@@ -1,0 +1,35 @@
+# Local development infrastructure for Pronto.
+#
+# Usage: docker compose up -d
+# Teardown: docker compose down          (keeps the data volume)
+#           docker compose down -v       (also deletes the data volume)
+#
+# Credentials below (pronto/pronto) are for local development only — not used in any
+# deployed environment. The backend (backend/src/main/resources/application.yml) reads
+# DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD env vars with defaults matching this file,
+# so it works out of the box against this compose service.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: pronto-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pronto
+      POSTGRES_USER: pronto
+      POSTGRES_PASSWORD: pronto
+      # UTF-8 encoding/collation is required for correct Hebrew text storage/sorting
+      # (docs/architecture/data-model.md §0).
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=en_US.UTF-8 --lc-ctype=en_US.UTF-8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - pronto-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pronto -d pronto"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pronto-postgres-data:

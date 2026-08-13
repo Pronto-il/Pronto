@@ -31,7 +31,15 @@ public enum ErrorCode {
     UNSUPPORTED_IMAGE_TYPE(HttpStatus.BAD_REQUEST),
     IMAGE_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE),
     AI_SERVICE_ERROR(HttpStatus.BAD_GATEWAY),
-    STORAGE_SERVICE_ERROR(HttpStatus.BAD_GATEWAY);
+    STORAGE_SERVICE_ERROR(HttpStatus.BAD_GATEWAY),
+
+    // Milestone 3 additions (bookings/availability, plus issues' GET /{id}). See
+    // docs/architecture/api-contract-bookings.md §2.
+    ISSUE_NOT_BOOKABLE(HttpStatus.CONFLICT),
+    CATEGORY_MISMATCH(HttpStatus.BAD_REQUEST),
+    SLOT_UNAVAILABLE(HttpStatus.CONFLICT),
+    ORDER_NOT_PENDING(HttpStatus.CONFLICT),
+    ORDER_NOT_CANCELLABLE(HttpStatus.CONFLICT);
 
     private final HttpStatus httpStatus;
 

@@ -3,9 +3,11 @@
 ## Purpose
 
 Issue creation, category selection, and image metadata; orchestrates the `ai` package for
-classification.
+classification. Since Milestone 3, also serves the single-issue lookup the booking flow
+needs.
 
-Implements `docs/architecture/api-contract-issues.md` §2.1–2.2.
+Implements `docs/architecture/api-contract-issues.md` §2.1–2.2 and
+`docs/architecture/api-contract-bookings.md` §2.1.
 
 ## Responsibilities
 
@@ -25,11 +27,19 @@ Implements `docs/architecture/api-contract-issues.md` §2.1–2.2.
   `imageKeys` ownership/existence independently of whatever was passed to `/classify`, then
   inserts `issues` + one `issue_images` row per validated key, all in one `@Transactional`
   method.
-- Both endpoints require `role = CUSTOMER`, enforced via
-  `common.security.RoleRequiredInterceptor` (registered for `/api/issues/**` by
-  `config.IssuesWebConfig`), which calls `common.security.RoleGuard.requireRole` from
-  `preHandle` — see `storage/README.md`'s "Role enforcement" section for the full
-  rationale (identical pattern used here).
+- `/classify` and `POST /api/issues` require `role = CUSTOMER`, enforced via
+  `common.security.RoleRequiredInterceptor` (registered for the two literal paths
+  `/api/issues/classify` and `/api/issues` by `config.IssuesWebConfig`), which calls
+  `common.security.RoleGuard.requireRole` from `preHandle` — see `storage/README.md`'s
+  "Role enforcement" section for the full rationale (identical pattern used here).
+- **`GET /api/issues/{id}`** (added Milestone 3, `docs/architecture/api-contract-bookings.md`
+  §2.1) — either `CUSTOMER` or `PROFESSIONAL` may call this; no route-level role gate is
+  registered for it (`config.IssuesWebConfig` only covers the two `CUSTOMER`-only paths
+  above). Ownership/authorization happens in `IssuesService.getById`: a customer must own
+  the issue; a professional must have any `orders` row against it (any status). Returns the
+  issue, its images, and a `latestOrder` summary (the most-recently-created order for the
+  issue, regardless of status, `null` if none) — the field the frontend uses to implement
+  the reject-return-to-list flow without a separate list-orders call.
 
 ## Key classes
 
@@ -38,12 +48,14 @@ Implements `docs/architecture/api-contract-issues.md` §2.1–2.2.
 | `entity.Issue` | JPA entity for `issues`. `customerId`/`categoryId` are plain FK columns, not associations — same convention as `professionals.entity.Professional`. Always starts `status = OPEN`. |
 | `entity.IssueImage` | JPA entity for `issue_images`. `imageUrl` is whatever `storage.StorageClient.resolveUrl` returns for the key — the underlying object is never moved/renamed on confirmation. |
 | `entity.IssueUrgencyType` / `entity.IssueStatus` | Enums mirroring the `issues` table's `CHECK` constraints. |
-| `repository.IssueRepository` / `repository.IssueImageRepository` | Plain `JpaRepository`s. |
+| `repository.IssueRepository` | `JpaRepository`, plus (since Milestone 3) `bookIfOpen`/`revertToOpen` — the atomic `UPDATE ... WHERE <status guard>` transitions `bookings.service.BookingsService` uses for the booking flow (`docs/architecture/api-contract-bookings.md` §3.2/§3.3). |
+| `repository.IssueImageRepository` | `JpaRepository`, plus `findByIssueId` (used by `GET /api/issues/{id}`). |
 | `dto.ClassifyRequest` / `dto.ClassifyResponse` | `POST /api/issues/classify` wire shapes. |
 | `dto.CreateIssueRequest` / `dto.IssueResponse` / `dto.IssueImageResponse` | `POST /api/issues` wire shapes. `CreateIssueRequest` deliberately carries no AI-suggestion field (see "Responsibilities" above). |
-| `service.IssuesService` | All business logic for both endpoints, including the shared `imageKeys` ownership/existence validation. |
-| `controller.IssuesController` | `/api/issues/classify` + `/api/issues`. |
-| `config.IssuesWebConfig` | Registers `common.security.RoleRequiredInterceptor(role = "CUSTOMER")` for `/api/issues/**` (see "Role check ordering fix" below). |
+| `dto.IssueDetailResponse` / `dto.LatestOrderSummary` | `GET /api/issues/{id}` wire shapes (Milestone 3). `LatestOrderSummary` is the one place this package depends on `bookings.entity.OrderStatus`/`bookings.repository.OrderRepository` — a deliberate, documented exception to the otherwise one-directional `bookings -> issues` dependency, per the contract doc §2.1. |
+| `service.IssuesService` | All business logic for all three endpoints, including the shared `imageKeys` ownership/existence validation and (Milestone 3) `getById`'s ownership/professional-order-existence authorization. |
+| `controller.IssuesController` | `/api/issues/classify`, `POST /api/issues`, `GET /api/issues/{id}`. |
+| `config.IssuesWebConfig` | Registers `common.security.RoleRequiredInterceptor(role = "CUSTOMER")` for exactly `/api/issues/classify` and `/api/issues` (narrowed in Milestone 3 — see "Assumptions / judgment calls" below). No interceptor is registered for `GET /api/issues/{id}` (either-role route). |
 
 ## Interactions with other packages
 
@@ -52,16 +64,19 @@ Implements `docs/architecture/api-contract-issues.md` §2.1–2.2.
   directly by the caller).
 - Calls `storage.client.StorageClient` (`exists`/`resolveUrl`) and
   `storage.ImageKeyUtils` (ownership parsing) to validate `imageKeys` before accepting them,
-  in both endpoints.
+  in `/classify`/`POST /api/issues`.
 - Depends on `professionals.repository.CategoryRepository` (read-only) to validate
-  `categoryId` — reused as-is, not duplicated, same pattern `auth` already uses (see
-  `professionals/README.md`).
+  `categoryId`, and (since Milestone 3) `professionals.repository.ProfessionalRepository`
+  and `users.repository.UserRepository` to authorize/enrich `GET /api/issues/{id}` for a
+  professional caller and resolve a professional's display name for `latestOrder`.
 - Depends on `common` for the error envelope (`ApiException`/`ErrorCode`) and
   `RoleGuard`/`AuthenticatedUser`.
-- Will be consumed by `bookings` in later milestones — an order is created against a
-  confirmed, persisted issue. **No `GET /api/issues/{id}` exists yet** (explicitly out of
-  this milestone's scope per the contract doc §2.2) — `bookings` will need one; flagged
-  here as a forward dependency, not solved in this package yet.
+- Since Milestone 3, depends on `bookings.repository.OrderRepository`/
+  `bookings.entity.Order`/`bookings.entity.OrderStatus` for `GET /api/issues/{id}`'s
+  `latestOrder` field — see the `dto.LatestOrderSummary` row above. `bookings` in turn
+  depends on `issues` (an order is created against a confirmed, persisted issue) and calls
+  `IssueRepository.bookIfOpen`/`revertToOpen` directly — the two packages are therefore
+  mutually dependent, a deliberate, documented exception, not an oversight.
 
 ## Data model
 
@@ -93,6 +108,17 @@ Owns `issues` (§2.6) and `issue_images` (§2.7) in `docs/architecture/data-mode
   document — trivially tunable (Bean Validation annotations only, no migration).
 
 ## Status
+
+**Milestone 3 addition, implemented and QA-validated**, on branch `MS3` (not yet merged to
+`main` — pending the user's own git operations): `GET /api/issues/{id}` implemented per
+`docs/architecture/api-contract-bookings.md` §2.1, alongside the `IssuesWebConfig` narrowing
+fix that same doc's §0.1 flagged (blanket `/api/issues/**` interceptor would have incorrectly
+`403`'d a professional calling the new endpoint). QA live-validated this endpoint (both
+`CUSTOMER`-ownership and `PROFESSIONAL`-order-existence authorization paths, and the
+`IssuesWebConfig` fix) against a real Postgres instance as part of the full Milestone 3
+pass — zero bugs found, no regression to the Milestone 2 `/classify`/`POST /api/issues`
+role gating. See `docs/architecture/implementation-plan.md`'s Milestone 3 entry for the
+full QA summary.
 
 Implemented in **Milestone 2 (Issue creation & AI classification)**, per
 `docs/architecture/implementation-plan.md`. Manually smoke-tested end-to-end against a real

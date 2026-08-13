@@ -302,6 +302,13 @@ acceptance criteria (confirm/override before proceeding). Milestone 3/4 (booking
 will need to look up an issue by id when a customer starts Standard/SOS booking against it
 — that's next-milestone planning scope, flagged here so it isn't forgotten, not solved now.
 
+**Update, Milestone 3 (2026-08-13):** `GET /api/issues/{id}` has since been designed and
+built — see `docs/architecture/api-contract-bookings.md` §2.1 for the full contract
+(request/response shape, either-`CUSTOMER`-or-`PROFESSIONAL` authorization, the
+`latestOrder` field) and `backend/src/main/java/com/pronto/issues/README.md` for the
+as-implemented summary. Not restated in full here to avoid two sources of truth drifting —
+the bookings contract doc remains authoritative for this endpoint.
+
 ---
 
 ### 2.3 `POST /api/storage/images`
@@ -623,6 +630,8 @@ re-classifies) with zero side effects before step 3 actually commits anything.
   because it's a real forward dependency: Milestone 3/4's booking flows will need to
   resolve an issue by id, and that endpoint doesn't exist yet — next milestone's planning
   pass needs to account for it, it isn't silently assumed to already exist.
+  **Resolved, Milestone 3 (2026-08-13)** — see the note under §2.2 above and
+  `docs/architecture/api-contract-bookings.md` §2.1 for the full spec.
 - **Storage object "permanence" after issue confirmation (§2.2 step 6).** Uploaded objects
   keep their original `.../temp/...`-style key forever; nothing "promotes" them to a
   permanent, issue-scoped path (e.g. `issues/{issueId}/...`) on confirm. Functionally

@@ -1,15 +1,20 @@
 package com.pronto.issues.controller;
 
+import com.pronto.common.exception.ApiException;
+import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
 import com.pronto.issues.dto.ClassifyRequest;
 import com.pronto.issues.dto.ClassifyResponse;
 import com.pronto.issues.dto.CreateIssueRequest;
+import com.pronto.issues.dto.IssueDetailResponse;
 import com.pronto.issues.dto.IssueResponse;
 import com.pronto.issues.service.IssuesService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -48,5 +53,34 @@ public class IssuesController {
                                                  @Valid @RequestBody CreateIssueRequest request) {
         IssueResponse response = issuesService.create(principal.id(), request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    /**
+     * §2.1 of {@code docs/architecture/api-contract-bookings.md}. Either role
+     * ({@code CUSTOMER} or {@code PROFESSIONAL}) may call this — no
+     * {@code RoleRequiredInterceptor} is registered for this path in
+     * {@code issues.config.IssuesWebConfig}; ownership/authorization happens in
+     * {@code IssuesService.getById}. {@code id} is parsed manually so a malformed value
+     * produces this app's standard error envelope with {@code 404 NOT_FOUND} (a
+     * path-referenced id that doesn't resolve, per that doc's §0 convention) rather than
+     * Spring's default type-mismatch handling.
+     */
+    @GetMapping("/{id}")
+    public ResponseEntity<IssueDetailResponse> getById(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                         @PathVariable("id") String idRaw) {
+        Long id = parsePathId(idRaw);
+        return ResponseEntity.ok(issuesService.getById(principal.id(), principal.role(), id));
+    }
+
+    private Long parsePathId(String raw) {
+        try {
+            long value = Long.parseLong(raw);
+            if (value <= 0) {
+                throw new NumberFormatException();
+            }
+            return value;
+        } catch (NumberFormatException e) {
+            throw new ApiException(ErrorCode.NOT_FOUND, "Not found.");
+        }
     }
 }

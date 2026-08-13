@@ -12,7 +12,16 @@
  * {@code storage} to verify {@code imageKeys} ownership/existence before either endpoint
  * accepts them (§3.3).
  *
+ * <p>Since Milestone 3, also exposes {@code GET /api/issues/{id}} (either {@code CUSTOMER}
+ * or {@code PROFESSIONAL}, ownership/authorization resolved in the service layer), added
+ * here rather than in {@code bookings} because the endpoint conceptually belongs to
+ * {@code issues} — see {@code docs/architecture/api-contract-bookings.md} §2.1. This is the
+ * one place {@code issues} depends on {@code bookings} (for the response's {@code
+ * latestOrder} summary), a deliberate, documented exception to the otherwise
+ * one-directional {@code bookings -> issues} dependency.
+ *
  * <p>Implemented in Milestone 2 (Issue creation & AI classification) per
- * {@code docs/architecture/implementation-plan.md}.
+ * {@code docs/architecture/implementation-plan.md}; extended in Milestone 3 (Standard
+ * booking flow).
  */
 package com.pronto.issues;

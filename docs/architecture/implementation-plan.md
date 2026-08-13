@@ -107,11 +107,68 @@ closed).
 
 ## Milestone 3 — Standard booking flow
 
-- **Scope**: `bookings` (Standard path), professional listing UI, price offers on cards,
-  accept/reject by the professional, confirmation flow, tracking screen (status only, no
-  GPS/map).
+- **Status: COMPLETE (backend), QA-signed-off on branch `MS3`, 2026-08-13.** Not yet
+  merged to `main` — merge/push is pending the user's own explicit git operations, not
+  implied by this status line. `bookings` (Standard path) and a minimal `availability`
+  slice implemented per `docs/architecture/api-contract-bookings.md`, plus one `issues`
+  package addition (`GET /api/issues/{id}`); QA validated live against a real Postgres
+  instance with zero bugs found — see "QA summary" below. **Frontend booking-flow screens
+  (professional listing, slot picker, tracking screen) are intentionally deferred**,
+  consistent with the rest of `frontend/` — not a gap in this milestone's backend
+  completion.
+- **Scope actually built**: two Flyway migrations (`V11__alter_orders_status_add_rejected.sql`,
+  a pre-existing gap fix adding the genuine 7th `order_status` value `REJECTED`;
+  `V12__add_slot_id_to_orders.sql`, new for this milestone, adds the nullable
+  `orders.slot_id` FK used as the sole slot-release lookup mechanism); `GET
+  /api/issues/{id}` plus the `IssuesWebConfig` narrowing fix (blanket `/api/issues/**` →
+  the two literal `CUSTOMER`-only Milestone 2 paths, leaving the new either-role endpoint
+  ungated at the route level); the 8 `bookings` endpoints (`GET
+  /api/bookings/professionals`, `GET /api/bookings/professionals/{professionalId}/slots`,
+  `POST /api/bookings/orders`, `POST /api/bookings/orders/{orderId}/accept`, `POST
+  /api/bookings/orders/{orderId}/reject`, `POST /api/bookings/orders/{orderId}/cancel`,
+  `GET /api/bookings/orders/{orderId}`, `GET /api/bookings/orders/me`); the 2
+  `availability` endpoints (`POST /api/availability/slots`, `GET
+  /api/availability/slots/me`); and the two per-package `WebMvcConfigurer`s
+  (`bookings.config.BookingsWebConfig`, with its two precisely-scoped
+  `RoleRequiredInterceptor` registrations since this package mixes `CUSTOMER`-only,
+  `PROFESSIONAL`-only, and either-role routes in one package;
+  `availability.config.AvailabilityWebConfig`, a single blanket-pattern registration since
+  both its endpoints share one role). See `backend/src/main/java/com/pronto/bookings/README.md`,
+  `.../availability/README.md`, and `.../issues/README.md` for full detail.
 - **Acceptance criteria**: full Standard path works end-to-end per PRD §3.4, including the
-  reject → return-to-list branch.
+  reject → return-to-list branch. **Met** — professional listing (filtered by category,
+  excluding soft-deleted professionals) → slot selection → order creation (atomic slot
+  claim + issue `OPEN → BOOKED` transition) → professional accept/reject → customer
+  tracking (`GET /api/bookings/orders/{orderId}`, polling-ready) → either party's cancel
+  (state/actor-dependent, per §2.7 of the contract doc) all verified against a real
+  Postgres instance, backend-only (no frontend UI this milestone).
+- **QA summary**: live-validated against a real Postgres instance — the full happy-path
+  Standard flow (professional listing → slot listing → create order → professional
+  accept → customer tracking, `orders`/`availability_slots`/`issues` rows all transitioning
+  correctly at each step), the reject → return-to-list branch (professional reject →
+  slot released → issue reverts to `OPEN` → customer re-lists professionals and re-books,
+  including re-booking the same professional who just rejected), cancel edge cases (the
+  full actor/state permission matrix from §2.7 of the contract doc: customer cancel from
+  `PENDING`/`CONFIRMED`, professional cancel from `CONFIRMED` only, professional attempting
+  cancel on a `PENDING` order correctly rejected with `409 ORDER_NOT_CANCELLABLE` since
+  `reject` is the only valid action there, cancel on terminal-state orders correctly
+  rejected), and ownership/role enforcement on every new endpoint (wrong-role and
+  wrong-party callers correctly `403`/`409` across all 8 `bookings` endpoints, the 2
+  `availability` endpoints, and `GET /api/issues/{id}`'s dual `CUSTOMER`-ownership /
+  `PROFESSIONAL`-order-existence authorization paths). **Zero bugs found**, no regressions
+  to Milestone 0-2 (auth, issue creation/classification, image upload all re-verified
+  working). Live-validated against a real Postgres instance throughout, not just unit
+  tests, matching the rigor of the Milestone 1/2 QA passes.
+- **Deferred / explicitly out of scope, per the contract doc**: professional viewing an
+  issue's photos before deciding accept/reject remains genuinely unresolved (contract doc
+  §6 item 3 / §7) — `GET /api/storage/images/{key}` stays `CUSTOMER`-only in every
+  milestone so far, not built or designed here, not blocking (the PRD's Standard flow
+  doesn't require photo access before accept/reject). `ON_THE_WAY`/`COMPLETED` job-status
+  progression is confirmed Milestone 6 scope (contract doc §6 item 4), not built here —
+  this milestone covers request/accept/reject/cancel/track through `CONFIRMED` plus the
+  terminal `CANCELLED`/`REJECTED` statuses only. Payment processing and GPS/live location
+  tracking remain permanent v1.0 exclusions (not milestone-specific deferrals) — the
+  tracking endpoint (§2.8) is status-only, no map/location data.
 
 ## Milestone 4 — SOS booking flow
 

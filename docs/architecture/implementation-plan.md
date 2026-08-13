@@ -270,24 +270,280 @@ closed).
 
 ## Milestone 5 — Notifications & real-time status
 
-- **Scope**: `notifications` package, short-polling status endpoints (per `overview.md`
-  §3.3), notification records on status transitions, email dispatch, **and** a
-  background/scheduled sweep job (e.g. Spring `@Scheduled`) that flips `orders` rows stuck
-  in `PENDING` past their timeout to `EXPIRED` (cascading to `issues.status` per
-  `data-model.md` §3 item 8) — ownership of this job was assigned to this milestone by
-  `pronto-lead` rather than Milestone 3/4, since its purpose centers on producing the
-  `ORDER_EXPIRED` notification/status change a polling client observes. Timeout duration
-  is a flagged recommendation pending sign-off (proposed: 15 min `STANDARD` / 5 min `SOS`
-  — see `data-model.md` §3 item 8), not yet decided.
+- **Status: COMPLETE (backend), QA-signed-off on branch `MS5`, 2026-08-13.** Not yet merged
+  to `main` (nor are `MS3`/`MS4`) — merge/push is pending the user's own explicit git
+  operations, not implied by this status line. `notifications` package implemented per
+  `docs/architecture/api-contract-notifications.md`, plus the specific hook points that doc
+  required adding to the already-shipped `bookings` package; QA validated live against a
+  real Postgres instance with one bug found and fixed — during the lead's own review of the
+  coding agent's output, *before* QA's formal pass ran — see "QA summary" below.
+  **Frontend notification-bell/tracking screens remain entirely deferred**, consistent with
+  Milestones 1-4 — not a gap in this milestone's backend completion.
+- **Scope actually built**: one Flyway migration
+  (`V14__alter_notifications_message_type_add_rejected.sql`, a pre-existing schema-gap fix —
+  same category as `V11`/`V13` — adding the missing `'ORDER_REJECTED'` value to
+  `notifications.message_type`'s `CHECK`, which `V9` never actually included despite
+  `data-model.md` §2.10 already documenting it as present); the 3 `notifications` endpoints
+  (`GET /api/notifications`, `POST /api/notifications/{id}/read`, `POST
+  /api/notifications/read-all`); `NotificationService`/`NotificationServiceImpl`
+  (`recordOrderNotification`, the `bookings → notifications` call boundary, §4.1); two
+  `@Scheduled` jobs (`EmailDispatchJob`, 20s, dispatches the `EMAIL`-channel `PENDING` queue
+  via a new `EmailSender.sendOrderStatusEmail` method; `OrderExpirySweepJob`, 60s, sweeps
+  `PENDING` orders past their per-urgency-type timeout to `EXPIRED`); `config.SchedulingConfig`
+  (`@EnableScheduling`, localized to this package). In the already-shipped `bookings`
+  package: a new required `NotificationService` constructor dependency on `BookingsService`;
+  five new `recordOrderNotification` call sites (`createOrder`/`createSosOrder`/`accept`/
+  `reject`/`cancel`); two new `BookingsService` methods (`findExpiredOrderCandidateIds`,
+  `expireIfPending`) and two new `OrderRepository` methods (`findPendingExpiryCandidateIds`,
+  `expireIfPending`) backing the sweep; two new hardcoded timeout constants
+  (`STANDARD_PENDING_TIMEOUT = 15 min`, `SOS_PENDING_TIMEOUT = 5 min` — **decided**, the
+  user's own sign-off at this milestone's kickoff, no longer a pending recommendation). One
+  new `issues.repository.IssueRepository` method (`expireIfBooked`, mirroring the existing
+  `bookIfOpen`/`revertToOpen` guarded-transition pattern). `auth.email.EmailSender` extended
+  with a second method, `sendOrderStatusEmail` (decided: extend the existing interface
+  rather than introduce a second, `notifications`-owned one — `LoggingEmailSender` remains
+  the sole implementation, logs at `INFO`, sends nothing real). New `application.yml` config
+  block, `pronto.email.mode` (default `log`; `smtp` not built this milestone — no source
+  document names a real email provider, unlike MS2's OpenAI/S3). **No new `ErrorCode`
+  values** — audited against every behavior branch in the contract doc; "not found"/"not
+  yours" reuse the existing `NOT_FOUND`/`FORBIDDEN` codes. See
+  `backend/src/main/java/com/pronto/notifications/README.md` and
+  `.../bookings/README.md`'s new Milestone 5 additions for full detail.
 - **Acceptance criteria**: booking status changes reach the relevant customer/professional
-  within the PRD's ~1s target; tracking screen updates without a manual refresh.
+  within the PRD's ~1s target; tracking screen updates without a manual refresh. **Met, with
+  a distinction worth stating explicitly** (per `api-contract-notifications.md` §4.5): the
+  PRD's ~1s target governs *propagation* latency — how fast an **already-changed** row
+  reaches a client already polling `GET /api/bookings/orders/{orderId}`/`GET
+  /api/notifications` every 3-5s, per the existing short-polling design (unchanged this
+  milestone). It says nothing about *detection* latency — how fast the backend notices a
+  `PENDING` order should expire in the first place. The 60s `OrderExpirySweepJob` interval
+  governs detection latency only, for the one new status transition this milestone
+  introduces (`PENDING → EXPIRED`); once the sweep *does* transition an order, the existing
+  3-5s polling mechanism picks it up with the PRD's normal ~1s-class propagation
+  characteristics, unaffected by the sweep's own 60s cadence. Worst case, an order sits up to
+  60s past its 15-/5-minute timeout before the sweep acts — a <7% overshoot on the tightest
+  (5-minute SOS) case, judged negligible and not a violation of the ~1s target, which was
+  never about this kind of latency to begin with.
+- **QA summary** (method: live validation against a real Postgres instance — docker-compose
+  `pronto-postgres`, migrated through `V13` from prior sessions, built via `mvnd clean
+  package`, booted the jar, drove every scenario through the real HTTP API with `curl`,
+  verified state via direct `psql` queries at every step, not just HTTP status codes):
+  - **Migration (`V14`)**: confirmed pre-state lacked `ORDER_REJECTED` in the `CHECK`
+    constraint, confirmed Flyway applied `V14` cleanly (schema version 14), confirmed the
+    `CHECK` now includes it, functionally confirmed via a live `reject` call.
+  - **Notification creation on every transition**: exercised Standard
+    (`createOrder`→accept, →reject, →accept→cancel-by-customer,
+    →accept→cancel-by-professional) and SOS (`createSosOrder`→accept→cancel-by-customer)
+    paths against real orders, verified via direct DB query: `ORDER_CREATED`→professional's
+    `user_id` (both Standard and SOS), `ORDER_CONFIRMED`/`ORDER_REJECTED`→customer,
+    `ORDER_CANCELLED`→the *non-acting* party (professional when customer cancels, customer
+    when professional cancels). Confirmed the reverse recipient never fires. Zero bugs.
+  - **In-app feed endpoints**: `GET /api/notifications` (`IN_APP`-only, correct ordering,
+    correct `unreadCount`), `unreadOnly=true` filter, `POST /{id}/read` (idempotent —
+    verified via DB that `read_at` doesn't change on a second call), `403` on someone else's
+    notification, `404` on a nonexistent id, `404` (not `500`) on a malformed id (the fixed
+    bug, below), `POST /read-all` (correct count, doesn't touch other users' rows). Zero
+    bugs.
+  - **Email dispatch job**: all `PENDING` `EMAIL` rows transitioned to `SENT` with `sent_at`
+    populated within ~15-20s (consistent with the 20s `fixedDelay`), `[MOCK EMAIL]` log
+    lines confirmed with correct recipient/subject/body content. End-of-session state: 22
+    `EMAIL` rows, all `SENT`, zero stuck in `PENDING`/`FAILED`. Pass.
+  - **Expiry sweep (highest-risk item)**: backdated real `orders.created_at` via direct SQL
+    to simulate timeout, waited for the real 60s `@Scheduled` sweep. Verified precisely at
+    both boundaries: Standard backdated 16min → `EXPIRED`; Standard backdated 10min → stays
+    `PENDING` (not over-eager); SOS backdated 6min → `EXPIRED`; SOS backdated 3min → stays
+    `PENDING`. Full side-effect verification on both expired orders: `orders.order_status =
+    'EXPIRED'` + `updated_at` bumped, `issues.status = 'EXPIRED'`, Standard slot released
+    (`availability_slots.is_available` back to `true`), SOS's `slot_id` correctly `NULL`
+    (safe no-op), `ORDER_EXPIRED` notification for the customer only (both channels) with
+    **zero** such rows for the professional (customer-only design holds). "Lost the race"
+    case verified: an order backdated past timeout but accepted via the real API *before*
+    the sweep ran stayed `CONFIRMED`, not flipped, no exception. Also incidentally observed
+    the sweep correctly auto-fire on genuinely stale `PENDING` orders left over from the MS4
+    QA session at app startup. Zero bugs — the strongest-verified part of the milestone.
+  - **Full regression pass (MS0-4)**: `/actuator/health`, `/api/users/me`, issue creation +
+    mock AI classification, image upload round-trip, Standard professional/slot listing
+    (soft-delete exclusion still correct), SOS availability toggle/listing, error-code
+    taxonomy spot-checks (`409 ORDER_NOT_PENDING`, `409 ISSUE_NOT_BOOKABLE`) all still
+    correct. Zero regressions. (This regression pass also reconfirmed the
+    `EXPIRED`-issue-can't-be-rebooked gap live — not a new finding, restates the
+    already-flagged `data-model.md` §4 item, see "Known gaps" below.)
+  - **One bug found**, caught during the lead's own review of the coding agent's output
+    *before* this formal QA pass ran (so QA's own pass itself found zero new defects, but the
+    bug is recorded here for the same reason MS2's role-check-ordering bug and MS4's
+    JSON-boolean-coercion bug are — a real bug caught and fixed, not swept under the rug):
+    `NotificationController`'s `{id}` path-variable handling initially used a typed
+    `@PathVariable Long`, with an incorrect Javadoc claim that Spring's default
+    type-mismatch handling would produce a `4xx` on a malformed value. In fact this would
+    have fallen through to `GlobalExceptionHandler`'s generic catch-all and returned `500
+    INTERNAL_ERROR`, not a `4xx`. Fixed to manually parse the id, matching
+    `IssuesController`'s established convention, guaranteeing `404 NOT_FOUND` on a malformed
+    value. QA live-verified the fix: `POST /api/notifications/abc/read` → `404`, not `500`.
+  - **Everything else matched the contract doc precisely** — QA's report states this
+    explicitly for the entity, repository, service, both scheduler jobs, the `V14`
+    migration, the `EmailSender` extension, the `application.yml` config block, and the
+    `bookings`/`issues` repository additions, and the trigger→recipient mapping.
+  - **Final verdict: full sign-off, zero known open bugs.** The one bug found (the
+    malformed-id `500`-vs-`404` issue) was caught and fixed before this formal QA pass ran;
+    QA's own pass itself found zero new defects.
+- **Known gaps, not blockers**:
+  - **The `EXPIRED`-issue-cannot-be-rebooked gap** (`docs/architecture/data-model.md` §4,
+    `docs/architecture/api-contract-notifications.md` §7): an issue that reaches `EXPIRED`
+    has no endpoint that reopens it to `OPEN`, so `createOrder`/`createSosOrder`'s
+    `issue.status == 'OPEN'` requirement makes an `EXPIRED` issue a practical dead end via
+    the existing booking endpoints (the customer's only workaround is creating an entirely
+    new `issues` row for the same problem). Reconfirmed as still-accurate and non-blocking
+    during QA's live regression pass this milestone (not a new finding) — needs a
+    `pronto-lead`/user decision (a "reopen" endpoint? treat `EXPIRED` as book-able too?
+    accept the new-issue workaround as intended?), not resolved by this milestone.
+  - No retry/backoff for `FAILED` email rows — `EmailDispatchJob` marks a row `FAILED` on any
+    exception and moves on; nothing retries it. Accepted MVP gap, an M7 hardening candidate
+    if email reliability becomes a concern once a real provider exists.
+  - No multi-instance email-dispatch atomic "claim" step — `EmailDispatchJob` has no per-row
+    claim before sending; two concurrent instances could double-send. Accepted MVP gap under
+    the current single-instance deployment assumption (`overview.md` §6); would need an
+    interim `delivery_status` value (a `V15` `CHECK` addition) before safe under horizontal
+    scaling.
+  - `ON_THE_WAY`/`COMPLETED` notification hooks are not wired — no `BookingsService` method
+    producing those statuses exists yet (Milestone 6's job); adding a hook now would be dead
+    code. Milestone 6 adds exactly one `recordOrderNotification(...)` call per new transition
+    method, following the identical pattern this milestone established.
+  - `auth`'s `EMAIL_VERIFICATION` message type is not retrofitted into this table this
+    milestone — an in-app notification for an event that occurs before the user has a usable
+    session has no real use case; `EMAIL_VERIFICATION` stays in the schema/enum for
+    completeness and any future retrofit, but nothing writes it yet.
+  - No SMS/push channels (unchanged, out of scope per `overview.md` §2). No rate limiting on
+    any endpoint in this doc (low risk, noted only for completeness). Exact notification
+    copy/Hebrew localization remains genuinely open, needs product/UX input (§7 of the
+    contract doc).
 
 ## Milestone 6 — Professional dashboard
 
-- **Scope**: availability management (`availability` package + UI), incoming-requests
-  view, job-status update actions.
-- **Acceptance criteria**: a professional can manage availability, see incoming requests,
-  and progress a job through its statuses.
+- **Status: COMPLETE (backend), QA-signed-off on branch `MS6`, 2026-08-13.** Not yet merged
+  to `main` (nor are `MS3`/`MS4`/`MS5`) — merge/push is pending the user's own explicit git
+  operations, not implied by this status line. Job-status progression endpoints
+  (`ON_THE_WAY`/`COMPLETED`) implemented in the `bookings` package per
+  `docs/architecture/api-contract-bookings.md` §2.16-2.17 (the same contract doc as
+  Milestones 3 & 4, extended in place rather than forked into a new file — titled
+  "Milestones 3, 4 & 6" as of this pass); the doc's §8 separately reviews and confirms the
+  other two acceptance-criterion pieces ("manage availability," "see incoming requests")
+  need no new endpoint at all, since the existing Milestone 3/4 surface already covers them.
+  QA validated live against a real Postgres instance with **zero bugs found** — see "QA
+  summary" below. **Frontend professional-dashboard screens remain entirely deferred**,
+  consistent with Milestones 1-5 — not a gap in this milestone's backend completion.
+- **Scope actually built**: two new `bookings` endpoints (`POST
+  /api/bookings/orders/{orderId}/on-the-way`, `CONFIRMED → ON_THE_WAY`, professional-only;
+  `POST /api/bookings/orders/{orderId}/complete`, `ON_THE_WAY → COMPLETED`,
+  professional-only). Both follow the exact same shape as the existing `accept`/`reject`
+  endpoints: same ownership check (`ProfessionalRepository.findByUserId`), a single guarded
+  `UPDATE ... WHERE order_status = <expected>` transition
+  (`OrderRepository.onTheWayIfConfirmed`/`completeIfOnTheWay`, new this milestone), and a
+  trailing `notificationService.recordOrderNotification(...)` call to the **customer**
+  (`ORDER_ON_THE_WAY`/`ORDER_COMPLETED` respectively) — reusing the exact notification
+  mechanism Milestone 5 established, no new call boundary. `complete` additionally
+  transitions the issue via a new `IssueRepository.completeIfBooked` method
+  (`UPDATE issues SET status = 'COMPLETED' ... WHERE status = 'BOOKED'`), mirroring
+  `expireIfBooked`'s exact shape and, like `expireIfPending`'s call to it, not checked for a
+  `0`-row result — the single-active-order-per-issue invariant (`data-model.md` §3 item 8,
+  §3.3 of the contract doc) guarantees this always affects exactly 1 row when reached. Two
+  new `common.exception.ErrorCode` values, both `409`: `ORDER_NOT_CONFIRMED` (`on-the-way`
+  called on a non-`CONFIRMED` order) and `ORDER_NOT_ON_THE_WAY` (`complete` called on a
+  non-`ON_THE_WAY` order — this is also the code returned for the deliberately-disallowed
+  `CONFIRMED → COMPLETED` skip-ahead attempt, no separate code distinguishes "you skipped a
+  step" from "wrong state for any other reason"). `BookingsWebConfig`'s existing
+  `PROFESSIONAL`-scoped `RoleRequiredInterceptor` registration gained two more literal path
+  patterns (`/api/bookings/orders/*/on-the-way`, `/api/bookings/orders/*/complete`) — its
+  literal-list design (chosen in Milestone 3 because this package mixes roles per-route)
+  doesn't pick up new routes automatically the way a wildcard would. **No `availability`
+  package changes** — confirmed and reasoned explicitly in the contract doc §8, not silently
+  skipped (see "Known gaps" below for the "no slot edit/delete" decision). **No new Flyway
+  migration** — verified directly against `backend/src/main/resources/db/migration/`, which
+  contains exactly `V1`-`V14`: `orders.order_status`'s `CHECK` has allowed `ON_THE_WAY`/
+  `COMPLETED` since the original `V8__create_orders.sql`, `notifications.message_type`'s
+  `CHECK` (as amended by `V14`) has allowed `ORDER_ON_THE_WAY`/`ORDER_COMPLETED` since the
+  original `V9__create_notifications.sql`, and `issues.status`'s `CHECK` has allowed
+  `COMPLETED` since the original `V6__create_issues.sql` — this milestone is the first to
+  *reach* these already-tolerated values via a real endpoint, not the first to need the
+  schema to allow them. **No new DTO** — `OrderResponse`/`OrderStatus` already carried
+  `ON_THE_WAY`/`COMPLETED` as unused enum values. See
+  `backend/src/main/java/com/pronto/bookings/README.md` for full detail.
+- **Acceptance criteria**: "a professional can manage availability, see incoming requests,
+  and progress a job through its statuses" — **all three met**, but only the third required
+  new backend work:
+  - **Manage availability**: already satisfied by the existing Milestone 3/4 surface
+    (`POST`/`GET /api/availability/slots`+`/me`, `PUT`/`GET
+    /api/availability/sos-availability`) — reviewed explicitly this milestone
+    (`api-contract-bookings.md` §8.1/§8.2) and confirmed sufficient; slot edit/delete was
+    explicitly considered and explicitly declined (see "Known gaps" below), not silently
+    left out.
+  - **See incoming requests**: already satisfied by `GET
+    /api/bookings/orders/me?status=PENDING` (§2.9, Milestone 3) — confirmed this milestone
+    (§8.1/§8.3) to already be exactly the right query shape, generic across Standard and SOS
+    orders.
+  - **Progress a job through its statuses**: the one genuinely new piece — `accept`/`reject`
+    (Milestone 3) plus `on-the-way`/`complete` (this milestone) now cover the full
+    `PENDING → CONFIRMED → ON_THE_WAY → COMPLETED` sequence end-to-end, with `cancel`
+    remaining reachable from `PENDING`/`CONFIRMED`/`ON_THE_WAY` throughout, per PRD §3.6.1's
+    named status sequence. **Met** — verified against a real Postgres instance, backend-only
+    (no dashboard UI this milestone).
+- **QA summary**: live-validated against a real Postgres instance (method: live HTTP + direct
+  `psql` verification at every step, not just status codes) —
+  - **Happy path, both booking types**: drove a Standard order and an SOS order each all the
+    way from creation through `accept` → `on-the-way` → `complete`, verifying at every step
+    via direct SQL: `orders.order_status`/`updated_at` transitions correctly at each hop,
+    `issues.status` stays `BOOKED` through `CONFIRMED`/`ON_THE_WAY` and only flips to
+    `COMPLETED` on the final `complete` call (never earlier), and the correct `OrderResponse`
+    shape/values at each step.
+  - **Guard-violation / skip-ahead cases**: `on-the-way` called against a `PENDING`,
+    `ON_THE_WAY` (already progressed), `COMPLETED`, `CANCELLED`, and `REJECTED` order each
+    correctly returned `409 ORDER_NOT_CONFIRMED`. `complete` called against a `PENDING` order
+    and — the deliberately-disallowed skip-ahead case — a still-`CONFIRMED` order (never
+    routed through `on-the-way`) each correctly returned `409 ORDER_NOT_ON_THE_WAY`,
+    confirming `ON_THE_WAY` is enforced as a genuine mandatory intermediate step by the code,
+    not just documented as one in the contract doc. `complete` against an already-`COMPLETED`
+    order and a `CANCELLED` order also correctly `409`'d.
+  - **Actor/role enforcement**: a customer calling either `on-the-way` or `complete`
+    correctly `403`'d (route-level `RoleRequiredInterceptor` rejection); a professional who
+    is not the order's own assigned professional calling either endpoint correctly `403`'d
+    (service-layer ownership check) on both a Standard and an SOS order.
+  - **`cancel` non-regression from `ON_THE_WAY`**: confirmed `cancel` (§2.7, unmodified this
+    milestone) still works correctly from `ON_THE_WAY` for both actors (customer and
+    professional), with no change to its existing `PENDING`/`CONFIRMED` behavior — the actor/
+    state permission matrix from Milestone 3 held unchanged.
+  - **Notification targeting**: direct `psql` verification that `ORDER_ON_THE_WAY`/
+    `ORDER_COMPLETED` notification rows were created for the customer only, on both a
+    Standard and an SOS order — zero such rows were ever created for the professional across
+    the entire session, confirming the "acting party doesn't need telling about their own
+    action" design holds for these two new transitions exactly as it already did for
+    `accept`/`reject`/`cancel`.
+  - **Full regression pass, Milestones 0-5**: `/actuator/health`, auth, issue creation +
+    classification, image upload, Standard/SOS professional and slot listing, the SOS
+    availability toggle, and — the highest-risk item — the `PENDING`-order expiry sweep
+    (Milestone 5), re-verified to correctly leave `CONFIRMED`/`ON_THE_WAY`/`COMPLETED` orders
+    alone (the sweep only ever targets `PENDING` orders, and this milestone introduced no
+    code path that could move an order back into `PENDING`). All still correct, zero
+    regressions found.
+  - **Final verdict: zero bugs found, full sign-off.**
+- **Known gaps, not blockers**:
+  - **The `EXPIRED`-issue-cannot-be-rebooked gap** (`docs/architecture/data-model.md` §4,
+    `docs/architecture/api-contract-notifications.md` §7) remains open and is **confirmed
+    unaffected by this milestone** — `on-the-way`/`complete` only ever read/write orders that
+    are already `CONFIRMED`/`ON_THE_WAY`, never `OPEN`/`EXPIRED` issues, so neither new
+    endpoint adds, removes, or narrows this gap in any way (verified explicitly in the
+    contract doc §9, not just asserted). Still needs a `pronto-lead`/user decision, unchanged
+    from Milestone 5.
+  - **No slot edit/delete added to `availability`** — restated explicitly as a **judgment
+    call, not a gap**: reviewed this milestone (`api-contract-bookings.md` §8.2) against the
+    "manage availability" acceptance criterion and PRD text, and deliberately not built (no
+    PRD text mandates it, no load-bearing functional gap exists without it, and frontend is
+    out of scope project-wide anyway). If a future UX review decides otherwise, the addition
+    would be a small independent slice (`DELETE /api/availability/slots/{slotId}`), not
+    designed here.
+  - **Frontend professional-dashboard UI remains entirely deferred project-wide**, consistent
+    with every prior milestone — not built or designed here, pending the user's design-system
+    decision.
+  - Professional-viewing-issue-images (contract doc §6 item 3 / §7) remains open and unbuilt,
+    unchanged from every prior milestone.
 
 ## Milestone 7 — Hardening & QA pass
 

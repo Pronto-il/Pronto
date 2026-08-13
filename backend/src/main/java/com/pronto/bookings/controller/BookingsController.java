@@ -34,7 +34,8 @@ import java.util.List;
  * either-role routes ({@code cancel}, {@code GET .../{orderId}}, {@code GET .../me}) have no
  * route-level gate at all; authorization for those happens entirely in
  * {@link BookingsService} once the resource is loaded. See
- * {@code docs/architecture/api-contract-bookings.md} §2.2-2.9 (Standard) and §2.12-2.13 (SOS).
+ * {@code docs/architecture/api-contract-bookings.md} §2.2-2.9 (Standard), §2.12-2.13 (SOS),
+ * and §2.16-2.17 (job-status progression, Milestone 6).
  *
  * <p>Path/query ids are parsed manually (not via typed {@code @PathVariable Long}/
  * {@code @RequestParam Long}) so a malformed value produces this app's standard error
@@ -103,6 +104,20 @@ public class BookingsController {
                                                  @PathVariable("orderId") String orderIdRaw) {
         Long orderId = parsePathId(orderIdRaw);
         return ResponseEntity.ok(bookingsService.reject(principal.id(), orderId));
+    }
+
+    @PostMapping("/orders/{orderId}/on-the-way")
+    public ResponseEntity<OrderResponse> onTheWay(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                    @PathVariable("orderId") String orderIdRaw) {
+        Long orderId = parsePathId(orderIdRaw);
+        return ResponseEntity.ok(bookingsService.onTheWay(principal.id(), orderId));
+    }
+
+    @PostMapping("/orders/{orderId}/complete")
+    public ResponseEntity<OrderResponse> complete(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                    @PathVariable("orderId") String orderIdRaw) {
+        Long orderId = parsePathId(orderIdRaw);
+        return ResponseEntity.ok(bookingsService.complete(principal.id(), orderId));
     }
 
     @PostMapping("/orders/{orderId}/cancel")

@@ -26,6 +26,8 @@ import com.pronto.issues.entity.Issue;
 import com.pronto.issues.entity.IssueStatus;
 import com.pronto.issues.entity.IssueUrgencyType;
 import com.pronto.issues.repository.IssueRepository;
+import com.pronto.notifications.entity.NotificationMessageType;
+import com.pronto.notifications.service.NotificationService;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.users.entity.User;
@@ -34,20 +36,27 @@ import com.pronto.users.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * {@code /api/bookings/*} — Standard and SOS booking flows (professional listing, slot
  * listing, create/accept/reject/cancel, tracking, self-listing). See
- * {@code docs/architecture/api-contract-bookings.md} §2.2-2.9 (Standard, Milestone 3) and
- * §2.12-2.13 (SOS, Milestone 4). Route-level role checks ({@code CUSTOMER}-only /
+ * {@code docs/architecture/api-contract-bookings.md} §2.2-2.9 (Standard, Milestone 3),
+ * §2.12-2.13 (SOS, Milestone 4), and §2.16-2.17 (job-status progression, Milestone 6).
+ * Route-level role checks ({@code CUSTOMER}-only /
  * {@code PROFESSIONAL}-only routes) happen in {@code bookings.config.BookingsWebConfig}; the
  * either-role routes (cancel, get-by-id, get-me) have no route-level gate and instead
  * authorize entirely here, once the resource is loaded (§0.1).
  */
 @Service
 public class BookingsService {
+
+    /** §4.5 of {@code api-contract-notifications.md} — hardcoded, no migration. */
+    private static final Duration STANDARD_PENDING_TIMEOUT = Duration.ofMinutes(15);
+    private static final Duration SOS_PENDING_TIMEOUT = Duration.ofMinutes(5);
 
     private final IssueRepository issueRepository;
     private final ProfessionalRepository professionalRepository;
@@ -56,6 +65,7 @@ public class BookingsService {
     private final SosAvailabilityRepository sosAvailabilityRepository;
     private final OrderRepository orderRepository;
     private final UserRepository userRepository;
+    private final NotificationService notificationService;
 
     public BookingsService(IssueRepository issueRepository,
                             ProfessionalRepository professionalRepository,
@@ -63,7 +73,8 @@ public class BookingsService {
                             AvailabilitySlotRepository availabilitySlotRepository,
                             SosAvailabilityRepository sosAvailabilityRepository,
                             OrderRepository orderRepository,
-                            UserRepository userRepository) {
+                            UserRepository userRepository,
+                            NotificationService notificationService) {
         this.issueRepository = issueRepository;
         this.professionalRepository = professionalRepository;
         this.professionalListingRepository = professionalListingRepository;
@@ -71,6 +82,7 @@ public class BookingsService {
         this.sosAvailabilityRepository = sosAvailabilityRepository;
         this.orderRepository = orderRepository;
         this.userRepository = userRepository;
+        this.notificationService = notificationService;
     }
 
     /** §2.2. */
@@ -166,6 +178,8 @@ public class BookingsService {
                 slot.getEndTime(), professional.getBasePrice(), slot.getId());
         order = orderRepository.save(order);
 
+        notificationService.recordOrderNotification(order.getId(), professional.getUserId(),
+                NotificationMessageType.ORDER_CREATED);
         return toOrderResponse(order);
     }
 
@@ -236,6 +250,8 @@ public class BookingsService {
                 professional.getBasePrice(), null);
         order = orderRepository.save(order);
 
+        notificationService.recordOrderNotification(order.getId(), professional.getUserId(),
+                NotificationMessageType.ORDER_CREATED);
         return toOrderResponse(order);
     }
 
@@ -254,6 +270,8 @@ public class BookingsService {
             throw orderNotPending(orderId);
         }
         // issues.status is not touched -- stays BOOKED (§2.5 step 5).
+        notificationService.recordOrderNotification(orderId, order.getCustomerId(),
+                NotificationMessageType.ORDER_CONFIRMED);
         return toOrderResponse(loadOrder(orderId));
     }
 
@@ -272,6 +290,8 @@ public class BookingsService {
             throw orderNotPending(orderId);
         }
         releaseSlotAndReopenIssue(order, now);
+        notificationService.recordOrderNotification(orderId, order.getCustomerId(),
+                NotificationMessageType.ORDER_REJECTED);
         return toOrderResponse(loadOrder(orderId));
     }
 
@@ -298,6 +318,50 @@ public class BookingsService {
             throw notCancellable(orderId);
         }
         releaseSlotAndReopenIssue(order, now);
+        notificationService.recordOrderNotification(orderId, resolveCancelNotificationRecipient(actor, order),
+                NotificationMessageType.ORDER_CANCELLED);
+        return toOrderResponse(loadOrder(orderId));
+    }
+
+    /** §2.16. */
+    @Transactional
+    public OrderResponse onTheWay(Long callerId, Long orderId) {
+        Order order = loadOrder(orderId);
+        Long professionalId = resolveProfessionalId(callerId);
+        if (!order.getProfessionalId().equals(professionalId)) {
+            throw forbidden();
+        }
+
+        Instant now = Instant.now();
+        int affected = orderRepository.onTheWayIfConfirmed(orderId, now);
+        if (affected == 0) {
+            throw orderNotConfirmed(orderId);
+        }
+        // issues.status is not touched -- stays BOOKED (§2.16 step 5).
+        notificationService.recordOrderNotification(orderId, order.getCustomerId(),
+                NotificationMessageType.ORDER_ON_THE_WAY);
+        return toOrderResponse(loadOrder(orderId));
+    }
+
+    /** §2.17. */
+    @Transactional
+    public OrderResponse complete(Long callerId, Long orderId) {
+        Order order = loadOrder(orderId);
+        Long professionalId = resolveProfessionalId(callerId);
+        if (!order.getProfessionalId().equals(professionalId)) {
+            throw forbidden();
+        }
+
+        Instant now = Instant.now();
+        int affected = orderRepository.completeIfOnTheWay(orderId, now);
+        if (affected == 0) {
+            throw orderNotOnTheWay(orderId);
+        }
+        // §3.3's single-active-order invariant guarantees this always affects 1 row when
+        // reached -- not branched on/checked, same as expireIfPending's call to expireIfBooked.
+        issueRepository.completeIfBooked(order.getIssueId(), now);
+        notificationService.recordOrderNotification(orderId, order.getCustomerId(),
+                NotificationMessageType.ORDER_COMPLETED);
         return toOrderResponse(loadOrder(orderId));
     }
 
@@ -348,6 +412,37 @@ public class BookingsService {
         return new OrdersListResponse(summaries);
     }
 
+    /** §4.5 of {@code api-contract-notifications.md}. */
+    @Transactional(readOnly = true)
+    public List<Long> findExpiredOrderCandidateIds() {
+        Instant now = Instant.now();
+        return orderRepository.findPendingExpiryCandidateIds(
+                now.minus(STANDARD_PENDING_TIMEOUT), now.minus(SOS_PENDING_TIMEOUT));
+    }
+
+    /**
+     * §4.5 — mirrors {@link #reject}'s shape exactly, but is called by a background job
+     * ({@code notifications.scheduler.OrderExpirySweepJob}), not an HTTP request: {@code 0}
+     * affected rows just means another caller already moved the order out of {@code PENDING},
+     * treated as a normal, silent outcome (no {@link ApiException}, no HTTP caller to report a
+     * {@code 409} to).
+     */
+    @Transactional
+    public Optional<OrderResponse> expireIfPending(Long orderId) {
+        Instant now = Instant.now();
+        int affected = orderRepository.expireIfPending(orderId, now);
+        if (affected == 0) {
+            return Optional.empty();
+        }
+        Order order = loadOrder(orderId);
+        // §3.3's single-active-order invariant guarantees this always affects 1 row when reached.
+        issueRepository.expireIfBooked(order.getIssueId(), now);
+        // Same §3.4 slot-release mechanism reject/cancel already use; safe no-op for SOS orders.
+        availabilitySlotRepository.releaseSlot(order.getSlotId(), now);
+        notificationService.recordOrderNotification(orderId, order.getCustomerId(), NotificationMessageType.ORDER_EXPIRED);
+        return Optional.of(toOrderResponse(order));
+    }
+
     // ---- shared helpers ----
 
     private Issue loadIssue(Long issueId) {
@@ -392,6 +487,20 @@ public class BookingsService {
             }
         }
         throw forbidden();
+    }
+
+    /**
+     * §4.2 of {@code api-contract-notifications.md}: the party who backed out doesn't get
+     * notified about their own action — resolve the *other* party's {@code user_id}.
+     */
+    private Long resolveCancelNotificationRecipient(CancelledBy actor, Order order) {
+        if (actor == CancelledBy.CUSTOMER) {
+            Professional professional = professionalRepository.findById(order.getProfessionalId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND,
+                            "Professional " + order.getProfessionalId() + " not found."));
+            return professional.getUserId();
+        }
+        return order.getCustomerId();
     }
 
     /** §3.4: sole slot-release mechanism, safe no-op when {@code order.slotId} is {@code null}. */
@@ -453,5 +562,15 @@ public class BookingsService {
     private ApiException notCancellable(Long orderId) {
         return new ApiException(ErrorCode.ORDER_NOT_CANCELLABLE,
                 "Order " + orderId + " cannot be cancelled in its current state.");
+    }
+
+    private ApiException orderNotConfirmed(Long orderId) {
+        return new ApiException(ErrorCode.ORDER_NOT_CONFIRMED,
+                "Order " + orderId + " is not in CONFIRMED status and cannot be marked on the way.");
+    }
+
+    private ApiException orderNotOnTheWay(Long orderId) {
+        return new ApiException(ErrorCode.ORDER_NOT_ON_THE_WAY,
+                "Order " + orderId + " is not in ON_THE_WAY status and cannot be completed.");
     }
 }

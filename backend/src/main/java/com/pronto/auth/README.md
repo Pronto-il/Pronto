@@ -38,6 +38,14 @@ Implements `docs/architecture/api-contract.md` §2.1–2.3 and §3.1–3.3.
   `INFO` only. No SMTP/SES dependency added this milestone (see `api-contract.md` §3.3);
   real delivery is deferred to Milestone 5 (`notifications`), which should implement a new
   `EmailSender` behind a config flag rather than rebuilding this interface.
+  **Milestone 5 update**: `EmailSender` gained a second method, `sendOrderStatusEmail(String
+  toEmail, String subject, String bodyText)`, per `docs/architecture/api-contract-notifications.md`
+  §4.4's decision to extend this interface rather than introduce a second,
+  `notifications`-owned one. `LoggingEmailSender` implements it the same way as the original
+  method (logs at `INFO`, sends nothing) — no code change to this package beyond that; the
+  calling code (`notifications.scheduler.EmailDispatchJob`) and the `pronto.email.mode`
+  config flag both live in `notifications`. See `notifications/README.md` for the full
+  writeup.
 
 ## Key classes
 
@@ -53,7 +61,7 @@ Implements `docs/architecture/api-contract.md` §2.1–2.3 and §3.1–3.3.
 | `security.JwtAuthenticationFilter` | `OncePerRequestFilter`, populates `SecurityContext` from a valid Bearer token. |
 | `security.JsonAuthenticationEntryPoint` | 401 envelope for unauthenticated requests to protected endpoints. |
 | `config.SecurityConfig` | `SecurityFilterChain` + `PasswordEncoder` bean. |
-| `email.EmailSender` / `email.LoggingEmailSender` | Verification code "delivery." |
+| `email.EmailSender` / `email.LoggingEmailSender` | Verification code "delivery," plus (Milestone 5) `sendOrderStatusEmail` for order-status-change email — see the Responsibilities note above. |
 
 ## Interactions with other packages
 

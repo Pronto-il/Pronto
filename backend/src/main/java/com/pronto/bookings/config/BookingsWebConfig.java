@@ -23,6 +23,11 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * the same registration — this package's literal-list design doesn't pick up new routes
  * automatically the way a wildcard would (§0.1/§6 item 8 of the contract doc).
  *
+ * <p>Milestone 6 adds two more {@code PROFESSIONAL}-only literal patterns
+ * ({@code /api/bookings/orders/*&#47;on-the-way}, {@code /api/bookings/orders/*&#47;complete},
+ * §2.16/§2.17) to that registration — same "literal-list doesn't pick up new routes
+ * automatically" reasoning as the Milestone 4 addition above.
+ *
  * <p>Nothing is registered for {@code cancel} (§2.7), {@code GET .../orders/{orderId}}
  * (§2.8), or {@code GET .../orders/me} (§2.9) — {@code auth.config.SecurityConfig}'s blanket
  * {@code .anyRequest().authenticated()} already guarantees any request reaching these routes
@@ -39,6 +44,7 @@ public class BookingsWebConfig implements WebMvcConfigurer {
                 .addPathPatterns("/api/bookings/professionals", "/api/bookings/professionals/*/slots",
                         "/api/bookings/orders", "/api/bookings/sos-professionals", "/api/bookings/sos-orders");
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.PROFESSIONAL.name()))
-                .addPathPatterns("/api/bookings/orders/*/accept", "/api/bookings/orders/*/reject");
+                .addPathPatterns("/api/bookings/orders/*/accept", "/api/bookings/orders/*/reject",
+                        "/api/bookings/orders/*/on-the-way", "/api/bookings/orders/*/complete");
     }
 }

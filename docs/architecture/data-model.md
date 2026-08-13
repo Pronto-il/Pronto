@@ -524,6 +524,19 @@ task brief's instruction not to silently pick an interpretation.
 
 ## 4. Open questions (lower-stakes, don't block Milestone 0 migrations, but flagging)
 
+- **2026-08-13 — surfaced while designing Milestone 5's expiry sweep
+  (`docs/architecture/api-contract-notifications.md` §7), genuinely open, not resolved by
+  that doc.** This item 8's own text says a customer can rebook after an issue reaches
+  `EXPIRED` ("the normal `OPEN`/`BOOKED` lifecycle applies to the new order, exactly as with
+  any other reject-and-rebook case"). But the already-shipped Milestone 3/4 booking-creation
+  endpoints (`api-contract-bookings.md` §2.4 step 6 / §2.13 step 6) require
+  `issue.status == 'OPEN'`, and no endpoint anywhere transitions an issue from `EXPIRED` back
+  to `OPEN` — so as designed and built through Milestone 4, an `EXPIRED` issue cannot
+  actually be rebooked via any existing endpoint (`409 ISSUE_NOT_BOOKABLE`), contradicting
+  this item's own aspirational text. Not fixed by the Milestone 5 notifications doc (out of
+  that package's scope) — needs a `pronto-lead` decision (add a "reopen" endpoint? treat
+  `EXPIRED` as book-able too? accept "create a new `issues` row for the same problem" as the
+  intended workaround?) before it's resolved either way.
 - **2026-08-13 — confirmed implementation divergence, both since fixed.** The
   already-applied `V5__create_availability_slots.sql` and `V8__create_orders.sql`
   migrations originally implemented the **pre-decision** designs (surfaced by

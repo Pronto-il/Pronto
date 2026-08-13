@@ -25,7 +25,9 @@ Milestone 3) and §2.14-2.15 (SOS-availability toggle, Milestone 4).
   `config.AvailabilityWebConfig`) — a single blanket-pattern registration is correct here
   since both endpoints share the same role (unlike `bookings`).
 - No overlap/double-booking validation, no edit/delete/toggle actions on `availability_slots`
-  — out of scope for this narrow Milestone 3 slice (Milestone 6's job).
+  — out of scope for this narrow Milestone 3 slice. **Milestone 6 explicitly reviewed and
+  declined to add slot edit/delete** (see Status below) — this is no longer open/deferred
+  scope, it's a settled decision.
 - `PUT /api/availability/sos-availability` — **new, Milestone 4.** The professional's own
   live "I'm currently available for urgent work" toggle (PRD §3.5.2). Request: `{
   "isAvailable": <boolean> }`. Writes via a **plain, unconditional** `UPDATE
@@ -108,8 +110,10 @@ only touched `orders`, unrelated to this package's tables.
 
 - **No overlap/double-booking validation against a professional's own existing slots** — a
   professional can create two overlapping slots today. Per the contract doc's explicit
-  "not requested, out of scope for this narrow slice" call (§2.10), flagged there as a
-  Milestone 6 candidate, not built here.
+  "not requested, out of scope for this narrow slice" call (§2.10). Was speculatively flagged
+  in earlier docs as a Milestone 6 candidate; Milestone 6 explicitly reviewed this package's
+  scope (§8.2 of the contract doc) and did not add it — remains undesigned/unbuilt, not
+  currently requested by any source document.
 - **`GET /api/availability/slots/me` has no query params this milestone** — returns
   everything unfiltered, per the doc's explicit "no `status`/date-range filter, no
   pagination" call (§2.11).
@@ -125,9 +129,10 @@ only touched `orders`, unrelated to this package's tables.
 
 ## Status
 
-**Implemented and QA-validated through Milestone 4**, on branch `MS4` (not yet merged to
-`main`, nor is `MS3` — pending the user's own git operations), per
-`docs/architecture/api-contract-bookings.md` ("Milestones 3 & 4") and
+**Implemented and QA-validated through Milestone 4** (no code changes to this package in
+Milestone 5 or Milestone 6 — see the note at the bottom of this section), on branch `MS4`
+(not yet merged to `main`, nor is `MS3` — pending the user's own git operations), per
+`docs/architecture/api-contract-bookings.md` ("Milestones 3, 4 & 6") and
 `docs/architecture/implementation-plan.md`.
 
 **Milestone 3 slice** (`POST`/`GET /api/availability/slots`, `/slots/me`): QA live-validated
@@ -150,9 +155,45 @@ instead of being rejected — see the Responsibilities section above and
 `docs/architecture/implementation-plan.md`'s Milestone 4 entry for the full writeup. Fixed
 and re-verified; final QA verdict for this package this milestone: zero known open bugs.
 
-Full CRUD, richer calendar semantics, and the professional dashboard UI (for
-`availability_slots`) remain Milestone 6 scope — the Standard-slot slice is intentionally
-not extended beyond §2.10/§2.11 (no edit/delete/toggle actions on `availability_slots`
-exist). `sos_availability` has no auto-expiry/timeout (a professional who forgets to toggle
-off after finishing urgent work stays listed indefinitely) — not designed anywhere, flagged
-as a candidate alongside Milestone 5's `EXPIRED` sweep, not built.
+**Milestone 6 resolved this section's prior forward-reference — no new `availability`
+endpoint was added, and full slot CRUD is not coming later either; this is now a settled
+decision, not an open placeholder.** `implementation-plan.md`'s Milestone 6 acceptance
+criteria ("a professional can manage availability, see incoming requests, and progress a job
+through its statuses") were reviewed against what already existed
+(`api-contract-bookings.md` §8) and found already satisfied for the "manage availability"
+piece by this package's existing surface: create a slot (§2.10), list your own slots (§2.11),
+and toggle live SOS availability (§2.14/§2.15) — "manage" is read literally against the
+acceptance criterion's own wording as "add and view," not "mutate/delete a specific
+already-published entry." **Slot edit/delete was explicitly considered and explicitly
+declined**, not silently skipped (§8.2 of the contract doc has the full reasoning, condensed
+here):
+- No PRD text mandates it — PRD §6's `AvailabilitySlots` schema and PRD §7's wireframes both
+  describe no edit/cancel workflow for a slot.
+- No load-bearing gap exists without it — a professional who creates a slot with the wrong
+  times has no way to correct/remove it before it's booked, but this has no negative
+  functional consequence: an unwanted `is_available = true` slot simply might get booked (at
+  which point the ordinary `reject`/`cancel` flow releases it and reopens the issue, so the
+  professional isn't stuck fulfilling a mistake), and a never-booked slot just ages into the
+  past, still visible/auditable via `GET .../slots/me` (§2.11 already returns past slots
+  unfiltered).
+- Frontend is out of scope project-wide this milestone anyway, so there is no current UI
+  caller motivating the endpoint even speculatively.
+
+This is a judgment call, not a certainty — flagged explicitly as the one place in that
+section reasonable people could land differently (e.g. a future UX review could decide a
+professional needs to delete a stale slot for peace of mind). If confirmed later, the
+addition would be a small, independent slice (`DELETE /api/availability/slots/{slotId}`,
+professional-owner-only, guarded on `is_available = true`) — not designed or built here,
+since it isn't currently requested by any source document.
+
+`sos_availability` has no auto-expiry/timeout (a professional who forgets to toggle off
+after finishing urgent work stays listed indefinitely) — not designed anywhere, flagged as a
+candidate alongside Milestone 5's `EXPIRED` sweep, not built; unaffected by Milestone 6 and
+not part of its scope review above (§8.3 of the contract doc: `sos_availability`'s
+read/write surface needed no further work this milestone).
+
+**This package had zero code changes in Milestone 6** — the two new endpoints Milestone 6
+added (`on-the-way`/`complete`) live entirely in `bookings`, guarded on `orders.order_status`,
+and never touch `availability_slots` or `sos_availability`. See
+`backend/src/main/java/com/pronto/bookings/README.md`'s Status section for that milestone's
+full QA summary.

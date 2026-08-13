@@ -68,6 +68,11 @@ pronto:
     model: ${OPENAI_MODEL:gpt-4o-mini}
     timeout-ms: ${OPENAI_TIMEOUT_MS:10000}
 
+  email:
+    # log | smtp (smtp not built this milestone — see docs/architecture/api-contract-notifications.md
+    # §4.4; LoggingEmailSender is the sole implementation for now).
+    mode: ${EMAIL_MODE:log}
+
 server:
   port: ${SERVER_PORT:8080}
 

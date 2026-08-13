@@ -1,4 +1,4 @@
-# Pronto — REST API Contract: Milestones 3 & 4 (Standard + SOS Booking Flows)
+# Pronto — REST API Contract: Milestones 3, 4 & 6 (Standard + SOS Booking Flows, Job-Status Progression)
 
 Status: **FINALIZED for Milestone 3 — implemented, QA-signed-off** (see
 `backend/.../bookings/README.md` / `.../availability/README.md`). **Milestone 4 (SOS
@@ -12,7 +12,7 @@ and the `ON_THE_WAY`/`COMPLETED`-progression-belongs-to-Milestone-6 reading is c
 correct. Every place below that previously described a fallback/conditional design now
 states the decided design directly — see §6 for the resolution record.
 
-**Milestone 4 addition (this pass)**: §2.12–§2.15 add the SOS-path creation/listing
+**Milestone 4 addition**: §2.12–§2.15 add the SOS-path creation/listing
 endpoints and the professional's own SOS-availability toggle, extending this same doc in
 place rather than forking a new file — §3.7 (written during Milestone 3) already predicted
 almost exactly this shape and is now cross-referenced as fulfilled. §6 items 5–8 record the
@@ -20,6 +20,20 @@ Milestone-4-specific decisions (the pre-existing `urgencyType` validation gap, t
 "professional becomes unavailable" semantics, the migration verdict, and the role-gating
 config verdict). No new file was created — this is the same contract doc MS3 QA already
 signed off on, extended.
+
+**Milestone 6 addition (this pass, 2026-08-13, `pronto-planning`), backend design only —
+ready for `pronto-coding`, no open sign-off items block it.** §2.16–§2.17 add the
+`ON_THE_WAY`/`COMPLETED` job-status progression endpoints this doc has deferred since
+Milestone 3 (§6 item 4) — the last two `orders.order_status` values with no producing
+endpoint. §6 items 9–13 record the Milestone-6-specific decisions (`ON_THE_WAY` as a
+mandatory intermediate step, the notification-recipient choice, the `issues.status →
+COMPLETED` transition mechanism, confirmation that `cancel` needs no change, and the
+no-new-migration verdict). §8 (new) separately verifies — per this milestone's other two
+scope items — that the existing `availability` (§2.10/§2.11/§2.14/§2.15) and `GET
+/api/bookings/orders/me` (§2.9) endpoints are sufficient for a professional dashboard's
+"manage availability" / "see incoming requests" needs, with **no new endpoint added** for
+either. As with the Milestone 4 pass, no new file was created and no UI is designed or
+built here (frontend remains deferred project-wide pending the design-system decision).
 
 Written by `pronto-planning`. Builds on:
 - `docs/architecture/data-model.md` §2.5 (`availability_slots`), §2.7 (`issues`), §2.9
@@ -35,15 +49,28 @@ Written by `pronto-planning`. Builds on:
   (adds `orders.slot_id`, new for this milestone, approved 2026-08-13). §1 also states the
   required apply order and confirms there is no ordering dependency between them beyond
   that convention.
+- **Milestone 6 addition**: `docs/architecture/data-model.md` §3 item 8 (the `issues.status`
+  lifecycle table this pass's `COMPLETED` transition implements exactly) and
+  `docs/architecture/api-contract-notifications.md` §4.1/§4.2/§4.6 (the
+  `NotificationService.recordOrderNotification(...)` call boundary this pass's two new
+  endpoints call into, and §4.6's explicit prediction of exactly this shape). The already-
+  applied `V1`–`V14` migrations (confirmed directly against
+  `backend/src/main/resources/db/migration/`, §1.5 below) — no `V15` is introduced.
 
-Scope: the `bookings` package, **both the Standard path (Milestone 3, §2.2–§2.11) and the
-SOS path (Milestone 4, §2.12–§2.15)**; plus the `availability` package slice this now
-implies — Milestone 3's narrow slot-creation/self-listing slice (§2.10/§2.11) **and**
-Milestone 4's SOS-availability toggle/read (§2.14/§2.15). Also specifies one small,
-necessary addition to the `issues` package (`GET /api/issues/{id}`, §2.1) — reasoning in
-that section. Still **not** covered by this doc: full slot CRUD/calendar semantics, the
-professional dashboard UI, `ON_THE_WAY`/`COMPLETED` progression, the `EXPIRED` sweep, and
-notification dispatch — all remain later milestones' scope exactly as before.
+Scope: the `bookings` package, **the Standard path (Milestone 3, §2.2–§2.11), the SOS path
+(Milestone 4, §2.12–§2.15), and job-status progression (Milestone 6, §2.16–§2.17)**; plus
+the `availability` package slices this implies — Milestone 3's narrow slot-creation/
+self-listing slice (§2.10/§2.11), Milestone 4's SOS-availability toggle/read
+(§2.14/§2.15), and Milestone 6's explicit confirmation (§8) that no new `availability`
+endpoint is needed. Also specifies one small, necessary addition to the `issues` package
+(`GET /api/issues/{id}`, §2.1) — reasoning in that section. Still **not** covered by this
+doc: full slot CRUD/calendar semantics (§8 makes this an explicit "not needed" call for
+v1.0, not a deferral), the professional dashboard **UI** (frontend remains deferred
+project-wide, pending the design-system decision), the `EXPIRED`-issue-reopen gap (§9 —
+confirmed still open, not touched by this pass), and email/in-app notification dispatch
+mechanics (owned by `docs/architecture/api-contract-notifications.md`, though this pass
+does specify the two new `recordOrderNotification(...)` call sites `bookings` makes into
+that package, per §2.16/§2.17 and its own §4.6's prediction).
 
 This doc is a **precise contract spec** (request/response JSON shapes, status codes, error
 codes, field-level validation), not literal Java code — writing the controllers/services is
@@ -181,6 +208,22 @@ classes (`backend/src/main/java/com/pronto/bookings/config/BookingsWebConfig.jav
   wildcard while `bookings`'s used a literal list (§0.1 above explains why each package
   made that choice).
 
+**Milestone 6 role-gating config change — one addition, same literal-list pattern.**
+`bookings.config.BookingsWebConfig`'s existing `PROFESSIONAL`-scoped
+`RoleRequiredInterceptor` registration (currently `.addPathPatterns("/api/bookings/orders/*/accept",
+"/api/bookings/orders/*/reject")`) needs two more literal entries for §2.16/§2.17's new
+routes:
+```java
+registry.addInterceptor(new RoleRequiredInterceptor(UserRole.PROFESSIONAL.name()))
+        .addPathPatterns("/api/bookings/orders/*/accept", "/api/bookings/orders/*/reject",
+                          "/api/bookings/orders/*/on-the-way", "/api/bookings/orders/*/complete");
+```
+Same reasoning as every prior addition to this list: the package's literal-pattern design
+(chosen because it mixes roles per-route, §0.1) does not pick up new routes automatically
+the way a wildcard would. The `CUSTOMER`-scoped registration and `availability`'s
+`AvailabilityWebConfig` need **no** change — neither new route is `CUSTOMER`-gated or lives
+under `/api/availability/*`.
+
 ---
 
 ## 1. Prerequisite migrations — `V11` and `V12` (both decided, apply in this order)
@@ -277,6 +320,37 @@ Checked directly against the applied migration history and current schema, not a
 Milestone 4.** If this changes later (e.g. a future decision adds an SOS-specific column),
 that would be a new, separately-flagged migration — not implied by anything designed here.
 
+### 1.5 Milestone 6 — no new migration required (verdict, checked against the real applied
+migration list, not assumed)
+
+Checked directly against `backend/src/main/resources/db/migration/`, which currently
+contains exactly `V1`–`V14` (confirmed by listing the directory: `V1`–`V13` sequential, plus
+`V14__alter_notifications_message_type_add_rejected.sql` from Milestone 5 — no gaps, no
+files beyond `V14`):
+
+- `orders.order_status`'s `CHECK` constraint already allows all 7 values, including
+  `ON_THE_WAY` and `COMPLETED` — these were present in the **original**
+  `V8__create_orders.sql` (`CHECK (order_status IN ('PENDING', 'CONFIRMED', 'ON_THE_WAY',
+  'COMPLETED', 'CANCELLED', 'EXPIRED'))`, before `V11` added the 7th value, `REJECTED`).
+  Milestone 6 is the first milestone to *produce* `ON_THE_WAY`/`COMPLETED` via an endpoint,
+  but the schema has tolerated both values since `V8`.
+- `notifications.message_type`'s `CHECK` constraint (as amended by `V14`) already includes
+  `ORDER_ON_THE_WAY` and `ORDER_COMPLETED` — both were present in the original
+  `V9__create_notifications.sql` list (`api-contract-notifications.md` §1 quotes it
+  verbatim: `'ORDER_CREATED', 'ORDER_CONFIRMED', 'ORDER_ON_THE_WAY', 'ORDER_COMPLETED',
+  'ORDER_CANCELLED', 'ORDER_EXPIRED', 'EMAIL_VERIFICATION'`); `V14` only added the unrelated
+  `ORDER_REJECTED` gap-fix. `notifications.entity.NotificationMessageType` already declares
+  both enum constants (confirmed by reading the file directly) — they have simply had no
+  producing call site until this pass.
+- `issues.status`'s `CHECK` constraint already includes `COMPLETED` (`data-model.md` §2.7,
+  `V6__create_issues.sql`) — this pass is the first to reach it via a real transition, not
+  the first to allow it in the schema.
+- No new column, table, or constraint is introduced anywhere in §2.16/§2.17's design below.
+
+**Verdict: `pronto-coding` does not need to write a `V15` (or any new) migration for
+Milestone 6.** Every value these two new endpoints read or write already exists and is
+already tolerated by the schema as of `V14`.
+
 ---
 
 ## 2. Error response envelope (reused verbatim from `api-contract.md` §1 / `api-contract-issues.md` §1)
@@ -313,6 +387,20 @@ New codes:
 |---|---|---|
 | `ISSUE_URGENCY_MISMATCH` | 409 | The referenced issue's `urgency_type` doesn't match the booking path the caller is using — a Standard-path endpoint (§2.2/§2.3/§2.4) called against an issue whose `urgency_type = 'SOS'`, or the SOS-path endpoints (§2.12/§2.13) called against an issue whose `urgency_type = 'STANDARD'`. New this milestone — see §6 item 5 for why this fixes a pre-existing Milestone 3 gap rather than only guarding the new SOS endpoints. |
 | `SOS_PROFESSIONAL_UNAVAILABLE` | 409 | `POST /api/bookings/sos-orders` (§2.13) called against a `professionalId` whose `sos_availability.is_available` is not `true` at the moment of the call — the professional was available when the customer loaded the list (§2.12) but has since toggled off, or the row was never toggled on. This is the backend-observable side of PRD §3.5.6's "becomes unavailable" branch — see §3.11 for the full reasoning. |
+
+### Error code taxonomy — Milestone 6 additions
+
+Both new codes below follow the exact naming precedent `ORDER_NOT_PENDING` already set
+(§2, Milestone 3 table) — a single-expected-source-status guard failing names that expected
+status directly, distinct from `ORDER_NOT_CANCELLABLE`'s broader "wrong state or wrong
+actor" framing (`cancel`, unlike `on-the-way`/`complete`, has more than one valid source
+status depending on the actor, §2.7 step 4 — these two new transitions each have exactly
+one).
+
+| `error.code` | HTTP status | Meaning |
+|---|---|---|
+| `ORDER_NOT_CONFIRMED` | 409 | `POST /api/bookings/orders/{orderId}/on-the-way` (§2.16) called on an order whose `order_status != 'CONFIRMED'` — already progressed further (`ON_THE_WAY`/`COMPLETED`), still `PENDING`, or terminal (`CANCELLED`/`REJECTED`/`EXPIRED`); also covers losing a race to a concurrent transition on the same order. |
+| `ORDER_NOT_ON_THE_WAY` | 409 | `POST /api/bookings/orders/{orderId}/complete` (§2.17) called on an order whose `order_status != 'ON_THE_WAY'` — **including** a professional attempting to jump directly from `CONFIRMED` to `COMPLETED`, which this design deliberately disallows (§6 item 9); also covers an already-`COMPLETED` order, a still-`CONFIRMED`/`PENDING` order, a terminal order, or a lost race. |
 
 ---
 
@@ -1170,6 +1258,155 @@ resource this URL could ever mean for an authenticated professional.
 
 ---
 
+### 2.16 `POST /api/bookings/orders/{orderId}/on-the-way` — new, Milestone 6, `bookings` package
+
+Auth required: **yes**. Role: **PROFESSIONAL**.
+
+The first of the two job-status progression endpoints this milestone adds — `CONFIRMED →
+ON_THE_WAY`. Every milestone since Milestone 3 has flagged this exact transition as
+Milestone 6 scope (§6 item 4 below; `data-model.md` §3 item 8's lifecycle table; the
+`orders.order_status` `CHECK` and `NotificationMessageType`/`OrderStatus` enums have carried
+`ON_THE_WAY` unused since `V8`/`V9` — §1.5 confirms this precisely). Shape is deliberately
+identical to `accept` (§2.5) — same ownership check, same single guarded `UPDATE`, same
+"`issues.status` untouched" behavior — because this is the same category of transition:
+a professional-only, single-hop, `PENDING`-style guarded advance with no side effect on the
+issue or the slot.
+
+**Behavior:**
+1. Resolve caller; `403 FORBIDDEN` if `role != PROFESSIONAL`.
+2. Load order by `orderId` → `404 NOT_FOUND` if missing.
+3. Resolve caller's `professionals.id` via `ProfessionalRepository.findByUserId(caller.id)`
+   (same mechanism as §2.5 step 3 / §3.5). `order.professionalId !=` that id → `403
+   FORBIDDEN`.
+4. Atomically transition: `UPDATE orders SET order_status = 'ON_THE_WAY', updated_at =
+   now() WHERE id = :orderId AND order_status = 'CONFIRMED'`. Affected rows `0` → `409
+   ORDER_NOT_CONFIRMED` (the order was never confirmed, already progressed further, is
+   terminal, or lost a race to a concurrent transition on the same order — same atomic-guard
+   mechanism as every other transition in this doc, §3.2, applied uniformly).
+5. **`issues.status` is not touched** — it is already `'BOOKED'` (set at order creation,
+   §2.4/§2.13 step 9/10) and stays `'BOOKED'` through `CONFIRMED`/`ON_THE_WAY`, exactly as
+   `data-model.md` §3 item 8's lifecycle note and this doc's own §2.5 step 5 already state
+   for the `CONFIRMED` case — `ON_THE_WAY` doesn't change that, it's still "the order is in
+   progress." See §3.6's updated transition table below.
+6. **Notification hook**: `notificationService.recordOrderNotification(orderId,
+   order.getCustomerId(), NotificationMessageType.ORDER_ON_THE_WAY)` — recipient is the
+   **customer**. Reasoning: symmetric with `accept`'s choice (§4.2 of
+   `api-contract-notifications.md`) — the professional took the action and doesn't need
+   telling about their own action; the customer needs to know their professional is en
+   route. See §6 item 10 below.
+7. Return `200` with the updated order (same shape as §2.4/§2.5's `OrderResponse`,
+   `orderStatus: "ON_THE_WAY"` — no new DTO needed, `OrderStatus` already has this value).
+
+**Response `200`:**
+```json
+{
+  "id": 900,
+  "issueId": 101,
+  "customerId": 42,
+  "professionalId": 43,
+  "orderStatus": "ON_THE_WAY",
+  "bookedStart": "2026-08-14T09:00:00Z",
+  "bookedEnd": "2026-08-14T11:00:00Z",
+  "finalPrice": 150.00,
+  "cancelledBy": null,
+  "createdAt": "2026-08-13T12:40:00Z",
+  "updatedAt": "2026-08-14T09:05:00Z"
+}
+```
+
+**Status codes**: `200` success · `401 UNAUTHORIZED` · `403 FORBIDDEN` ·
+`404 NOT_FOUND` · `409 ORDER_NOT_CONFIRMED`.
+
+---
+
+### 2.17 `POST /api/bookings/orders/{orderId}/complete` — new, Milestone 6, `bookings` package
+
+Auth required: **yes**. Role: **PROFESSIONAL**.
+
+The second job-status progression endpoint — `ON_THE_WAY → COMPLETED`, plus the matching
+`issues.status: BOOKED → COMPLETED` transition `data-model.md` §3 item 8 and this doc's own
+§3.6 table already named but left unbuilt.
+
+**Decided: `ON_THE_WAY` is a mandatory intermediate step — a professional cannot call this
+endpoint directly from `CONFIRMED`, skipping "on the way."** Full reasoning in §6 item 9;
+summary here since it's the single most consequential call this section makes: (a) PRD
+§3.6.1 lists `Pending, Confirmed, On the Way, Completed, Cancelled, Expired` as a named,
+ordered sequence, and nothing in the PRD describes a "skip a step" path; (b) every other
+guarded transition already built in this doc (`accept`/`reject` from exactly `PENDING`,
+`cancel`'s precise actor/state matrix, §2.7 step 4) is a strict single-hop guard with no
+precedent anywhere for a multi-hop "or skip ahead" `WHERE` clause — inventing one here would
+be a new, unrequested pattern; (c) allowing `CONFIRMED → COMPLETED` directly would mean
+`ORDER_ON_THE_WAY`'s notification (and the "professional en route" signal that is this
+platform's core real-time-status value proposition, `overview.md` §3.3) could be silently
+skipped for some jobs and not others, with no way for the customer to know which to expect.
+Therefore `complete` guards on `ON_THE_WAY` only, exactly as `on-the-way` (§2.16) guards on
+`CONFIRMED` only — both single-hop, no fallback branch.
+
+**Behavior:**
+1. Resolve caller; `403 FORBIDDEN` if `role != PROFESSIONAL`.
+2. Load order by `orderId` → `404 NOT_FOUND` if missing.
+3. Ownership check, same mechanism as §2.16 step 3 → `403 FORBIDDEN`.
+4. Atomically transition: `UPDATE orders SET order_status = 'COMPLETED', updated_at =
+   now() WHERE id = :orderId AND order_status = 'ON_THE_WAY'`. Affected rows `0` → `409
+   ORDER_NOT_ON_THE_WAY` — this is also the code returned for the deliberately-disallowed
+   `CONFIRMED → COMPLETED` skip-ahead attempt (a `CONFIRMED` order fails this guard exactly
+   like any other non-`ON_THE_WAY` order would; no separate error code distinguishes "you
+   skipped a step" from "wrong state for any other reason" — consistent with how
+   `ORDER_NOT_PENDING` doesn't separately distinguish *why* an order wasn't `PENDING`
+   either).
+5. **Transition the issue**: `issueRepository.completeIfBooked(issue.getId(), now)` — a new
+   `IssueRepository` method, mirroring `expireIfBooked`'s exact shape (`data-model.md` §3
+   item 8 / §4.5 of `api-contract-notifications.md`): `UPDATE issues SET status =
+   'COMPLETED', updated_at = now() WHERE id = :issueId AND status = 'BOOKED'` — guarded on
+   `BOOKED`, **not** unconditional like `reject`/`cancel`'s `revertToOpen`. **Not branched
+   on/checked for a `0`-row result**, exactly matching how the existing
+   `BookingsService.expireIfPending` calls `issueRepository.expireIfBooked(...)` today with
+   no affected-row check at all: the single-active-order-per-issue invariant (§3.3) that
+   already justifies `expireIfBooked`'s unchecked call applies identically here — step 4's
+   guarded `UPDATE` only succeeds if this order was still `ON_THE_WAY`, i.e. still the sole
+   active order against this issue, which guarantees the issue is still `BOOKED` at this
+   exact moment (nothing else could have moved it away without also having moved this order
+   out of `ON_THE_WAY` first, which the step-4 guard already ruled out). See §6 item 11 for
+   the full reasoning record.
+6. **Notification hook**: `notificationService.recordOrderNotification(orderId,
+   order.getCustomerId(), NotificationMessageType.ORDER_COMPLETED)` — recipient is the
+   **customer**, same reasoning as §2.16 step 6 (the professional acted, the customer needs
+   to know; see §6 item 10).
+7. Return `200` with the updated order (`orderStatus: "COMPLETED"`).
+
+**Response `200`:**
+```json
+{
+  "id": 900,
+  "issueId": 101,
+  "customerId": 42,
+  "professionalId": 43,
+  "orderStatus": "COMPLETED",
+  "bookedStart": "2026-08-14T09:00:00Z",
+  "bookedEnd": "2026-08-14T11:00:00Z",
+  "finalPrice": 150.00,
+  "cancelledBy": null,
+  "createdAt": "2026-08-13T12:40:00Z",
+  "updatedAt": "2026-08-14T11:10:00Z"
+}
+```
+
+**Status codes**: `200` success · `401 UNAUTHORIZED` · `403 FORBIDDEN` ·
+`404 NOT_FOUND` · `409 ORDER_NOT_ON_THE_WAY`.
+
+**`cancel` (§2.7) remains reachable from `ON_THE_WAY`, unchanged — confirmed, not modified
+by this pass.** §2.7 step 4 already permits both `CUSTOMER` (from `PENDING`/`CONFIRMED`/
+`ON_THE_WAY`) and `PROFESSIONAL` (from `CONFIRMED`/`ON_THE_WAY`) to cancel an
+`ON_THE_WAY` order — nothing about §2.16/§2.17 narrows that. A race between a professional
+calling `complete` and either party calling `cancel` on the same `ON_THE_WAY` order is
+handled by the same guarded-`UPDATE`-on-`order_status` mechanism every other concurrent-
+transition race in this doc already relies on (§3.2) — whichever call's `UPDATE` runs first
+wins; the other's guard affects `0` rows and returns its own state-conflict error
+(`409 ORDER_NOT_ON_THE_WAY` or `409 ORDER_NOT_CANCELLABLE` respectively), no new mechanism
+needed. See §6 item 12.
+
+---
+
 ## 4. End-to-end flow summary (PRD §3.4, including the reject → return-to-list branch)
 
 For clarity, the full Standard-path sequence this contract implements:
@@ -1195,10 +1432,15 @@ For clarity, the full Standard-path sequence this contract implements:
      closing note).
 6. Once `CONFIRMED`, either party may still `cancel` (§2.7) → `CANCELLED`, slot released,
    `issues.status → 'OPEN'` (same return-to-list branch as a rejection, different terminal
-   status).
-7. Progression from `CONFIRMED` onward to `ON_THE_WAY`/`COMPLETED` is **not** built by any
-   endpoint in this doc — **confirmed** (`pronto-lead`, 2026-08-13, §6 item 4) as
-   Milestone 6's scope, not Milestone 3's; see §6 item 4 for the full reasoning.
+   status) — remains true at `ON_THE_WAY` too, unchanged by step 7 below.
+7. **New, Milestone 6.** From `CONFIRMED`, the professional advances the job via `POST
+   .../orders/{orderId}/on-the-way` (§2.16) → `order_status → 'ON_THE_WAY'`, `issues.status`
+   untouched (stays `BOOKED`). Then, from `ON_THE_WAY` (a mandatory intermediate step — see
+   §2.17's "Decided" note / §6 item 9 — `CONFIRMED → COMPLETED` directly is not permitted),
+   `POST .../orders/{orderId}/complete` (§2.17) → `order_status → 'COMPLETED'`,
+   `issues.status → 'COMPLETED'`. Both steps notify the customer (`ORDER_ON_THE_WAY`/
+   `ORDER_COMPLETED`, §2.16/§2.17 step 6). Either party may still `cancel` from `ON_THE_WAY`
+   (unchanged, §2.17's closing note).
 
 ### SOS-path sequence (PRD §3.5, new this pass — including the reject/becomes-unavailable
 → return-to-list branch, PRD §3.5.6)
@@ -1243,10 +1485,15 @@ For clarity, the full Standard-path sequence this contract implements:
 5. Once `CONFIRMED`, either party may still `cancel` (§2.7, unchanged) → `CANCELLED`,
    `issues.status → 'OPEN'` (same return-to-list branch, different terminal status, same as
    Standard step 6).
-6. **Not built by any endpoint in this doc, same as Standard**: `ON_THE_WAY`/`COMPLETED`
-   progression (Milestone 6) and the `PENDING`-timeout `EXPIRED` sweep (Milestone 5, and —
-   per `data-model.md` §3 item 8's proposed **5-minute** SOS timeout vs. Standard's proposed
-   15 minutes — SOS is expected to expire faster once that sweep exists; not designed here).
+6. **New, Milestone 6, reused verbatim from Standard, zero SOS-specific code** (same
+   pattern §3.7 already established for `accept`/`reject`/`cancel`/tracking/self-listing):
+   `POST .../on-the-way` (§2.16) then `POST .../complete` (§2.17) work identically for SOS
+   orders — neither method branches on `urgency_type`, and `issueRepository
+   .completeIfBooked`'s guard is the same `BOOKED → COMPLETED` transition regardless of how
+   the issue got `BOOKED`. The `PENDING`-timeout `EXPIRED` sweep (Milestone 5, already built
+   — per `data-model.md` §3 item 8's **5-minute** SOS timeout vs. Standard's 15 minutes) is
+   unaffected by this pass; it only ever acts on `PENDING` orders, never on `CONFIRMED`/
+   `ON_THE_WAY` ones.
 
 **What's deliberately *not* a third trigger here**: a `PENDING` SOS order whose
 professional toggles `sos_availability.is_available` to `false` *after* the order was
@@ -1334,8 +1581,9 @@ not a `500`.
 | Order accepted (`CONFIRMED`) | stays `BOOKED` | §2.5 |
 | Order rejected (`REJECTED`) | `BOOKED → OPEN` | §2.6 |
 | Order cancelled (`CANCELLED`) | `BOOKED → OPEN` | §2.7 |
-| Order completed (`COMPLETED`) | `BOOKED → COMPLETED` | **not built this milestone** — no endpoint here reaches `orders.order_status = 'COMPLETED'` at all; **confirmed** Milestone 6 scope (§6 item 4). Noted so Milestone 6 knows the mapping is already decided, just not yet wired to an endpoint. |
-| Order expires (`EXPIRED`, sweep) | `BOOKED → EXPIRED` (unless customer already rebooked) | **Milestone 5's job**, per `data-model.md` §3 item 8 — restated here only as a forward-reference, not designed in this doc. |
+| Order set on the way (`ON_THE_WAY`) | stays `BOOKED` | **New, Milestone 6**, §2.16 step 5. |
+| Order completed (`COMPLETED`) | `BOOKED → COMPLETED` | **New, Milestone 6**, §2.17 step 5 (`issueRepository.completeIfBooked`, guarded on `BOOKED`, mirrors `expireIfBooked`'s shape). This row was previously "not built"; the mapping itself was already decided (unchanged) — it is now wired to an endpoint. |
+| Order expires (`EXPIRED`, sweep) | `BOOKED → EXPIRED` (unless customer already rebooked) | **Milestone 5's job**, already built — per `data-model.md` §3 item 8 and `api-contract-notifications.md` §4.5. Restated here only as a forward-reference; unaffected by this pass (only ever acts on `PENDING` orders). |
 
 ### 3.7 Where this design already generalizes to SOS (Milestone 4) vs. where it doesn't
 
@@ -1565,6 +1813,94 @@ pick an interpretation.
    `/api/availability/**`, which already covers §2.14/§2.15's new routes for free. Full
    detail, including the exact diff, in §0.1 above.
 
+**Milestone 6 pass (this doc, 2026-08-13, `pronto-planning`) — items 9–13, each a call made
+explicitly rather than left ambiguous:**
+
+9. **`ON_THE_WAY` is a mandatory intermediate step between `CONFIRMED` and `COMPLETED` —
+   DECIDED, not left as an open question.** A professional cannot call `POST
+   .../orders/{orderId}/complete` (§2.17) directly from `CONFIRMED`; it only succeeds from
+   `ON_THE_WAY`, exactly mirroring `POST .../on-the-way`'s (§2.16) own single-hop guard from
+   `CONFIRMED` only. Reasoning (full version in §2.17's own "Decided" note, repeated here for
+   the resolution record):
+   - PRD §3.6.1 names `Pending, Confirmed, On the Way, Completed, Cancelled, Expired` as an
+     explicit, ordered sequence — no source document describes or implies a "skip a named
+     status" path for any transition anywhere in the system.
+   - Every guarded transition already built in this doc is a strict single-hop guard against
+     exactly one expected prior status (`accept`/`reject` from `PENDING` only; `cancel`'s
+     actor/state matrix, §2.7 step 4, is multiple *actor*-scoped single-hop guards, not a
+     multi-hop "skip a state" allowance for any one actor). A `CONFIRMED`-**or**-`ON_THE_WAY`
+     guard on `complete` would be the first "skip-ahead" transition in the whole contract —
+     a new pattern, not requested by any source document, and exactly the kind of
+     unrequested flexibility the task brief's "don't silently pick an interpretation"/"don't
+     over-engineer" instructions caution against inventing.
+   - `ORDER_ON_THE_WAY`'s notification (§2.16 step 6) is this platform's concrete
+     implementation of the "real-time status updates" value proposition
+     (`overview.md` §3.3) — specifically the "professional is en route" signal. Allowing
+     `CONFIRMED → COMPLETED` to skip it would mean that signal fires for some jobs and
+     silently never fires for others depending on which endpoint the professional happened
+     to call, with no way for the customer (or `pronto-lead` reading a future bug report) to
+     tell which behavior to expect from the API contract alone. A mandatory intermediate
+     step keeps the observable behavior deterministic and matches the PRD's named sequence
+     literally.
+   - **Accepted consequence, stated plainly**: a professional whose job genuinely required
+     no travel time (e.g. a customer physically present with them already, a purely
+     theoretical v1.0 edge case no source document describes) must still call `on-the-way`
+     immediately before `complete` — two API calls in quick succession rather than one. This
+     is judged a negligible UX cost (well within the PRD's ~1-2s screen-load targets,
+     `overview.md` §3.3, and not a *screen* at all if the frontend later chooses to fire both
+     calls from one button) against the benefit of a deterministic, PRD-literal status
+     sequence — not a silently accepted gap, an explicit tradeoff.
+
+10. **Notification recipient for both new transitions — DECIDED: the customer, for both
+    `ORDER_ON_THE_WAY` and `ORDER_COMPLETED`.** Symmetric with `accept`'s already-established
+    reasoning (`api-contract-notifications.md` §4.2): in both cases the professional is the
+    actor, and the party who acts never needs telling about their own action — the customer
+    is the party who needs the information (their professional is now en route; their job is
+    now done, `final_price` may be worth re-checking). No alternative reading was seriously
+    considered — `data-model.md`/`overview.md` describe only two parties to an order
+    (customer, professional), and the professional-facing side of "job status" is already
+    fully visible to them via `GET /api/bookings/orders/me` (§2.9) without needing a push
+    notification about their own actions, consistent with how `accept`/`reject`/`cancel`
+    already treat the acting party.
+
+11. **`issues.status → 'COMPLETED'` — DECIDED: a new `issueRepository.completeIfBooked`
+    method, guarded on `BOOKED`, called without checking its affected-row count — mirrors
+    `expireIfBooked`'s exact shape and the exact way `BookingsService.expireIfPending`
+    already calls it.** This was the task brief's explicit instruction ("mirroring
+    `expireIfBooked`'s shape") and is additionally the only internally-consistent choice
+    once the single-active-order-per-issue invariant (§3.3) is taken seriously: by the time
+    §2.17 step 4's `order_status = 'ON_THE_WAY'`-guarded `UPDATE` has already succeeded, this
+    order is proven to still be the sole active order for its issue, which proves the issue
+    is still `BOOKED` at that exact instant — the same reasoning `api-contract-
+    notifications.md` §4.5 already uses verbatim to justify `expireIfPending` not checking
+    `expireIfBooked`'s result ("§3.3's single-active-order invariant guarantees this always
+    affects 1 row when reached"). Extending, not re-deriving, an already-accepted argument —
+    not a new risk being introduced. **Alternative considered and rejected**: guarding on
+    `BOOKED` *and* branching on a `0`-row result with a `500 INTERNAL_ERROR` (matching
+    `SosAvailabilityRepository`'s "row unexpectedly missing" precedent, §2.14 step 5) — not
+    chosen because that precedent applies to a *missing row* (a data-integrity bug with no
+    theoretical justification for why it can't happen), whereas here the invariant gives an
+    actual proof the guard always succeeds when reached, making an unreachable branch pure
+    dead-code risk, not a genuine defensive measure.
+
+12. **`cancel` (§2.7) needs no change and remains reachable from `ON_THE_WAY` — CONFIRMED,
+    verified against the existing spec, not assumed.** §2.7 step 4's actor/state permission
+    matrix already names `ON_THE_WAY` as a valid source status for both `CUSTOMER` and
+    `PROFESSIONAL` cancellation — written during Milestone 3, before `ON_THE_WAY` had any
+    producing endpoint, and already correct for this milestone with zero edits needed. The
+    race between a concurrent `complete`/`cancel` pair targeting the same `ON_THE_WAY` order
+    is resolved by the same guarded-`UPDATE`-on-`order_status` mechanism (§3.2) every other
+    concurrent-transition race in this doc already relies on — no new locking/coordination
+    mechanism introduced.
+
+13. **No new Flyway migration for Milestone 6 — DECIDED, verified against the applied
+    migration list (`V1`–`V14`), not assumed.** Full verification in §1.5: `orders
+    .order_status`'s `CHECK` has allowed `ON_THE_WAY`/`COMPLETED` since the original `V8`;
+    `notifications.message_type`'s `CHECK` (as amended by `V14`) has allowed
+    `ORDER_ON_THE_WAY`/`ORDER_COMPLETED` since the original `V9`; `issues.status`'s `CHECK`
+    has allowed `COMPLETED` since `V6`. §2.16/§2.17 are the first endpoints to *reach* these
+    already-tolerated values, not the first to need the schema to allow them.
+
 ---
 
 ## 7. Open items / risks (lower-stakes, don't block `pronto-coding`, but flagging)
@@ -1617,3 +1953,148 @@ pick an interpretation.
   `UPDATE` on an indexed single-row lookup, no external API cost unlike
   `POST /api/issues/classify`'s already-flagged OpenAI-cost concern, `overview.md` §6) —
   not flagged as a real risk, noted only for completeness.
+
+**Milestone 6 additions:**
+
+- **`GET /api/bookings/orders/me`'s `status` filter can now actually return `ON_THE_WAY`/
+  `COMPLETED` results** — the "always-empty filter result until Milestone 5/6 exist" caveat
+  on the bullet above is now half-resolved (`COMPLETED`/`ON_THE_WAY` are reachable;
+  `EXPIRED` already became reachable in Milestone 5). No endpoint change was needed for
+  this — §2.9 was already written generically enough to handle every `OrderStatus` value
+  without modification, confirming its own original "no `pronto-coding` guessing" design
+  intent.
+- **No dedicated "job history" or "completed jobs" view beyond the existing `GET
+  /api/bookings/orders/me?status=COMPLETED` filter** — not requested by any source document;
+  the existing generic self-listing endpoint already covers it, per §8 below's broader
+  "existing surface is sufficient" conclusion.
+- **The `EXPIRED`-issue-reopen gap is unaffected by this pass, confirmed not silently
+  broken or accidentally fixed** — see §9 below for the explicit confirmation.
+
+---
+
+## 8. Milestone 6 scope verification — availability management & incoming-requests view
+(no new endpoint added; a decision, not an oversight)
+
+Per the task brief's instruction to make an explicit call rather than silently duplicate
+work already built in Milestone 3/4, this section reviews exactly what exists today against
+what `implementation-plan.md`'s Milestone 6 acceptance criteria ("a professional can manage
+availability, see incoming requests, and progress a job through its statuses") actually
+require, and concludes **no new backend endpoint is needed** for the first two — only the
+job-status piece (§2.16/§2.17 above) required new endpoints.
+
+### 8.1 What already exists (verified against the real code and this doc's own earlier
+sections, not assumed)
+
+| Need | Existing endpoint(s) | Built in |
+|---|---|---|
+| Create a bookable Standard advance-booking window | `POST /api/availability/slots` (§2.10) | Milestone 3 |
+| View my own slots (past/future/available/claimed) | `GET /api/availability/slots/me` (§2.11) | Milestone 3 |
+| Toggle "available for urgent work now" | `PUT /api/availability/sos-availability` (§2.14) | Milestone 4 |
+| Read my current SOS-availability state | `GET /api/availability/sos-availability` (§2.15) | Milestone 4 |
+| See incoming (pending) requests | `GET /api/bookings/orders/me?status=PENDING` (§2.9) | Milestone 3 |
+| See all my orders / any status, e.g. active jobs in progress | `GET /api/bookings/orders/me` (§2.9, optional `status` filter — now covers all 7 values reachably, see §7's Milestone 6 addition above) | Milestone 3 |
+| See one job's full detail | `GET /api/bookings/orders/{orderId}` (§2.8) | Milestone 3 |
+| Progress a job through its statuses | `accept`/`reject` (§2.5/§2.6, Milestone 3), `cancel` (§2.7, Milestone 3), `on-the-way`/`complete` (§2.16/§2.17, **this pass**) | Milestone 3 + 6 |
+
+§2.9's own text (written during Milestone 3) already anticipated this exact conclusion:
+*"Milestone 6 is expected to build its dashboard UI on top of this same endpoint, not need
+a new one — this isn't stepping on M6's scope, just building the read API home it will
+consume."* This section confirms that prediction held.
+
+### 8.2 Explicit call: slot edit/delete/cancel ("full CRUD") is **not** added — reasoning,
+not a silent gap
+
+Several earlier docs speculatively flagged full slot CRUD as a Milestone 6 *candidate* —
+`availability/README.md` ("Full CRUD, richer calendar semantics, and any dashboard UI
+remain Milestone 6 scope"), this doc's own §2.10 ("Flagged as a candidate for Milestone 6's
+richer calendar semantics, not built here"). **Decision: not building slot edit/delete this
+milestone.** Reasoning:
+
+- **No PRD text mandates it.** PRD §6's `AvailabilitySlots` schema lists exactly
+  `id, professional_id, start_time, end_time, is_available` with no described edit/cancel
+  workflow; no wireframe section (§7.x) describes a slot-editing screen either. The
+  "candidate" language in the docs above was exactly that — a speculative placeholder
+  flagged for later reconsideration, not a confirmed requirement, and the task brief
+  explicitly asks this doc to make the call rather than let that speculation silently become
+  scope.
+- **No load-bearing gap exists without it.** A professional who creates a slot with the
+  wrong start/end time has no way today to correct or remove it before it's booked — but
+  this has no negative *functional* consequence: an unwanted, still-`is_available = true`
+  slot simply might get booked by a customer (at which point the normal `reject`/`cancel`
+  flow, §2.6/§2.7, releases it back to `is_available = true` and reopens the issue — the
+  professional isn't stuck fulfilling a mistaken slot), and a slot nobody ever books simply
+  ages into the past with no cleanup needed (`GET .../slots/me`, §2.11, already returns past
+  slots unfiltered, so it remains visible/auditable, not silently lost). There is no
+  scenario in which lacking slot edit/delete leaves a professional unable to run their
+  business or a customer unable to book — the two properties an MVP dashboard actually needs
+  to guarantee.
+- **"Manage availability" (the acceptance-criterion wording) is satisfied by create + list +
+  the SOS toggle.** A professional can already: publish new availability (§2.10), see what
+  they've published (§2.11), and flip a live "available now" signal on/off (§2.14/§2.15).
+  Read this literally against the acceptance criterion's own wording — "manage" is satisfied
+  by the ability to add and view availability; it does not, on its own, imply mutate/delete
+  of a specific already-published entry.
+- **Frontend is out of scope project-wide this milestone anyway** (deferred pending the
+  design-system decision, per this pass's task brief) — even if a future dashboard UI wanted
+  an "edit slot" affordance, that's a frontend-scope question to raise when UI work actually
+  starts, not a reason to speculatively build a backend endpoint with no current caller.
+
+**This is a judgment call, not a certainty** — flagged explicitly, per the task brief's
+"don't silently pick an interpretation" instruction, as the one place in this section where
+reasonable people could land differently (e.g. if a future UX review decides a professional
+genuinely needs to delete a stale slot for peace of mind, not correctness). If that need is
+confirmed later, the addition would be a small, independent slice (`DELETE
+/api/availability/slots/{slotId}`, professional-owner-only, guarded on `is_available = true`
+so a claimed/booked slot can't be silently deleted out from under an active order) — not
+designed here, since it is not currently requested by any source document.
+
+### 8.3 SOS availability and incoming-requests need no further work
+
+`sos_availability` (§2.14/§2.15) is inherently a single row per professional with a live
+toggle — there is no "CRUD" concept that applies to it beyond read/write, both of which
+already exist. `GET /api/bookings/orders/me?status=PENDING` (§2.9) is exactly the
+"incoming-requests view" backend need — already built, already generic, already exercises
+correctly for both Standard and SOS orders (§3.7). Neither needs anything new.
+
+**Conclusion for deliverable 2**: the existing `availability` and `bookings` endpoint
+surface (Milestones 3/4, listed in §8.1) is sufficient for v1.0's professional-dashboard
+backend needs. No new endpoint is added by this pass beyond §2.16/§2.17 (job-status
+progression, which was never in question — every prior milestone's doc already named it as
+the one genuinely missing piece).
+
+---
+
+## 9. Confirmation — the `EXPIRED`-issue-reopen gap is unaffected by this pass (not
+resolved, not touched, per the task brief's explicit instruction not to attempt it)
+
+`data-model.md` §4 and `api-contract-notifications.md` §7 both already document a real,
+open gap: an issue that reaches `issues.status = 'EXPIRED'` has no endpoint anywhere that
+transitions it back to `'OPEN'`, so `POST /api/bookings/orders` (§2.4 step 6) and `POST
+/api/bookings/sos-orders` (§2.13 step 6) both reject a rebooking attempt against it with
+`409 ISSUE_NOT_BOOKABLE`, contradicting `data-model.md` §3 item 8's own aspirational text
+that a customer should be able to rebook after expiry.
+
+**Confirmed still accurately described as open, and confirmed unaffected by §2.16/§2.17
+above** — checked explicitly, not assumed, per the task brief:
+
+- §2.16 (`on-the-way`) only ever reads/writes an order whose `order_status = 'CONFIRMED'`
+  and an issue that is (by the single-active-order invariant, §3.3) necessarily `BOOKED` —
+  it never touches `OPEN` or `EXPIRED` issues, and has no code path that could reach one
+  (an `EXPIRED` issue's most recent order is, by construction, `EXPIRED` too — never
+  `CONFIRMED` — so §2.16's ownership/guard checks would simply `404`/`409` long before
+  reaching any issue-status logic, the same as they would for any other order that isn't
+  this professional's `CONFIRMED` order).
+- §2.17 (`complete`) similarly only ever transitions an issue `BOOKED → COMPLETED`, guarded
+  on `BOOKED` — it has no `WHERE status = 'EXPIRED'` (or `'OPEN'`) branch anywhere, and
+  cannot be reached by an `EXPIRED` issue's orders for the identical reason above.
+- Neither endpoint adds, removes, or narrows any existing pathway to/from `EXPIRED` or
+  `OPEN` — the gap's shape (no endpoint transitions `EXPIRED → OPEN`) is exactly as
+  `data-model.md` §4 and `api-contract-notifications.md` §7 already describe it, unchanged
+  by this pass.
+
+**Not attempted here, per the task brief's explicit instruction** — this remains a
+`pronto-lead`/user decision (add a "reopen" endpoint? treat `EXPIRED` as book-able too?
+accept the new-issue-workaround as intended?), tracked in `data-model.md` §4 and
+`api-contract-notifications.md` §7, restated here only for cross-reference completeness so a
+reader of this doc's Milestone 6 pass doesn't have to wonder whether it was silently
+resolved or silently broken by the new endpoints above. It was neither.

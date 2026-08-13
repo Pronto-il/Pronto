@@ -20,4 +20,10 @@ public class LoggingEmailSender implements EmailSender {
         log.info("[MOCK EMAIL] Verification code for {}: {} (no real email sent — LoggingEmailSender)",
                 toEmail, code);
     }
+
+    @Override
+    public void sendOrderStatusEmail(String toEmail, String subject, String bodyText) {
+        log.info("[MOCK EMAIL] To: {} | Subject: {} | Body: {} (no real email sent — LoggingEmailSender)",
+                toEmail, subject, bodyText);
+    }
 }

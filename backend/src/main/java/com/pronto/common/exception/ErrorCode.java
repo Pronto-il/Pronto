@@ -44,7 +44,12 @@ public enum ErrorCode {
     // Milestone 4 additions (SOS booking flow). See
     // docs/architecture/api-contract-bookings.md §2 "Milestone 4 additions".
     ISSUE_URGENCY_MISMATCH(HttpStatus.CONFLICT),
-    SOS_PROFESSIONAL_UNAVAILABLE(HttpStatus.CONFLICT);
+    SOS_PROFESSIONAL_UNAVAILABLE(HttpStatus.CONFLICT),
+
+    // Milestone 6 additions (job-status progression). See
+    // docs/architecture/api-contract-bookings.md §2 "Milestone 6 additions".
+    ORDER_NOT_CONFIRMED(HttpStatus.CONFLICT),
+    ORDER_NOT_ON_THE_WAY(HttpStatus.CONFLICT);
 
     private final HttpStatus httpStatus;
 

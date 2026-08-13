@@ -48,7 +48,7 @@ Implements `docs/architecture/api-contract-issues.md` §2.1–2.2 and
 | `entity.Issue` | JPA entity for `issues`. `customerId`/`categoryId` are plain FK columns, not associations — same convention as `professionals.entity.Professional`. Always starts `status = OPEN`. |
 | `entity.IssueImage` | JPA entity for `issue_images`. `imageUrl` is whatever `storage.StorageClient.resolveUrl` returns for the key — the underlying object is never moved/renamed on confirmation. |
 | `entity.IssueUrgencyType` / `entity.IssueStatus` | Enums mirroring the `issues` table's `CHECK` constraints. |
-| `repository.IssueRepository` | `JpaRepository`, plus (since Milestone 3) `bookIfOpen`/`revertToOpen` — the atomic `UPDATE ... WHERE <status guard>` transitions `bookings.service.BookingsService` uses for the booking flow (`docs/architecture/api-contract-bookings.md` §3.2/§3.3). |
+| `repository.IssueRepository` | `JpaRepository`, plus (since Milestone 3) `bookIfOpen`/`revertToOpen` — the atomic `UPDATE ... WHERE <status guard>` transitions `bookings.service.BookingsService` uses for the booking flow (`docs/architecture/api-contract-bookings.md` §3.2/§3.3) — and (since Milestone 5) `expireIfBooked`, the same guarded-`UPDATE` shape targeting `EXPIRED` instead of `OPEN`, called by `bookings.service.BookingsService.expireIfPending` as part of the `PENDING`-order timeout sweep (`docs/architecture/api-contract-notifications.md` §4.5). |
 | `repository.IssueImageRepository` | `JpaRepository`, plus `findByIssueId` (used by `GET /api/issues/{id}`). |
 | `dto.ClassifyRequest` / `dto.ClassifyResponse` | `POST /api/issues/classify` wire shapes. |
 | `dto.CreateIssueRequest` / `dto.IssueResponse` / `dto.IssueImageResponse` | `POST /api/issues` wire shapes. `CreateIssueRequest` deliberately carries no AI-suggestion field (see "Responsibilities" above). |
@@ -76,7 +76,11 @@ Implements `docs/architecture/api-contract-issues.md` §2.1–2.2 and
   `latestOrder` field — see the `dto.LatestOrderSummary` row above. `bookings` in turn
   depends on `issues` (an order is created against a confirmed, persisted issue) and calls
   `IssueRepository.bookIfOpen`/`revertToOpen` directly — the two packages are therefore
-  mutually dependent, a deliberate, documented exception, not an oversight.
+  mutually dependent, a deliberate, documented exception, not an oversight. Since Milestone
+  5, `bookings.service.BookingsService.expireIfPending` (invoked by
+  `notifications.scheduler.OrderExpirySweepJob`'s `@Scheduled` sweep) also calls
+  `IssueRepository.expireIfBooked` directly, the same `bookings → issues` relationship as
+  `bookIfOpen`/`revertToOpen`, not a new dependency edge.
 
 ## Data model
 
@@ -135,3 +139,11 @@ Post-Milestone-2 bug fix (QA-reported): the role-check-ordering bug described ab
 `common.security.RoleRequiredInterceptor`) and re-verified against a real local Postgres —
 professional token + malformed body now correctly `403`s on both `/api/issues/classify`
 and `POST /api/issues` instead of `400`.
+
+**Milestone 5 addition**: `IssueRepository.expireIfBooked` added, alongside the existing
+`bookIfOpen`/`revertToOpen`, for the new `PENDING`-order timeout expiry sweep. This package's
+role is limited to owning that one guarded-transition method; the sweep itself (scheduling,
+candidate-finding, notification dispatch) lives in `bookings`/`notifications` — see
+`notifications/README.md` and `docs/architecture/api-contract-notifications.md` §4.5 for the
+full mechanism. QA live-validated the transition (including the `EXPIRED`-issue-side-effect
+check) as part of the Milestone 5 pass.

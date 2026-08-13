@@ -9,4 +9,11 @@ package com.pronto.auth.email;
 public interface EmailSender {
 
     void sendVerificationCode(String toEmail, String code);
+
+    /**
+     * Order-status-change email, added in Milestone 5. See
+     * {@code docs/architecture/api-contract-notifications.md} §4.4 — same interface, reused
+     * rather than superseded, per that section's reasoning.
+     */
+    void sendOrderStatusEmail(String toEmail, String subject, String bodyText);
 }

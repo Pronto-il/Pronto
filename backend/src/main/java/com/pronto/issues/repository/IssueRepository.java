@@ -35,4 +35,29 @@ public interface IssueRepository extends JpaRepository<Issue, Long> {
     @Modifying(clearAutomatically = true)
     @Query("UPDATE Issue i SET i.status = com.pronto.issues.entity.IssueStatus.OPEN, i.updatedAt = :now WHERE i.id = :issueId")
     int revertToOpen(@Param("issueId") Long issueId, @Param("now") Instant now);
+
+    /**
+     * §4.5 of {@code api-contract-notifications.md} — used by {@code
+     * BookingsService.expireIfPending}. Guarded on {@code BOOKED} (the only state an order's
+     * issue can be in while that order is still {@code PENDING}, per the single-active-order
+     * invariant, §3.3 of {@code api-contract-bookings.md}) rather than unconditional like
+     * {@link #revertToOpen}.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE Issue i SET i.status = com.pronto.issues.entity.IssueStatus.EXPIRED, i.updatedAt = :now "
+            + "WHERE i.id = :issueId AND i.status = com.pronto.issues.entity.IssueStatus.BOOKED")
+    int expireIfBooked(@Param("issueId") Long issueId, @Param("now") Instant now);
+
+    /**
+     * §2.17 step 5 of {@code api-contract-bookings.md} (Milestone 6) — used by
+     * {@code BookingsService.complete}. Mirrors {@link #expireIfBooked}'s exact shape, guarded
+     * on {@code BOOKED} rather than unconditional like {@link #revertToOpen}. Not branched
+     * on/checked for a {@code 0}-row result by its caller, exactly like {@link #expireIfBooked}
+     * isn't — the single-active-order-per-issue invariant (§3.3) guarantees this always
+     * succeeds when reached (§2.17's own reasoning).
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE Issue i SET i.status = com.pronto.issues.entity.IssueStatus.COMPLETED, i.updatedAt = :now "
+            + "WHERE i.id = :issueId AND i.status = com.pronto.issues.entity.IssueStatus.BOOKED")
+    int completeIfBooked(@Param("issueId") Long issueId, @Param("now") Instant now);
 }

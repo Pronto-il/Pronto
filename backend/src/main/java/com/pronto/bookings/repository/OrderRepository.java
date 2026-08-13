@@ -59,4 +59,47 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             + "WHERE o.id = :orderId AND o.orderStatus = :expectedStatus")
     int cancelIfStatus(@Param("orderId") Long orderId, @Param("expectedStatus") OrderStatus expectedStatus,
                         @Param("cancelledBy") CancelledBy cancelledBy, @Param("now") Instant now);
+
+    /**
+     * §4.5 of {@code api-contract-notifications.md} — mirrors {@link #rejectIfPending}
+     * exactly, target status {@code EXPIRED} instead of {@code REJECTED}. {@code 0} affected
+     * rows means the order already left {@code PENDING} (another caller won the race).
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE Order o SET o.orderStatus = com.pronto.bookings.entity.OrderStatus.EXPIRED, "
+            + "o.updatedAt = :now WHERE o.id = :orderId AND o.orderStatus = com.pronto.bookings.entity.OrderStatus.PENDING")
+    int expireIfPending(@Param("orderId") Long orderId, @Param("now") Instant now);
+
+    /**
+     * §2.16 step 4 (Milestone 6). {@code 0} affected rows means the order wasn't
+     * {@code CONFIRMED}.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE Order o SET o.orderStatus = com.pronto.bookings.entity.OrderStatus.ON_THE_WAY, "
+            + "o.updatedAt = :now WHERE o.id = :orderId AND o.orderStatus = com.pronto.bookings.entity.OrderStatus.CONFIRMED")
+    int onTheWayIfConfirmed(@Param("orderId") Long orderId, @Param("now") Instant now);
+
+    /**
+     * §2.17 step 4 (Milestone 6). {@code 0} affected rows means the order wasn't
+     * {@code ON_THE_WAY} — including the deliberately-disallowed {@code CONFIRMED ->
+     * COMPLETED} skip-ahead attempt, which fails this guard exactly like any other
+     * non-{@code ON_THE_WAY} order would.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE Order o SET o.orderStatus = com.pronto.bookings.entity.OrderStatus.COMPLETED, "
+            + "o.updatedAt = :now WHERE o.id = :orderId AND o.orderStatus = com.pronto.bookings.entity.OrderStatus.ON_THE_WAY")
+    int completeIfOnTheWay(@Param("orderId") Long orderId, @Param("now") Instant now);
+
+    /**
+     * §4.5 — candidate {@code PENDING} orders past their per-urgency-type timeout, for the
+     * expiry sweep. Cross-entity comma-join JPQL, same style as
+     * {@code ProfessionalListingRepository}'s existing Professional/User/SosAvailability
+     * joins.
+     */
+    @Query("SELECT o.id FROM Order o, Issue i WHERE o.issueId = i.id "
+            + "AND o.orderStatus = com.pronto.bookings.entity.OrderStatus.PENDING "
+            + "AND ((i.urgencyType = com.pronto.issues.entity.IssueUrgencyType.STANDARD AND o.createdAt < :standardCutoff) "
+            + "OR (i.urgencyType = com.pronto.issues.entity.IssueUrgencyType.SOS AND o.createdAt < :sosCutoff))")
+    List<Long> findPendingExpiryCandidateIds(@Param("standardCutoff") Instant standardCutoff,
+                                              @Param("sosCutoff") Instant sosCutoff);
 }

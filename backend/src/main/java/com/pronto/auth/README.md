@@ -12,9 +12,10 @@ Implements `docs/architecture/api-contract.md` §2.1–2.3 and §3.1–3.3.
 - `POST /api/auth/register` — customer/professional registration (one flat JSON shape,
   `role` discriminates; professional-only fields validated conditionally in the service
   layer, not via unconditional Bean Validation). Creates the `users` row and, for
-  `PROFESSIONAL`, the `professionals` row (via the `professionals` package's entity/repo).
-  Does **not** create an `sos_availability` row — that table doesn't exist yet (flagged
-  gap, see `docs/architecture/data-model.md` §4 and `api-contract.md` §4).
+  `PROFESSIONAL`, the `professionals` row (via the `professionals` package's entity/repo)
+  plus a `sos_availability` row defaulting to `isAvailable = false` (via
+  `availability.repository.SosAvailabilityRepository`, added when the `V13` migration
+  closed the previously-flagged schema gap — see `docs/architecture/data-model.md` §2.6).
 - `POST /api/auth/verify` — consumes a 6-digit `verification_codes` row, sets
   `users.email_verified = true`.
 - `POST /api/auth/login` — bcrypt password check, the exact ordered lockout logic from

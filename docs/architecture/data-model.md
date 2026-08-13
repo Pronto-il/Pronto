@@ -524,6 +524,17 @@ task brief's instruction not to silently pick an interpretation.
 
 ## 4. Open questions (lower-stakes, don't block Milestone 0 migrations, but flagging)
 
+- **2026-08-13 — confirmed implementation divergence, not yet fixed** (surfaced by
+  `pronto-planning` during Milestone 1, out of scope for that milestone to fix): the
+  already-applied `V5__create_availability_slots.sql` and `V8__create_orders.sql`
+  migrations still implement the **pre-decision** designs. `V5` implements SOS matching as
+  a query variant of `availability_slots` — the single-table approach §2.6/§3 item 5
+  explicitly rejected in favor of a dedicated `sos_availability` table — and no
+  `sos_availability` migration exists yet. `V8`'s `order_status` `CHECK` constraint still
+  lists only the superseded 6 values (no `REJECTED`), contradicting §2.9/§3 item 10. Both
+  need a follow-up Flyway migration before Milestone 4 (SOS) and Milestone 3/4 (reject
+  semantics) respectively. Full writeup: `api-contract.md` §4; cross-referenced from
+  `overview.md` §6.
 - **`professionals.reliability_score` — where does this number come from?** No
   review/rating submission mechanism appears anywhere in the PRD (§7 wireframes only
   mention a "rating or trust indicator" being *displayed*, never collected) or in
@@ -531,12 +542,11 @@ task brief's instruction not to silently pick an interpretation.
   order counts (no new table needed), or a genuine reviews feature that hasn't been
   scoped yet (would need a new table, out of this doc's scope until confirmed). Schema
   here just stores the resulting number (nullable numeric); the computation is undefined.
-- **`users.locked_until` semantics** — is lockout time-based (auto-expires after N
-  minutes) or does it require a manual/admin unlock? V1.0 has no admin screens designed
-  anywhere (auto-approval removed the only admin workflow the PRD had). Recommended
-  default: time-based auto-expiry (no admin tooling needed) — flagged in §3 item as
-  needing confirmation since a permanent lock with no unlock path would be a real UX dead
-  end.
+- **DECIDED (user override, 2026-08-13)** — `users.locked_until` is time-based, auto-expiry
+  after **15 minutes**, no manual/admin unlock (v1.0 has no admin screens). `auth`'s login
+  handler must check `locked_until > now()` and reject with a clear "try again later"
+  message rather than the generic bad-credentials error, so the 15-minute window is
+  discoverable by the user.
 - **ETA display — resolved, not open**: PRD §7.4/§7.5 wireframe text mentions ETA on SOS
   cards and the tracking screen, but PRD §3.4.8/§3.5.5 (functional requirements, more
   authoritative than the wireframe description) explicitly label ETA/tracking display as
@@ -572,10 +582,9 @@ task brief's instruction not to silently pick an interpretation.
 - **Done, this update**: `overview.md` §4's `availability` package row now distinguishes
   `availability_slots` (advance calendar) from `sos_availability` (live SOS toggle), per
   §3 item 5 (decided 2026-08-12).
-- **New follow-up, not made by this agent**: `implementation-plan.md`'s Milestone 5 scope
-  bullet doesn't yet explicitly list the PENDING-order-timeout sweep job (§3 item 8,
-  decided 2026-08-12) — recommend `pronto-lead`/`pronto-documentation` add one line there
-  so the dependency isn't implicit-only in this doc.
+- **Done, 2026-08-13** (`pronto-documentation`, Milestone 1 doc-sync pass):
+  `implementation-plan.md`'s Milestone 5 scope bullet now explicitly lists the
+  PENDING-order-timeout sweep job (§3 item 8, decided 2026-08-12).
 - No other changes needed to `implementation-plan.md` — the new `verification_codes` table
   and the `professionals`/`orders`/`notifications` column additions all fit inside the
   existing Milestone 0/1/3/5 scopes as written, they just weren't enumerated at the field

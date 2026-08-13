@@ -2,27 +2,69 @@
 
 ## Purpose
 
-Shared exceptions, base entities/DTOs, config, and cross-cutting utilities.
+Shared exceptions, error-response envelope, DTOs, and the cross-request security
+principal type — cross-cutting infrastructure used by more than one domain package.
 
 ## Responsibilities
 
-- Cross-cutting infrastructure used by more than one domain package: global exception
-  handling, shared base entity/DTO classes, configuration beans.
-- No business logic of its own — this package should stay thin and infrastructural.
+- The standard error-response envelope (`docs/architecture/api-contract.md` §1), used by
+  every endpoint across every milestone, not just `auth`/`users`.
+- A global `@RestControllerAdvice` (`exception.GlobalExceptionHandler`) that converts
+  `ApiException`s, Bean Validation failures, and unreadable JSON bodies into that envelope,
+  plus a catch-all for anything unexpected (never leaks a stack trace to the client).
+- `security.AuthenticatedUser` — the `Authentication` principal type set by `auth`'s JWT
+  filter and read by any controller via `@AuthenticationPrincipal`. Lives here (not in
+  `auth`) specifically so `users` (and any future package with an authenticated endpoint)
+  doesn't have to depend on `auth` just to read "who is the current caller" — `role` is
+  stored as a plain `String` rather than `users`' `UserRole` enum for the same reason: this
+  package must never depend on a domain package.
+- `security.RoleGuard` (Milestone 2) — a one-method role-restriction check
+  (`requireRole(principal, requiredRole)`, throws `ApiException(FORBIDDEN, ...)` on
+  mismatch), used by `issues`/`storage` since every endpoint in those packages requires
+  `role = CUSTOMER`. Deliberately **not** `@PreAuthorize`/method security — see
+  `storage/README.md`'s "Role enforcement" section for the full rationale (in short:
+  declarative method security would need `auth.config.SecurityConfig` changes, which were
+  out of bounds for the task that added it). Takes a plain `String` role, same reasoning as
+  `AuthenticatedUser.role` above.
+- `security.RoleRequiredInterceptor` (Milestone 2 bug fix) — a generic, reusable
+  `HandlerInterceptor` that calls `RoleGuard.requireRole` from `preHandle`, i.e. *before*
+  Spring resolves `@Valid`/`@RequestParam` argument binding for the matched controller
+  method. Fixes an ordering bug where `RoleGuard.requireRole` called from inside a
+  controller method body ran *after* argument resolution, so a wrong-role request with an
+  also-malformed body incorrectly returned `400 VALIDATION_ERROR` instead of
+  `403 FORBIDDEN`. Takes the required role as a constructor argument and has no built-in
+  knowledge of which routes it applies to — each domain package registers its own instance
+  for its own routes (`issues.config.IssuesWebConfig`, `storage.config.StorageWebConfig`),
+  keeping this class generic and keeping route-to-role knowledge out of `common`.
+- No business logic of its own — stays thin and infrastructural.
 
 ## Key classes
 
-None yet — stub package (`package-info.java` only). As of Milestone 0, the health
-endpoint (`/actuator/health`) is provided entirely by Spring Boot Actuator
-auto-configuration (`spring-boot-starter-actuator` + `management.endpoints.web.exposure
-.include=health` in `application.yml`) — no supporting class was needed in `common` for
-that.
+| Class | Role |
+|---|---|
+| `exception.ErrorCode` | The stable machine-readable taxonomy (`VALIDATION_ERROR`, `DUPLICATE_EMAIL`, ... `INTERNAL_ERROR`, plus Milestone 2's `FORBIDDEN`/`IMAGE_KEY_INVALID`/`UNSUPPORTED_IMAGE_TYPE`/`IMAGE_TOO_LARGE`/`AI_SERVICE_ERROR`/`STORAGE_SERVICE_ERROR`), each with its HTTP status. |
+| `exception.ApiException` | Thrown by service-layer code for any expected, business-meaningful failure; carries an `ErrorCode` + message + optional `details`. |
+| `exception.GlobalExceptionHandler` | `@RestControllerAdvice`, builds the envelope for every exception type above, plus (Milestone 2) `MaxUploadSizeExceededException` → `413 IMAGE_TOO_LARGE` and `MissingServletRequestPartException` → `400 VALIDATION_ERROR` (both from `storage`'s multipart upload endpoint). |
+| `dto.ErrorResponse` / `dto.ErrorBody` | The envelope shape (`timestamp`, `path`, `error{code,message,details}`). |
+| `dto.FieldError` | One entry in a `VALIDATION_ERROR`'s `details` array. |
+| `dto.LockedDetails` | The `details` payload for `ACCOUNT_LOCKED` (`lockedUntil`, `retryAfterSeconds`). |
+| `security.AuthenticatedUser` | `record(Long id, String role)` — the JWT-derived principal. |
+| `security.RoleGuard` | (Milestone 2) `requireRole(principal, requiredRole)` — see "Responsibilities" above. |
+| `security.RoleRequiredInterceptor` | (Milestone 2 bug fix) `HandlerInterceptor` wrapping `RoleGuard.requireRole`, registered per-route by `issues`/`storage` — see "Responsibilities" above. |
 
 ## Interactions with other packages
 
-- Available to be depended on by every other `com.pronto.*` package for shared
-  infrastructure. Should never depend on a domain package itself (to avoid circular
-  dependencies).
+- Available to be depended on by every other `com.pronto.*` package. Must never depend on
+  a domain package itself (enforced by design choices above, e.g. `AuthenticatedUser.role`
+  being a `String`, not an enum from `users`).
+- `auth`'s `JwtAuthenticationFilter`/`JsonAuthenticationEntryPoint` construct/read
+  `AuthenticatedUser` and throw/format using `ApiException`/`ErrorCode`.
+- Every controller across every package is expected to let `ApiException`s propagate up to
+  `GlobalExceptionHandler` rather than building its own error responses.
+- `issues`/`storage` (Milestone 2) each register a `RoleRequiredInterceptor(role =
+  "CUSTOMER")` (via their own `config.*WebConfig` `WebMvcConfigurer`) for their route
+  prefixes, which calls `RoleGuard.requireRole` before their controller methods' argument
+  resolution runs.
 
 ## Data model
 
@@ -30,6 +72,19 @@ No tables owned by this package.
 
 ## Status
 
-Stub only, no logic yet — populated incrementally as later milestones need shared
-infrastructure (e.g. a global `@ControllerAdvice` exception handler in Milestone 1), per
-`docs/architecture/implementation-plan.md`.
+Populated in **Milestone 1** with the error-envelope/exception-handling infrastructure
+`api-contract.md` §1 calls for, plus the shared `AuthenticatedUser` principal type. The
+Milestone 0 health-endpoint note (Actuator auto-configuration, no supporting class needed)
+still applies unchanged.
+
+Extended in **Milestone 2** (per `api-contract-issues.md` §1) with the 6 new error codes,
+2 new `GlobalExceptionHandler` entries (multipart-upload failures), and `RoleGuard` for
+`issues`/`storage`'s `role = CUSTOMER` restriction.
+
+Extended again post-Milestone-2, fixing a QA-reported ordering bug: `RoleGuard.requireRole`
+was originally called from inside `issues`/`storage` controller method bodies, which ran
+*after* Spring's `@Valid`/`@RequestParam` argument resolution, so a wrong-role request with
+an also-malformed body incorrectly returned `400 VALIDATION_ERROR` instead of
+`403 FORBIDDEN`. Added `security.RoleRequiredInterceptor` (a `HandlerInterceptor`, calls
+`RoleGuard.requireRole` from `preHandle`, which always runs before argument resolution) to
+fix it, without touching `auth.config.SecurityConfig`.

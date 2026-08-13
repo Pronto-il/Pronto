@@ -23,6 +23,51 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: false
 
+  servlet:
+    multipart:
+      # §2.3's recommended 8 MB cap on an uploaded image. Exceeding this throws
+      # MaxUploadSizeExceededException, mapped to 413 IMAGE_TOO_LARGE by
+      # common.exception.GlobalExceptionHandler. See docs/architecture/api-contract-issues.md §2.3.
+      max-file-size: 8MB
+      max-request-size: 8MB
+
+pronto:
+  jwt:
+    # Local-dev-only default. This is NOT production-safe — every real deployment must
+    # override this via the JWT_SECRET env var with a securely generated, kept-secret
+    # value (must be >= 32 bytes for HS256). See docs/architecture/api-contract.md §3.1.
+    secret: ${JWT_SECRET:local-dev-only-insecure-jwt-secret-key-please-override-via-JWT_SECRET-env-var-before-any-real-deployment}
+    expiration-seconds: ${JWT_EXPIRATION_SECONDS:86400}
+
+  storage:
+    # local | s3. Default local — zero AWS credentials needed, matches M1's
+    # zero-external-dependency default. See docs/architecture/api-contract-issues.md §3.2.
+    mode: ${STORAGE_MODE:local}
+    # Base URL this backend is reachable at, used by BOTH storage modes to build the
+    # backend-proxied GET /api/storage/images/** URL returned as imageUrl (local mode
+    # serves straight off disk; s3 mode still proxies through this same endpoint rather
+    # than exposing a raw/public S3 URL, since the bucket blocks all public access — see
+    # storage.client.S3StorageClient's Javadoc). Override in any non-local deployment via
+    # STORAGE_PUBLIC_BASE_URL.
+    public-base-url: ${STORAGE_PUBLIC_BASE_URL:http://localhost:${server.port:8080}}
+    local:
+      base-dir: ${STORAGE_LOCAL_BASE_DIR:./data/uploads}
+    # Only used when mode=s3, see storage.client.S3StorageClient's Javadoc.
+    bucket: ${STORAGE_S3_BUCKET:}
+    region: ${STORAGE_S3_REGION:eu-central-1}
+
+  ai:
+    # mock | openai. Default mock — no real OpenAI key needed. See
+    # docs/architecture/api-contract-issues.md §3.1.
+    mode: ${AI_MODE:mock}
+
+  openai:
+    # Never committed — env-var-sourced only, same treatment as JWT_SECRET. Required only
+    # when pronto.ai.mode=openai.
+    api-key: ${OPENAI_API_KEY:}
+    model: ${OPENAI_MODEL:gpt-4o-mini}
+    timeout-ms: ${OPENAI_TIMEOUT_MS:10000}
+
 server:
   port: ${SERVER_PORT:8080}
 

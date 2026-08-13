@@ -31,19 +31,79 @@ closed).
 
 ## Milestone 1 — Auth & user management
 
+- **Status: COMPLETE (backend), 2026-08-13.** `auth`, `users`, `professionals` packages
+  implemented per `docs/architecture/api-contract.md`; QA validated in two passes (full
+  validation, then a re-verification pass after a login-lockout bug fix) — see "QA
+  summary" below. **Frontend `features/auth` screens are intentionally deferred**, not an
+  oversight — the user has not yet finalized the frontend design system, and building auth
+  screens ahead of that decision was explicitly deprioritized. Do not read the absence of
+  frontend auth work as a gap in this milestone's backend completion.
 - **Scope**: `auth`, `users`, `professionals` (profile only — no approval workflow, v1.0
   auto-approves professional accounts). Registration, email verification code, login,
   password hashing, account lockout after 5 failed attempts, account deletion endpoint.
 - **Acceptance criteria**: a customer and a professional can both register, verify, and
   log in; failed-login lockout is enforced; a verified professional can receive bookings
-  immediately, with no separate approval step.
+  immediately, with no separate approval step. **All met**, backend-only.
+- **QA summary**: live-validated against a real Postgres instance — registration/
+  verification/login for both roles, professional auto-approval (no admin gate), lockout
+  enforcement (5 attempts → 15-min lock → auto-expiry/reset), soft-delete + PII
+  anonymization on account deletion, JWT auth enforcement on `/api/users/me`,
+  `/actuator/health` still public (no Milestone 0 regression), and edge cases
+  (case-insensitive duplicate email, expired/consumed verification codes, invalid
+  `categoryId`). First pass caught a critical lockout-bookkeeping bug (fixed via
+  `LoginAttemptRecorder`, see `backend/src/main/java/com/pronto/auth/README.md`
+  "Transaction boundaries"); second pass re-verified the fix and passed fully.
+- **Known gaps, not blockers**: no password-reset flow, no resend-verification-code
+  endpoint, no refresh-token/logout-revocation mechanism — see `overview.md` §6 and
+  `api-contract.md` §4 for detail.
 
 ## Milestone 2 — Issue creation & AI classification
 
-- **Scope**: `issues`, `ai`, `storage` (S3 image upload). Home/New Issue screen, AI
+- **Status: COMPLETE (backend), 2026-08-13.** `issues`, `ai`, `storage` packages
+  implemented per `docs/architecture/api-contract-issues.md`; QA validated live against a
+  real Postgres instance, with one bug found and fixed mid-milestone (a role-check-vs-
+  validation ordering bug) — see "QA summary" below. **Frontend `features/issues` screens
+  (Home/New Issue, AI Review) are intentionally deferred**, consistent with the rest of
+  `frontend/` — not a gap in this milestone's backend completion.
+- **Scope**: `issues`, `ai`, `storage` (image upload). Home/New Issue screen, AI
   Review screen with confirm/edit, image upload with the 5s target.
 - **Acceptance criteria**: a customer can describe an issue, optionally attach images,
-  receive an AI-suggested category, and confirm or override it before proceeding.
+  receive an AI-suggested category, and confirm or override it before proceeding. **Met**,
+  backend-only — verified end-to-end (upload → classify → confirm/override → create) against
+  a real Postgres instance with the default mock AI classifier and local-disk storage.
+- **QA summary**: live-validated against a real Postgres instance — the full happy path
+  (upload image → classify → confirm/override category → create issue), the
+  ephemeral-classify-vs-persisted-create distinction (held up under ~25 requests to
+  `/classify` with zero premature persistence, confirming §2.1's "no DB write" guarantee),
+  image ownership enforcement (a forged/mismatched-owner `imageKey` correctly `400`s with
+  `IMAGE_KEY_INVALID`; cross-customer retrieval via `GET /api/storage/images/**` correctly
+  `403`s), validation/error-code coverage across both packages, mock AI classifier sanity
+  (Hebrew keyword-based category matches, `general_handyman` fallback with `confidence:
+  null` on no match), local storage round-trip byte-identity (upload → retrieve produces an
+  identical byte array), and no regression to Milestone 1 (`/actuator/health`,
+  `/api/auth/*`, `/api/users/me` all still work). **One real bug found**: role-check-vs-
+  validation ordering meant a professional-role token combined with a malformed request body
+  returned `400 VALIDATION_ERROR` instead of the contract-mandated `403 FORBIDDEN` on 3
+  endpoints (`POST /api/issues/classify`, `POST /api/issues`, `POST /api/storage/images`) —
+  `RoleGuard.requireRole` was being called from inside each controller method body, which
+  runs *after* Spring resolves `@Valid`/`@RequestParam` argument binding for the matched
+  handler. Fixed by introducing `common.security.RoleRequiredInterceptor` (a
+  `HandlerInterceptor` that calls `RoleGuard.requireRole` from `preHandle`, which always
+  runs before argument resolution), registered per-package via a new `WebMvcConfigurer`
+  (`issues.config.IssuesWebConfig`, `storage.config.StorageWebConfig`) rather than touching
+  `auth.config.SecurityConfig` — see `backend/src/main/java/com/pronto/common/README.md`
+  and `.../issues/README.md`/`.../storage/README.md` for the full writeup. Re-verified
+  green afterward: all repro cases now correctly return `403`, and the rest of the
+  milestone's QA suite was re-run with no new regressions.
+- **Known gaps, not blockers**: `S3StorageClient` and `OpenAiClassificationClient` are
+  implemented and compile but were never live-tested this milestone (no AWS/OpenAI
+  credentials available) — both activate purely via config flags
+  (`pronto.storage.mode=s3`, `pronto.ai.mode=openai`) once credentials exist, an explicit,
+  documented deferral rather than a gap papered over. No `GET /api/issues/{id}` endpoint
+  (out of this milestone's scope; a forward dependency for Milestone 3/4's booking flows),
+  no rate limiting on `/classify`, no orphaned-upload cleanup job, and the S3
+  bucket-privacy policy / AI-suggestion-persistence questions remain genuinely open — see
+  `overview.md` §6 and `api-contract-issues.md` §4 for detail.
 
 ## Milestone 3 — Standard booking flow
 
@@ -63,7 +123,14 @@ closed).
 ## Milestone 5 — Notifications & real-time status
 
 - **Scope**: `notifications` package, short-polling status endpoints (per `overview.md`
-  §3.3), notification records on status transitions, email dispatch.
+  §3.3), notification records on status transitions, email dispatch, **and** a
+  background/scheduled sweep job (e.g. Spring `@Scheduled`) that flips `orders` rows stuck
+  in `PENDING` past their timeout to `EXPIRED` (cascading to `issues.status` per
+  `data-model.md` §3 item 8) — ownership of this job was assigned to this milestone by
+  `pronto-lead` rather than Milestone 3/4, since its purpose centers on producing the
+  `ORDER_EXPIRED` notification/status change a polling client observes. Timeout duration
+  is a flagged recommendation pending sign-off (proposed: 15 min `STANDARD` / 5 min `SOS`
+  — see `data-model.md` §3 item 8), not yet decided.
 - **Acceptance criteria**: booking status changes reach the relevant customer/professional
   within the PRD's ~1s target; tracking screen updates without a manual refresh.
 

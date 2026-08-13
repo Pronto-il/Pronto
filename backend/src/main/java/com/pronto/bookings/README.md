@@ -33,5 +33,11 @@ Owns the `orders` table (see `docs/architecture/data-model.md` §2.8). Note: no 
 
 ## Status
 
-Stub only, no logic yet — implemented across **Milestone 3 (Standard booking flow)** and
-**Milestone 4 (SOS booking flow)** per `docs/architecture/implementation-plan.md`.
+Stub only, no logic yet. **Design finalized, ready for implementation, 2026-08-13** — the
+full Milestone 3 (Standard path) contract is specified in
+`docs/architecture/api-contract-bookings.md` (no open sign-off items remain); implemented
+across **Milestone 3 (Standard booking flow)** and **Milestone 4 (SOS booking flow)** per
+`docs/architecture/implementation-plan.md`. Note: this README's "Data model" section below
+still describes the pre-`api-contract-bookings.md` design (no distinct `REJECTED` status,
+no `slot_id`) — superseded by the finalized contract; a full rewrite of this file is
+`pronto-documentation`'s job once the package is actually implemented, not done here.

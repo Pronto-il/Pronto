@@ -35,3 +35,9 @@ bin/
 
 ### Env ###
 .env
+
+### Local-disk fake storage (pronto.storage.mode=local) ###
+data/
+
+### QA scratch files (manual smoke-test payloads/output, not fixtures) ###
+qa-tmp/

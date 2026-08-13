@@ -1,8 +1,11 @@
 # Pronto — System Overview & Architecture
 
-Status: **initial design pass, not yet implemented**. This is the living source of truth
-for architecture/decisions — keep it in sync with the actual implementation as it lands
-(owned going forward by the `pronto-documentation` agent).
+Status: **Milestone 1 (Auth & user management) and Milestone 2 (Issue creation & AI
+classification) both implemented on the backend and QA-signed-off, as of 2026-08-13** (see
+`docs/architecture/implementation-plan.md` for milestone-by-milestone status); Milestones
+3+ and all of `frontend/` remain design-only. This is the living source of truth for
+architecture/decisions — keep it in sync with the actual implementation as it lands (owned
+going forward by the `pronto-documentation` agent).
 
 ## 1. Consolidated understanding
 
@@ -113,6 +116,10 @@ lockout after 5 failed login attempts (PRD §5.2.3). All traffic over HTTPS/TLS 
 terminated at the load balancer/CDN layer. Account deletion / personal data management
 supported per PRD §5.2.4.
 
+**Milestone 1 REST contract** (register/verify/login/profile/account-deletion endpoints,
+error taxonomy, JWT claims/expiry, password-hashing and email-sender decisions) is fully
+specified in `docs/architecture/api-contract.md` — not duplicated here.
+
 ### 3.8 Service categories (v1.0 fixed list)
 The AI classifier picks from, and the customer confirms/overrides against, this fixed set:
 
@@ -147,7 +154,7 @@ changes it, per the shared project rule.
 | `ai` | OpenAI client wrapper + classification service, kept separate from `issues` so it's independently testable/mockable. |
 | `bookings` | `Orders` — Standard + SOS booking flows, accept/reject, status transitions. |
 | `notifications` | Notification records + status polling endpoints, plus email dispatch. |
-| `storage` | S3 image upload integration. |
+| `storage` | Image upload/retrieval, backend-proxied, behind a `StorageClient` abstraction swappable between a local-disk fake (dev/QA default) and real S3 (`pronto.storage.mode`). |
 | `common` | Shared exceptions, base entities/DTOs, config, cross-cutting utilities. |
 
 ### Frontend — `frontend/src/*`
@@ -177,8 +184,15 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
    structure with stub docs.
 2. Auth & user management — registration, verification, login, professional profile,
    account lockout. (No approval-flag step — v1.0 auto-approves professionals.)
+   **Backend implemented and QA-signed-off, 2026-08-13** — see
+   `implementation-plan.md`'s Milestone 1 entry for status detail; corresponding frontend
+   screens (`features/auth`) are intentionally deferred, not yet started.
 3. Issue creation & AI classification — issue form, image upload, OpenAI integration,
    confirm/edit category, seeded against the fixed 8-category list (§3.8).
+   **Backend implemented and QA-signed-off, 2026-08-13** — see
+   `implementation-plan.md`'s Milestone 2 entry for status detail; corresponding frontend
+   screens (`features/issues`) are deferred along with the rest of `frontend/`, not yet
+   started.
 4. Standard booking flow — professional listing, price offers, accept/reject,
    confirmation/tracking screen (status only).
 5. SOS booking flow — urgent professional list, SOS request/accept/reject, fallback
@@ -196,3 +210,79 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
   §2) and S3 handles images (decided, §3.5). The PRD's API Gateway/SQS/Lambda are not yet
   confirmed as needed for v1.0 — revisit if/when an async or gateway use case actually
   arises; don't build them speculatively.
+- **2026-08-13 — surfaced during Milestone 1 (Auth & user management) implementation/QA.**
+  Recorded here so a future milestone doesn't rediscover these the hard way. Full detail
+  for all four items lives in `docs/architecture/api-contract.md` §4; cross-referenced from
+  `data-model.md` §4 for the first one, since it's schema-specific.
+  - **Pre-existing schema contradiction, not fixed (out of scope for Milestone 1).**
+    `backend/src/main/resources/db/migration/V5__create_availability_slots.sql` still
+    implements the single-table SOS-matching design that `data-model.md` §2.6/§3 item 5
+    explicitly rejected in favor of a dedicated `sos_availability` table.
+    `V8__create_orders.sql`'s `order_status` `CHECK` constraint still lists only the
+    superseded 6 values (no `REJECTED`), contradicting the settled 7-status decision above
+    (§1/§2) and in `data-model.md` §2.9/§3 item 10. Both migrations were already applied
+    before Milestone 1 and were out of bounds for this milestone to alter. Both need a
+    follow-up Flyway migration: the `sos_availability` gap blocks Milestone 4 (SOS) and the
+    Milestone 6 dashboard toggle; the missing `REJECTED` value blocks Milestone 3/4's
+    accept/reject logic.
+  - **No password-reset flow.** Not requested by any source document, but a real
+    end-user gap — a customer/professional who forgets their password currently has no
+    self-service recovery path.
+  - **No "resend verification code" endpoint.** A user whose 15-minute verification code
+    expires has no self-service recovery short of hitting `409 DUPLICATE_EMAIL` on
+    re-registration.
+  - **No refresh-token / logout-revocation mechanism.** JWTs expire after 24h; logout is
+    client-side-discard-only. Deleted-account revocation is handled via a per-request DB
+    check (§3.7/`api-contract.md` §3.1), but general token compromise isn't otherwise
+    mitigated. Accepted MVP limitation, not an oversight.
+- **2026-08-13 — surfaced during Milestone 2 (Issue creation & AI classification)
+  implementation/QA.** Recorded here so a future milestone doesn't rediscover these the
+  hard way. Full detail for every item lives in `docs/architecture/api-contract-issues.md`
+  §4.
+  - **AI-suggested category is not persisted anywhere — genuinely open, needs the user's
+    sign-off.** `POST /api/issues` stores only the confirmed `categoryId`; nothing records
+    what `/classify` originally suggested vs. what the customer confirmed or overrode. This
+    was a deliberate default (no new Flyway migration required this milestone), but it
+    forecloses any future "how often do customers override the AI" analysis unless a
+    nullable `ai_suggested_category_id` column or a separate log table is added later — cheap
+    now, more annoying to retrofit once `issues` rows without a recorded suggestion already
+    exist. **Ask**: is AI-accuracy/override-rate tracking wanted from day one?
+  - **S3 bucket-privacy / access-policy for issue images — genuinely open, needs a decision
+    before `pronto.storage.mode=s3` goes live anywhere.** Home-issue photos are plausibly
+    sensitive (interior of someone's home). Whether the bucket/prefix should be public-read,
+    served via signed/expiring URLs, or proxied through the backend (mirroring the local-mode
+    `GET /api/storage/images/**` retrieval endpoint) is undecided — deferred because it
+    can't be meaningfully tested without real AWS credentials (not available this
+    milestone), not because it's unimportant.
+  - **Image-key ownership is a path-prefix convention (`customers/{callerId}/...`), not a
+    real access-control record.** No DB row exists linking an uploaded object to its
+    uploader until `POST /api/issues` runs, so ownership is enforced purely by parsing the
+    key's embedded id. Two accepted MVP gaps: no expiry/cleanup job for orphaned uploads
+    (a customer who uploads photos and abandons the New Issue flow leaves those objects in
+    storage forever, untracked by any DB row); no prevention of the same `imageKey` being
+    attached to two different issues (judged low-risk/low-impact, not a security or
+    data-integrity problem).
+  - **No rate limiting on `POST /api/issues/classify`.** Stateless/cheap-to-call-repeatedly
+    by design, so nothing currently stops a customer from spamming it — a real OpenAI-cost
+    exposure once `pronto.ai.mode=openai` is live (mock mode has no such cost). Flagged as a
+    candidate for Milestone 7's hardening pass if AI API costs become a concern.
+  - **AI category-mapping fallback is a recommendation, not confirmed.** If a real OpenAI
+    response doesn't cleanly map to one of the 8 seeded `categories.code` values, the
+    implemented fallback is "default to `general_handyman` with `confidence = null`, logged
+    at `WARN`" — reasonable, but not specified by any source document, and not
+    live-verified against real OpenAI output this milestone (no credentials available).
+  - **No `GET /api/issues/{id}` endpoint yet.** Real forward dependency: Milestone 3/4's
+    booking flows will need to resolve an issue by id, and that endpoint doesn't exist —
+    next milestone's planning pass needs to account for it.
+  - **Storage object "permanence" after issue confirmation isn't designed.** Uploaded
+    objects keep their original `.../temp/...`-style key forever; nothing promotes them to
+    a permanent, issue-scoped path on confirm. Functionally harmless today (the DB row's
+    `image_url` is authoritative regardless of key naming), but a future S3 lifecycle/cost
+    policy that assumes `.../temp/...` objects are safe to expire would be wrong once one is
+    referenced by a persisted `issue_images` row.
+  - **`S3StorageClient` and `OpenAiClassificationClient` are implemented and compile but
+    were never live-tested this milestone** (no AWS/OpenAI credentials available) — an
+    explicit, documented deferral per the task brief, not a silently-accepted gap. Both
+    activate purely via config flags (`pronto.storage.mode=s3`, `pronto.ai.mode=openai`)
+    once credentials exist; no code change expected to be needed, but neither has been
+    proven against the real service yet.

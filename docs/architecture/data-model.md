@@ -524,17 +524,18 @@ task brief's instruction not to silently pick an interpretation.
 
 ## 4. Open questions (lower-stakes, don't block Milestone 0 migrations, but flagging)
 
-- **2026-08-13 — confirmed implementation divergence, not yet fixed** (surfaced by
-  `pronto-planning` during Milestone 1, out of scope for that milestone to fix): the
+- **2026-08-13 — confirmed implementation divergence, both since fixed.** The
   already-applied `V5__create_availability_slots.sql` and `V8__create_orders.sql`
-  migrations still implement the **pre-decision** designs. `V5` implements SOS matching as
-  a query variant of `availability_slots` — the single-table approach §2.6/§3 item 5
-  explicitly rejected in favor of a dedicated `sos_availability` table — and no
-  `sos_availability` migration exists yet. `V8`'s `order_status` `CHECK` constraint still
-  lists only the superseded 6 values (no `REJECTED`), contradicting §2.9/§3 item 10. Both
-  need a follow-up Flyway migration before Milestone 4 (SOS) and Milestone 3/4 (reject
-  semantics) respectively. Full writeup: `api-contract.md` §4; cross-referenced from
-  `overview.md` §6.
+  migrations originally implemented the **pre-decision** designs (surfaced by
+  `pronto-planning` during Milestone 1, out of scope for that milestone to fix). `V8`'s
+  `order_status` `CHECK` constraint listing only the superseded 6 values (no `REJECTED`)
+  was fixed via `V11__alter_orders_status_add_rejected.sql` as part of Milestone 3. `V5`
+  originally left SOS matching as an unimplemented query-variant of `availability_slots` —
+  the single-table approach §2.6/§3 item 5 explicitly rejected in favor of a dedicated
+  `sos_availability` table — closed via `V13__create_sos_availability.sql` (professional
+  registration now also inserts the default row, see `auth.service.AuthService#register`),
+  done ahead of Milestone 4 specifically to unblock it. Full writeup: `api-contract.md` §4;
+  cross-referenced from `overview.md` §6.
 - **`professionals.reliability_score` — where does this number come from?** No
   review/rating submission mechanism appears anywhere in the PRD (§7 wireframes only
   mention a "rating or trust indicator" being *displayed*, never collected) or in

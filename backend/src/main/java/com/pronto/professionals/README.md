@@ -78,9 +78,9 @@ validation against the seeded `categories` table (including the invalid-`categor
 edge case), and the nested `professional` object surfaced correctly via
 `GET /api/users/me`.
 
-**Not yet fixed, flagged (see `docs/architecture/data-model.md` §4 and
-`docs/architecture/overview.md` §6):** the already-applied `V5__create_availability_slots.sql`
-migration still implements the single-table SOS design that `data-model.md` §2.6/§3 item 5
-rejected — no dedicated `sos_availability` table exists yet. This package's registration
-flow already accounts for that gap (see "Does not model `sos_availability`" in
-`entity/Professional`'s Javadoc) rather than silently working around it.
+**Fixed, 2026-08-13 (pre-Milestone-4 schema-gap fix):** the `V5__create_availability_slots.sql`
+gap flagged in `docs/architecture/data-model.md` §4 (single-table SOS design that §2.6/§3
+item 5 rejected) is closed via `V13__create_sos_availability.sql` (owned by the
+`availability` package). This package's registration flow (`auth.service.AuthService`,
+which owns registration end-to-end) now inserts the default `sos_availability` row
+alongside the `professionals` row.

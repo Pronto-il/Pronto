@@ -133,9 +133,9 @@ for a customer registration.
 3. Insert the `users` row (`email_verified = false`, `role` as given).
 4. If `role = PROFESSIONAL`: also insert the `professionals` row
    (`category_id`, `service_area`, `base_price`, `approval_status` defaults to
-   `'APPROVED'` per the inert-column decision — nothing else to do, no workflow step).
-   **Does not** insert an `sos_availability` row — see §4, this is a flagged schema gap,
-   not a silent omission.
+   `'APPROVED'` per the inert-column decision — nothing else to do, no workflow step), plus
+   an `sos_availability` row defaulting to `isAvailable = false` — see §4, added by the
+   `V13__create_sos_availability.sql` schema-gap fix (2026-08-13, ahead of Milestone 4).
 5. Generate a 6-digit numeric verification code, insert into `verification_codes`
    (`purpose = 'EMAIL_VERIFICATION'`, `expires_at = now() + 15 minutes` — see §3.3 for the
    duration rationale), and dispatch it via the configured `EmailSender` (§3.3).
@@ -459,26 +459,19 @@ inventing an unrelated third duration. Flagged as a judgment call, not a hard re
 
 ## 4. Open items / risks (flagged, not silently resolved)
 
-- **Genuine contradiction found in already-applied Milestone 0 schema, not part of this
-  milestone's scope to fix, but blocking for later milestones — flagging to `pronto-lead`
-  per instructions.** `data-model.md` §2.6 and §3 item 5 (both dated "DECIDED, user
-  override, 2026-08-12") specify a dedicated `sos_availability` table, separate from
-  `availability_slots`. The actual applied migration,
-  `backend/src/main/resources/db/migration/V5__create_availability_slots.sql`, implements
-  the **originally-rejected** single-table design instead — its own header comment says the
-  table is "used for both Standard scheduling and SOS 'currently available' matching," and
-  no `V11__create_sos_availability.sql` (or similar) exists. Relatedly,
-  `V8__create_orders.sql`'s `order_status` CHECK constraint and header comment still
-  implement the **superseded 6-status** model (no `REJECTED`), contradicting
-  `data-model.md` §2.9/§3 item 10 and `overview.md`'s now-7-status "Booking statuses" row
-  (also dated 2026-08-12). Both gaps predate this task and are **not altered by this
-  doc** (Milestone 0 migrations were explicitly out of bounds for this task) — this
-  endpoint contract works around the `sos_availability` gap by simply not creating that
-  row at professional-registration time (§2.1 step 4) rather than silently inventing a
-  migration. Both gaps need a follow-up migration + `pronto-lead` sign-off on sequencing —
-  the `sos_availability` gap blocks Milestone 4 (SOS) and Milestone 6 (dashboard toggle);
-  the `order_status`/`REJECTED` gap blocks Milestone 3/4's accept/reject logic. Neither
-  blocks Milestone 1 itself.
+- **Genuine contradiction found in already-applied Milestone 0 schema — both gaps since
+  fixed.** `data-model.md` §2.6 and §3 item 5 (both dated "DECIDED, user override,
+  2026-08-12") specify a dedicated `sos_availability` table, separate from
+  `availability_slots`. The originally-applied migration,
+  `backend/src/main/resources/db/migration/V5__create_availability_slots.sql`, had
+  implemented the **originally-rejected** single-table design instead (its own header
+  comment said the table was "used for both Standard scheduling and SOS 'currently
+  available' matching"). Closed via `V13__create_sos_availability.sql` (2026-08-13, done
+  ahead of Milestone 4 specifically to unblock it) — registration (§2.1 step 4) now inserts
+  the `sos_availability` row too. Relatedly, `V8__create_orders.sql`'s `order_status` CHECK
+  constraint had implemented the **superseded 6-status** model (no `REJECTED`),
+  contradicting `data-model.md` §2.9/§3 item 10 — closed via
+  `V11__alter_orders_status_add_rejected.sql` as part of Milestone 3.
 - **No password-reset flow.** Nothing in the source docs describes one (the
   `verification_codes.purpose` column was deliberately left as a single-value CHECK
   precisely because of this, per `data-model.md` §2.3), so none is designed here. Worth

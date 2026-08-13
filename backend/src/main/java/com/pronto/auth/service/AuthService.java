@@ -11,6 +11,8 @@ import com.pronto.auth.email.EmailSender;
 import com.pronto.auth.entity.VerificationCode;
 import com.pronto.auth.repository.VerificationCodeRepository;
 import com.pronto.auth.security.JwtService;
+import com.pronto.availability.entity.SosAvailability;
+import com.pronto.availability.repository.SosAvailabilityRepository;
 import com.pronto.common.dto.FieldError;
 import com.pronto.common.dto.LockedDetails;
 import com.pronto.common.exception.ApiException;
@@ -50,6 +52,7 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final ProfessionalRepository professionalRepository;
+    private final SosAvailabilityRepository sosAvailabilityRepository;
     private final CategoryRepository categoryRepository;
     private final VerificationCodeRepository verificationCodeRepository;
     private final PasswordEncoder passwordEncoder;
@@ -59,6 +62,7 @@ public class AuthService {
 
     public AuthService(UserRepository userRepository,
                         ProfessionalRepository professionalRepository,
+                        SosAvailabilityRepository sosAvailabilityRepository,
                         CategoryRepository categoryRepository,
                         VerificationCodeRepository verificationCodeRepository,
                         PasswordEncoder passwordEncoder,
@@ -67,6 +71,7 @@ public class AuthService {
                         LoginAttemptRecorder loginAttemptRecorder) {
         this.userRepository = userRepository;
         this.professionalRepository = professionalRepository;
+        this.sosAvailabilityRepository = sosAvailabilityRepository;
         this.categoryRepository = categoryRepository;
         this.verificationCodeRepository = verificationCodeRepository;
         this.passwordEncoder = passwordEncoder;
@@ -92,10 +97,11 @@ public class AuthService {
         if (request.role() == UserRole.PROFESSIONAL) {
             Professional professional = new Professional(
                     user.getId(), request.categoryId(), request.serviceArea(), request.basePrice());
-            professionalRepository.save(professional);
-            // Deliberately does NOT insert an sos_availability row — that table doesn't
-            // exist yet. Known, flagged schema gap (data-model.md §4), not this
-            // milestone's problem to fix.
+            professional = professionalRepository.save(professional);
+            // data-model.md §2.6 row-lifecycle requirement: one sos_availability row per
+            // professional from creation, defaulting to isAvailable = false, so a future
+            // SOS-matching query needs no NULL-handling for professionals who never toggled it.
+            sosAvailabilityRepository.save(new SosAvailability(professional.getId()));
         }
 
         String code = generateVerificationCode();

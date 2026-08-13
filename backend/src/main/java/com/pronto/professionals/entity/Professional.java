@@ -20,8 +20,9 @@ import java.time.Instant;
  * just the id. Mapping matches the already-applied {@code V4__create_professionals.sql}
  * migration exactly. See {@code docs/architecture/data-model.md} §2.4.
  *
- * <p>Does not model {@code sos_availability} — that table doesn't exist yet (known,
- * flagged gap; see {@code docs/architecture/api-contract.md} §4).
+ * <p>Does not model {@code sos_availability} — that's a separate 1:1 table owned by the
+ * {@code availability} package ({@code availability.entity.SosAvailability}), not this
+ * entity, matching the decided design in {@code docs/architecture/data-model.md} §2.6.
  */
 @Entity
 @Table(name = "professionals")

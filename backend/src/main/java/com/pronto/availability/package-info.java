@@ -1,19 +1,19 @@
 /**
- * {@code AvailabilitySlots} management for professionals.
+ * {@code AvailabilitySlots}/{@code sos_availability} management for professionals.
  *
- * <p>Owns the {@code availability_slots} table (see
- * {@code docs/architecture/data-model.md} §2.5), used both for Standard scheduling
- * (future bookable windows) and SOS "currently available" matching. Consumed by the
- * {@code bookings} package when matching professionals to Standard/SOS requests. Stub
- * only as of Milestone 0.
+ * <p>Owns the {@code availability_slots} table (see {@code docs/architecture/data-model.md}
+ * §2.5), used for Standard scheduling (future bookable windows). Still a stub as of this
+ * commit — no JPA entity/repository/controller for it yet; that's Milestone 3's job.
  *
- * <p><b>Milestone 3 slice approved, 2026-08-13</b> ({@code pronto-lead}): a narrow,
- * read-focused slice — the {@code AvailabilitySlot} entity/repository plus {@code POST
- * /api/availability/slots} and {@code GET /api/availability/slots/me} only, no edit/
- * delete/toggle, no UI — is pulled forward into Milestone 3 so the {@code bookings}
- * package's Standard-path endpoints have real slot rows to book against. Full contract:
- * {@code docs/architecture/api-contract-bookings.md} §2.10/§2.11. The rest of this
- * package (full CRUD, calendar-management surface, dashboard UI) remains Milestone 6
- * (Professional dashboard) scope, per {@code docs/architecture/implementation-plan.md}.
+ * <p><b>Pre-Milestone-4 schema-gap fix — 2026-08-13</b>: also owns the {@code
+ * sos_availability} table (§2.6), added by {@code V13__create_sos_availability.sql}. This
+ * closes a previously-flagged divergence: the originally-applied
+ * {@code V5__create_availability_slots.sql} implemented SOS matching as a query variant of
+ * {@code availability_slots} — the single-table design §2.6/§3 item 5 explicitly rejected in
+ * favor of a dedicated table — done now, ahead of Milestone 3/4, specifically so
+ * professional registration ({@code auth.service.AuthService#register}) can insert the
+ * default {@code isAvailable = false} row per {@code data-model.md} §2.6's row-lifecycle
+ * requirement. The {@code SosAvailability} entity + repository exist; the toggle/listing
+ * endpoints themselves remain Milestone 4 (SOS booking flow) scope.
  */
 package com.pronto.availability;

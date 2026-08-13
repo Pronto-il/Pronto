@@ -172,10 +172,101 @@ closed).
 
 ## Milestone 4 — SOS booking flow
 
-- **Scope**: `bookings` (SOS path), reusing the professional-selection component with
-  urgent filtering per `overview.md` §4 (not a separate screen).
+- **Status: COMPLETE (backend), QA-signed-off on branch `MS4`, 2026-08-13.** Not yet
+  merged to `main` (nor is `MS3`) — merge/push is pending the user's own explicit git
+  operations, not implied by this status line. `bookings` (SOS path) and the
+  `availability` SOS-toggle slice implemented per `docs/architecture/api-contract-bookings.md`
+  §2.12-2.15 (the same contract doc as Milestone 3, extended in place rather than forked
+  into a new file — titled "Milestones 3 & 4" as of this pass); QA validated live against a
+  real Postgres instance with one bug found and fixed mid-milestone (a JSON-boolean-
+  coercion bug on the new SOS-availability toggle) — see "QA summary" below. **Frontend
+  booking-flow screens remain entirely deferred**, consistent with Milestones 1-3 — not a
+  gap in this milestone's backend completion.
+- **Scope actually built**: two new `bookings` endpoints (`GET
+  /api/bookings/sos-professionals?issueId=`, `POST /api/bookings/sos-orders`) plus a fix to
+  the three existing Milestone 3 `BookingsService` methods (`listProfessionals`,
+  `listSlots`, `createOrder`) adding a step that checks `issue.urgencyType` matches the
+  endpoint's booking path (`409 ISSUE_URGENCY_MISMATCH` otherwise) — closing a gap those
+  three endpoints shipped with in Milestone 3 (they never validated `urgencyType` at all;
+  see the contract doc's §3.10/§6 item 5 for why this was fixed now rather than left open).
+  New DTO `bookings/dto/CreateSosOrderRequest.java` (one field fewer than
+  `CreateOrderRequest` — no `slotId`, SOS has no slot selection). `ProfessionalListingRepository`
+  gained `listSosAvailableByCategory` (joins `professionals`/`users`/`sos_availability`,
+  same soft-delete exclusion and `base_price ASC` ordering as the Standard listing query).
+  `BookingsWebConfig` gained two new literal path patterns
+  (`/api/bookings/sos-professionals`, `/api/bookings/sos-orders`) on its existing
+  `CUSTOMER`-scoped `RoleRequiredInterceptor` registration — its literal-list design (chosen
+  in Milestone 3 because this package mixes roles per-route) doesn't pick up new routes via
+  a wildcard the way `availability`'s config does. In `availability`: two new endpoints
+  (`PUT`/`GET /api/availability/sos-availability`), new DTOs
+  `availability/dto/SosAvailabilityRequest.java`/`SosAvailabilityResponse.java`,
+  `SosAvailabilityRepository` gained an `updateAvailability` unconditional-`UPDATE` method
+  (deliberately not the guarded-transition pattern used everywhere else in this doc — see
+  `availability/README.md` for why). `AvailabilityWebConfig` needed **no** change — its
+  existing blanket `/api/availability/**` pattern already covered the new routes. Two new
+  shared error codes in `common.exception.ErrorCode`: `ISSUE_URGENCY_MISMATCH` (409),
+  `SOS_PROFESSIONAL_UNAVAILABLE` (409). **No new Flyway migration this milestone** —
+  verified directly against the applied migration history: `sos_availability` (`V13`),
+  nullable `orders.slot_id`/`booked_end` (`V12`/`V8`), and the 7-value `order_status` `CHECK`
+  including `REJECTED` (`V11`) all already existed ahead of this milestone (`V13` was
+  applied as a pre-Milestone-4 schema-gap fix, already reflected in `availability/README.md`'s
+  prior status line). `accept`/`reject`/`cancel`/`GET .../{orderId}`/`GET .../me`
+  (§2.5-§2.9) received **zero code changes** — confirmed by QA to already generalize
+  correctly to SOS orders (nullable `slotId`/`bookedEnd` flow through cleanly; the
+  unconditional `releaseSlot(order.getSlotId(), now)` call is a safe no-op when `slotId` is
+  `null`). See `backend/src/main/java/com/pronto/bookings/README.md` and
+  `.../availability/README.md` for full detail.
 - **Acceptance criteria**: full SOS path works end-to-end per PRD §3.5, including the
-  reject/unavailable → return-to-list-or-no-professional-message branch.
+  reject/unavailable → return-to-list-or-no-professional-message branch. **Met** — SOS
+  professional listing (filtered by category **and** live `sos_availability.is_available =
+  true`, excluding soft-deleted professionals) → order creation against a specific
+  currently-available professional (no slot selection; `bookedStart = now()`, `bookedEnd =
+  NULL`, `slotId = NULL`) → professional accept/reject (the exact same endpoints Standard
+  orders use, unmodified) → customer tracking, all verified against a real Postgres
+  instance, backend-only. Both halves of PRD §3.5.6's "rejects or becomes unavailable"
+  requirement are implemented: "rejects" maps to the existing `reject` endpoint once an
+  order already exists; "becomes unavailable" maps to a `409 SOS_PROFESSIONAL_UNAVAILABLE`
+  at order-creation time (a plain read-check of `sos_availability`, not an atomic claim —
+  see the contract doc §2.13/§3.11 for the full design reasoning) rather than a reactive
+  sweep over already-`PENDING` orders — a deliberate design decision, not an oversight.
+- **QA summary**: live-validated against a real Postgres instance (fresh schema, all 13
+  migrations applied cleanly) — the full SOS happy path with row-level state verification at
+  every step (list SOS-available professionals → professional toggles availability on →
+  list again reflects the toggle → customer creates an SOS order → professional accepts →
+  customer polls tracking), both branches of PRD §3.5.6 (professional reject via the reused
+  Milestone 3 `reject` endpoint; "becomes unavailable" verified as a clean `409
+  SOS_PROFESSIONAL_UNAVAILABLE` at order-creation time with no orphaned `orders` rows and no
+  incorrect `issues`/`sos_availability` status flips), the no-available-professional case
+  (an empty list is a valid `200`, not an error), cross-path `ISSUE_URGENCY_MISMATCH`
+  validation in both directions (Standard endpoints correctly reject SOS-flagged issues and
+  vice versa, all 5 endpoint combinations: §2.2/§2.3/§2.4 against an SOS issue, §2.12/§2.13
+  against a Standard issue), full ownership/role enforcement on all 4 new endpoints, the
+  SOS-availability toggle's semantics (idempotent, no state-guard needed, verified against
+  both prior states), and a full regression pass confirming **zero breakage** to Milestone
+  1-3 — including explicitly confirming `accept`/`reject`/`cancel`/`GET .../{orderId}`/`GET
+  .../me` behave identically for SOS vs. Standard orders, since none of those five endpoints
+  received any code change this milestone. **One bug found mid-milestone**: a numeric JSON
+  value (e.g. `1`/`0`) sent to `PUT /api/availability/sos-availability`'s `isAvailable`
+  field was silently coerced to a boolean by Jackson's default lenient scalar coercion,
+  rather than being rejected as `400 VALIDATION_ERROR` per the contract doc's explicit field-
+  validation rule (§2.14). Fixed via a narrowly-scoped custom Jackson deserializer
+  (`availability.dto.StrictBooleanDeserializer`, applied only to
+  `SosAvailabilityRequest.isAvailable` via `@JsonDeserialize`) — deliberately **not** a
+  global `ObjectMapper` coercion-config change, to avoid any risk of altering Milestone 1-3's
+  already-shipped Jackson behavior on other endpoints' `Boolean` fields. Re-verified fixed
+  with no side effects to any other endpoint. **Final QA verdict: full sign-off, zero known
+  open bugs.**
+- **Known gaps/deferred, carried forward accurately from Milestone 3 (checked, still true)**:
+  `ON_THE_WAY`/`COMPLETED` job-status progression remains Milestone 6 scope, unchanged by
+  this milestone — SOS orders reach the same `CONFIRMED` ceiling Standard orders did in
+  Milestone 3. The `PENDING`-order timeout/expiry sweep remains Milestone 5 scope — an SOS
+  order stuck `PENDING` because its professional went unavailable mid-request has no faster
+  resolution than normal polling (`GET /api/bookings/orders/{orderId}`) until that sweep
+  exists; this is the accepted, explicitly-documented consequence of the contract doc's §3.11
+  design decision, not a newly-discovered gap. Professional-viewing-issue-images remains open
+  and unbuilt (unchanged from Milestone 3, contract doc §6 item 3 / §7). Frontend
+  booking-flow screens remain entirely deferred project-wide, consistent with Milestones
+  1-3.
 
 ## Milestone 5 — Notifications & real-time status
 

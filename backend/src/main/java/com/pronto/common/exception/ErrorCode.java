@@ -39,7 +39,12 @@ public enum ErrorCode {
     CATEGORY_MISMATCH(HttpStatus.BAD_REQUEST),
     SLOT_UNAVAILABLE(HttpStatus.CONFLICT),
     ORDER_NOT_PENDING(HttpStatus.CONFLICT),
-    ORDER_NOT_CANCELLABLE(HttpStatus.CONFLICT);
+    ORDER_NOT_CANCELLABLE(HttpStatus.CONFLICT),
+
+    // Milestone 4 additions (SOS booking flow). See
+    // docs/architecture/api-contract-bookings.md §2 "Milestone 4 additions".
+    ISSUE_URGENCY_MISMATCH(HttpStatus.CONFLICT),
+    SOS_PROFESSIONAL_UNAVAILABLE(HttpStatus.CONFLICT);
 
     private final HttpStatus httpStatus;
 

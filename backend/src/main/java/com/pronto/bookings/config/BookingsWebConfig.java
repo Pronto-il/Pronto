@@ -18,6 +18,11 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * incorrectly swallow the either-role sub-paths ({@code /orders/{id}}, {@code /orders/me})
  * that must NOT be gated here.
  *
+ * <p>Milestone 4 adds two more {@code CUSTOMER}-only literal patterns
+ * ({@code /api/bookings/sos-professionals}, {@code /api/bookings/sos-orders}, §2.12/§2.13) to
+ * the same registration — this package's literal-list design doesn't pick up new routes
+ * automatically the way a wildcard would (§0.1/§6 item 8 of the contract doc).
+ *
  * <p>Nothing is registered for {@code cancel} (§2.7), {@code GET .../orders/{orderId}}
  * (§2.8), or {@code GET .../orders/me} (§2.9) — {@code auth.config.SecurityConfig}'s blanket
  * {@code .anyRequest().authenticated()} already guarantees any request reaching these routes
@@ -32,7 +37,7 @@ public class BookingsWebConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.CUSTOMER.name()))
                 .addPathPatterns("/api/bookings/professionals", "/api/bookings/professionals/*/slots",
-                        "/api/bookings/orders");
+                        "/api/bookings/orders", "/api/bookings/sos-professionals", "/api/bookings/sos-orders");
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.PROFESSIONAL.name()))
                 .addPathPatterns("/api/bookings/orders/*/accept", "/api/bookings/orders/*/reject");
     }

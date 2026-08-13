@@ -1,6 +1,7 @@
 package com.pronto.bookings.controller;
 
 import com.pronto.bookings.dto.CreateOrderRequest;
+import com.pronto.bookings.dto.CreateSosOrderRequest;
 import com.pronto.bookings.dto.OrderDetailResponse;
 import com.pronto.bookings.dto.OrderResponse;
 import com.pronto.bookings.dto.OrdersListResponse;
@@ -26,14 +27,14 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * {@code /api/bookings/*} — Standard booking flow. Route-level role gating
- * ({@code CUSTOMER}-only / {@code PROFESSIONAL}-only) is enforced by
+ * {@code /api/bookings/*} — Standard (Milestone 3) and SOS (Milestone 4) booking flows.
+ * Route-level role gating ({@code CUSTOMER}-only / {@code PROFESSIONAL}-only) is enforced by
  * {@code bookings.config.BookingsWebConfig}'s {@code RoleRequiredInterceptor}
  * registrations, not in these method bodies — see that class's javadoc (§0.1). The
  * either-role routes ({@code cancel}, {@code GET .../{orderId}}, {@code GET .../me}) have no
  * route-level gate at all; authorization for those happens entirely in
  * {@link BookingsService} once the resource is loaded. See
- * {@code docs/architecture/api-contract-bookings.md} §2.2-2.9.
+ * {@code docs/architecture/api-contract-bookings.md} §2.2-2.9 (Standard) and §2.12-2.13 (SOS).
  *
  * <p>Path/query ids are parsed manually (not via typed {@code @PathVariable Long}/
  * {@code @RequestParam Long}) so a malformed value produces this app's standard error
@@ -72,6 +73,21 @@ public class BookingsController {
     public ResponseEntity<OrderResponse> createOrder(@AuthenticationPrincipal AuthenticatedUser principal,
                                                        @Valid @RequestBody CreateOrderRequest request) {
         OrderResponse response = bookingsService.createOrder(principal.id(), request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @GetMapping("/sos-professionals")
+    public ResponseEntity<ProfessionalListingResponse> listSosProfessionals(
+            @AuthenticationPrincipal AuthenticatedUser principal,
+            @RequestParam(name = "issueId", required = false) String issueIdRaw) {
+        Long issueId = parseQueryId(issueIdRaw, "issueId");
+        return ResponseEntity.ok(bookingsService.listSosProfessionals(principal.id(), issueId));
+    }
+
+    @PostMapping("/sos-orders")
+    public ResponseEntity<OrderResponse> createSosOrder(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                          @Valid @RequestBody CreateSosOrderRequest request) {
+        OrderResponse response = bookingsService.createSosOrder(principal.id(), request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 

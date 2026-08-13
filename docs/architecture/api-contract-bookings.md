@@ -1,14 +1,25 @@
-# Pronto — REST API Contract: Milestone 3 (Standard Booking Flow)
+# Pronto — REST API Contract: Milestones 3 & 4 (Standard + SOS Booking Flows)
 
-Status: **FINALIZED — ready for `pronto-coding`, no open sign-off items remain for
-Milestone 3.** All four decisions raised in the original draft's §6 have been resolved by
-`pronto-lead` (2026-08-13): `orders.slot_id` is approved as a new column (`V12`, decided —
-see §1), a minimal `availability` slice is approved for this milestone (option (a) — see
+Status: **FINALIZED for Milestone 3 — implemented, QA-signed-off** (see
+`backend/.../bookings/README.md` / `.../availability/README.md`). **Milestone 4 (SOS
+booking flow) design added 2026-08-13, ready for `pronto-coding` — no open sign-off items
+block it.** All four decisions raised in the original Milestone-3 draft's §6 were resolved
+by `pronto-lead` (2026-08-13): `orders.slot_id` is approved as a new column (`V12`, decided
+— see §1), a minimal `availability` slice is approved for Milestone 3 (option (a) — see
 §2.10/§2.11 for the full endpoint contract), the professional-viewing-images question
-stays explicitly out of Milestone 3's scope (tracked as an open item, §7, not designed or
-built here), and the `ON_THE_WAY`/`COMPLETED`-progression-belongs-to-Milestone-6 reading is
-confirmed correct. Every place below that previously described a fallback/conditional
-design now states the decided design directly — see §6 for the resolution record.
+stays explicitly out of scope (tracked as an open item, §7, not designed or built here),
+and the `ON_THE_WAY`/`COMPLETED`-progression-belongs-to-Milestone-6 reading is confirmed
+correct. Every place below that previously described a fallback/conditional design now
+states the decided design directly — see §6 for the resolution record.
+
+**Milestone 4 addition (this pass)**: §2.12–§2.15 add the SOS-path creation/listing
+endpoints and the professional's own SOS-availability toggle, extending this same doc in
+place rather than forking a new file — §3.7 (written during Milestone 3) already predicted
+almost exactly this shape and is now cross-referenced as fulfilled. §6 items 5–8 record the
+Milestone-4-specific decisions (the pre-existing `urgencyType` validation gap, the
+"professional becomes unavailable" semantics, the migration verdict, and the role-gating
+config verdict). No new file was created — this is the same contract doc MS3 QA already
+signed off on, extended.
 
 Written by `pronto-planning`. Builds on:
 - `docs/architecture/data-model.md` §2.5 (`availability_slots`), §2.7 (`issues`), §2.9
@@ -25,12 +36,14 @@ Written by `pronto-planning`. Builds on:
   required apply order and confirms there is no ordering dependency between them beyond
   that convention.
 
-Scope: the `bookings` package, **Standard path only** (SOS is Milestone 4 — nothing below
-implements SOS-specific behavior, but §3.7/§4 call out exactly where the design already
-generalizes to SOS and where M4 will need net-new endpoints); plus a deliberately narrow
-slice of the `availability` package (two endpoints only — slot creation + self-listing,
-§2.10/§2.11 — not the Milestone 6 dashboard). Also specifies one small, necessary addition
-to the `issues` package (`GET /api/issues/{id}`, §2.1) — reasoning in that section.
+Scope: the `bookings` package, **both the Standard path (Milestone 3, §2.2–§2.11) and the
+SOS path (Milestone 4, §2.12–§2.15)**; plus the `availability` package slice this now
+implies — Milestone 3's narrow slot-creation/self-listing slice (§2.10/§2.11) **and**
+Milestone 4's SOS-availability toggle/read (§2.14/§2.15). Also specifies one small,
+necessary addition to the `issues` package (`GET /api/issues/{id}`, §2.1) — reasoning in
+that section. Still **not** covered by this doc: full slot CRUD/calendar semantics, the
+professional dashboard UI, `ON_THE_WAY`/`COMPLETED` progression, the `EXPIRED` sweep, and
+notification dispatch — all remain later milestones' scope exactly as before.
 
 This doc is a **precise contract spec** (request/response JSON shapes, status codes, error
 codes, field-level validation), not literal Java code — writing the controllers/services is
@@ -127,6 +140,47 @@ fixed here, no behavior change to any endpoint's actual access rule):
   correct here, the same simple case `IssuesWebConfig`/`StorageWebConfig` were in for
   Milestone 2).
 
+**Milestone 4 role-gating config changes — verified against the real, as-built config
+classes (`backend/src/main/java/com/pronto/bookings/config/BookingsWebConfig.java`,
+`.../availability/config/AvailabilityWebConfig.java`), not assumed:**
+
+- **`bookings.config.BookingsWebConfig` needs a real change.** Both new `bookings`
+  endpoints (§2.12 `GET /api/bookings/sos-professionals`, §2.13 `POST
+  /api/bookings/sos-orders`) are `CUSTOMER`-only, same role as the existing
+  `CUSTOMER`-scoped registration. The as-built config registers that interceptor on an
+  explicit literal-path list (`"/api/bookings/professionals",
+  "/api/bookings/professionals/*/slots", "/api/bookings/orders"`), not a wildcard — so the
+  two new routes do **not** get picked up automatically and must be added as two more
+  literal entries to that same list:
+  ```java
+  registry.addInterceptor(new RoleRequiredInterceptor(UserRole.CUSTOMER.name()))
+          .addPathPatterns("/api/bookings/professionals", "/api/bookings/professionals/*/slots",
+                            "/api/bookings/orders", "/api/bookings/sos-professionals",
+                            "/api/bookings/sos-orders");
+  ```
+  Both new patterns are bare literals (`GET /api/bookings/sos-professionals` takes its
+  `issueId` as a query param, not a path segment; `POST /api/bookings/sos-orders` has no
+  path variable either) — no `/*` wildcard segment needed, and neither string is a prefix
+  of any existing pattern or vice versa, so there is no risk of one pattern accidentally
+  swallowing another. The existing `PROFESSIONAL`-scoped registration
+  (`accept`/`reject`) is untouched — nothing new in this doc is `PROFESSIONAL`-gated inside
+  the `bookings` package. `accept`/`reject`/`cancel`/`GET .../{orderId}`/`GET .../me`
+  (§2.5–§2.9) need **no** config change at all, consistent with §3.7's claim that they work
+  unchanged for SOS orders — verified directly against `OrderRepository`'s
+  `acceptIfPending`/`rejectIfPending`/`cancelIfStatus` (no `urgency_type`/`slot_id`
+  branching in any of the three `@Query` bodies) and `Order`'s constructor (already accepts
+  nullable `slotId`/`bookedEnd`), not merely re-asserted.
+- **`availability.config.AvailabilityWebConfig` needs no change at all.** It already
+  registers `RoleRequiredInterceptor(PROFESSIONAL)` on the blanket wildcard pattern
+  `"/api/availability/**"` (confirmed by reading the file directly, not assumed from the
+  README's prose) — `/api/availability/sos-availability` (§2.14/§2.15, also
+  `PROFESSIONAL`-only) is already covered by that existing `/**` wildcard the same way
+  `/api/availability/slots`/`/api/availability/slots/me` are. This is the "already-covered
+  for free" case, not the "needs a new literal pattern" case `bookings` is in — the
+  difference is entirely because `availability`'s existing registration already used a
+  wildcard while `bookings`'s used a literal list (§0.1 above explains why each package
+  made that choice).
+
 ---
 
 ## 1. Prerequisite migrations — `V11` and `V12` (both decided, apply in this order)
@@ -203,6 +257,26 @@ Milestone 1/2 (conceptually "owed" already, independent of this milestone) while
 net-new scope introduced by this doc — keeping that provenance distinction visible in the
 migration history is the only reason for the ordering, not a correctness one.
 
+### 1.4 Milestone 4 — no new migration required (verdict, not a recommendation)
+
+Checked directly against the applied migration history and current schema, not assumed:
+
+- `sos_availability` already exists — `V13__create_sos_availability.sql`, applied ahead of
+  this milestone specifically to unblock it (`data-model.md` §4, `availability/README.md`).
+  Milestone 4's toggle/read endpoints (§2.14/§2.15) read/write this existing table's
+  existing `is_available`/`updated_at` columns only — no new column needed.
+- `orders.slot_id` and `orders.booked_end` are already nullable (`V12`, §1.2; `V8`
+  originally for `booked_end`) — SOS order creation (§2.13) writes `slot_id = NULL`,
+  `booked_end = NULL` into columns that already tolerate `NULL`, no `ALTER TABLE` needed.
+- `orders.order_status`'s `CHECK` constraint already includes all 7 values including
+  `REJECTED` (`V11`, §1.1) — SOS orders use the exact same status set as Standard orders,
+  nothing new to add.
+- No new table, column, or constraint is introduced anywhere in §2.12–§2.15's design.
+
+**Verdict: `pronto-coding` does not need to write a `V14` (or any new) migration for
+Milestone 4.** If this changes later (e.g. a future decision adds an SOS-specific column),
+that would be a new, separately-flagged migration — not implied by anything designed here.
+
 ---
 
 ## 2. Error response envelope (reused verbatim from `api-contract.md` §1 / `api-contract-issues.md` §1)
@@ -232,6 +306,13 @@ New codes:
 | `SLOT_UNAVAILABLE` | 409 | The referenced `slotId` doesn't exist for that professional, isn't currently `is_available = true`, has `start_time <= now()`, or lost a concurrency race to another request claiming it first (§3.2). |
 | `ORDER_NOT_PENDING` | 409 | `accept`/`reject` called on an order whose `order_status != 'PENDING'` (already decided, or lost a race to a concurrent accept/reject). |
 | `ORDER_NOT_CANCELLABLE` | 409 | `cancel` called on an order in a terminal state (`COMPLETED`/`CANCELLED`/`REJECTED`/`EXPIRED`), or by an actor/state combination that isn't permitted (a professional calling `cancel` on a still-`PENDING` order — they must use `reject` instead, §2.7). |
+
+### Error code taxonomy — Milestone 4 additions
+
+| `error.code` | HTTP status | Meaning |
+|---|---|---|
+| `ISSUE_URGENCY_MISMATCH` | 409 | The referenced issue's `urgency_type` doesn't match the booking path the caller is using — a Standard-path endpoint (§2.2/§2.3/§2.4) called against an issue whose `urgency_type = 'SOS'`, or the SOS-path endpoints (§2.12/§2.13) called against an issue whose `urgency_type = 'STANDARD'`. New this milestone — see §6 item 5 for why this fixes a pre-existing Milestone 3 gap rather than only guarding the new SOS endpoints. |
+| `SOS_PROFESSIONAL_UNAVAILABLE` | 409 | `POST /api/bookings/sos-orders` (§2.13) called against a `professionalId` whose `sos_availability.is_available` is not `true` at the moment of the call — the professional was available when the customer loaded the list (§2.12) but has since toggled off, or the row was never toggled on. This is the backend-observable side of PRD §3.5.6's "becomes unavailable" branch — see §3.11 for the full reasoning. |
 
 ---
 
@@ -329,15 +410,18 @@ under `/api/bookings/*` rather than `/api/professionals/*` — see §3.9.
    VALIDATION_ERROR` otherwise.
 3. Load issue → `404 NOT_FOUND` if missing.
 4. `issue.customerId != caller.id` → `403 FORBIDDEN`.
-5. `issue.status != 'OPEN'` → `409 ISSUE_NOT_BOOKABLE`.
-6. Query `professionals` joined to `users` where `category_id = issue.categoryId` and
+5. **`issue.urgencyType != 'STANDARD'` → `409 ISSUE_URGENCY_MISMATCH`.** New this pass —
+   see §6 item 5 for why this pre-existing Milestone 3 gap (this endpoint never checked
+   `urgencyType` at all until now) is fixed here rather than left open.
+6. `issue.status != 'OPEN'` → `409 ISSUE_NOT_BOOKABLE`.
+7. Query `professionals` joined to `users` where `category_id = issue.categoryId` and
    `users.deleted_at IS NULL` (**resolves the flagged gap in `api-contract.md` §2.5**: a
    soft-deleted professional's row previously stayed queryable with nothing filtering it
    out of Standard/SOS listings — this join is the fix, landing exactly where that gap
    said it would need to). Ordered by `base_price ASC` (cheapest first — **judgment call**,
    not specified by any source document; trivial to change, e.g. to `reliability_score DESC
    NULLS LAST`, later).
-7. Return the list. **Not** filtered by whether the professional currently has any open
+8. Return the list. **Not** filtered by whether the professional currently has any open
    `availability_slots` (see §3.4 for the reasoning) — a professional with zero slots still
    appears; the slot-selection screen (§2.3) shows "no available times" for them.
 
@@ -363,7 +447,7 @@ under `/api/bookings/*` rather than `/api/professionals/*` — see §3.9.
 null-tolerant field).
 
 **Status codes**: `200` success · `400 VALIDATION_ERROR` · `401 UNAUTHORIZED` ·
-`403 FORBIDDEN` · `404 NOT_FOUND` · `409 ISSUE_NOT_BOOKABLE`.
+`403 FORBIDDEN` · `404 NOT_FOUND` · `409 ISSUE_URGENCY_MISMATCH` · `409 ISSUE_NOT_BOOKABLE`.
 
 ---
 
@@ -377,9 +461,10 @@ to book against.
 **Behavior:**
 1. Resolve caller; `403 FORBIDDEN` if `role != CUSTOMER`.
 2. `issueId` query param required/valid → `400 VALIDATION_ERROR` otherwise.
-3. Load issue → `404 NOT_FOUND`; ownership → `403 FORBIDDEN`; bookable
-   (`status == 'OPEN'`) → `409 ISSUE_NOT_BOOKABLE`. (Same three checks as §2.2 — kept
-   as defense-in-depth even though the frontend would normally only reach this screen
+3. Load issue → `404 NOT_FOUND`; ownership → `403 FORBIDDEN`; urgency type
+   (`urgencyType == 'STANDARD'`) → `409 ISSUE_URGENCY_MISMATCH` (new this pass, §6 item 5);
+   bookable (`status == 'OPEN'`) → `409 ISSUE_NOT_BOOKABLE`. (Same four checks as §2.2 —
+   kept as defense-in-depth even though the frontend would normally only reach this screen
    after §2.2, consistent with this contract family's established paranoid-validation
    style, e.g. M2's re-validation of `imageKeys` in both `/classify` and `POST
    /api/issues`.)
@@ -405,7 +490,8 @@ An empty `slots` array is a valid, expected response (the professional currently
 open windows) — not an error.
 
 **Status codes**: `200` success · `400 VALIDATION_ERROR` · `400 CATEGORY_MISMATCH` ·
-`401 UNAUTHORIZED` · `403 FORBIDDEN` · `404 NOT_FOUND` · `409 ISSUE_NOT_BOOKABLE`.
+`401 UNAUTHORIZED` · `403 FORBIDDEN` · `404 NOT_FOUND` · `409 ISSUE_URGENCY_MISMATCH` ·
+`409 ISSUE_NOT_BOOKABLE`.
 
 ---
 
@@ -433,28 +519,31 @@ Creates the order — the Standard-booking "pick this professional, at this slot
 2. Validate field presence/shape → `400 VALIDATION_ERROR`.
 3. Load issue by `issueId` → `404 NOT_FOUND` if missing.
 4. `issue.customerId != caller.id` → `403 FORBIDDEN`.
-5. `issue.status != 'OPEN'` → `409 ISSUE_NOT_BOOKABLE`.
-6. Load professional by `professionalId` (with `users.deleted_at IS NULL`) → `400
+5. **`issue.urgencyType != 'STANDARD'` → `409 ISSUE_URGENCY_MISMATCH`.** New this pass —
+   see §6 item 5: this endpoint never validated `urgencyType` at all before now, a
+   pre-existing Milestone 3 gap fixed here rather than left open.
+6. `issue.status != 'OPEN'` → `409 ISSUE_NOT_BOOKABLE`.
+7. Load professional by `professionalId` (with `users.deleted_at IS NULL`) → `400
    VALIDATION_ERROR` if missing/deleted.
-7. `professional.categoryId != issue.categoryId` → `400 CATEGORY_MISMATCH`.
-8. **Atomically claim the slot** (single transaction from here through step 10):
+8. `professional.categoryId != issue.categoryId` → `400 CATEGORY_MISMATCH`.
+9. **Atomically claim the slot** (single transaction from here through step 11):
    `UPDATE availability_slots SET is_available = false, updated_at = now() WHERE id =
    :slotId AND professional_id = :professionalId AND is_available = true AND start_time >
    now()`. If the affected-row count is `0` → `409 SLOT_UNAVAILABLE`, roll back, return
    immediately (covers: slot doesn't exist, belongs to a different professional, already
    claimed, already in the past, or lost a concurrency race to a simultaneous request —
    §3.2).
-9. **Atomically transition the issue**: `UPDATE issues SET status = 'BOOKED', updated_at =
-   now() WHERE id = :issueId AND status = 'OPEN'`. If affected rows `= 0` → the issue was
-   booked by a concurrent request between step 5 and here → roll back the whole
-   transaction (including the slot claim from step 8) → `409 ISSUE_NOT_BOOKABLE`.
-10. Insert the `orders` row: `issue_id`, `customer_id = caller.id`, `professional_id`,
+10. **Atomically transition the issue**: `UPDATE issues SET status = 'BOOKED', updated_at =
+    now() WHERE id = :issueId AND status = 'OPEN'`. If affected rows `= 0` → the issue was
+    booked by a concurrent request between step 6 and here → roll back the whole
+    transaction (including the slot claim from step 9) → `409 ISSUE_NOT_BOOKABLE`.
+11. Insert the `orders` row: `issue_id`, `customer_id = caller.id`, `professional_id`,
     `booked_start = slot.startTime`, `booked_end = slot.endTime`, `order_status =
     'PENDING'`, `cancelled_by = NULL`, `final_price = professional.basePrice`
     (initialized from the professional's standing price offer, per `data-model.md` §2.9 —
     not editable by any endpoint in this milestone), `slot_id = :slotId` (per `V12`, §1.2 —
     always set for a Standard order).
-11. Commit. Return `201`.
+12. Commit. Return `201`.
 
 **Response `201`:**
 ```json
@@ -474,8 +563,8 @@ Creates the order — the Standard-booking "pick this professional, at this slot
 ```
 
 **Status codes**: `201` success · `400 VALIDATION_ERROR` · `400 CATEGORY_MISMATCH` ·
-`401 UNAUTHORIZED` · `403 FORBIDDEN` · `404 NOT_FOUND` · `409 ISSUE_NOT_BOOKABLE` ·
-`409 SLOT_UNAVAILABLE`.
+`401 UNAUTHORIZED` · `403 FORBIDDEN` · `404 NOT_FOUND` · `409 ISSUE_URGENCY_MISMATCH` ·
+`409 ISSUE_NOT_BOOKABLE` · `409 SLOT_UNAVAILABLE`.
 
 **A customer may re-pick the same professional after a rejection.** Nothing in this
 endpoint (or anywhere else) prevents creating a second `orders` row against the same issue
@@ -807,6 +896,280 @@ response — not an error.
 
 ---
 
+### 2.12 `GET /api/bookings/sos-professionals?issueId={id}` — new, Milestone 4
+
+Auth required: **yes**. Role: **CUSTOMER**.
+
+Professional listing for an SOS booking, filtered by the issue's category **and** currently
+`sos_availability.is_available = true`. Placed under `/api/bookings/*`, matching §2.2's
+Standard-listing precedent and §3.9's reasoning exactly (issue-scoped matching, not a
+general professional directory) — kept as a sibling of §2.2 rather than a query-param
+variant of it (e.g. `GET /api/bookings/professionals?issueId=&urgent=true`) so the two
+listing shapes can diverge independently later (the SOS listing already needs a different
+join/filter today) without one endpoint's contract quietly depending on the other's.
+
+**Behavior:**
+1. Resolve caller; `403 FORBIDDEN` if `role != CUSTOMER`.
+2. `issueId` query param required, must parse as a positive integer → `400
+   VALIDATION_ERROR` otherwise.
+3. Load issue → `404 NOT_FOUND` if missing.
+4. `issue.customerId != caller.id` → `403 FORBIDDEN`.
+5. `issue.urgencyType != 'SOS'` → `409 ISSUE_URGENCY_MISMATCH` (the SOS-side mirror of the
+   fix applied to §2.2/§2.3/§2.4 — see §6 item 5. Unlike those three, this is *not* a
+   pre-existing-gap fix — this endpoint is new, so the check is simply built in from the
+   start).
+6. `issue.status != 'OPEN'` → `409 ISSUE_NOT_BOOKABLE`.
+7. Query `professionals` joined to `users` (`users.deleted_at IS NULL`, same soft-delete
+   exclusion as §2.2) and joined to `sos_availability` where `category_id =
+   issue.categoryId` and `sos_availability.is_available = true`. A professional with no
+   `sos_availability` row at all is excluded by the join (in practice this shouldn't occur
+   — `data-model.md` §2.6 documents a row being created for every professional at
+   registration time, defaulting to `false`, precisely so no NULL-handling is needed here).
+   Ordered by `base_price ASC` — same **judgment call** as §2.2, made independently (not
+   required to match, per the task brief), landing on the same choice because nothing in
+   the source documents suggests a different SOS-specific ordering signal (e.g. "soonest
+   available" has no meaning here — SOS availability isn't time-windowed, §2.6).
+8. Return the list. An **empty list is a valid, expected response** — this is the backend
+   shape behind PRD §3.5.6's "no-available-professional message," which is a **frontend
+   rendering concern** (rendering an empty array as that message), not a backend error
+   condition. No `404`/`409` is returned for "zero professionals currently available."
+
+**Response `200`:**
+```json
+{
+  "issueId": 102,
+  "categoryId": 1,
+  "professionals": [
+    {
+      "professionalId": 47,
+      "fullName": "משה לוי",
+      "serviceArea": "רמת גן",
+      "basePrice": 220.00,
+      "reliabilityScore": null
+    }
+  ]
+}
+```
+
+Deliberately the **same shape** as §2.2's response (`issueId`, `categoryId`,
+`professionals: [{ professionalId, fullName, serviceArea, basePrice, reliabilityScore }]`)
+— per `overview.md` §4's `features/professionals` note that a future shared frontend
+component should be able to consume both listings with minimal branching (PRD §7.4). No
+extra field (e.g. an `sosAvailable` flag) is added to each card — every entry in *this*
+response is, by construction, currently SOS-available, so such a flag would be redundant.
+
+**Status codes**: `200` success · `400 VALIDATION_ERROR` · `401 UNAUTHORIZED` ·
+`403 FORBIDDEN` · `404 NOT_FOUND` · `409 ISSUE_URGENCY_MISMATCH` ·
+`409 ISSUE_NOT_BOOKABLE`.
+
+---
+
+### 2.13 `POST /api/bookings/sos-orders` — new, Milestone 4
+
+Auth required: **yes**. Role: **CUSTOMER**.
+
+Creates an SOS order — the SOS-booking "pick this currently-available professional" action
+(PRD §3.5.3/§3.5.4). No slot selection: SOS has no `availability_slots` involvement at all
+(`data-model.md` §2.6/§3 item 5) — the request naturally has one fewer field than §2.4's.
+
+**Request:**
+```json
+{ "issueId": 102, "professionalId": 47 }
+```
+
+**Field validation:**
+
+| Field | Rule |
+|---|---|
+| `issueId` | required, positive integer. Must resolve to an issue owned by the caller (Behavior step 3/4) — invalid/nonexistent → `404 NOT_FOUND`, same path-style exception to the general body-field-id rule that §2.4's own `issueId` field already uses (§0), for the identical reason (issue is the primary resource this call acts on). |
+| `professionalId` | required, positive integer. Must reference an existing `professionals` row whose `users.deleted_at IS NULL` → `400 VALIDATION_ERROR` otherwise — same ordinary body-reference convention as §2.4's `professionalId`. |
+
+**Behavior** (evaluated in this order):
+1. Resolve caller; `403 FORBIDDEN` if `role != CUSTOMER`.
+2. Validate field presence/shape → `400 VALIDATION_ERROR`.
+3. Load issue by `issueId` → `404 NOT_FOUND` if missing.
+4. `issue.customerId != caller.id` → `403 FORBIDDEN`.
+5. `issue.urgencyType != 'SOS'` → `409 ISSUE_URGENCY_MISMATCH` (built in from the start,
+   same reasoning as §2.12 step 5 — this is a new endpoint, not a retrofit).
+6. `issue.status != 'OPEN'` → `409 ISSUE_NOT_BOOKABLE`.
+7. Load professional by `professionalId` (with `users.deleted_at IS NULL`) → `400
+   VALIDATION_ERROR` if missing/deleted.
+8. `professional.categoryId != issue.categoryId` → `400 CATEGORY_MISMATCH`.
+9. **Read-check the professional's SOS availability** (single transaction from here through
+   step 11, same `@Transactional` shape as §2.4, but see the note below on why this step is
+   a plain read, not an atomic claim): load the professional's `sos_availability` row. If it
+   doesn't exist, or `is_available != true` → `409 SOS_PROFESSIONAL_UNAVAILABLE`, roll back
+   the transaction (nothing has been written yet at this point — the issue hasn't been
+   touched), return immediately. **This is the order-creation-time check that implements
+   PRD §3.5.6's "becomes unavailable" branch — see §3.11 for the full reasoning.**
+10. **Atomically transition the issue**: `UPDATE issues SET status = 'BOOKED', updated_at =
+    now() WHERE id = :issueId AND status = 'OPEN'` — the **same** `bookIfOpen` mechanism
+    §2.4 step 10 uses (`issues.repository.IssueRepository`, no urgency-type branching in
+    that query). If affected rows `= 0` → the issue was booked by a concurrent request
+    between step 6 and here → roll back → `409 ISSUE_NOT_BOOKABLE`.
+11. Insert the `orders` row: `issue_id`, `customer_id = caller.id`, `professional_id`,
+    `booked_start = now()` (the moment of the request — SOS has no pre-agreed window, unlike
+    Standard's `slot.startTime`), `booked_end = NULL` (always — `data-model.md` §2.9's
+    nullability of this column exists specifically for this case), `order_status =
+    'PENDING'`, `cancelled_by = NULL`, `final_price = professional.basePrice` (same
+    initialization rule as §2.4), `slot_id = NULL` (always — no `availability_slots` row is
+    ever involved in an SOS order).
+12. Commit. Return `201`.
+
+**Why the SOS-availability check (step 9) is a plain read, not an atomic
+claim-with-exclusive-lock, unlike the Standard slot claim (§2.4 step 9 / §3.2) — design
+decision made here, evaluated against the source docs, not inherited from anywhere:** a
+specific `availability_slots` row represents one professional's one calendar window — two
+customers must not both be able to claim it, hence the exclusive `UPDATE ... WHERE
+is_available = true` claim. `sos_availability.is_available`, by contrast, is not a
+resource that gets "consumed" by a single incoming request — it's a live signal ("I'm
+currently open for urgent work"), and nothing in PRD §3.5.2–§3.5.4 or the `sos_availability`
+table design (`data-model.md` §2.6/§3 item 5) suggests a professional can only receive one
+SOS request at a time. This mirrors the *non-exclusive* model Standard booking already has
+at the professional level (nothing stops two different customers from independently
+booking the same professional for two different slots) — just applied one level up, at
+"is this professional open for SOS work at all" rather than at a specific resource. A plain
+read-check inside the `@Transactional` method (ordinary read-committed semantics, no
+`SELECT ... FOR UPDATE`, consistent with this whole doc's §3.2 "no explicit locking, no
+`@Version` column" convention) is therefore sufficient and is the design adopted here. The
+narrow race this leaves open — a professional toggles off in the few milliseconds between
+this read and the transaction's commit — is accepted as a low-probability, low-consequence
+edge case (the professional would simply reject the resulting `PENDING` order, §2.6,
+functionally equivalent to the customer having been bounced back to the list one step
+later than ideal), not different in kind from races already accepted elsewhere in this
+doc (e.g. concurrent `accept`/`reject`, §3.2).
+
+**Response `201`:** identical shape to §2.4's response, differing only in the values —
+```json
+{
+  "id": 950,
+  "issueId": 102,
+  "customerId": 42,
+  "professionalId": 47,
+  "orderStatus": "PENDING",
+  "bookedStart": "2026-08-13T13:05:00Z",
+  "bookedEnd": null,
+  "finalPrice": 220.00,
+  "cancelledBy": null,
+  "createdAt": "2026-08-13T13:05:00Z",
+  "updatedAt": "2026-08-13T13:05:00Z"
+}
+```
+
+**Status codes**: `201` success · `400 VALIDATION_ERROR` · `400 CATEGORY_MISMATCH` ·
+`401 UNAUTHORIZED` · `403 FORBIDDEN` · `404 NOT_FOUND` · `409 ISSUE_URGENCY_MISMATCH` ·
+`409 ISSUE_NOT_BOOKABLE` · `409 SOS_PROFESSIONAL_UNAVAILABLE`.
+
+**Everything downstream of order creation is unchanged, reused endpoints — not redesigned
+here.** Once this call returns `201`, the resulting `orders` row is indistinguishable, from
+`accept`/`reject`/`cancel`/`GET .../{orderId}`/`GET .../me`'s point of view, from a
+Standard order — §2.5–§2.9 apply verbatim, per §3.7's original prediction (now confirmed
+against the real code, §0.1 above).
+
+---
+
+### 2.14 `PUT /api/availability/sos-availability` — new, Milestone 4, `availability` package
+
+Auth required: **yes**. Role: **PROFESSIONAL**.
+
+The professional's own SOS-availability toggle — "I'm currently available for urgent work"
+— per PRD §3.5.2 and `data-model.md` §2.6/§3 item 5. Lives in `availability`, not
+`bookings` (same package boundary as §2.10/§2.11 — this package owns both `availability_slots`
+and `sos_availability`, `overview.md` §4), under its own base path per §0's convention.
+This is the endpoint the `availability/README.md` status line already flagged as
+Milestone-4 scope ("the toggle/listing endpoints themselves are Milestone 4") — built here,
+not new scope being invented.
+
+**Request:**
+```json
+{ "isAvailable": true }
+```
+
+**Field validation:**
+
+| Field | Rule |
+|---|---|
+| `isAvailable` | required, boolean → `400 VALIDATION_ERROR` if missing or not a boolean. |
+
+**Behavior:**
+1. Resolve caller; `403 FORBIDDEN` if `role != PROFESSIONAL`.
+2. Validate field presence/shape → `400 VALIDATION_ERROR`.
+3. Resolve caller's `professionals.id` via `ProfessionalRepository.findByUserId(caller.id)`
+   (same existing mechanism as §2.10 step 3 / §3.5).
+4. **Write**: `UPDATE sos_availability SET is_available = :isAvailable, updated_at = now()
+   WHERE professional_id = :professionalId`. **No `WHERE <current-state-guard>` beyond the
+   row's own key is needed or used, unlike every `orders`/`availability_slots` transition
+   in this doc** — there is no "wrong state to toggle from": setting the same value twice
+   in a row, or flipping it either direction from either prior value, is always a valid
+   request from a still-authenticated professional. This is a plain, unconditional
+   `UPDATE`, not the §3.2 guarded-transition pattern — deliberately, because §3.2's pattern
+   exists to defend against a *concurrent conflicting state change*, and there is no
+   concept of a conflicting concurrent change here (the professional is the sole writer of
+   their own toggle; two rapid toggles from the same professional simply produce the
+   last-write-wins result, which is correct, not a race to guard against). It is still
+   issued as a repository-level `UPDATE`, not a JPA load-mutate-save round trip, because
+   `SosAvailability` (like `Order`) exposes no setter for `isAvailable` — consistent with
+   this codebase's established entity-design convention (`bookings/README.md`'s note on
+   `Order`), not a new convention invented here.
+5. **Invariant check, not a normal error path**: the affected-row count from step 4 should
+   always be `1` — every professional is expected to have a `sos_availability` row created
+   at registration time (`data-model.md` §2.6's row-lifecycle note; already true as of the
+   `V13` schema-gap fix). If it is `0` (the row is somehow missing — a data-integrity bug,
+   not a user-facing error condition), respond `500 INTERNAL_ERROR` and log at `WARN`,
+   **not** a new `4xx` error code — this isn't a condition a well-behaved client can ever
+   trigger through normal use, so it doesn't belong in the `error.code` taxonomy the way
+   `SOS_PROFESSIONAL_UNAVAILABLE` (a real, reachable client-facing state) does.
+6. Return `200` with the updated value.
+
+**Response `200`:**
+```json
+{
+  "professionalId": 47,
+  "isAvailable": true,
+  "updatedAt": "2026-08-13T13:00:00Z"
+}
+```
+
+**Status codes**: `200` success · `400 VALIDATION_ERROR` · `401 UNAUTHORIZED` ·
+`403 FORBIDDEN`.
+
+---
+
+### 2.15 `GET /api/availability/sos-availability` — new, Milestone 4, `availability` package
+
+Auth required: **yes**. Role: **PROFESSIONAL**.
+
+Reads the caller's own current SOS-availability value — the read-side counterpart to
+§2.14, for the professional's dashboard toggle UI to render its current state. No `/me`
+suffix (unlike §2.11's `/api/availability/slots/me`) — deliberate, not an inconsistency:
+`sos_availability` is inherently a single row per professional with no "list" concept at
+all (§2.6), so there's no ambiguity a `/me` suffix would need to resolve the way it does
+for `/api/availability/slots/me` (which disambiguates "my slots" from a hypothetical
+by-id/by-professional variant that doesn't currently exist either, but the naming
+precedent there was set by §2.11 already existing). Kept short since there is exactly one
+resource this URL could ever mean for an authenticated professional.
+
+**Behavior:**
+1. Resolve caller; `403 FORBIDDEN` if `role != PROFESSIONAL`.
+2. Resolve caller's `professionals.id` (same mechanism as §2.14 step 3).
+3. Load the `sos_availability` row by `professional_id`. Missing row → same invariant-
+   violation handling as §2.14 step 5 (`500 INTERNAL_ERROR`, logged at `WARN` — not
+   expected to occur given the registration-time row-creation guarantee).
+4. Return it.
+
+**Response `200`:**
+```json
+{
+  "professionalId": 47,
+  "isAvailable": false,
+  "updatedAt": "2026-08-12T09:00:00Z"
+}
+```
+
+**Status codes**: `200` success · `401 UNAUTHORIZED` · `403 FORBIDDEN`.
+
+---
+
 ## 4. End-to-end flow summary (PRD §3.4, including the reject → return-to-list branch)
 
 For clarity, the full Standard-path sequence this contract implements:
@@ -836,6 +1199,62 @@ For clarity, the full Standard-path sequence this contract implements:
 7. Progression from `CONFIRMED` onward to `ON_THE_WAY`/`COMPLETED` is **not** built by any
    endpoint in this doc — **confirmed** (`pronto-lead`, 2026-08-13, §6 item 4) as
    Milestone 6's scope, not Milestone 3's; see §6 item 4 for the full reasoning.
+
+### SOS-path sequence (PRD §3.5, new this pass — including the reject/becomes-unavailable
+→ return-to-list branch, PRD §3.5.6)
+
+1. Customer has a confirmed `issues` row with `urgencyType = 'SOS'` (Milestone 2,
+   `status = 'OPEN'`).
+2. `GET /api/bookings/sos-professionals?issueId=` (§2.12) → professional cards for
+   currently-SOS-available professionals in the issue's category. **May be empty** — the
+   frontend renders PRD §3.5.6's "no-available-professional message" directly from an empty
+   array; this is not a distinct backend code path or error.
+3. Customer picks one → `POST /api/bookings/sos-orders` (§2.13) → **two outcomes**:
+   - **Success (`201`)**: `orders` row created (`PENDING`, `bookedStart = now()`,
+     `bookedEnd = NULL`, `slotId = NULL`), `issues.status → 'BOOKED'`. Proceeds to step 4.
+   - **`409 SOS_PROFESSIONAL_UNAVAILABLE`**: the professional's `sos_availability` flipped
+     to unavailable between the customer loading the (possibly slightly stale) list in step
+     2 and submitting the request in step 3 — **this is the backend implementation of PRD
+     §3.5.6's "becomes unavailable" trigger** (§3.11 below has the full reasoning for this
+     mapping). No `orders` row is created; `issues.status` is untouched (still `OPEN`). The
+     frontend's response to this error is to re-fetch §2.12 (a fresh list, which will no
+     longer include the now-unavailable professional) and return the customer to the SOS
+     professional list — the same observable "bounced back to the list" outcome PRD §3.5.6
+     describes for a rejection, just triggered one step earlier, before any request ever
+     reached the professional.
+4. Professional sees the `PENDING` order via `GET /api/bookings/orders/me?status=PENDING`
+   (§2.9, unchanged, urgency-agnostic) → `accept` (§2.5) or `reject` (§2.6), **both reused
+   verbatim, zero SOS-specific code** (§3.7, confirmed against the real `OrderRepository`
+   methods in §0.1 above).
+   - **Accept**: `order_status → 'CONFIRMED'`. Customer's polling `GET
+     /api/bookings/orders/{orderId}` (§2.8) observes the change — same confirmation flow as
+     Standard. ETA/tracking display is explicitly PRD §3.5.5's "(future version)" — not
+     built, consistent with the hard GPS/live-tracking exclusion (`overview.md` §2).
+   - **Reject** — **this is PRD §3.5.6's "rejects the request" trigger, the other half of
+     the reject/becomes-unavailable pair**: `order_status → 'REJECTED'` (`slotId` is
+     already `NULL` for an SOS order, so the slot-release step, §3.4, is a no-op exactly as
+     §3.7 predicted — verified, not just asserted, against `AvailabilitySlotRepository
+     .releaseSlot`'s unconditional-on-`slotId` `UPDATE`), `issues.status → 'OPEN'`. Same
+     observable outcome as the `SOS_PROFESSIONAL_UNAVAILABLE` branch in step 3 — the
+     customer's client sees `issue.status == 'OPEN'` again (via polling §2.8 or re-`GET
+     /api/issues/{id}`, §2.1) and returns to step 2, free to pick a different
+     currently-available professional (or, if still listed and still available, the same
+     one again — no dedup, matching §2.2/§7's existing "not filtered" call for Standard).
+5. Once `CONFIRMED`, either party may still `cancel` (§2.7, unchanged) → `CANCELLED`,
+   `issues.status → 'OPEN'` (same return-to-list branch, different terminal status, same as
+   Standard step 6).
+6. **Not built by any endpoint in this doc, same as Standard**: `ON_THE_WAY`/`COMPLETED`
+   progression (Milestone 6) and the `PENDING`-timeout `EXPIRED` sweep (Milestone 5, and —
+   per `data-model.md` §3 item 8's proposed **5-minute** SOS timeout vs. Standard's proposed
+   15 minutes — SOS is expected to expire faster once that sweep exists; not designed here).
+
+**What's deliberately *not* a third trigger here**: a `PENDING` SOS order whose
+professional toggles `sos_availability.is_available` to `false` *after* the order was
+already created (i.e., after step 3 succeeded, while the order sits `PENDING` awaiting that
+professional's accept/reject) does **not** auto-expire, auto-cancel, or otherwise change
+state as a side effect of the toggle. §2.14 (the toggle write) touches only
+`sos_availability`, never `orders`. See §3.11 for why this reading — rather than building a
+reactive "toggle off cancels my pending SOS requests" mechanism — was chosen.
 
 ---
 
@@ -920,6 +1339,13 @@ not a `500`.
 
 ### 3.7 Where this design already generalizes to SOS (Milestone 4) vs. where it doesn't
 
+**Written during Milestone 3, as a forward-looking prediction — now confirmed fulfilled by
+§2.12–§2.15 above, verified against the real code, not just re-asserted.** Kept in its
+original Milestone-3 form below (not rewritten) so the "what we predicted" vs. "what we
+built" comparison stays visible; §0.1's Milestone-4 role-gating note and §2.13's own text
+independently confirm the same conclusions against the as-built `OrderRepository`/
+`AvailabilitySlotRepository`/`Order` code.
+
 Stated explicitly per the task brief's "don't paint yourself into a corner for M4"
 instruction:
 
@@ -966,18 +1392,90 @@ meaningful mid-booking-flow) rather than a general "browse all professionals" di
 feature — placing it under `/api/bookings/*` (implemented in the `bookings` package, reading
 from `professionals`/`availability_slots` as needed) keeps the booking journey's endpoints
 discoverable together, mirroring the M2 precedent of keeping `/classify` under
-`/api/issues/*` even though it's backed by the separate `ai` package.
+`/api/issues/*` even though it's backed by the separate `ai` package. §2.12
+(`sos-professionals`) follows the identical placement reasoning — issue-scoped SOS matching
+is a `bookings`-package concern for the same reason Standard matching is.
+
+### 3.10 The pre-existing `urgencyType` validation gap — fixed in this pass, not left open
+(§6 item 5 has the full decision record; this is the technical summary)
+
+Milestone 3's §2.2/§2.3/§2.4 originally validated issue ownership and bookable status
+(`status == 'OPEN'`) but never checked `urgencyType` at all — a customer could call the
+Standard-path endpoints against an `urgencyType = 'SOS'` issue and nothing stopped it (and,
+symmetrically, nothing in this doc stopped the reverse before §2.12/§2.13 existed, since
+those endpoints didn't exist yet to be misused). Now that Milestone 4 introduces a second,
+parallel creation path that legitimately *does* need to distinguish the two, leaving the
+Standard side's check missing would be an asymmetric, confusing gap — one path validates
+`urgencyType`, the other doesn't, for no principled reason. **Fixed directly in §2.2/§2.3/
+§2.4 above** (one new behavior step each, one new shared error code,
+`ISSUE_URGENCY_MISMATCH`) rather than tracked as an open item — see §6 item 5 for why this
+was judged in-scope for this pass rather than deferred.
+
+### 3.11 PRD §3.5.6's two triggers ("rejects" vs. "becomes unavailable") — resolution
+
+PRD §3.5.6: *"If the selected professional rejects the request or becomes unavailable, the
+system shall return the customer to the SOS professional list or display a
+no-available-professional message."* Two triggers, same observable outcome. This doc maps
+them to two different, non-overlapping backend mechanisms — reasoning for each, and for why
+a third possible reading (a background sweep reacting to a professional going unavailable
+*while* an order they already received sits `PENDING`) was **not** adopted:
+
+- **"Rejects the request"** maps to the existing, unchanged `POST
+  /api/bookings/orders/{orderId}/reject` (§2.6) — this can only be true once an `orders` row
+  already exists in `PENDING`, i.e. after §2.13 already succeeded and the professional has
+  since acted on it. No design work was needed here beyond confirming §2.6 truly has zero
+  SOS-specific branching (confirmed, §0.1).
+- **"Becomes unavailable"** maps to §2.13 step 9's order-creation-time read-check,
+  surfaced as `409 SOS_PROFESSIONAL_UNAVAILABLE`. **Reasoning for choosing this over the
+  alternative (a reactive mechanism that watches for a professional going unavailable while
+  they already have a `PENDING` SOS order against them and does something to that order as
+  a result):**
+  - PRD §3.5.3–§3.5.4 describes the flow as: customer selects from the list → the *selected*
+    professional receives the request. The moment "does this professional still match what
+    the customer saw" is naturally checkable is exactly the instant the request is about to
+    be sent — i.e. order-creation time — not some later point. Reading "becomes unavailable"
+    as "was already unavailable (or became so) by the time the request would be sent" is a
+    direct, literal fit for that moment, with no gap requiring a background process.
+  - No source document (PRD, `overview.md`, `data-model.md`) describes or implies a
+    mechanism by which toggling `sos_availability` should reach into and mutate any
+    already-created `orders` row. Building one now would mean inventing a new
+    cross-package trigger (`availability` → `bookings`) and a new sweep/event mechanism
+    that doesn't exist anywhere else in this codebase's design — exactly the kind of
+    speculative, not-requested infrastructure the task brief says not to build ("no
+    speculative microservices, no premature abstractions, no infrastructure the current
+    scope doesn't need").
+  - The two triggers already map cleanly onto the two moments PRD §3.5 actually describes
+    (before the request is sent, §3.5.2–§3.5.4; after it's sent and pending a decision,
+    §3.5.4 second half) without needing a third mechanism — a `PENDING` SOS order whose
+    professional has since gone unavailable is left exactly where a `PENDING` Standard order
+    past its `booked_start` is already left today: unresolved until the professional acts
+    (`accept`/`reject`) or the future Milestone 5 `EXPIRED` sweep reaches it. This is a
+    **consistent**, not a special-cased, gap — the same "no proactive cleanup, only the
+    timeout sweep eventually" posture `data-model.md` §3 item 8 already established for
+    every other `PENDING`-order staleness case.
+  - **Accepted consequence, stated plainly**: between an SOS order being created and the
+    professional acting on it, if that professional flips their toggle off, the customer's
+    UI has no faster signal than normal `PENDING`-order polling (§2.8) — the order simply
+    stays `PENDING` until the professional explicitly `reject`s it (or a future expiry sweep
+    reaches it). This is judged an acceptable MVP gap, not a silently swallowed one — stated
+    here explicitly, consistent with the task brief's "flag it instead of silently deciding"
+    instruction, even though the overall design choice itself is being made with
+    confidence, not left as an open question.
 
 ---
 
-## 6. Decisions — resolution record (`pronto-lead`, 2026-08-13)
+## 6. Decisions — resolution record (`pronto-lead`, 2026-08-13; items 5–8 added same day,
+Milestone 4 pass)
 
-The original draft raised four items for explicit sign-off before `pronto-coding` could
-start. All four have now been resolved. Kept as a numbered record for traceability (why
-the doc reads the way it does above), **not** a pending-sign-off list any more — items 1,
-2, and 4 are fully closed; item 3 is confirmed to remain a genuinely open question, but one
-that's explicitly **out of Milestone 3's scope**, not a blocker for `pronto-coding` to
-start building everything else in this doc.
+The original Milestone 3 draft raised four items for explicit sign-off before
+`pronto-coding` could start. All four have now been resolved. Kept as a numbered record for
+traceability (why the doc reads the way it does above), **not** a pending-sign-off list any
+more — items 1, 2, and 4 are fully closed; item 3 is confirmed to remain a genuinely open
+question, but one that's explicitly **out of Milestone 3's scope**, not a blocker for
+`pronto-coding` to start building everything else in this doc. Items 5–8 below are new,
+added as part of this same pass while designing Milestone 4 — each is a call this doc makes
+explicitly rather than leaving ambiguous, per the task brief's instruction not to silently
+pick an interpretation.
 
 1. **`orders.slot_id` — APPROVED.** Built as `V12__add_slot_id_to_orders.sql`, exactly as
    originally drafted (nullable, FK → `availability_slots(id)` `ON DELETE SET NULL`,
@@ -1018,6 +1516,55 @@ start building everything else in this doc.
    `implementation-plan.md`'s existing milestone bullet split. No design change to this
    doc was needed — the interpretation was already correct, just unconfirmed until now.
 
+5. **The pre-existing `urgencyType` validation gap in §2.2/§2.3/§2.4 (Standard-path
+   listing/slot-listing/order-creation) — DECIDED: fixed in this same pass, not tracked as
+   an open item.** Those three Milestone 3 endpoints never validated `issue.urgencyType`
+   at all, meaning a customer could technically call the Standard-path endpoints against an
+   `urgencyType = 'SOS'` issue and nothing stopped it. Both resolutions were defensible
+   (fix now vs. leave open, per the task brief) — **fix now was chosen**, for the same
+   reason `V11`/`V13` fixed pre-existing gaps ahead of/during their own milestones rather
+   than deferring them indefinitely: the fix is small (one additional behavior step + one
+   shared error code per endpoint, no migration, no new table/column), and Milestone 4
+   introduces a second creation path where the *absence* of the equivalent check would be a
+   glaring, easily-noticed inconsistency (SOS validates urgency type from day one, §2.12/
+   §2.13; Standard not validating it at all, right next to it in the same file, would read
+   as an oversight rather than a decision). See §3.10 for the technical summary and the
+   actual edits in §2.2/§2.3/§2.4 above (new `409 ISSUE_URGENCY_MISMATCH` error code, §2's
+   taxonomy table). **Not** treated as a breaking change to already-QA-signed-off
+   Milestone 3 behavior in any way that matters — no legitimate Milestone 3 caller was ever
+   relying on being able to Standard-book an SOS-flagged issue (nothing in the PRD's
+   Standard flow, §3.4, ever describes that as intended behavior); this closes an
+   unintentional gap, not a designed capability.
+
+6. **PRD §3.5.6's "becomes unavailable" trigger — DECIDED: maps to the order-creation-time
+   read-check in §2.13 step 9 (`409 SOS_PROFESSIONAL_UNAVAILABLE`), not a reactive
+   sweep/cancellation mechanism watching already-`PENDING` SOS orders.** Full reasoning in
+   §3.11 — evaluated against PRD §3.5.2–§3.5.6's actual described sequence, the existing
+   `sos_availability` design (`data-model.md` §2.6/§3 item 5), and the task brief's
+   don't-over-engineer instruction, not adopted as a rubber stamp of the brief's own working
+   hypothesis. Accepted consequence stated explicitly in §3.11's last bullet: an SOS order
+   that's already `PENDING` when its professional goes unavailable has no faster
+   customer-facing signal than ordinary polling until the professional acts or a future
+   expiry sweep reaches it — consistent with, not a special case of, how every other
+   `PENDING`-order staleness scenario is already handled in this doc.
+
+7. **Migration — DECIDED: no new Flyway migration for Milestone 4.** See §1.4 for the full
+   verification against the applied migration history (`sos_availability` already exists
+   via `V13`; `orders.slot_id`/`booked_end` already nullable via `V12`/`V8`;
+   `order_status`'s `CHECK` already includes `REJECTED` via `V11`). §2.12–§2.15 read/write
+   only columns that already exist and already tolerate the values Milestone 4 needs.
+
+8. **Role-gating config — DECIDED, verified against the real config classes, not
+   assumed.** `bookings.config.BookingsWebConfig`'s existing `CUSTOMER`-scoped
+   `RoleRequiredInterceptor` registration needs two new literal path patterns added
+   (`/api/bookings/sos-professionals`, `/api/bookings/sos-orders`) — its literal-list
+   design (chosen in Milestone 3 specifically because this package mixes roles per-route,
+   §0.1) doesn't pick up new routes automatically the way a wildcard would.
+   `availability.config.AvailabilityWebConfig`, by contrast, needs **no change** — its
+   existing single `PROFESSIONAL`-scoped registration already uses the blanket wildcard
+   `/api/availability/**`, which already covers §2.14/§2.15's new routes for free. Full
+   detail, including the exact diff, in §0.1 above.
+
 ---
 
 ## 7. Open items / risks (lower-stakes, don't block `pronto-coding`, but flagging)
@@ -1045,3 +1592,28 @@ start building everything else in this doc.
 - **`GET /api/bookings/orders/me`'s `status` filter accepts any of the 7 values including
   `EXPIRED`/`COMPLETED`** even though no endpoint in this doc ever produces those — harmless
   (an always-empty filter result until Milestone 5/6 exist), not worth special-casing.
+
+**Milestone 4 additions:**
+
+- **SOS-listing ordering (`base_price ASC`, §2.12) is a judgment call**, made independently
+  of §2.2's identical choice (not required to match, per the task brief) — landed on the
+  same value because no source document suggests a different SOS-specific signal. Trivial
+  to change later, same as §2.2's/§2.9's equivalent notes above.
+- **`sos_availability` still has no auto-expiry/timeout** (`data-model.md` §4, restated
+  here now that §2.14 actually builds the toggle-write path this would apply to): a
+  professional who forgets to flip `is_available` back to `false` after finishing urgent
+  work stays listed as SOS-available indefinitely, and nothing in §2.12/§2.13 changes that.
+  Not designed here — no source document specifies a timeout behavior, and building one
+  would mean another scheduled-sweep mechanism in the category already deferred to
+  Milestone 5 (§3 item 8's `EXPIRED` sweep) — flagged, not built.
+- **No notification is sent to the professional when an SOS order lands as `PENDING`
+  against them, nor to the customer on accept/reject/`SOS_PROFESSIONAL_UNAVAILABLE`** — the
+  `notifications` package doesn't exist yet (Milestone 5). Same "discoverable only via
+  polling `GET /api/bookings/orders/me`" limitation §2.9 already states for Standard,
+  extended to SOS for free since §2.9 is reused unchanged; not a new gap, just restated so
+  it isn't assumed SOS gets push-style notice where Standard doesn't.
+- **No rate limiting on `PUT /api/availability/sos-availability`** — a professional could
+  toggle the flag arbitrarily rapidly with no cost/throttle. Harmless in practice (a plain
+  `UPDATE` on an indexed single-row lookup, no external API cost unlike
+  `POST /api/issues/classify`'s already-flagged OpenAI-cost concern, `overview.md` §6) —
+  not flagged as a real risk, noted only for completeness.

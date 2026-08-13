@@ -1,8 +1,11 @@
 package com.pronto.bookings.service;
 
 import com.pronto.availability.entity.AvailabilitySlot;
+import com.pronto.availability.entity.SosAvailability;
 import com.pronto.availability.repository.AvailabilitySlotRepository;
+import com.pronto.availability.repository.SosAvailabilityRepository;
 import com.pronto.bookings.dto.CreateOrderRequest;
+import com.pronto.bookings.dto.CreateSosOrderRequest;
 import com.pronto.bookings.dto.OrderDetailResponse;
 import com.pronto.bookings.dto.OrderResponse;
 import com.pronto.bookings.dto.OrderSummaryResponse;
@@ -21,6 +24,7 @@ import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.issues.entity.Issue;
 import com.pronto.issues.entity.IssueStatus;
+import com.pronto.issues.entity.IssueUrgencyType;
 import com.pronto.issues.repository.IssueRepository;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRepository;
@@ -34,13 +38,13 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * {@code /api/bookings/*} — Standard booking flow (professional listing, slot listing,
- * create/accept/reject/cancel, tracking, self-listing). See
- * {@code docs/architecture/api-contract-bookings.md} §2.2-2.9. Route-level role checks
- * ({@code CUSTOMER}-only / {@code PROFESSIONAL}-only routes) happen in
- * {@code bookings.config.BookingsWebConfig}; the either-role routes (cancel, get-by-id,
- * get-me) have no route-level gate and instead authorize entirely here, once the resource is
- * loaded (§0.1).
+ * {@code /api/bookings/*} — Standard and SOS booking flows (professional listing, slot
+ * listing, create/accept/reject/cancel, tracking, self-listing). See
+ * {@code docs/architecture/api-contract-bookings.md} §2.2-2.9 (Standard, Milestone 3) and
+ * §2.12-2.13 (SOS, Milestone 4). Route-level role checks ({@code CUSTOMER}-only /
+ * {@code PROFESSIONAL}-only routes) happen in {@code bookings.config.BookingsWebConfig}; the
+ * either-role routes (cancel, get-by-id, get-me) have no route-level gate and instead
+ * authorize entirely here, once the resource is loaded (§0.1).
  */
 @Service
 public class BookingsService {
@@ -49,6 +53,7 @@ public class BookingsService {
     private final ProfessionalRepository professionalRepository;
     private final ProfessionalListingRepository professionalListingRepository;
     private final AvailabilitySlotRepository availabilitySlotRepository;
+    private final SosAvailabilityRepository sosAvailabilityRepository;
     private final OrderRepository orderRepository;
     private final UserRepository userRepository;
 
@@ -56,12 +61,14 @@ public class BookingsService {
                             ProfessionalRepository professionalRepository,
                             ProfessionalListingRepository professionalListingRepository,
                             AvailabilitySlotRepository availabilitySlotRepository,
+                            SosAvailabilityRepository sosAvailabilityRepository,
                             OrderRepository orderRepository,
                             UserRepository userRepository) {
         this.issueRepository = issueRepository;
         this.professionalRepository = professionalRepository;
         this.professionalListingRepository = professionalListingRepository;
         this.availabilitySlotRepository = availabilitySlotRepository;
+        this.sosAvailabilityRepository = sosAvailabilityRepository;
         this.orderRepository = orderRepository;
         this.userRepository = userRepository;
     }
@@ -72,6 +79,9 @@ public class BookingsService {
         Issue issue = loadIssue(issueId);
         if (!issue.getCustomerId().equals(callerId)) {
             throw forbidden();
+        }
+        if (issue.getUrgencyType() != IssueUrgencyType.STANDARD) {
+            throw urgencyMismatch(issue.getId());
         }
         if (issue.getStatus() != IssueStatus.OPEN) {
             throw notBookable(issue.getId());
@@ -86,6 +96,9 @@ public class BookingsService {
         Issue issue = loadIssue(issueId);
         if (!issue.getCustomerId().equals(callerId)) {
             throw forbidden();
+        }
+        if (issue.getUrgencyType() != IssueUrgencyType.STANDARD) {
+            throw urgencyMismatch(issue.getId());
         }
         if (issue.getStatus() != IssueStatus.OPEN) {
             throw notBookable(issue.getId());
@@ -115,6 +128,9 @@ public class BookingsService {
         if (!issue.getCustomerId().equals(callerId)) {
             throw forbidden();
         }
+        if (issue.getUrgencyType() != IssueUrgencyType.STANDARD) {
+            throw urgencyMismatch(issue.getId());
+        }
         if (issue.getStatus() != IssueStatus.OPEN) {
             throw notBookable(issue.getId());
         }
@@ -130,7 +146,7 @@ public class BookingsService {
 
         Instant now = Instant.now();
 
-        // Step 8: atomically claim the slot.
+        // Step 9: atomically claim the slot.
         int claimed = availabilitySlotRepository.claimSlot(request.slotId(), professional.getId(), now);
         if (claimed == 0) {
             throw slotUnavailable(request.slotId());
@@ -138,16 +154,86 @@ public class BookingsService {
         AvailabilitySlot slot = availabilitySlotRepository.findById(request.slotId())
                 .orElseThrow(() -> slotUnavailable(request.slotId()));
 
-        // Step 9: atomically transition the issue; 0 rows rolls back the whole transaction,
+        // Step 10: atomically transition the issue; 0 rows rolls back the whole transaction,
         // including the slot claim above (single @Transactional method).
         int booked = issueRepository.bookIfOpen(issue.getId(), now);
         if (booked == 0) {
             throw notBookable(issue.getId());
         }
 
-        // Step 10: insert the order.
+        // Step 11: insert the order.
         Order order = new Order(issue.getId(), callerId, professional.getId(), slot.getStartTime(),
                 slot.getEndTime(), professional.getBasePrice(), slot.getId());
+        order = orderRepository.save(order);
+
+        return toOrderResponse(order);
+    }
+
+    /** §2.12. */
+    @Transactional(readOnly = true)
+    public ProfessionalListingResponse listSosProfessionals(Long callerId, Long issueId) {
+        Issue issue = loadIssue(issueId);
+        if (!issue.getCustomerId().equals(callerId)) {
+            throw forbidden();
+        }
+        if (issue.getUrgencyType() != IssueUrgencyType.SOS) {
+            throw urgencyMismatch(issue.getId());
+        }
+        if (issue.getStatus() != IssueStatus.OPEN) {
+            throw notBookable(issue.getId());
+        }
+        List<ProfessionalCard> professionals =
+                professionalListingRepository.listSosAvailableByCategory(issue.getCategoryId());
+        return new ProfessionalListingResponse(issue.getId(), issue.getCategoryId(), professionals);
+    }
+
+    /** §2.13. */
+    @Transactional
+    public OrderResponse createSosOrder(Long callerId, CreateSosOrderRequest request) {
+        Issue issue = issueRepository.findById(request.issueId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND,
+                        "Issue " + request.issueId() + " not found."));
+        if (!issue.getCustomerId().equals(callerId)) {
+            throw forbidden();
+        }
+        if (issue.getUrgencyType() != IssueUrgencyType.SOS) {
+            throw urgencyMismatch(issue.getId());
+        }
+        if (issue.getStatus() != IssueStatus.OPEN) {
+            throw notBookable(issue.getId());
+        }
+
+        Professional professional = professionalRepository.findById(request.professionalId()).orElse(null);
+        if (professional == null || !isProfessionalActive(professional)) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
+                    List.of(new FieldError("professionalId", "must reference an existing, active professional")));
+        }
+        if (!professional.getCategoryId().equals(issue.getCategoryId())) {
+            throw categoryMismatch();
+        }
+
+        // Step 9: plain read-check of the professional's SOS availability -- not an atomic
+        // claim (§2.13's "why a plain read-check" note; sos_availability is a live signal,
+        // not a single-consumer resource like an availability_slots row).
+        boolean available = sosAvailabilityRepository.findById(professional.getId())
+                .map(SosAvailability::isAvailable)
+                .orElse(false);
+        if (!available) {
+            throw sosProfessionalUnavailable(professional.getId());
+        }
+
+        Instant now = Instant.now();
+
+        // Step 10: atomically transition the issue -- same bookIfOpen mechanism as §2.4 step 10.
+        int booked = issueRepository.bookIfOpen(issue.getId(), now);
+        if (booked == 0) {
+            throw notBookable(issue.getId());
+        }
+
+        // Step 11: insert the order. bookedStart = now (request time), bookedEnd = null,
+        // slotId = null -- SOS never consumes an availability_slots row.
+        Order order = new Order(issue.getId(), callerId, professional.getId(), now, null,
+                professional.getBasePrice(), null);
         order = orderRepository.save(order);
 
         return toOrderResponse(order);
@@ -338,6 +424,16 @@ public class BookingsService {
 
     private ApiException notBookable(Long issueId) {
         return new ApiException(ErrorCode.ISSUE_NOT_BOOKABLE, "Issue " + issueId + " is not open for booking.");
+    }
+
+    private ApiException urgencyMismatch(Long issueId) {
+        return new ApiException(ErrorCode.ISSUE_URGENCY_MISMATCH,
+                "Issue " + issueId + "'s urgency type does not match this booking path.");
+    }
+
+    private ApiException sosProfessionalUnavailable(Long professionalId) {
+        return new ApiException(ErrorCode.SOS_PROFESSIONAL_UNAVAILABLE,
+                "Professional " + professionalId + " is not currently available for SOS work.");
     }
 
     private ApiException categoryMismatch() {

@@ -61,7 +61,7 @@ future milestones' endpoints too — worth `pronto-coding` implementing once as 
 | `DUPLICATE_EMAIL` | 409 | Registration email already in use (case-insensitive, per `ux_users_email_lower`). |
 | `INVALID_CODE` | 400 | Verification code doesn't match any active code for the user (wrong code, or no code exists). |
 | `CODE_EXPIRED` | 410 | Verification code matched but `expires_at` has passed. |
-| `CODE_ALREADY_CONSUMED` | 409 | The matched code's `consumed_at` is already set (already used). |
+| `CODE_ALREADY_CONSUMED` | 409 | The matched code's `consumed_at` is already set (already used). **Note**: structurally unreachable in practice given `/verify`'s check order — see the note under §2.2. |
 | `EMAIL_ALREADY_VERIFIED` | 409 | `/verify` called for a user whose `email_verified` is already `true`. |
 | `INVALID_CREDENTIALS` | 401 | Login: unknown email, wrong password, or a soft-deleted account (deliberately indistinguishable from each other — no user enumeration). |
 | `EMAIL_NOT_VERIFIED` | 403 | Login: credentials correct but `email_verified = false`. |
@@ -191,6 +191,24 @@ Auth required: no (caller doesn't have a token yet at this point in the flow).
 
 **Status codes**: `200` success · `400 INVALID_CODE` · `410 CODE_EXPIRED` ·
 `409 EMAIL_ALREADY_VERIFIED` / `409 CODE_ALREADY_CONSUMED`.
+
+**Note, added Milestone 7 (2026-08-14), not a bug — clarifying a QA finding so a future
+reader doesn't mistake this for dead/buggy code.** `409 CODE_ALREADY_CONSUMED` (behavior
+step 3's second bullet, `consumed_at IS NOT NULL`) is defined for the code-lookup path but
+is **structurally unreachable via the live API today**, given this endpoint's own
+documented check order above: step 2 (`emailVerified` already `true` → `409
+EMAIL_ALREADY_VERIFIED`) always runs *before* step 3's code lookup, and consuming a code
+always sets `users.email_verified = true` in the same transaction that sets its
+`consumed_at` (step 3's last bullet). So by the time a *second* submission of an
+already-consumed code could reach step 3's `consumed_at IS NOT NULL` check, step 2 has
+already short-circuited the request with `409 EMAIL_ALREADY_VERIFIED` instead. There is
+also no "resend code" endpoint (see the out-of-scope note below) that could otherwise
+create a scenario with a genuinely-consumed-but-not-yet-verified state to reach this branch
+through. QA confirmed this live against `AuthService.verify` — re-submitting an
+already-consumed code returns `409 EMAIL_ALREADY_VERIFIED`, never `409
+CODE_ALREADY_CONSUMED` — and confirmed the framing above matches this endpoint's own
+already-documented check order, i.e. this is expected/correct behavior as designed, not a
+regression or an unreachable-code defect to fix.
 
 **Out of scope, flagged not built**: a "resend verification code" endpoint. Nothing in the
 task brief or `overview.md`/`data-model.md` asks for one; if a code expires (15 min) the

@@ -1,0 +1,7 @@
+=== Sequential quiescent uploads ===
+200kb: n=20 p50=8.6ms p95=14.4ms p99=39.0ms non-201-responses=0
+1mb: n=20 p50=13.1ms p95=24.6ms p99=27.4ms non-201-responses=0
+4mb: n=20 p50=29.4ms p95=47.0ms p99=58.0ms non-201-responses=0
+7_9mb: n=20 p50=52.1ms p95=70.8ms p99=74.7ms non-201-responses=0
+=== Boundary check: >8MB file should fast-413, not slow-timeout ===
+over-8mb upload: time=14.7ms http_code=413

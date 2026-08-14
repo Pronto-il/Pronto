@@ -49,7 +49,11 @@ public enum ErrorCode {
     // Milestone 6 additions (job-status progression). See
     // docs/architecture/api-contract-bookings.md §2 "Milestone 6 additions".
     ORDER_NOT_CONFIRMED(HttpStatus.CONFLICT),
-    ORDER_NOT_ON_THE_WAY(HttpStatus.CONFLICT);
+    ORDER_NOT_ON_THE_WAY(HttpStatus.CONFLICT),
+
+    // Milestone 7 hardening addition (per-IP rate limiting on /api/auth/*). See
+    // docs/architecture/hardening-plan.md §5.2.
+    RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS);
 
     private final HttpStatus httpStatus;
 

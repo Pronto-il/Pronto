@@ -604,17 +604,24 @@ re-classifies) with zero side effects before step 3 actually commits anything.
     object. Judged low-risk/low-impact (a customer attaching the same photo to two issues
     isn't a security or data-integrity problem, just a minor redundancy) — not treated as a
     defect, just noted for completeness.
-- **S3 image URL privacy / bucket access policy — not fully designed.** §3.1's decision to
-  send image *bytes* (not URLs) to OpenAI removes the *classification* call's dependency on
-  public reachability, but `issue_images.image_url` (and the `imageUrl` field returned by
-  `POST /api/storage/images`/`POST /api/issues`) still needs to resolve to *something* the
-  **frontend** can render as an `<img>` — home-issue photos are plausibly sensitive
-  (interior of someone's home). Whether the S3 bucket/prefix is public-read, served via
-  signed/expiring GET URLs, or proxied through the backend (mirroring §2.4's local-mode
-  retrieval endpoint) is genuinely undecided here — deferred because it can't be
-  meaningfully tested without real AWS credentials anyway (not available this milestone per
-  the brief), but it's a real decision still owed before `pronto.storage.mode=s3` goes to
-  any environment beyond local dev.
+- **S3 image URL privacy / bucket access policy — resolved (updated, Milestone 7,
+  2026-08-14).** At the time this doc was originally written, this was flagged as
+  genuinely undecided. It has since been decided and built: the actual, already-implemented
+  `backend/src/main/java/com/pronto/storage/client/S3StorageClient.java` Javadoc states
+  that the bucket blocks all public access (default SSE-S3 encryption, no public-read
+  policy), so `resolveUrl` deliberately does **not** return a raw S3 URL (which would
+  always `403`). Instead, exactly like `LocalDiskStorageClient`, it points at this
+  backend's own `GET /api/storage/images/**` retrieval endpoint (§2.4), built from the
+  shared `pronto.storage.public-base-url` config property — the controller/service layer
+  downloads the bytes from S3 server-side and streams them back to the caller. In other
+  words, **every image fetch is backend-proxied in both `local` and `s3` storage modes**,
+  never a direct-to-S3 redirect or a pre-signed URL — this is a deliberate, already-built
+  decision, not a placeholder pending one. This doc's own §3.1 already anticipated this
+  outcome ("reduces the urgency of the still-open S3 bucket-privacy question... OpenAI
+  never touches the object's URL directly") without confirming it was actually resolved
+  this way — it now is, per `S3StorageClient.java`'s Javadoc, cross-referenced here so this
+  section stops describing a closed question as open. (Flagged as a doc-drift finding in
+  `docs/architecture/hardening-plan.md` §5.3, corrected here per that finding.)
 - **No rate limiting on `/classify`.** Since it's stateless/cheap-to-call-repeatedly by
   design (§3.4), nothing currently stops a customer from spamming it, which is a real
   OpenAI-cost exposure once `pronto.ai.mode=openai` is live (mock mode has no such cost).

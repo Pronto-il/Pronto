@@ -554,6 +554,48 @@ closed).
 - **Acceptance criteria**: QA sign-off against every PRD Must-Have and Should-Have
   requirement; no known critical defects open; every package `.md` current.
 
+### Results (2026-08-14)
+
+Full spec executed: `docs/architecture/hardening-plan.md`.
+
+- **§1 Performance** — all thresholds passed. Note §1.1 (PRD §5.1.1, 2s max screen-load) is
+  necessarily a **backend-only proxy** measurement, not a literal end-to-end screen-load
+  test — no frontend exists yet in this project. Full methodology, raw results, and k6
+  output are archived under `docs/qa/ms7/perf/`, not restated here.
+- **§2 Security** — every checklist item passed or was reviewed (TLS/HTTPS is a
+  config/design review only, per the plan's own explicit caveat — no deployed environment
+  exists to live-test against). Zero regressions found across MS1-6 behavior re-verified
+  this pass.
+- **§3 Regression matrix** — all 9 cross-flow rows passed with zero defects found. Full
+  detail lives in QA's own notes, not restated here in full.
+- **Two hardening fixes implemented and live-verified** this milestone, both additive with
+  no behavior/DTO/config-default changes to existing endpoints: the `JWT_SECRET` fail-fast
+  startup guard (hardening-plan.md §5.1) and per-IP auth rate limiting on
+  `/api/auth/register`\|`login`\|`verify` (hardening-plan.md §5.2). See
+  `backend/src/main/java/com/pronto/auth/README.md` for the as-implemented writeup.
+
+**Open items — pending `pronto-lead`/user sign-off, not decided here** (per the project's
+standing rule against silently resolving things that need sign-off; full context for each
+is in `hardening-plan.md` §6):
+
+1. §4.1 — the `EXPIRED`-issue-cannot-be-rebooked product decision (reopen endpoint vs.
+   relax the booking guard vs. formally accept the new-issue workaround as intended).
+2. §2.4 — PRD §5.2.4 "personal data management" scope (does soft-delete + anonymization
+   satisfy it, or is a self-service data-export endpoint also expected).
+3. §2.5 — AWS root-account credential rotation timing (local dev run config currently uses
+   root-account keys; recommendation is to rotate to a scoped IAM user/role, timing is the
+   user's call).
+4. §4.2/§4.3 — confirmation that deferring email retry/backoff and the multi-instance
+   dispatch "claim" mechanism (both recommended as out of Milestone 7 scope) is accepted,
+   not silently agreed.
+5. §4.4 — confirmation nod only (no new decision) that leaving `availability` without
+   slot edit/delete remains correct, as already decided in Milestone 6.
+6. §5.5 — pagination. The load test now supplies a real measured data point: the
+   professionals-listing payload is approximately 1565 bytes for about 7 professionals in
+   one category at current seed scale — comfortably within the "tens of KB, defer" range
+   the plan itself set as its own decision threshold. Still needs `pronto-lead`/user to
+   formally close this out rather than leaving it open by default.
+
 ## Cross-cutting rules for every milestone
 
 - Planning docs (`overview.md`, this file) are updated if a milestone's actual

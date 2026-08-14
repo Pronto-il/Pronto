@@ -42,12 +42,13 @@ principal type — cross-cutting infrastructure used by more than one domain pac
 
 | Class | Role |
 |---|---|
-| `exception.ErrorCode` | The stable machine-readable taxonomy (`VALIDATION_ERROR`, `DUPLICATE_EMAIL`, ... `INTERNAL_ERROR`, plus Milestone 2's `FORBIDDEN`/`IMAGE_KEY_INVALID`/`UNSUPPORTED_IMAGE_TYPE`/`IMAGE_TOO_LARGE`/`AI_SERVICE_ERROR`/`STORAGE_SERVICE_ERROR`), each with its HTTP status. |
+| `exception.ErrorCode` | The stable machine-readable taxonomy (`VALIDATION_ERROR`, `DUPLICATE_EMAIL`, ... `INTERNAL_ERROR`, plus Milestone 2's `FORBIDDEN`/`IMAGE_KEY_INVALID`/`UNSUPPORTED_IMAGE_TYPE`/`IMAGE_TOO_LARGE`/`AI_SERVICE_ERROR`/`STORAGE_SERVICE_ERROR`, plus Milestone 7's `RATE_LIMITED`, `429`), each with its HTTP status. |
 | `exception.ApiException` | Thrown by service-layer code for any expected, business-meaningful failure; carries an `ErrorCode` + message + optional `details`. |
 | `exception.GlobalExceptionHandler` | `@RestControllerAdvice`, builds the envelope for every exception type above, plus (Milestone 2) `MaxUploadSizeExceededException` → `413 IMAGE_TOO_LARGE` and `MissingServletRequestPartException` → `400 VALIDATION_ERROR` (both from `storage`'s multipart upload endpoint). |
 | `dto.ErrorResponse` / `dto.ErrorBody` | The envelope shape (`timestamp`, `path`, `error{code,message,details}`). |
 | `dto.FieldError` | One entry in a `VALIDATION_ERROR`'s `details` array. |
 | `dto.LockedDetails` | The `details` payload for `ACCOUNT_LOCKED` (`lockedUntil`, `retryAfterSeconds`). |
+| `dto.RateLimitDetails` | (Milestone 7) The `details` payload for `RATE_LIMITED` (`retryAfterSeconds`) — thrown by `auth.security.AuthRateLimitInterceptor`, same value also set as the response's `Retry-After` header. |
 | `security.AuthenticatedUser` | `record(Long id, String role)` — the JWT-derived principal. |
 | `security.RoleGuard` | (Milestone 2) `requireRole(principal, requiredRole)` — see "Responsibilities" above. |
 | `security.RoleRequiredInterceptor` | (Milestone 2 bug fix) `HandlerInterceptor` wrapping `RoleGuard.requireRole`, registered per-route by `issues`/`storage` — see "Responsibilities" above. |
@@ -88,3 +89,8 @@ an also-malformed body incorrectly returned `400 VALIDATION_ERROR` instead of
 `403 FORBIDDEN`. Added `security.RoleRequiredInterceptor` (a `HandlerInterceptor`, calls
 `RoleGuard.requireRole` from `preHandle`, which always runs before argument resolution) to
 fix it, without touching `auth.config.SecurityConfig`.
+
+Extended in **Milestone 7** (`docs/architecture/hardening-plan.md` §5.2) with `RATE_LIMITED`
+(`429`) and `dto.RateLimitDetails`, consumed by `auth.security.AuthRateLimitInterceptor` —
+the same `ApiException`/`GlobalExceptionHandler` envelope mechanism as every other error,
+no new pattern introduced.

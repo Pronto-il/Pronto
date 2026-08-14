@@ -1,0 +1,9 @@
+Starting polling loop (every 4s) against order 130, currently PENDING...
+poll @ 1786691051119: status=PENDING updatedAt=2026-08-14T07:03:55.548058Z
+poll @ 1786691055325: status=PENDING updatedAt=2026-08-14T07:03:55.548058Z
+Firing professional accept() now...
+T0=1786691055532
+poll @ 1786691059632: status=CONFIRMED updatedAt=2026-08-14T07:04:15.572164Z
+T0=1786691055532
+T1=1786691059632
+T1 - T0 = 4100 ms

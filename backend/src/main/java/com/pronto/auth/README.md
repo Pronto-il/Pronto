@@ -34,6 +34,20 @@ Implements `docs/architecture/api-contract.md` §2.1–2.3 and §3.1–3.3.
   non-soft-deleted `users` row), per `api-contract.md` §3.1.
 - `security/JsonAuthenticationEntryPoint` — writes the standard error envelope for
   security-layer 401s (before a request ever reaches a controller/`@ControllerAdvice`).
+- **Milestone 7 hardening additions** (`docs/architecture/hardening-plan.md` §5.1/§5.2):
+  - `security/JwtSecretStartupGuard` — a `@PostConstruct` check (runs before the embedded
+    Tomcat starts, not an `ApplicationRunner`, which was tried first but leaves a brief
+    window where the server is already accepting connections — see the class's own
+    Javadoc) that refuses to start (`IllegalStateException`) if `pronto.environment` (new
+    config property, default `local`, set via `PRONTO_ENVIRONMENT`) is not `local` **and**
+    `pronto.jwt.secret` is still the checked-in insecure placeholder. A no-op for every
+    local/QA/dev startup to date (none set `PRONTO_ENVIRONMENT`).
+  - `security/AuthRateLimitInterceptor` + `config/AuthWebConfig` — a simple per-client-IP,
+    in-memory, fixed-window rate limiter registered on `POST /api/auth/register` (10 req /
+    10 min), `.../login` (30 req / 5 min), and `.../verify` (10 req / 15 min). Closes the
+    gap that per-account login lockout doesn't catch distributed credential-stuffing and
+    that `/verify`'s 6-digit code had no brute-force attempt cap. `429 RATE_LIMITED` +
+    `Retry-After` header on trip.
 - `email/EmailSender` + `email/LoggingEmailSender` — verification code delivery, logged at
   `INFO` only. No SMTP/SES dependency added this milestone (see `api-contract.md` §3.3);
   real delivery is deferred to Milestone 5 (`notifications`), which should implement a new
@@ -61,6 +75,9 @@ Implements `docs/architecture/api-contract.md` §2.1–2.3 and §3.1–3.3.
 | `security.JwtAuthenticationFilter` | `OncePerRequestFilter`, populates `SecurityContext` from a valid Bearer token. |
 | `security.JsonAuthenticationEntryPoint` | 401 envelope for unauthenticated requests to protected endpoints. |
 | `config.SecurityConfig` | `SecurityFilterChain` + `PasswordEncoder` bean. |
+| `security.JwtSecretStartupGuard` | (Milestone 7) Fail-fast startup check for the insecure default `pronto.jwt.secret`. |
+| `security.AuthRateLimitInterceptor` | (Milestone 7) Per-IP fixed-window rate limiter, one instance per registered route. |
+| `config.AuthWebConfig` | (Milestone 7) Registers the three `AuthRateLimitInterceptor` instances on `/api/auth/register`\|`login`\|`verify`. |
 | `email.EmailSender` / `email.LoggingEmailSender` | Verification code "delivery," plus (Milestone 5) `sendOrderStatusEmail` for order-status-change email — see the Responsibilities note above. |
 
 ## Interactions with other packages
@@ -136,6 +153,15 @@ packages' repositories rather than raw SQL.
 
 Implemented in **Milestone 1 (Auth & user management)**, per
 `docs/architecture/implementation-plan.md`.
+
+**Milestone 7 hardening pass** (`docs/architecture/hardening-plan.md` §5.1/§5.2) added the
+`pronto.environment` config property + `security.JwtSecretStartupGuard` (fail-fast if a
+non-local environment still uses the checked-in placeholder `JWT_SECRET`) and
+`security.AuthRateLimitInterceptor` + `config.AuthWebConfig` (per-IP fixed-window rate
+limiting on the three `/api/auth/*` endpoints). Both are additive — no existing endpoint
+behavior, DTO shape, or config default changed; every pre-existing local/QA/dev startup
+path is unaffected (neither `PRONTO_ENVIRONMENT` nor a rate-limit trip occurs under normal
+usage volumes).
 
 QA found a critical bug in `login()`'s lockout bookkeeping (writes made right before a
 thrown `ApiException` were silently rolled back with the rest of the transaction — see

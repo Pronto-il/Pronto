@@ -32,10 +32,22 @@ spring:
       max-request-size: 8MB
 
 pronto:
+  # Milestone 7 hardening (docs/architecture/hardening-plan.md §5.1). This codebase has no
+  # Spring profiles configured anywhere (single application.yml, no spring.profiles.active
+  # usage) — this one property is a deliberately minimal substitute, not the start of a
+  # profile system. Default "local" covers every local/QA/dev startup path today (none of
+  # them set PRONTO_ENVIRONMENT). A real deployment sets this to anything other than
+  # "local" (e.g. "production") as part of its own config, alongside a real JWT_SECRET.
+  # Consumed by auth.security.JwtSecretStartupGuard.
+  environment: ${PRONTO_ENVIRONMENT:local}
+
   jwt:
     # Local-dev-only default. This is NOT production-safe — every real deployment must
     # override this via the JWT_SECRET env var with a securely generated, kept-secret
     # value (must be >= 32 bytes for HS256). See docs/architecture/api-contract.md §3.1.
+    # Enforced at startup, not just documented here: auth.security.JwtSecretStartupGuard
+    # refuses to start if pronto.environment != local and this is still the placeholder
+    # below.
     secret: ${JWT_SECRET:local-dev-only-insecure-jwt-secret-key-please-override-via-JWT_SECRET-env-var-before-any-real-deployment}
     expiration-seconds: ${JWT_EXPIRATION_SECONDS:86400}
 

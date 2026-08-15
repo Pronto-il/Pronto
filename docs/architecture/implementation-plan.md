@@ -627,6 +627,113 @@ relocated into `overview.md` §6/§7 and `data-model.md` §6; substantially dupl
 own `.md` files) was not migrated. See `overview.md` §6's 2026-08-15 entry and §7 for the
 merged content.
 
+## Milestone 8 — Professional Profiles, Reviews, Favorites & Matching (Distance/ETA)
+
+- **Status: COMPLETE (backend), QA-signed-off with zero bugs found on functionality or
+  security, 2026-08-15.** Not yet committed at the time this entry was written (branch
+  `MS7`, per `git status`) — commit/merge/push remain the user's own explicit actions, not
+  implied by this status line. This is the first milestone-equivalent unit of work added
+  after Milestone 7's hardening/QA pass closed — not one of the originally-numbered
+  milestones in `overview.md` §5, added by direct user request and referred to informally in
+  the implementing code's own comments as "Milestone 8-ish." Documented here as a full
+  milestone entry (not an addendum to Milestone 7) because its scope — a new self-service
+  profile layer, two new packages, a new cross-cutting design override — is materially
+  larger than a hardening-pass follow-up. Full design/contract:
+  `docs/architecture/api-contract-professionals-reviews.md`.
+- **Load-bearing scope note**: this milestone **overrides** a prior "ETA/tracking display is
+  out of v1.0 scope, permanent" ruling (`data-model.md` §4, `overview.md` §2) — by direct,
+  detailed user instruction (exact formulas/peak-hour windows/required test coverage were
+  specified directly), not a `pronto-planning`/`pronto-lead` reinterpretation. See
+  `api-contract-professionals-reviews.md` §5 for the full record. GPS/live-location tracking
+  remains a completely separate, still-valid, untouched permanent exclusion.
+- **Scope actually built**: five new Flyway migrations (`V15__alter_professionals_add_profile_fields.sql`
+  — `professionals.bio`/`profile_image_key`/`city`, the last backfilled once from
+  `service_area`; `V16__create_reviews.sql`; `V17__create_favorites.sql`;
+  `V18__alter_orders_add_service_address.sql` — `orders.service_city`/`service_street`/
+  `service_house_number`/`service_apartment`; `V19__alter_orders_add_sos_pricing.sql` —
+  `orders.base_price_snapshot`/`sos_surcharge`). Two brand-new packages: `reviews` (full CRUD,
+  `POST`/`GET`/`PUT`/`DELETE /api/reviews`, two new `ErrorCode` values —
+  `REVIEW_ORDER_NOT_COMPLETED`, `REVIEW_ALREADY_EXISTS`) and `favorites` (`POST`/
+  `GET /api/favorites`, `DELETE /api/favorites/{professionalId}`, both write endpoints
+  idempotent, no new `ErrorCode` needed). One brand-new, endpoint-less package: `matching`
+  (`DistanceEtaStrategy`/`ApproximateDistanceEtaStrategy`, pure stateless distance/ETA
+  computation, owns no table). `professionals` gained its **first-ever service/controller/
+  DTO/config layer** (`GET`/`PUT /api/professionals/me`, `POST
+  /api/professionals/me/profile-image`, `GET /api/professionals/{professionalId}`) plus a
+  new narrow cross-package `ReviewAggregateRepository` (mirrors `bookings`'s existing
+  `ProfessionalListingRepository` pattern). `bookings` gained: required `city`/`street`/
+  `houseNumber` (+ optional `apartment`) query params and an optional `sort=CHEAPEST|FASTEST`
+  on both professional-listing endpoints; an enriched `ProfessionalCard` (profile image,
+  rating/review-count, `favorited`, distance/ETA fields); required `serviceCity`/
+  `serviceStreet`/`serviceHouseNumber` (+ optional `serviceApartment`) on both order-creation
+  endpoints, persisted onto the new `orders.service_*` columns; and a `basePriceSnapshot`/
+  `sosSurcharge` split on `OrderResponse`/`OrderDetailResponse` (SOS orders:
+  `sosSurcharge = 50.00`, a hardcoded, explicitly-flagged placeholder constant; Standard
+  orders: always `0.00`). `storage` received a follow-up security-relevant fix:
+  `professionals/`-prefixed keys (profile images) are now publicly readable by any
+  authenticated caller of either role (`ImageKeyUtils.isPubliclyReadable`), and
+  `StorageWebConfig`'s role gate was narrowed from blanket `/api/storage/**` to the literal
+  `/api/storage/images` `POST`-only path — `customers/`-prefixed issue-image retrieval is
+  completely unchanged (same effective CUSTOMER-only ownership behavior, verified zero
+  regression). `common.security.RoleRequiredInterceptor` gained an optional
+  HTTP-method-scoped constructor, needed because `reviews`' `POST`/`GET /api/reviews` share
+  an identical literal path but require different role gating.
+- **Acceptance criteria**: a professional can self-manage their profile (bio, city, price,
+  profile photo) without going through `auth`; customers can rate/review completed jobs and
+  bookmark professionals; professional-search results can be sorted by approximate travel
+  time in addition to price. **Met** — verified against a real Postgres instance, backend
+  only (no frontend UI, consistent with every prior milestone).
+- **QA summary**: QA validated this feature set functionally and for security and found
+  **zero bugs** — full sign-off, the same "zero known open bugs" bar every prior milestone in
+  this plan has been held to. Coverage independently corroborated against the real code and
+  its accompanying unit tests during this documentation pass (`ApproximateDistanceEtaStrategyTest`
+  — 12 cases, every same/different-city × peak/off-peak combination plus all 6 named
+  half-open-interval boundary times; `ReviewsServiceTest`; `FavoritesServiceTest`;
+  `ProfessionalsServiceTest`; and additions to `BookingsServiceTest` for the enrichment/
+  sort/service-address/surcharge logic). QA's 12-item coverage summary, as reported: the four
+  new `professionals` self-service endpoints (ownership/role enforcement, allowlist-DTO
+  field coverage, profile-image content-type validation); the four `reviews` endpoints
+  (ownership, the `COMPLETED`-only gate, the one-review-per-order constraint including its
+  race-condition backstop, immutable-field enforcement on edit); the three `favorites`
+  endpoints (idempotency of both add and remove, existence validation on add); the
+  distance/ETA computation's same/different-city and peak/off-peak boundary correctness;
+  the `sort=CHEAPEST`/`FASTEST` listing behavior on both Standard and SOS endpoints; the
+  service-address snapshot's persistence on order creation; the SOS-surcharge price split
+  (`finalPrice = basePriceSnapshot + sosSurcharge`) on both booking paths; and a full
+  regression pass confirming zero breakage to Milestones 1-7 (auth, issue creation,
+  Standard/SOS booking, notifications, job-status progression, availability slot edit/
+  delete, and the Milestone 7 hardening fixes all re-verified working). Security review
+  covered the new `storage` public-read carve-out specifically (confirmed scoped exactly to
+  `professionals/`-prefixed keys, with `customers/`-prefixed issue-image ownership
+  enforcement re-verified unchanged) and role/ownership enforcement on every new endpoint
+  across all three new/changed packages.
+- **Known gap, not a bug — accepted consequence of the approved design**: **newly-registered
+  professionals get `city = NULL`.** `auth.service.AuthService#register` was not changed by
+  this milestone and still only sets `professionals.service_area`, never `city` — confirmed
+  directly by reading the method (`new Professional(user.getId(), request.categoryId(),
+  request.serviceArea(), request.basePrice())`, no `city` argument exists on that
+  constructor). `matching.ApproximateDistanceEtaStrategy` treats a `null` professional city
+  as "different city" (a deliberate conservative default — never silently treating an unset
+  city as "matches everywhere"). **Consequence**: a professional who registers after this
+  milestone shipped and never visits `PUT /api/professionals/me` shows `sameCity: false` and
+  the worse (different-city) ETA/distance figures to every customer by default, regardless
+  of their actual service area, until they self-edit their profile. Documented here, in
+  `professionals/README.md`, `matching/README.md`, `bookings/README.md`, and
+  `api-contract-professionals-reviews.md` §9 item 1 — not silently omitted from any of them.
+  **Not fixed in this pass** (would require either a backend source change to
+  `AuthService.register()` or a design change to the ETA strategy's default, both out of
+  scope for a documentation-only pass) — reported to `pronto-lead`/the user as a candidate
+  for a future small follow-up, not treated as a defect requiring immediate action.
+- **Also flagged, non-blocking**: the `SOS_SURCHARGE_AMOUNT = 50.00` placeholder and the
+  15/40-minute base-travel-time and 8.0/35.0 km placeholder-distance constants are
+  explicitly not sourced from any pricing/routing provider or source document (only the
+  peak-hour windows and their surcharge minutes came directly from the user's own
+  instruction) — see `api-contract-professionals-reviews.md` §9 items 2-3 for the full
+  provenance distinction. A booking's persisted service address is never cross-validated
+  against the address used on the preceding listing search (§9 item 4) — judged low-risk,
+  consistent with this project's existing tolerance for similar low-impact gaps (e.g. the
+  Milestone 2 duplicate-`imageKey` gap, `overview.md` §6).
+
 ## Cross-cutting rules for every milestone
 
 - Planning docs (`overview.md`, this file) are updated if a milestone's actual

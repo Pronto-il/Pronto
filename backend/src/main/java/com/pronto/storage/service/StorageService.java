@@ -38,6 +38,34 @@ public class StorageService {
     }
 
     public ImageUploadResponse upload(AuthenticatedUser caller, MultipartFile file) {
+        ImageContentType type = validateAndResolveType(file);
+        String key = "customers/" + caller.id() + "/issues/temp/" + UUID.randomUUID() + "." + type.extension();
+        StoredObject stored = uploadWithKey(key, file);
+        return new ImageUploadResponse(stored.key(), stored.url(), stored.contentType(), stored.sizeBytes());
+    }
+
+    /**
+     * Generic "validate type/size, delegate to {@link StorageClient#upload}, wrap exceptions"
+     * logic, extracted so other packages needing their own image-upload endpoint (e.g.
+     * {@code professionals.service.ProfessionalsService#uploadProfileImage}) don't duplicate
+     * it. {@code key} is fully caller-supplied (including extension) — the caller resolves
+     * its own {@link ImageContentType} first (via {@link #validateAndResolveType}, or its own
+     * equivalent lookup) to build a key template appropriate to its own domain, then hands
+     * the finished key here. {@link #upload} above is now a thin wrapper: it builds its own
+     * {@code customers/{callerId}/issues/temp/{uuid}.{ext}} key and calls straight through to
+     * this method — behavior for issue images is unchanged.
+     */
+    public StoredObject uploadWithKey(String key, MultipartFile file) {
+        ImageContentType type = validateAndResolveType(file);
+        byte[] content = readBytes(file);
+        try {
+            return storageClient.upload(key, content, type.contentType());
+        } catch (StorageException e) {
+            throw new ApiException(ErrorCode.STORAGE_SERVICE_ERROR, "Failed to store uploaded image.");
+        }
+    }
+
+    private ImageContentType validateAndResolveType(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
                     List.of(new FieldError("file", "is required")));
@@ -50,35 +78,33 @@ public class StorageService {
         if (file.getSize() > MAX_SIZE_BYTES) {
             throw new ApiException(ErrorCode.IMAGE_TOO_LARGE, "File exceeds the maximum allowed size of 8 MB.");
         }
+        return type;
+    }
 
-        byte[] content;
+    private byte[] readBytes(MultipartFile file) {
         try {
-            content = file.getBytes();
+            return file.getBytes();
         } catch (IOException e) {
             throw new ApiException(ErrorCode.STORAGE_SERVICE_ERROR, "Failed to read uploaded file.");
         }
-
-        String key = "customers/" + caller.id() + "/issues/temp/" + UUID.randomUUID() + "." + type.extension();
-
-        StoredObject stored;
-        try {
-            stored = storageClient.upload(key, content, type.contentType());
-        } catch (StorageException e) {
-            throw new ApiException(ErrorCode.STORAGE_SERVICE_ERROR, "Failed to store uploaded image.");
-        }
-
-        return new ImageUploadResponse(stored.key(), stored.url(), stored.contentType(), stored.sizeBytes());
     }
 
     /**
      * §2.4 steps 2-4. Ownership mismatch (including an unparseable key) is always
      * {@code 403 FORBIDDEN} — never {@code 404} — so a caller can't distinguish "not yours"
      * from "doesn't exist" by probing (§2.4's explicit anti-enumeration requirement).
+     *
+     * <p>{@code professionals/}-prefixed keys (profile images) skip the ownership check
+     * entirely — see {@link ImageKeyUtils#isPubliclyReadable}'s javadoc for why. Every other
+     * key format, in particular {@code customers/}-prefixed issue images, still goes through
+     * {@link ImageKeyUtils#belongsTo}'s exact original per-caller ownership check, unchanged.
      */
     public RetrievedImage retrieve(AuthenticatedUser caller, String key) {
-        boolean ownedByCaller = ImageKeyUtils.belongsTo(key, caller.id());
-        if (!ownedByCaller) {
-            throw new ApiException(ErrorCode.FORBIDDEN, "You do not have access to this image.");
+        if (!ImageKeyUtils.isPubliclyReadable(key)) {
+            boolean ownedByCaller = ImageKeyUtils.belongsTo(key, caller.id());
+            if (!ownedByCaller) {
+                throw new ApiException(ErrorCode.FORBIDDEN, "You do not have access to this image.");
+            }
         }
 
         boolean exists;

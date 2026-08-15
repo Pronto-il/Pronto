@@ -2,85 +2,139 @@
 
 ## Purpose
 
-Professional profile (category, service area, standing price offer, reliability score).
-No approval workflow — v1.0 auto-approves professional accounts (`approval_status`
-defaults to and stays `'APPROVED'`).
+Professional profile: category, service area/city, standing price offer, bio, profile
+image, and the derived average-rating/review-count aggregate. No approval workflow — v1.0
+auto-approves professional accounts (`approval_status` defaults to and stays `'APPROVED'`).
+
+**This README was previously stale** (described only the Milestone 1 entity+repository-only
+state). Rewritten 2026-08-15 to reflect this package's first-ever service/controller/DTO/
+config layer, added alongside the reviews/favorites/matching feature set. Implements
+`docs/architecture/api-contract-professionals-reviews.md` §4.1-4.4.
 
 ## Responsibilities
 
-- Owns the `Professional` JPA entity mapped to the `professionals` table, matching
-  `V4__create_professionals.sql` exactly (`ddl-auto: validate`).
-- Provides `ProfessionalRepository` (used by `auth` at registration time, and by `users`
-  to populate `GET /api/users/me`'s nested `professional` object).
-- Provides a **read-only** `Category` entity + `CategoryRepository`, mapped to the
-  `categories` table, used solely to validate `RegisterRequest.categoryId` at professional
-  registration time (`api-contract.md` §2.1). The application never writes to
-  `categories` — only `V10__seed_categories.sql` does.
+- **Entity/repository layer (Milestone 1, unchanged in shape, extended in columns)**: owns
+  the `Professional` JPA entity mapped to the `professionals` table, matching
+  `V4__create_professionals.sql` plus this feature set's `V15__alter_professionals_add_profile_fields.sql`
+  (adds `bio`, `profile_image_key`, `city`) exactly (`ddl-auto: validate`). Provides
+  `ProfessionalRepository` (`findByUserId`, used by `auth` at registration time, by `users`
+  for `GET /api/users/me`'s nested `professional` object, and by this package's own new
+  service layer to resolve "the caller's own professional row"). Provides a **read-only**
+  `Category` entity + `CategoryRepository`, unchanged since Milestone 1 (see "Assumptions"
+  below for why `Category` lives here).
+- **Self-service profile layer (new this pass)**:
+  - `GET /api/professionals/me` — the caller's own profile, enriched with the average-
+    rating/review-count aggregate and a resolved profile-image URL. `favorited` is always
+    `null` on this self-view.
+  - `PUT /api/professionals/me` — allowlist edit of `fullName` (on the underlying `users`
+    row), `serviceArea`, `city`, `bio`, `basePrice`. A plain load-mutate-save write (not the
+    guarded-atomic-`UPDATE` pattern reserved for concurrency-contended state machines like
+    `orders`/`availability_slots`) — a single owner editing their own profile has no
+    meaningful concurrent-writer race to guard against.
+  - `POST /api/professionals/me/profile-image` — multipart upload, stores under
+    `professionals/{professionalId}/profile/{uuid}.{ext}` via `storage.service
+    .StorageService#uploadWithKey` (a different key template/code path than `issues`' own
+    `customers/{callerId}/issues/temp/...` upload), replaces (not appends to) any prior
+    `profile_image_key`.
+  - `GET /api/professionals/{professionalId}` — public detail view, either role, no
+    route-level gate (authorization for what it needs — the `favorited` flag — happens in
+    the service layer). Same response shape as `/me`, but `favorited` is populated only for
+    a `CUSTOMER` caller.
 
 ## Key classes
 
 | Class | Role |
 |---|---|
-| `entity.Professional` | JPA entity for `professionals`. `userId`/`categoryId` are plain FK columns (not `@ManyToOne`/`@OneToOne` associations) — this package never needs to navigate the related `User`/`Category` object graph, just the id. |
-| `entity.Category` | Read-only reference entity for `categories` (8 fixed rows). |
-| `repository.ProfessionalRepository` | `findByUserId`. |
-| `repository.CategoryRepository` | Plain `JpaRepository`; used via `existsById` only in this milestone. |
-
-No service/controller layer yet — Milestone 1 only needs entity creation (via `auth`) and
-read access (via `users`/`auth`). Profile edit/dashboard flows are Milestone 6's scope.
+| `entity.Professional` | JPA entity for `professionals`. `userId`/`categoryId` are plain FK columns (not `@ManyToOne`/`@OneToOne` associations) — unchanged reasoning since Milestone 1. As of this pass, also carries `bio`/`profileImageKey`/`city` (all nullable, plain `String` columns). |
+| `entity.Category` | Read-only reference entity for `categories` (8 fixed rows) — unchanged since Milestone 1. |
+| `repository.ProfessionalRepository` | `findByUserId` — unchanged since Milestone 1, now also the primary lookup this package's own new service layer uses to resolve "the caller's own professional row." |
+| `repository.CategoryRepository` | Plain `JpaRepository`, `existsById`-only usage — unchanged since Milestone 1. |
+| `repository.ReviewAggregateRepository` | **New this pass.** A narrow, read-only `Repository<Review, Long>` (not `JpaRepository` — exists purely to expose one aggregate query, not full CRUD) reading `reviews.entity.Review` from outside its owning package, projecting into `ProfessionalRatingAggregate`. Deliberately lives here, not in `reviews` — mirrors the intentional narrow-cross-package-repository pattern `bookings.repository.ProfessionalListingRepository` already established (a package reading another package's entity for its own projection need, rather than that dependency running the other direction). |
+| `repository.ProfessionalRatingAggregate` | Projection record, `(averageRating, reviewCount)`. `averageRating` is `null` and `reviewCount` is `0` when the professional has no reviews (JPQL `AVG`/`COUNT` over zero rows) — always exactly one row is returned (aggregate functions never produce zero result rows), so callers never need an `Optional`. |
+| `service.ProfessionalsService` | **New this pass.** All business logic for the four endpoints above — resolving "the caller's own professional" (with a defense-in-depth `403 FORBIDDEN` if a `PROFESSIONAL`-role caller somehow has no `professionals` row, not expected to be reachable in practice), the profile-image upload flow, and the shared response-building helper that resolves the profile-image URL (via `storage.client.StorageClient#resolveUrl`) and the rating aggregate (via `ReviewAggregateRepository`) for both the self-view and the public-detail-view endpoints. |
+| `controller.ProfessionalsController` | **New this pass.** `/api/professionals/me` (`GET`/`PUT`), `/api/professionals/me/profile-image` (`POST`, `multipart/form-data`), `/api/professionals/{professionalId}` (`GET`). Manual path-id parsing, same convention as every other controller in this codebase. |
+| `config.ProfessionalsWebConfig` | **New this pass.** A single `RoleRequiredInterceptor(PROFESSIONAL)` registered on the literal paths `/api/professionals/me` and `/api/professionals/me/profile-image` (not a blanket `/api/professionals/**` — this package mixes a `PROFESSIONAL`-only surface with the either-role `{professionalId}` detail route, the same reason `bookings`/`issues` use literal-pattern lists instead of a wildcard). `GET /api/professionals/{professionalId}` is left ungated at the route level. |
+| `dto.ProfessionalProfileResponse` | Shared response shape for `GET`/`PUT /api/professionals/me` and `GET /api/professionals/{professionalId}` — `favorited` is `Boolean` (not `boolean`), since it's meaningfully three-valued (`null` on self-views/non-`CUSTOMER` callers, `true`/`false` for a `CUSTOMER` viewing another professional's card). |
+| `dto.UpdateProfessionalProfileRequest` | Allowlist DTO for `PUT /api/professionals/me` — deliberately excludes (by omission) `id`, `userId`, `categoryId`, `approvalStatus`, `reliabilityScore`, any rating/review-count field, `profileImageKey` (its own endpoint), and the timestamps. |
+| `dto.ProfileImageUploadResponse` | Response shape for the profile-image upload — mirrors `storage.dto.ImageUploadResponse`'s shape, scoped to this endpoint's own key/URL. |
 
 ## Interactions with other packages
 
 - Depended on by `auth` (`AuthService`) to create a `Professional` row at professional
-  registration and to validate `categoryId` via `CategoryRepository`.
+  registration and to validate `categoryId` via `CategoryRepository` — unchanged since
+  Milestone 1. **Known gap, not fixed by this pass**: `AuthService#register` still only sets
+  `serviceArea` from `RegisterRequest`, never `city` — a newly-registered professional has
+  `city = NULL` until they call `PUT /api/professionals/me` themselves. See "Assumptions"
+  below and `docs/architecture/implementation-plan.md`'s Milestone 8 entry for the full
+  consequence this has on `matching`'s distance/ETA computation.
 - Depended on by `users` (`UsersService`) to populate `GET /api/users/me`'s nested
-  `professional` object.
-- **Milestone 2**: depended on by `issues` (`IssuesService`, to validate `categoryId` on
-  `POST /api/issues`) and by `ai` (`ClassificationService`, to resolve an AI-returned
-  category code to a `categories` row and to build the OpenAI prompt's category list) —
-  both reuse `CategoryRepository` as-is. See "Assumptions" below: this settles the
-  Milestone-1-flagged "should `Category` move to a shared package" question.
-- Will be consumed by `bookings` (Standard/SOS listings) and `availability` in later
-  milestones.
+  `professional` object — unchanged since Milestone 1.
+- Depended on by `issues`/`ai` (both reuse `CategoryRepository` read-only) — unchanged since
+  Milestone 2.
+- Depended on by `bookings` (`ProfessionalRepository` for lookup/ownership checks,
+  `Professional` entity for `categoryId`/`basePrice`/`city`/`profileImageKey`) — unchanged
+  dependency edge since Milestone 3, now also reading the three new columns. **Note**:
+  `bookings.repository.ProfessionalListingRepository` is a *separate* Spring Data repository
+  over the same `Professional` entity, deliberately kept in `bookings` rather than merged
+  here — see `bookings/README.md`'s Interactions section and `overview.md` §6's
+  2026-08-15 finding for the full "two repositories, one entity, two packages" reasoning
+  (not new to this pass, restated here for discoverability).
+- **New this pass**: depends on `reviews` (`ReviewAggregateRepository`'s narrow read into
+  `reviews.entity.Review`), `favorites` (`FavoriteRepository`, for the `favorited` flag on
+  `GET /api/professionals/{professionalId}`), and `storage` (`StorageClient`/`StorageService`,
+  for profile-image upload/URL resolution — a new dependency edge this package did not have
+  in Milestone 1, when it had no service layer at all).
+- Depends on `common` for the error envelope (`ApiException`/`ErrorCode`) and
+  `RoleRequiredInterceptor`/`AuthenticatedUser` — new dependency edge, this package's
+  controller/service layer didn't exist before this pass to need it.
 
 ## Data model
 
-Owns the `professionals` table (`docs/architecture/data-model.md` §2.4). Also maps
-`categories` (§2.1) as a read-only reference entity — see the placement note below.
+Owns the `professionals` table (`docs/architecture/data-model.md` §2.4, amended by
+`V15__alter_professionals_add_profile_fields.sql` — adds `bio`/`profile_image_key`/`city`,
+the last backfilled from `service_area` for existing rows at migration time only). Also maps
+`categories` (§2.1) as a read-only reference entity, unchanged since Milestone 1.
 
 ## Assumptions / judgment calls made during implementation
 
-- **`Category` entity placement (flagged in Milestone 1, resolved in Milestone 2).** No
-  dedicated `categories` package exists. `Category`/`CategoryRepository` were added here
-  in Milestone 1 purely so professional registration could validate `categoryId` against a
-  real FK target, with a flagged open question of whether `issues` (which would also need
-  `category_id` in Milestone 2) should get its own copy or a shared package should be
-  introduced. **Resolved during Milestone 2's implementation**: `issues` and `ai` both
-  depend on this package's `CategoryRepository` directly (read-only), the same pattern
-  `auth` already used — no duplication, no new package. Still worth revisiting if a future
-  milestone gives `categories` real write/management behavior (e.g. an admin CRUD screen),
-  at which point a dedicated package would earn its keep; not needed for read-only lookups.
-- `Professional.approvalStatus` is a plain `String` (not a Java enum) — matches the
-  DB `CHECK` constraint's value set exactly and the column is functionally inert in v1.0
-  (always `'APPROVED'`), so an enum felt like unnecessary ceremony for a value that's
-  never branched on by application logic yet.
-- `reliabilityScore` is mapped but never set/read by any Milestone 1 code path — no
-  rating/review mechanism exists yet (per `data-model.md` §4's open question).
+- **`Category` entity placement** — unchanged since Milestone 2's resolution (see prior
+  revisions of this doc / `data-model.md` §4 if needed); not revisited by this pass.
+- `Professional.approvalStatus` remains a plain `String`, functionally inert in v1.0 —
+  unchanged since Milestone 1.
+- `reliabilityScore` remains mapped but never set/read by any code path in this package —
+  **this feature set's `averageRating`/`reviewCount` (derived live from `reviews`) are a
+  separate, newly-populated concept and do not retrofit `reliability_score`**; the original
+  Milestone 1 open question ("where does this number come from") is unaffected and still
+  open, per `data-model.md` §4.
+- **`PUT /api/professionals/me` is a load-mutate-save write, not a guarded atomic `UPDATE`**
+  — a deliberate choice, not an inconsistency with `bookings`/`availability`'s guarded-
+  transition pattern: those packages guard against *concurrent, adversarial* state changes
+  (two customers racing for the same slot); a professional editing their own profile has no
+  equivalent contention to guard against, matching `users.service.UsersService#deleteMe`'s
+  existing load-mutate-save precedent for the same category of single-owner write.
+- **Newly-registered professionals get `city = NULL`** (known gap, not fixed by this pass —
+  `AuthService.register()` was out of scope to change here). Combined with
+  `matching.ApproximateDistanceEtaStrategy`'s conservative "`null` city = different city"
+  default, a new professional shows worse ETA/`sameCity: false` by default in Standard/SOS
+  listings until they self-edit via `PUT /api/professionals/me`. Documented as an accepted
+  consequence of the approved design, not silently omitted — see
+  `docs/architecture/implementation-plan.md`'s Milestone 8 entry and
+  `docs/architecture/api-contract-professionals-reviews.md` §9 for the full record.
+- **Profile-image retrieval has no ownership check** (any authenticated caller of either
+  role can fetch a `professionals/`-prefixed key) — owned and documented by `storage`, not
+  this package; see `storage/README.md`'s "Role enforcement" section for the full mechanism.
+  This package only generates the key and stores it.
 
 ## Status
 
-Entity/repository layer implemented in **Milestone 1 (Auth & user management)**, per
-`docs/architecture/implementation-plan.md` (profile creation only, via `auth`'s
-registration flow; dashboard/edit flows are Milestone 6). QA-validated (2026-08-13, two
-passes) against a real Postgres instance: professional registration creates a
-`professionals` row with `approval_status = 'APPROVED'` and no admin gate, `categoryId`
-validation against the seeded `categories` table (including the invalid-`categoryId`
-edge case), and the nested `professional` object surfaced correctly via
-`GET /api/users/me`.
+**Entity/repository layer**: implemented in Milestone 1 (Auth & user management), QA-
+validated 2026-08-13 — unchanged summary, see prior implementation-plan entries.
 
-**Fixed, 2026-08-13 (pre-Milestone-4 schema-gap fix):** the `V5__create_availability_slots.sql`
-gap flagged in `docs/architecture/data-model.md` §4 (single-table SOS design that §2.6/§3
-item 5 rejected) is closed via `V13__create_sos_availability.sql` (owned by the
-`availability` package). This package's registration flow (`auth.service.AuthService`,
-which owns registration end-to-end) now inserts the default `sos_availability` row
-alongside the `professionals` row.
+**Self-service profile/controller/service/config layer**: implemented and QA-signed-off
+(zero bugs found on functionality/security) as part of the professional-profile/reviews/
+favorites/matching feature set, 2026-08-15 (branch `MS7`, not yet committed at the time this
+doc was written). See `docs/architecture/implementation-plan.md`'s Milestone 8 entry for the
+full QA summary (including the `city = NULL` known gap) and
+`docs/architecture/api-contract-professionals-reviews.md` §4.1-4.4 for the complete
+design/contract this layer implements. Unit-tested
+(`professionals.service.ProfessionalsServiceTest`).

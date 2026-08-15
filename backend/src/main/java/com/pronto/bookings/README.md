@@ -6,17 +6,35 @@
 
 Implements `docs/architecture/api-contract-bookings.md` §2.2-2.9 (Standard path,
 Milestone 3), §2.12-2.13 (SOS path, Milestone 4), and §2.16-2.17 (job-status
-progression, `ON_THE_WAY`/`COMPLETED`, Milestone 6).
+progression, `ON_THE_WAY`/`COMPLETED`, Milestone 6). **As of Milestone 8**, also implements
+`docs/architecture/api-contract-professionals-reviews.md` §7 (service-location query params,
+`sort=CHEAPEST|FASTEST`, the enriched `ProfessionalCard`, service-address snapshot on order
+creation, and the SOS-surcharge price split) — that doc is the authoritative source for the
+Milestone 8 delta; this README's Responsibilities/Key classes sections below summarize it
+in place rather than restating it in full.
 
 ## Responsibilities
 
 - `GET /api/bookings/professionals?issueId=` — professional listing for a Standard booking,
   filtered by the issue's category, joined to `users` to exclude soft-deleted professionals,
-  ordered `base_price ASC` (judgment call, §7 of the contract doc). Requires the issue to be
-  owned by the caller, have `urgencyType = STANDARD` (`409 ISSUE_URGENCY_MISMATCH`
+  ordered `base_price ASC` by default (judgment call, §7 of the contract doc). Requires the
+  issue to be owned by the caller, have `urgencyType = STANDARD` (`409 ISSUE_URGENCY_MISMATCH`
   otherwise — added Milestone 4, fixing a pre-existing Milestone 3 gap where this endpoint
   never validated urgency type at all, contract doc §3.10/§6 item 5), and `status = OPEN`
-  (`409 ISSUE_NOT_BOOKABLE` otherwise).
+  (`409 ISSUE_NOT_BOOKABLE` otherwise). **As of Milestone 8**: now also requires `city`/
+  `street`/`houseNumber` query params (+ optional `apartment`, together the customer's
+  per-request `matching.ServiceLocation`) — missing/blank required fields → `400
+  VALIDATION_ERROR`, one `FieldError` per missing field. Each returned card is enriched
+  (post-fetch, in Java, never in SQL) with `profileImageUrl`/`averageRating`/`reviewCount`/
+  `favorited` (correlated subqueries in `ProfessionalListingRepository` over `reviews`/
+  `favorites`, resolved/converted in `BookingsService`) and `sameCity`/`distanceKm`/
+  `baseTravelTimeMinutes`/`trafficAdjustmentMinutes`/`etaMinutes` (via
+  `matching.DistanceEtaStrategy`, one uniform `requestTime = Instant.now()` per listing
+  call). An optional `sort` param (`CHEAPEST` default/`FASTEST`) controls final ordering —
+  `CHEAPEST` leaves the DB's `base_price ASC` order untouched; `FASTEST` re-sorts the
+  already-enriched list in-memory by `etaMinutes` ascending (necessarily in-memory —
+  `etaMinutes` is never a database column). See
+  `docs/architecture/api-contract-professionals-reviews.md` §7.1-§7.3 for the full spec.
 - `GET /api/bookings/professionals/{professionalId}/slots?issueId=` — one professional's
   open, future `availability_slots`, ordered by `start_time ASC`. Same
   issue-ownership/urgency-type/bookable checks as the listing endpoint (including the
@@ -28,16 +46,29 @@ progression, `ON_THE_WAY`/`COMPLETED`, Milestone 6).
   `409 SLOT_UNAVAILABLE` on 0 affected rows) and transitions the issue
   `OPEN -> BOOKED` (`UPDATE issues ... WHERE status = 'OPEN'`, rolling back the slot claim
   too on 0 affected rows), all in one `@Transactional` method, before inserting the `orders`
-  row (`order_status = PENDING`, `final_price` initialized from `professional.basePrice`,
-  `slot_id` always set for a Standard order).
+  row (`order_status = PENDING`, `slot_id` always set for a Standard order). **As of
+  Milestone 8**: the request body also requires `serviceCity`/`serviceStreet`/
+  `serviceHouseNumber` (+ optional `serviceApartment`) — persisted verbatim onto the new
+  `orders.service_*` columns as a point-in-time snapshot, **not** cross-validated against
+  whatever `city`/`street`/`houseNumber` the customer used on the preceding listing call
+  (a flagged, accepted gap — see `docs/architecture/api-contract-professionals-reviews.md`
+  §9 item 4). `final_price` is now computed as `basePriceSnapshot + sosSurcharge`
+  (`basePriceSnapshot = professional.basePrice` at booking time, `sosSurcharge = 0.00`
+  always for a Standard order, explicitly set in the insert rather than relying on the DB
+  column's `DEFAULT 0` alone) and both components are persisted alongside `final_price` for
+  display (`OrderResponse`/`OrderDetailResponse`'s new fields).
 - `GET /api/bookings/sos-professionals?issueId=` — **new, Milestone 4.** SOS-path sibling
   of the Standard listing above: filtered by the issue's category **and** currently
   `sos_availability.is_available = true` (join added to `ProfessionalListingRepository`),
-  same soft-delete exclusion and `base_price ASC` ordering. Requires `urgencyType = SOS`
-  (`409 ISSUE_URGENCY_MISMATCH` otherwise — built in from the start, not a retrofit, since
-  this endpoint is new) and `status = OPEN`. An empty list is a valid `200`, not an error —
-  it's the backend shape behind PRD §3.5.6's "no-available-professional message," a
-  frontend rendering concern.
+  same soft-delete exclusion and `base_price ASC` default ordering. Requires `urgencyType =
+  SOS` (`409 ISSUE_URGENCY_MISMATCH` otherwise — built in from the start, not a retrofit,
+  since this endpoint is new) and `status = OPEN`. An empty list is a valid `200`, not an
+  error — it's the backend shape behind PRD §3.5.6's "no-available-professional message," a
+  frontend rendering concern. **As of Milestone 8**: takes the identical `city`/`street`/
+  `houseNumber`/`apartment`/`sort` query params and produces the identical enriched
+  `ProfessionalCard` shape as the Standard listing above — same enrichment/sort code path
+  (`BookingsService#enrichAndSort`), applied independently to whichever list this endpoint
+  fetched.
 - `POST /api/bookings/sos-orders` — **new, Milestone 4.** Creates an SOS order: no slot
   selection at all (`CreateSosOrderRequest` has one fewer field than `CreateOrderRequest`).
   Same issue-ownership/`urgencyType = SOS`/bookable checks, then a **plain read-check** (not
@@ -47,7 +78,13 @@ progression, `ON_THE_WAY`/`COMPLETED`, Milestone 6).
   §3.11 has the full design reasoning for why a plain read is correct here, unlike the
   exclusive slot claim). On success: `issues.status -> BOOKED` (same `bookIfOpen` mechanism
   the Standard path uses), then inserts the `orders` row with `bookedStart = now()`,
-  `bookedEnd = NULL`, `slotId = NULL`.
+  `bookedEnd = NULL`, `slotId = NULL`. **As of Milestone 8**: also requires the same
+  `serviceCity`/`serviceStreet`/`serviceHouseNumber` (+ optional `serviceApartment`) body
+  fields as `POST /api/bookings/orders`, persisted the same way. `sosSurcharge` is always
+  `SOS_SURCHARGE_AMOUNT` (a hardcoded `static final BigDecimal("50.00")` placeholder,
+  explicitly flagged in its own Javadoc as not a sourced business figure — see
+  `docs/architecture/api-contract-professionals-reviews.md` §7.5/§9 item 2), so
+  `finalPrice = basePriceSnapshot + 50.00` for every SOS order.
 - `POST /api/bookings/orders/{orderId}/accept` — `PENDING -> CONFIRMED`, professional-owner
   only. `issues.status` is not touched (stays `BOOKED`). Unmodified since Milestone 3 —
   works identically for SOS and Standard orders (no `urgency_type` branching anywhere in
@@ -144,10 +181,10 @@ not just re-asserted).
 | `entity.Order` | JPA entity for `orders`. Exposes no setters for `orderStatus`/`cancelledBy` — every transition goes through `repository.OrderRepository`'s atomic `UPDATE` methods, never a load-mutate-save round trip. Unchanged in Milestone 4 — its constructor already accepted nullable `slotId`/`bookedEnd`, used by `createSosOrder` with no entity change needed. |
 | `entity.OrderStatus` / `entity.CancelledBy` | Enums mirroring `orders.order_status` (7 values, post-`V11`) / `orders.cancelled_by`. |
 | `repository.OrderRepository` | `JpaRepository`, plus `acceptIfPending`/`rejectIfPending`/`cancelIfStatus` (the atomic guarded transitions, §3.2) and the self-listing/`latestOrder`/professional-authorization finder methods. Unchanged in Milestone 4 — no `urgency_type`/`slot_id` branching in any `@Query`. **As of Milestone 5**, two new methods: `expireIfPending` (mirrors `rejectIfPending` exactly, target status `EXPIRED`) and `findPendingExpiryCandidateIds` (cross-entity comma-join JPQL against `Order`/`Issue`, same style as `ProfessionalListingRepository`'s existing joins — returns candidate order ids past their per-`urgencyType` cutoff for the sweep). **As of Milestone 6**, two new guarded-transition methods following the exact same shape: `onTheWayIfConfirmed` (`UPDATE ... WHERE order_status = 'CONFIRMED'`, target `ON_THE_WAY`) and `completeIfOnTheWay` (`UPDATE ... WHERE order_status = 'ON_THE_WAY'`, target `COMPLETED`) — both single-hop guards, no skip-ahead `WHERE` clause. |
-| `repository.ProfessionalListingRepository` | A narrow, read-only query interface over `professionals`/`users` (§2.2) projected into `dto.ProfessionalCard` — deliberately lives here, not in `professionals`, to avoid a reverse `professionals -> bookings` dependency (see its Javadoc). As of Milestone 4, exposes two queries: `listByCategory` (§2.2, Standard) and `listSosAvailableByCategory` (§2.12, SOS — additionally joined to `com.pronto.availability.entity.SosAvailability` filtering on `isAvailable = true`). |
-| `dto.*` | Wire shapes for all twelve endpoints (§2.2-2.9, §2.12-2.13, §2.16-2.17) — `OrderResponse` is shared by create/accept/reject, `createSosOrder`, **and, as of Milestone 6, `onTheWay`/`complete`** (identical shape, differing only in values — `OrderStatus` already had `ON_THE_WAY`/`COMPLETED` as enum constants, no new field needed); `OrderDetailResponse`/`OrderSummaryResponse` are the richer/leaner shapes for get-by-id vs. list-mine, mirroring the pattern M1 used for `/api/users/me`. `dto.CreateSosOrderRequest` (new, Milestone 4) is `CreateOrderRequest` minus `slotId` — SOS has no slot selection. **No new DTO added in Milestone 6.** |
-| `service.BookingsService` | All business logic for §2.2-2.9, §2.12-2.13, and §2.16-2.17, including the atomic-transaction sequencing in `createOrder`/`createSosOrder` and the actor/authorization resolution for `cancel`/`getOrderDetail`/`listMine`. Milestone 4 added `listSosProfessionals`/`createSosOrder` plus a shared `urgencyMismatch(...)` helper/exception factory called from `listProfessionals`/`listSlots`/`createOrder` (Standard) and `listSosProfessionals`/`createSosOrder` (SOS) alike. **As of Milestone 5**: constructor gains a new required `notifications.service.NotificationService` dependency; `createOrder`/`createSosOrder`/`accept`/`reject`/`cancel` each gained a trailing `recordOrderNotification(...)` call; two new public methods, `findExpiredOrderCandidateIds()`/`expireIfPending(Long)`, plus the two hardcoded timeout constants (`STANDARD_PENDING_TIMEOUT`/`SOS_PENDING_TIMEOUT`) — see Responsibilities above for the full writeup. **As of Milestone 6**: two new public methods, `onTheWay(Long callerId, Long orderId)` and `complete(Long callerId, Long orderId)`, each resolving the caller's `professionals.id` (same `resolveProfessionalId` helper `accept`/`reject` already use), calling the matching `OrderRepository` guarded transition, and finishing with a `recordOrderNotification(...)` call to the customer — see Responsibilities above for the full writeup, including `complete`'s additional `issueRepository.completeIfBooked(...)` call. |
-| `controller.BookingsController` | `/api/bookings/professionals`, `/api/bookings/professionals/{id}/slots`, `/api/bookings/orders` (+ `/accept`/`/reject`/`/cancel`/`/{orderId}`/`/me`), as of Milestone 4 `/api/bookings/sos-professionals` + `/api/bookings/sos-orders`, and, **as of Milestone 6, `/api/bookings/orders/{orderId}/on-the-way` + `/api/bookings/orders/{orderId}/complete`** (`POST`, same manual path-id-parsing convention as `accept`/`reject`). Path/query ids are parsed manually so a malformed value produces this app's standard error envelope (`404` for a path id, `400 VALIDATION_ERROR` for a query id) rather than Spring's default type-mismatch handling. |
+| `repository.ProfessionalListingRepository` | A narrow, read-only query interface over `professionals`/`users` (§2.2) projected into `dto.ProfessionalCard` — deliberately lives here, not in `professionals`, to avoid a reverse `professionals -> bookings` dependency (see its Javadoc). As of Milestone 4, exposes two queries: `listByCategory` (§2.2, Standard) and `listSosAvailableByCategory` (§2.12, SOS — additionally joined to `com.pronto.availability.entity.SosAvailability` filtering on `isAvailable = true`). **As of Milestone 8**: both queries' `SELECT NEW ProfessionalCard(...)` projections gained `p.city`/`p.profileImageKey` and three correlated scalar subqueries — `AVG(r.rating)`/`COUNT(r)` over `com.pronto.reviews.entity.Review` (rating aggregate) and `COUNT(f)` over `com.pronto.favorites.entity.Favorite` scoped to `:customerId` (the `favorited` flag) — deliberately correlated subqueries, not a `LEFT JOIN + GROUP BY`, to avoid a wide `GROUP BY` column list across three joined tables. ETA/distance are deliberately **not** added to either query — computed in Java, post-fetch, never in SQL (see `service.BookingsService#enrichAndSort` below). |
+| `dto.*` | Wire shapes for all twelve endpoints (§2.2-2.9, §2.12-2.13, §2.16-2.17) — `OrderResponse` is shared by create/accept/reject, `createSosOrder`, **and, as of Milestone 6, `onTheWay`/`complete`** (identical shape, differing only in values — `OrderStatus` already had `ON_THE_WAY`/`COMPLETED` as enum constants, no new field needed); `OrderDetailResponse`/`OrderSummaryResponse` are the richer/leaner shapes for get-by-id vs. list-mine, mirroring the pattern M1 used for `/api/users/me`. `dto.CreateSosOrderRequest` (new, Milestone 4) is `CreateOrderRequest` minus `slotId` — SOS has no slot selection. **No new DTO added in Milestone 6. As of Milestone 8**: `ProfessionalCard` gained `profileImageUrl`/`averageRating`/`reviewCount`/`favorited`/`sameCity`/`distanceKm`/`baseTravelTimeMinutes`/`trafficAdjustmentMinutes`/`etaMinutes` — a two-stage-construction record (see its own Javadoc): the JPQL-projection constructor `ProfessionalListingRepository` calls carries raw column values and rating/favorite subquery results with placeholder ETA fields; `BookingsService#enrichAndSort` produces the final card via the canonical (all-fields) constructor. `CreateOrderRequest`/`CreateSosOrderRequest` gained required `serviceCity`/`serviceStreet`/`serviceHouseNumber` (+ optional `serviceApartment`). `OrderResponse`/`OrderDetailResponse` gained `basePriceSnapshot`/`sosSurcharge` and the four `service*` fields. New enum `dto.ProfessionalSort` (`CHEAPEST`/`FASTEST`). `OrderSummaryResponse` (list-mine) was **not** changed — the new fields are detail/create-response-only. |
+| `service.BookingsService` | All business logic for §2.2-2.9, §2.12-2.13, and §2.16-2.17, including the atomic-transaction sequencing in `createOrder`/`createSosOrder` and the actor/authorization resolution for `cancel`/`getOrderDetail`/`listMine`. Milestone 4 added `listSosProfessionals`/`createSosOrder` plus a shared `urgencyMismatch(...)` helper/exception factory called from `listProfessionals`/`listSlots`/`createOrder` (Standard) and `listSosProfessionals`/`createSosOrder` (SOS) alike. **As of Milestone 5**: constructor gains a new required `notifications.service.NotificationService` dependency; `createOrder`/`createSosOrder`/`accept`/`reject`/`cancel` each gained a trailing `recordOrderNotification(...)` call; two new public methods, `findExpiredOrderCandidateIds()`/`expireIfPending(Long)`, plus the two hardcoded timeout constants (`STANDARD_PENDING_TIMEOUT`/`SOS_PENDING_TIMEOUT`) — see Responsibilities above for the full writeup. **As of Milestone 6**: two new public methods, `onTheWay(Long callerId, Long orderId)` and `complete(Long callerId, Long orderId)`, each resolving the caller's `professionals.id` (same `resolveProfessionalId` helper `accept`/`reject` already use), calling the matching `OrderRepository` guarded transition, and finishing with a `recordOrderNotification(...)` call to the customer — see Responsibilities above for the full writeup, including `complete`'s additional `issueRepository.completeIfBooked(...)` call. **As of Milestone 8**: constructor gains two new required dependencies, `matching.DistanceEtaStrategy` and `storage.client.StorageClient`; `listProfessionals`/`listSosProfessionals` now take a `matching.ServiceLocation`/sort-param pair and call the new private `enrichAndSort(...)` helper (resolves each card's profile-image URL, computes distance/ETA via `DistanceEtaStrategy#calculate` with one uniform `Instant.now()` per listing call, and re-sorts by `etaMinutes` when `sort == FASTEST`); `createOrder`/`createSosOrder` gained the service-address snapshot (persisted verbatim onto the new `Order` constructor params) and the `basePriceSnapshot`/`sosSurcharge` computation (`sosSurcharge` always `0.00` for Standard, always the new `SOS_SURCHARGE_AMOUNT` constant for SOS); new private helpers `parseSort(String)` (mirrors `parseStatus`'s "blank means default/no-filter" convention) and the `SOS_SURCHARGE_AMOUNT` constant. |
+| `controller.BookingsController` | `/api/bookings/professionals`, `/api/bookings/professionals/{id}/slots`, `/api/bookings/orders` (+ `/accept`/`/reject`/`/cancel`/`/{orderId}`/`/me`), as of Milestone 4 `/api/bookings/sos-professionals` + `/api/bookings/sos-orders`, and, **as of Milestone 6, `/api/bookings/orders/{orderId}/on-the-way` + `/api/bookings/orders/{orderId}/complete`** (`POST`, same manual path-id-parsing convention as `accept`/`reject`). Path/query ids are parsed manually so a malformed value produces this app's standard error envelope (`404` for a path id, `400 VALIDATION_ERROR` for a query id) rather than Spring's default type-mismatch handling. **As of Milestone 8**: `listProfessionals`/`listSosProfessionals` gained `city`/`street`/`houseNumber`/`apartment`/`sort` query params and a new private `parseServiceLocation(...)` helper (collects all missing required fields into one `400 VALIDATION_ERROR` response, same "collect every failure" spirit as `@Valid` body validation). |
 | `config.BookingsWebConfig` | Two separate, precisely-scoped `RoleRequiredInterceptor` registrations (`CUSTOMER` on the customer-only routes, `PROFESSIONAL` on `accept`/`reject`) — no blanket pattern, since this package mixes roles per-route. As of Milestone 4, the `CUSTOMER` registration's literal path list also includes `/api/bookings/sos-professionals` and `/api/bookings/sos-orders` (added explicitly — this package's literal-list design doesn't pick up new routes via a wildcard the way `availability`'s config does). **As of Milestone 6**, the `PROFESSIONAL` registration's literal path list also includes `/api/bookings/orders/*/on-the-way` and `/api/bookings/orders/*/complete` — same "literal-list doesn't pick up new routes automatically" reasoning. Nothing registered for `cancel`/get-by-id/get-me (service-layer authorization only). |
 
 ## Interactions with other packages
@@ -192,6 +229,18 @@ not just re-asserted).
   same dependency as before — `complete`'s new `issueRepository.completeIfBooked(...)` call
   uses the existing `IssueRepository` this package already depended on, just one more method
   on it (mirroring `expireIfBooked`, itself added in Milestone 5).
+- **New, Milestone 8**: depends on `matching` (`DistanceEtaStrategy`/`EtaResult`/
+  `ServiceLocation`, constructor-injected into `BookingsService`) for distance/ETA
+  computation, and on `storage` (`StorageClient#resolveUrl`) to resolve each listed
+  professional's profile-image URL — both new dependency edges. Also gains an **indirect**
+  read dependency on `reviews`/`favorites`, expressed entirely at the SQL level inside
+  `ProfessionalListingRepository`'s two `@Query` methods (correlated subqueries referencing
+  `com.pronto.reviews.entity.Review`/`com.pronto.favorites.entity.Favorite` directly by
+  fully-qualified JPQL entity name) rather than through either package's service or
+  repository layer — the same narrow-cross-package-repository-read pattern this interface
+  already used for `professionals`/`sos_availability`, extended to two more packages.
+  `professionals.entity.Professional`'s new `city`/`profileImageKey` columns are read via
+  the existing `professionals` dependency edge, no new edge needed there.
 
 ## Data model
 
@@ -223,6 +272,18 @@ to *reach* these already-tolerated values, not the first to need the schema to a
 the same is true of `notifications.message_type`'s `ORDER_ON_THE_WAY`/`ORDER_COMPLETED`
 values, present since the original `V9__create_notifications.sql` and now finally given a
 producing call site (see "Responsibilities" above).
+
+**Milestone 8 added two new migrations directly to `orders`**:
+`V18__alter_orders_add_service_address.sql` (`service_city`/`service_street`/
+`service_house_number`/`service_apartment`, all nullable at the DB level — required at the
+API/Bean-Validation layer for new writes instead, since existing orders have no backfillable
+service address) and `V19__alter_orders_add_sos_pricing.sql` (`base_price_snapshot`,
+nullable, backfilled from `final_price` for existing rows; `sos_surcharge`, `NOT NULL
+DEFAULT 0`, `CHECK (sos_surcharge >= 0)` — every order, past and future, has a well-defined
+surcharge amount). Both migrations are owned by this package (the `orders` table), not
+`reviews`/`favorites`/`matching` — see `docs/architecture/data-model.md` §2.9 (amended) and
+`docs/architecture/api-contract-professionals-reviews.md` §1.4-§1.5 for the full column
+specs.
 
 ## Assumptions / judgment calls made during implementation
 
@@ -301,6 +362,32 @@ deviation:
   genuine defensive measure (contract doc §6 item 11 has the full comparison against
   `SosAvailabilityRepository`'s different "row unexpectedly missing" precedent, which *does*
   branch, because that case lacks an equivalent invariant-based proof).
+- **Milestone 8 — `sort=FASTEST` is necessarily an in-memory re-sort, not a second SQL query
+  variant.** `etaMinutes` is computed in Java, never persisted, so no `ORDER BY` could sort by
+  it at the DB level; both `sort` values fetch the identical DB-level `base_price ASC`-ordered
+  result set and enrich every card identically — `sort` only changes the *final* ordering
+  step, never which cards are enriched or how.
+- **Milestone 8 — `SOS_SURCHARGE_AMOUNT = 50.00` is an explicitly-flagged placeholder, not a
+  sourced business figure** — a single hardcoded `static final BigDecimal` constant, same
+  category of judgment call as Milestone 5's `STANDARD_PENDING_TIMEOUT`/
+  `SOS_PENDING_TIMEOUT`, trivial to change later with no migration implied. Flagged directly
+  in the constant's own Javadoc and restated in
+  `docs/architecture/api-contract-professionals-reviews.md` §9 item 2 and
+  `docs/architecture/implementation-plan.md`'s Milestone 8 entry.
+- **Milestone 8 — a booking's `serviceCity`/`serviceStreet`/`serviceHouseNumber`/
+  `serviceApartment` is never cross-validated against the `city`/`street`/`houseNumber`
+  query params used on the preceding listing call.** The two are independent inputs on two
+  independent requests; nothing links them. Judged low-risk/low-impact, not built as a
+  cross-check — see `docs/architecture/api-contract-professionals-reviews.md` §9 item 4.
+- **Milestone 8 — newly-registered professionals have `city = NULL`** (untouched
+  `auth.service.AuthService#register`, still only sets `serviceArea`), which
+  `matching.ApproximateDistanceEtaStrategy` treats as "different city" (a deliberate
+  conservative default owned by `matching`, not this package) — a new professional shows
+  worse ETA/`sameCity: false` by default in every listing this package produces, until they
+  self-edit via `professionals`' new `PUT /api/professionals/me`. Not a bug in this package —
+  documented here because it's directly observable in this package's own response shape; the
+  root cause and full record live in `professionals/README.md` and
+  `docs/architecture/implementation-plan.md`'s Milestone 8 entry.
 
 ## Status
 
@@ -411,3 +498,20 @@ package, `bookings`, received no code changes for that addition; it lives entire
 `availability`). The professional-dashboard **UI** remains entirely deferred project-wide,
 consistent with every prior milestone — nothing in this milestone builds any `frontend/`
 code.
+
+**Milestone 8 (Professional Profiles, Reviews, Favorites & Matching)**: this package gained
+the service-location query params/`sort` mode on both listing endpoints, the enriched
+`ProfessionalCard` (profile image, rating/review-count, favorited flag, distance/ETA), the
+service-address snapshot and SOS-surcharge price split on order creation, two new `orders`
+migrations (`V18`/`V19`), and two new constructor dependencies (`matching.DistanceEtaStrategy`,
+`storage.client.StorageClient`) — see "Responsibilities"/"Key classes"/"Interactions" above
+for the full writeup. **No new `ErrorCode` values in this package** — every new failure mode
+(missing service-location query params, missing service-address body fields) reuses the
+existing `VALIDATION_ERROR` code via `FieldError`, and `sort`'s invalid-value case reuses the
+same convention `parseStatus` already established. QA-signed-off with **zero bugs found on
+functionality or security** as part of this feature set's overall sign-off — see
+`docs/architecture/implementation-plan.md`'s Milestone 8 entry for the full QA summary (and
+its one recorded non-blocking known gap, the `professionals.city = NULL` default for newly
+registered professionals, which this package's listing enrichment directly surfaces via
+`sameCity: false`/worse ETA figures). Full design/contract:
+`docs/architecture/api-contract-professionals-reviews.md` §7-§9.

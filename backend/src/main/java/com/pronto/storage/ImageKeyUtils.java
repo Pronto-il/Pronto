@@ -17,7 +17,27 @@ public final class ImageKeyUtils {
 
     private static final Pattern OWNER_PATTERN = Pattern.compile("^customers/(\\d+)/.*");
 
+    /** Prefix for professional profile-image keys (see
+     * {@code professionals.service.ProfessionalsService#uploadProfileImage}'s
+     * {@code professionals/{professionalId}/profile/{uuid}.{ext}} key template). Unlike
+     * {@code customers/}-prefixed issue images (private to their owner), profile images are
+     * shown to any customer browsing listings — so they carry no per-caller ownership check,
+     * just {@link #isPubliclyReadable}. */
+    private static final String PUBLIC_PREFIX = "professionals/";
+
     private ImageKeyUtils() {
+    }
+
+    /**
+     * {@code true} iff {@code key} is under the {@code professionals/} prefix — readable by any
+     * authenticated caller (no ownership check), since profile images are meant to be visible
+     * to any customer browsing listings, not just the owning professional. See
+     * {@code storage.service.StorageService#retrieve}, which special-cases this before falling
+     * back to {@link #belongsTo}'s strict ownership check for every other key format (in
+     * particular {@code customers/}-prefixed issue images, whose behavior is unchanged).
+     */
+    public static boolean isPubliclyReadable(String key) {
+        return key != null && key.startsWith(PUBLIC_PREFIX);
     }
 
     /** The {@code {callerId}} segment embedded in {@code customers/{callerId}/...}, if present and well-formed. */

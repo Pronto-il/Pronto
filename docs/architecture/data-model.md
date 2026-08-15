@@ -44,11 +44,15 @@ users
   ← orders.customer_id
   ← notifications.user_id
   ← verification_codes.user_id
+  ← reviews.customer_id (new, 2026-08-15)
+  ← favorites.customer_id (new, 2026-08-15; composite PK with favorites.professional_id)
 
 professionals (extends a user with role = PROFESSIONAL)
   ← availability_slots.professional_id
   ← sos_availability.professional_id (1:1)
   ← orders.professional_id
+  ← reviews.professional_id (new, 2026-08-15)
+  ← favorites.professional_id (new, 2026-08-15)
 
 issues
   ← issue_images.issue_id
@@ -57,6 +61,7 @@ issues
 
 orders
   ← notifications.related_order_id (nullable)
+  ← reviews.order_id (new, 2026-08-15; UNIQUE — at most one review per order)
 ```
 
 ---
@@ -162,14 +167,19 @@ sign-off in §3 — summary here, detail there.
 | `approval_status` | `VARCHAR(20)` | NO | `'APPROVED'` | `CHECK (approval_status IN ('PENDING','APPROVED','REJECTED'))`. **Column is kept but functionally inert in v1.0** — every insert defaults to and stays `'APPROVED'`, no query/workflow gates on it. See §3 item 1 for the keep-vs-drop reasoning. |
 | `reliability_score` | `NUMERIC(3,2)` | YES | `NULL` | `CHECK (reliability_score IS NULL OR (reliability_score BETWEEN 0 AND 5))`. Nullable until a score exists. **Open question, §4** — no rating/review submission mechanism exists anywhere in the PRD or wireframes, so the source of this score is undefined. |
 | `base_price` | `NUMERIC(10,2)` | YES | `NULL` | **New column, not in PRD §6.** The professional's standing/current price offer, shown on their card in the Standard and SOS professional-list screens *before* any request is sent (PRD §1, §2, §3.4.2, §7.3, §7.4: "each professional presents their own price offer" / professional capability "provide price offers"). See §3 item 4 for the full reasoning — this fills a genuine gap between PRD §6 (schema) and PRD §1–3/§7 (flows/wireframes), flagged for sign-off. |
+| `bio` | `TEXT` | YES | `NULL` | **New column, added by `V15__alter_professionals_add_profile_fields.sql`** (professional-profile/reviews/favorites/matching feature set, 2026-08-15). Free-text self-description, editable via `PUT /api/professionals/me`. Not backfilled — no source of truth existed for existing rows, so it's simply `NULL` until a professional sets it. |
+| `profile_image_key` | `VARCHAR(500)` | YES | `NULL` | **New column, same migration.** Storage object key (not a URL — mirrors `issue_images`' own url-vs-key convention loosely, though this column stores a key while `issue_images.image_url` stores a full URL; see `professionals/README.md`), set via `POST /api/professionals/me/profile-image`. Resolved to a public URL at read time via `storage.client.StorageClient#resolveUrl` — never itself a URL. Not backfilled. |
+| `city` | `VARCHAR(100)` | YES | `NULL` | **New column, same migration.** The professional's city, used by `matching.DistanceEtaStrategy` for same-city/different-city distance/ETA approximation — see §4's ETA-scope-override note below and `api-contract-professionals-reviews.md` §6 for the full computation model. **Backfilled once, at migration time only**, from the pre-existing `service_area` column (`UPDATE professionals SET city = service_area WHERE city IS NULL`) — this is a one-time copy, not an ongoing sync; the two columns can diverge afterward (`service_area` stays free text, `city` is the field `matching` actually reads). **Not backfilled for professionals registered after this migration** — `auth.service.AuthService#register` was not changed by this feature set and still only sets `service_area`, so every professional who registers from this point on gets `city = NULL` until they self-edit via `PUT /api/professionals/me`. See §4 (new item) and `professionals/README.md`/`matching/README.md` for the full consequence this has on distance/ETA display. |
 | `created_at` | `TIMESTAMPTZ` | NO | `now()` | |
-| `updated_at` | `TIMESTAMPTZ` | NO | `now()` | Bumped when the professional edits `base_price`, `service_area`, etc. |
+| `updated_at` | `TIMESTAMPTZ` | NO | `now()` | Bumped when the professional edits `base_price`, `service_area`, `city`, `bio`, etc. |
 
 **Constraints**: PK(`id`); `UNIQUE(user_id)`; FK(`user_id`) → `users(id)` `ON DELETE
 RESTRICT`; FK(`category_id`) → `categories(id)` `ON DELETE RESTRICT`.
 **Indexes**: `idx_professionals_category ON (category_id)` (primary filter for Standard/SOS
-listings — who offers this issue's category). `service_area` is not indexed in v1.0 (no
-area-based search/filter UX is specified yet; revisit if one is added).
+listings — who offers this issue's category). `service_area`/`city` are not indexed in v1.0
+(no area-based search/filter UX is specified yet beyond the same-city/different-city ETA
+comparison, which reads full table scans of already-category-filtered result sets, not an
+independent city-indexed query; revisit if a dedicated city-filter UX is added).
 
 ---
 
@@ -293,18 +303,30 @@ order_status, final_price`.
 | `booked_end` | `TIMESTAMPTZ` | YES | `NULL` | **Nullable — deviates from an implicit "both present" reading of PRD §6.** Standard bookings (matched against an `availability_slots` window) should always have both; SOS bookings are "as soon as possible" with no pre-agreed duration, so `booked_end` may be unknown at booking time. `CHECK (booked_end IS NULL OR booked_end > booked_start)`. Flagged for sign-off, §3 item 9. |
 | `order_status` | `VARCHAR(20)` | NO | `'PENDING'` | `CHECK (order_status IN ('PENDING','CONFIRMED','ON_THE_WAY','COMPLETED','CANCELLED','REJECTED','EXPIRED'))` — 7 values. **Decided, §3 item 10 (user override, 2026-08-12)**: `REJECTED` is a genuine 7th status, not folded into `CANCELLED` + `cancelled_by='PROFESSIONAL'` as originally proposed. See §3 item 10 for the precise PENDING-decline-vs-CONFIRMED-backs-out distinction this creates, and §3 item 8 for `EXPIRED`'s precise trigger. |
 | `cancelled_by` | `VARCHAR(20)` | YES | `NULL` | **New column.** `CHECK (cancelled_by IS NULL OR cancelled_by IN ('CUSTOMER','PROFESSIONAL','SYSTEM'))`. Set when `order_status` becomes `'CANCELLED'` (**not** for `'REJECTED'` — that case is unambiguous from the status value alone and needs no further column). Distinguishes who backed out of an already-`CONFIRMED`-or-later order: the customer, the professional, or a system process (e.g. the expiry sweep, §3 item 8). Still needed after adding `REJECTED` — see §3 item 10 for why `'PROFESSIONAL'` remains a valid value here (a professional backing out post-acceptance is a different event from declining a still-`PENDING` request). |
-| `final_price` | `NUMERIC(10,2)` | YES | `NULL` | Tracked/displayed only — no payment gateway (confirmed out of scope). Nullable until set; typically initialized from `professionals.base_price` at order creation and may be adjusted later (e.g. after the professional inspects the job on-site), but that workflow detail is application logic, not enforced here. |
+| `final_price` | `NUMERIC(10,2)` | YES | `NULL` | Tracked/displayed only — no payment gateway (confirmed out of scope). Nullable until set; typically initialized from `professionals.base_price` at order creation and may be adjusted later (e.g. after the professional inspects the job on-site), but that workflow detail is application logic, not enforced here. **As of the professional-profile/reviews/favorites/matching feature set (2026-08-15)**: computed at creation time as `base_price_snapshot + sos_surcharge` (see those two columns below) rather than a bare copy of `professionals.base_price` — still nullable, still tracked/displayed only, no payment-gateway change. |
+| `slot_id` | `BIGINT` | YES | `NULL` | Added by `V12__add_slot_id_to_orders.sql` (Milestone 3) — FK → `availability_slots(id)` `ON DELETE SET NULL`. Nullable because SOS orders never consume a slot. See `api-contract-bookings.md` §1.2. |
+| `service_city` | `VARCHAR(100)` | YES | `NULL` | **New column, added by `V18__alter_orders_add_service_address.sql`** (2026-08-15). A point-in-time snapshot of the customer's service address at booking time, supplied on `POST /api/bookings/orders`/`sos-orders`'s request body — **not** a reference to any stored customer-address record (no such concept exists anywhere in this schema) and **not** automatically copied from whatever address the customer used on the preceding professional-listing call (those are two independent inputs on two independent requests — see `api-contract-professionals-reviews.md` §8/§9 item 4). Nullable at the DB level only because pre-existing orders have no backfillable value; required (`@NotBlank`) at the API/Bean-Validation layer for every order created from this point on. |
+| `service_street` | `VARCHAR(150)` | YES | `NULL` | Same migration/snapshot/nullability reasoning as `service_city`. |
+| `service_house_number` | `VARCHAR(20)` | YES | `NULL` | Same. Stored as `VARCHAR`, not numeric — house numbers routinely carry letters/suffixes (e.g. `"12A"`). |
+| `service_apartment` | `VARCHAR(20)` | YES | `NULL` | Same migration, but **genuinely optional at the API layer too** (no `@NotBlank`) — not every address has an apartment/unit number. |
+| `base_price_snapshot` | `NUMERIC(10,2)` | YES | `NULL` | **New column, added by `V19__alter_orders_add_sos_pricing.sql`** (2026-08-15). The professional's `base_price` copied verbatim at order-creation time — a snapshot, same "copy once, never re-synced" reasoning `final_price` already used, kept as a **separate** column from `final_price` so the surcharge component (below) can be displayed as its own line item. Nullable, backfilled once from `final_price` for every pre-existing row at migration time (`UPDATE orders SET base_price_snapshot = final_price WHERE base_price_snapshot IS NULL`) — not an ongoing sync. |
+| `sos_surcharge` | `NUMERIC(10,2)` | NO | `0` | **New column, same migration.** `CHECK (sos_surcharge >= 0)`. The one new column here that *is* `NOT NULL` — every order, past (backfilled to `0` implicitly via the column default applied retroactively) and future, has a well-defined surcharge amount. Always `0.00` for a Standard order (explicitly set in the insert, not relying on the column default alone in that code path); a flat, hardcoded `50.00` placeholder for an SOS order (`bookings.service.BookingsService.SOS_SURCHARGE_AMOUNT`) — **explicitly flagged in the implementing code's own Javadoc as a placeholder business figure, not sourced from any pricing model or source document**. See `api-contract-professionals-reviews.md` §7.5/§9 item 2. |
 | `created_at` | `TIMESTAMPTZ` | NO | `now()` | |
 | `updated_at` | `TIMESTAMPTZ` | NO | `now()` | Bumped on every status transition — this is what a polling client effectively watches. |
 
 **Constraints**: PK(`id`); FK(`issue_id`) → `issues(id)` `ON DELETE RESTRICT`;
 FK(`customer_id`) → `users(id)` `ON DELETE RESTRICT`; FK(`professional_id`) →
-`professionals(id)` `ON DELETE RESTRICT`; the two `CHECK`s above.
+`professionals(id)` `ON DELETE RESTRICT`; FK(`slot_id`) → `availability_slots(id)` `ON
+DELETE SET NULL`; the two original `CHECK`s above; `CHECK (sos_surcharge >= 0)` (new).
 **Indexes**: `idx_orders_issue ON (issue_id)`; `idx_orders_customer ON (customer_id)`;
 `idx_orders_professional ON (professional_id)`; `idx_orders_status ON (order_status)`
 (explicitly required by task brief); `idx_orders_professional_status ON (professional_id,
 order_status)` (professional dashboard's "incoming requests" feed); `idx_orders_customer_status
-ON (customer_id, order_status)` (customer's active-order polling query).
+ON (customer_id, order_status)` (customer's active-order polling query);
+`idx_orders_slot ON (slot_id)` (Milestone 3). No new index was added for any of the six new
+2026-08-15 columns — none is a primary filter/sort path for any endpoint in this feature set
+(the service-address columns are write-once/read-by-id only; `sos_surcharge`/
+`base_price_snapshot` are display fields, never filtered or sorted on).
 
 ---
 
@@ -331,6 +353,77 @@ endpoint's primary query: this user's recent notifications); `idx_notifications_
 (related_order_id)`; `idx_notifications_channel_status ON (channel, delivery_status) WHERE
 delivery_status = 'PENDING'` (partial index — email-dispatch worker's "what still needs
 sending" query).
+
+---
+
+### 2.11 `reviews` — *new table, 2026-08-15*
+
+New table, added by `V16__create_reviews.sql` as part of the professional-profile/reviews/
+favorites/matching feature set. Not in PRD §6 (which has no reviews/ratings entity at all —
+see the pre-existing §4 open question on `professionals.reliability_score`'s undefined
+source, which this table does **not** resolve, see the note at the end of this section) — a
+genuinely new feature, added by direct user instruction alongside `favorites`/`matching`.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `BIGINT` (identity) | NO | — | PK |
+| `professional_id` | `BIGINT` | NO | — | FK → `professionals(id)` `ON DELETE RESTRICT`. Denormalized from the reviewed order for query convenience — avoids a join for "all reviews of professional X." |
+| `customer_id` | `BIGINT` | NO | — | FK → `users(id)` `ON DELETE RESTRICT`. The reviewer, always the order's own customer — derived server-side from the loaded order at creation time, never trusted from the request body. |
+| `order_id` | `BIGINT` | NO | — | FK → `orders(id)` `ON DELETE RESTRICT`. `UNIQUE` — at most one review per order. |
+| `rating` | `SMALLINT` | NO | — | `CHECK (rating BETWEEN 1 AND 5)`. |
+| `comment` | `TEXT` | YES | `NULL` | Optional free text (capped at 2000 chars by Bean Validation, not a DB constraint). |
+| `created_at` | `TIMESTAMPTZ` | NO | `now()` | |
+| `updated_at` | `TIMESTAMPTZ` | NO | `now()` | Bumped on edit. |
+
+**Constraints**: PK(`id`); FK(`professional_id`) → `professionals(id)` `ON DELETE
+RESTRICT`; FK(`customer_id`) → `users(id)` `ON DELETE RESTRICT`; FK(`order_id`) →
+`orders(id)` `ON DELETE RESTRICT`; `UNIQUE(order_id)` (`ux_reviews_order`); `CHECK (rating
+BETWEEN 1 AND 5)`.
+**Indexes**: `idx_reviews_professional_created ON (professional_id, created_at DESC)` — the
+hot-path query for "this professional's reviews, newest first" and the average-rating/
+review-count aggregate both `professionals`/`bookings` compute via correlated subqueries.
+
+**A review may only be created against an order the caller owns as `CUSTOMER` that has
+reached `order_status = 'COMPLETED'`** — enforced entirely at the application layer (no DB
+constraint on `orders.order_status` at review-creation time; the FK alone doesn't know about
+order state). All three FKs use `RESTRICT` (not `CASCADE`) — a review is a durable
+historical record even relative to its own referenced rows, consistent with this schema's
+general core-entity FK-delete convention (§0).
+
+**Relationship to the pre-existing `professionals.reliability_score` open question (§4)**:
+this table's `averageRating`/`reviewCount` (computed live, never persisted onto
+`professionals`) is a **separate, newly-populated concept** — it does **not** retrofit or
+resolve where `reliability_score` itself is supposed to come from. That original Milestone 0
+open question remains unaffected and still open.
+
+### 2.12 `favorites` — *new table, 2026-08-15*
+
+New table, added by `V17__create_favorites.sql`, same feature set as `reviews` above. A
+customer's bookmarked professionals — pure many-to-many join, no independent meaning beyond
+the relationship itself.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `customer_id` | `BIGINT` | NO | — | **PK, part 1** (composite — no surrogate `id`, a deliberate deviation from §0's general PK convention; see below). FK → `users(id)` `ON DELETE CASCADE`. |
+| `professional_id` | `BIGINT` | NO | — | **PK, part 2**. FK → `professionals(id)` `ON DELETE CASCADE`. |
+| `created_at` | `TIMESTAMPTZ` | NO | `now()` | When favorited — sort key for the customer's favorites list (`created_at DESC`). |
+
+**Constraints**: PK(`customer_id`, `professional_id`); FK(`customer_id`) → `users(id)` `ON
+DELETE CASCADE`; FK(`professional_id`) → `professionals(id)` `ON DELETE CASCADE`.
+**Indexes**: `idx_favorites_professional ON (professional_id)` — supports the correlated
+`COUNT`/`existsBy...` subqueries `bookings`/`professionals` both run to compute a
+`favorited` flag scoped to one customer against many professionals.
+
+**Two deliberate deviations from §0's general table conventions, both intentional, not
+oversights:**
+- **No surrogate `id` PK** — the composite `(customer_id, professional_id)` pair *is* the
+  natural key with no loss of clarity for what is inherently a pure join/bookmark row, the
+  same reasoning `sos_availability` (§2.6) already used for its own single-column natural
+  PK.
+- **`ON DELETE CASCADE` on both FKs**, not `RESTRICT` — a favorite has no independent
+  meaning apart from either party, the same reasoning already applied to `issue_images`/
+  `availability_slots`/`sos_availability`'s existing `CASCADE` carve-outs in §0's FK-policy
+  convention table.
 
 ---
 
@@ -573,6 +666,32 @@ task brief's instruction not to silently pick an interpretation.
   **"(future version)"** — i.e. out of v1.0 scope, consistent with the already-settled GPS
   exclusion. No ETA column was added to this schema. Noting this here only so the
   wireframe-vs-functional-requirements tension doesn't get re-discovered later.
+
+  **OVERRIDDEN (explicit user instruction, 2026-08-15) — the "out of v1.0 scope, permanent"
+  ruling above no longer holds for professional-search/listing ETA.** Kept verbatim above,
+  per this project's convention of preserving the historical record rather than silently
+  rewriting it (the same convention §3 item 10 already used for the `REJECTED`-status
+  override) — the text above described a real, correctly-resolved reading of the PRD at the
+  time it was written; it simply isn't the final word anymore. The override is by **direct,
+  detailed user instruction** — exact ETA/distance formulas, peak-hour windows, and required
+  test coverage were specified directly by the user, not derived by `pronto-planning`/
+  `pronto-lead` re-reading the same PRD text differently. **What changed**: distance/ETA
+  between a professional and a customer's service address, computed dynamically on every
+  `GET /api/bookings/professionals`/`sos-professionals` request, is now in v1.0 scope —
+  implemented by the new `matching` package (`ApproximateDistanceEtaStrategy`), consumed by
+  `bookings`, and exposed on `bookings.dto.ProfessionalCard`. **What did not change**: no ETA
+  value is persisted anywhere (still no ETA column in this schema — `matching` owns no
+  table; every figure is recomputed fresh per request); the tracking screen (`GET
+  /api/bookings/orders/{orderId}`) gained no ETA field from this change — the override is
+  scoped to professional search/listing, not tracking, so PRD §3.4.8/§3.5.5's "future
+  version" framing is not contradicted for the tracking-screen case specifically. **GPS/
+  live-location tracking remains completely untouched and still a permanent hard
+  exclusion** (`overview.md` §2) — nothing in this change adds real routing, live position,
+  or map data; the new ETA figures are coarse same-city/different-city + peak-hour
+  approximations from two city strings, not geolocation. Full design record:
+  `docs/architecture/api-contract-professionals-reviews.md` §5 (the canonical write-up this
+  note points back to) and §6 (the `matching` package's exact computation model); also noted
+  in `overview.md` §2's resolved-decisions table.
 - **Image count limit per issue** — not specified anywhere; no DB constraint added, flag
   if a limit is later decided (would be enforced app-side, not a schema change).
 - **`sos_availability` has no automatic timeout/expiry.** A professional who forgets to
@@ -617,13 +736,15 @@ task brief's instruction not to silently pick an interpretation.
 Merged from `backend/BACKEND_ARCHITECTURE.md` during Milestone 7's closing documentation
 pass, 2026-08-15 (that standalone doc has since been deleted — its genuinely useful,
 still-accurate content was relocated here and to `overview.md` §7). Verified against the
-current schema, including `V14` (`notifications.message_type` gains `ORDER_REJECTED`) — the
-most recent migration as of this pass; the Milestone 7 `availability` slot edit/delete
-addition (`api-contract-bookings.md` §2.18/§2.19) required no schema change, so this
-diagram is unaffected by it. All relationships below are real DB-level foreign keys (from
-the Flyway migrations, §2 above) — none are JPA object-graph associations (§0's convention:
-every FK is a plain `@Column`, never `@ManyToOne`/`@OneToMany`/etc., navigated by
-application code via repository lookups, not Hibernate-managed navigation).
+current schema through `V14` as of that pass; **updated again the same day** (a second,
+later pass) to reflect `V15`-`V19` (the professional-profile/reviews/favorites/matching
+feature set — §2.11/§2.12's new `reviews`/`favorites` tables, and the new columns on
+`professionals`/`orders` documented in §2.4/§2.9 above). The Milestone 7 `availability` slot
+edit/delete addition (`api-contract-bookings.md` §2.18/§2.19) required no schema change, so
+this diagram was and remains unaffected by it. All relationships below are real DB-level
+foreign keys (from the Flyway migrations, §2 above) — none are JPA object-graph associations
+(§0's convention: every FK is a plain `@Column`, never `@ManyToOne`/`@OneToMany`/etc.,
+navigated by application code via repository lookups, not Hibernate-managed navigation).
 
 ```mermaid
 erDiagram
@@ -632,6 +753,8 @@ erDiagram
     USERS ||--o{ ISSUES : "customer_id (RESTRICT)"
     USERS ||--o{ ORDERS : "customer_id (RESTRICT)"
     USERS ||--o{ NOTIFICATIONS : "user_id (CASCADE)"
+    USERS ||--o{ REVIEWS : "customer_id (RESTRICT)"
+    USERS ||--o{ FAVORITES : "customer_id (PK part, CASCADE)"
 
     CATEGORIES ||--o{ PROFESSIONALS : "category_id (RESTRICT)"
     CATEGORIES ||--o{ ISSUES : "category_id (RESTRICT)"
@@ -639,6 +762,8 @@ erDiagram
     PROFESSIONALS ||--o{ AVAILABILITY_SLOTS : "professional_id (CASCADE)"
     PROFESSIONALS ||--o| SOS_AVAILABILITY : "professional_id (PK+FK, CASCADE)"
     PROFESSIONALS ||--o{ ORDERS : "professional_id (RESTRICT)"
+    PROFESSIONALS ||--o{ REVIEWS : "professional_id (RESTRICT)"
+    PROFESSIONALS ||--o{ FAVORITES : "professional_id (PK part, CASCADE)"
 
     ISSUES ||--o{ ISSUE_IMAGES : "issue_id (CASCADE)"
     ISSUES ||--o{ ORDERS : "issue_id (RESTRICT)"
@@ -646,6 +771,7 @@ erDiagram
     AVAILABILITY_SLOTS |o--o{ ORDERS : "slot_id (nullable, SET NULL)"
 
     ORDERS |o--o{ NOTIFICATIONS : "related_order_id (nullable, SET NULL)"
+    ORDERS ||--o| REVIEWS : "order_id (UNIQUE, RESTRICT) -- at most one review per order"
 
     USERS {
         bigint id PK
@@ -666,6 +792,9 @@ erDiagram
         varchar approval_status
         numeric reliability_score
         numeric base_price
+        text bio
+        varchar profile_image_key
+        varchar city
     }
     CATEGORIES {
         bigint id PK
@@ -719,6 +848,12 @@ erDiagram
         varchar order_status
         varchar cancelled_by
         numeric final_price
+        varchar service_city
+        varchar service_street
+        varchar service_house_number
+        varchar service_apartment
+        numeric base_price_snapshot
+        numeric sos_surcharge
     }
     NOTIFICATIONS {
         bigint id PK
@@ -729,5 +864,18 @@ erDiagram
         varchar delivery_status
         timestamptz read_at
         timestamptz sent_at
+    }
+    REVIEWS {
+        bigint id PK
+        bigint professional_id FK
+        bigint customer_id FK
+        bigint order_id FK
+        smallint rating
+        text comment
+    }
+    FAVORITES {
+        bigint customer_id PK_FK
+        bigint professional_id PK_FK
+        timestamptz created_at
     }
 ```

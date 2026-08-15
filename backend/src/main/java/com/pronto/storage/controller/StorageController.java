@@ -21,12 +21,15 @@ import org.springframework.web.servlet.HandlerMapping;
 
 /**
  * {@code /api/storage/images} — image upload (backend-proxied, §2.3) and retrieval
- * (§2.4, backend-proxied for both storage modes). Both endpoints require
+ * (§2.4, backend-proxied for both storage modes). {@code POST} (upload) requires
  * {@code role = CUSTOMER} (§0.1), enforced by
  * {@code storage.config.StorageWebConfig}'s {@code RoleRequiredInterceptor} registration —
- * not in these method bodies, see that class's javadoc for why (it must run before
- * {@code @RequestParam}/multipart resolution below). See
- * {@code docs/architecture/api-contract-issues.md} §2.3-2.4.
+ * not in this method's body, see that class's javadoc for why (it must run before
+ * {@code @RequestParam}/multipart resolution below). {@code GET} (retrieval) is either-role
+ * (any authenticated caller) at the route level; per-key authorization is enforced in
+ * {@code storage.service.StorageService#retrieve} — see that method's javadoc and
+ * {@code StorageWebConfig}'s for why. See {@code docs/architecture/api-contract-issues.md}
+ * §2.3-2.4.
  */
 @RestController
 @RequestMapping("/api/storage")

@@ -11,6 +11,11 @@ import java.time.Instant;
  * {@code POST .../accept} (§2.5), and {@code POST .../reject} (§2.6) — all three return the
  * order in this same shape, differing only in {@code orderStatus}/{@code cancelledBy}. See
  * {@code docs/architecture/api-contract-bookings.md} §2.4-2.6.
+ *
+ * <p>{@code basePriceSnapshot}/{@code sosSurcharge} are the SOS-surcharge line-item split
+ * (§1 classification item 10) — {@code finalPrice = basePriceSnapshot + sosSurcharge} when
+ * both are non-null. {@code serviceCity}/{@code serviceStreet}/{@code serviceHouseNumber}/
+ * {@code serviceApartment} are the service-address snapshot (§1 classification item 5).
  */
 public record OrderResponse(
         Long id,
@@ -21,6 +26,12 @@ public record OrderResponse(
         Instant bookedStart,
         Instant bookedEnd,
         BigDecimal finalPrice,
+        BigDecimal basePriceSnapshot,
+        BigDecimal sosSurcharge,
+        String serviceCity,
+        String serviceStreet,
+        String serviceHouseNumber,
+        String serviceApartment,
         CancelledBy cancelledBy,
         Instant createdAt,
         Instant updatedAt

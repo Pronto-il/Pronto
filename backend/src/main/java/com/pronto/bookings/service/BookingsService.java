@@ -12,6 +12,7 @@ import com.pronto.bookings.dto.OrderSummaryResponse;
 import com.pronto.bookings.dto.OrdersListResponse;
 import com.pronto.bookings.dto.ProfessionalCard;
 import com.pronto.bookings.dto.ProfessionalListingResponse;
+import com.pronto.bookings.dto.ProfessionalSort;
 import com.pronto.bookings.dto.SlotListingResponse;
 import com.pronto.bookings.dto.SlotSummary;
 import com.pronto.bookings.entity.CancelledBy;
@@ -26,18 +27,24 @@ import com.pronto.issues.entity.Issue;
 import com.pronto.issues.entity.IssueStatus;
 import com.pronto.issues.entity.IssueUrgencyType;
 import com.pronto.issues.repository.IssueRepository;
+import com.pronto.matching.DistanceEtaStrategy;
+import com.pronto.matching.EtaResult;
+import com.pronto.matching.ServiceLocation;
 import com.pronto.notifications.entity.NotificationMessageType;
 import com.pronto.notifications.service.NotificationService;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRepository;
+import com.pronto.storage.client.StorageClient;
 import com.pronto.users.entity.User;
 import com.pronto.users.entity.UserRole;
 import com.pronto.users.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 
@@ -58,6 +65,14 @@ public class BookingsService {
     private static final Duration STANDARD_PENDING_TIMEOUT = Duration.ofMinutes(15);
     private static final Duration SOS_PENDING_TIMEOUT = Duration.ofMinutes(5);
 
+    /**
+     * Flat SOS surcharge added on top of a professional's {@code basePrice} for an SOS order.
+     * A placeholder/approximation business figure (not sourced from any pricing model) —
+     * always {@code 0.00} for Standard orders. See approved reviews/favorites/matching design
+     * §7.
+     */
+    private static final BigDecimal SOS_SURCHARGE_AMOUNT = new BigDecimal("50.00");
+
     private final IssueRepository issueRepository;
     private final ProfessionalRepository professionalRepository;
     private final ProfessionalListingRepository professionalListingRepository;
@@ -66,6 +81,8 @@ public class BookingsService {
     private final OrderRepository orderRepository;
     private final UserRepository userRepository;
     private final NotificationService notificationService;
+    private final DistanceEtaStrategy distanceEtaStrategy;
+    private final StorageClient storageClient;
 
     public BookingsService(IssueRepository issueRepository,
                             ProfessionalRepository professionalRepository,
@@ -74,7 +91,9 @@ public class BookingsService {
                             SosAvailabilityRepository sosAvailabilityRepository,
                             OrderRepository orderRepository,
                             UserRepository userRepository,
-                            NotificationService notificationService) {
+                            NotificationService notificationService,
+                            DistanceEtaStrategy distanceEtaStrategy,
+                            StorageClient storageClient) {
         this.issueRepository = issueRepository;
         this.professionalRepository = professionalRepository;
         this.professionalListingRepository = professionalListingRepository;
@@ -83,11 +102,14 @@ public class BookingsService {
         this.orderRepository = orderRepository;
         this.userRepository = userRepository;
         this.notificationService = notificationService;
+        this.distanceEtaStrategy = distanceEtaStrategy;
+        this.storageClient = storageClient;
     }
 
-    /** §2.2. */
+    /** §2.2, extended with the service-location/sort matching design. */
     @Transactional(readOnly = true)
-    public ProfessionalListingResponse listProfessionals(Long callerId, Long issueId) {
+    public ProfessionalListingResponse listProfessionals(Long callerId, Long issueId, ServiceLocation location,
+                                                           String sortParam) {
         Issue issue = loadIssue(issueId);
         if (!issue.getCustomerId().equals(callerId)) {
             throw forbidden();
@@ -98,7 +120,9 @@ public class BookingsService {
         if (issue.getStatus() != IssueStatus.OPEN) {
             throw notBookable(issue.getId());
         }
-        List<ProfessionalCard> professionals = professionalListingRepository.listByCategory(issue.getCategoryId());
+        List<ProfessionalCard> professionals =
+                professionalListingRepository.listByCategory(issue.getCategoryId(), callerId);
+        professionals = enrichAndSort(professionals, location, parseSort(sortParam));
         return new ProfessionalListingResponse(issue.getId(), issue.getCategoryId(), professionals);
     }
 
@@ -131,7 +155,7 @@ public class BookingsService {
         return new SlotListingResponse(professionalId, slots);
     }
 
-    /** §2.4. */
+    /** §2.4, extended with the service-address snapshot. */
     @Transactional
     public OrderResponse createOrder(Long callerId, CreateOrderRequest request) {
         Issue issue = issueRepository.findById(request.issueId())
@@ -173,9 +197,14 @@ public class BookingsService {
             throw notBookable(issue.getId());
         }
 
-        // Step 11: insert the order.
+        // Step 11: insert the order. Standard orders always carry sosSurcharge = 0.00,
+        // explicitly (not relying on the DB column default alone in this insert path).
+        BigDecimal basePriceSnapshot = professional.getBasePrice();
+        BigDecimal sosSurcharge = BigDecimal.ZERO;
+        BigDecimal finalPrice = basePriceSnapshot == null ? null : basePriceSnapshot.add(sosSurcharge);
         Order order = new Order(issue.getId(), callerId, professional.getId(), slot.getStartTime(),
-                slot.getEndTime(), professional.getBasePrice(), slot.getId());
+                slot.getEndTime(), finalPrice, slot.getId(), request.serviceCity(), request.serviceStreet(),
+                request.serviceHouseNumber(), request.serviceApartment(), basePriceSnapshot, sosSurcharge);
         order = orderRepository.save(order);
 
         notificationService.recordOrderNotification(order.getId(), professional.getUserId(),
@@ -183,9 +212,10 @@ public class BookingsService {
         return toOrderResponse(order);
     }
 
-    /** §2.12. */
+    /** §2.12, extended with the service-location/sort matching design. */
     @Transactional(readOnly = true)
-    public ProfessionalListingResponse listSosProfessionals(Long callerId, Long issueId) {
+    public ProfessionalListingResponse listSosProfessionals(Long callerId, Long issueId, ServiceLocation location,
+                                                              String sortParam) {
         Issue issue = loadIssue(issueId);
         if (!issue.getCustomerId().equals(callerId)) {
             throw forbidden();
@@ -197,11 +227,12 @@ public class BookingsService {
             throw notBookable(issue.getId());
         }
         List<ProfessionalCard> professionals =
-                professionalListingRepository.listSosAvailableByCategory(issue.getCategoryId());
+                professionalListingRepository.listSosAvailableByCategory(issue.getCategoryId(), callerId);
+        professionals = enrichAndSort(professionals, location, parseSort(sortParam));
         return new ProfessionalListingResponse(issue.getId(), issue.getCategoryId(), professionals);
     }
 
-    /** §2.13. */
+    /** §2.13, extended with the service-address snapshot and SOS surcharge. */
     @Transactional
     public OrderResponse createSosOrder(Long callerId, CreateSosOrderRequest request) {
         Issue issue = issueRepository.findById(request.issueId())
@@ -245,9 +276,14 @@ public class BookingsService {
         }
 
         // Step 11: insert the order. bookedStart = now (request time), bookedEnd = null,
-        // slotId = null -- SOS never consumes an availability_slots row.
-        Order order = new Order(issue.getId(), callerId, professional.getId(), now, null,
-                professional.getBasePrice(), null);
+        // slotId = null -- SOS never consumes an availability_slots row. sosSurcharge is
+        // always SOS_SURCHARGE_AMOUNT for an SOS order.
+        BigDecimal basePriceSnapshot = professional.getBasePrice();
+        BigDecimal sosSurcharge = SOS_SURCHARGE_AMOUNT;
+        BigDecimal finalPrice = basePriceSnapshot == null ? null : basePriceSnapshot.add(sosSurcharge);
+        Order order = new Order(issue.getId(), callerId, professional.getId(), now, null, finalPrice, null,
+                request.serviceCity(), request.serviceStreet(), request.serviceHouseNumber(),
+                request.serviceApartment(), basePriceSnapshot, sosSurcharge);
         order = orderRepository.save(order);
 
         notificationService.recordOrderNotification(order.getId(), professional.getUserId(),
@@ -384,8 +420,9 @@ public class BookingsService {
 
         return new OrderDetailResponse(order.getId(), order.getIssueId(), order.getCustomerId(), customerName,
                 order.getProfessionalId(), professionalName, order.getOrderStatus(), order.getBookedStart(),
-                order.getBookedEnd(), order.getFinalPrice(), order.getCancelledBy(), order.getCreatedAt(),
-                order.getUpdatedAt());
+                order.getBookedEnd(), order.getFinalPrice(), order.getBasePriceSnapshot(), order.getSosSurcharge(),
+                order.getServiceCity(), order.getServiceStreet(), order.getServiceHouseNumber(),
+                order.getServiceApartment(), order.getCancelledBy(), order.getCreatedAt(), order.getUpdatedAt());
     }
 
     /** §2.9. */
@@ -521,10 +558,66 @@ public class BookingsService {
         }
     }
 
+    /**
+     * {@code sort} query param: missing/blank defaults to {@link ProfessionalSort#CHEAPEST}
+     * (mirrors {@link #parseStatus}'s "blank means no filter" convention, adapted for this
+     * param's "blank means default" semantics); any non-blank value that isn't a valid enum
+     * constant is {@code 400 VALIDATION_ERROR}, same convention as {@link #parseStatus}.
+     */
+    private ProfessionalSort parseSort(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return ProfessionalSort.CHEAPEST;
+        }
+        try {
+            return ProfessionalSort.valueOf(raw);
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request failed validation.",
+                    List.of(new FieldError("sort", "must be one of CHEAPEST, FASTEST")));
+        }
+    }
+
+    /**
+     * Post-fetch, in-Java-only enrichment pass (never in SQL, per the approved design):
+     * resolves each card's raw {@code profileImageUrl} slot (currently the raw
+     * {@code profile_image_key} column value, per {@code ProfessionalCard}'s Javadoc) to a
+     * real URL via {@link StorageClient#resolveUrl}, and computes distance/ETA via
+     * {@link DistanceEtaStrategy#calculate} using a single, uniform {@code requestTime =
+     * Instant.now()} for the whole listing — applied unconditionally regardless of
+     * {@code sort} (§7). When {@code sort == FASTEST}, the resulting list is re-sorted by
+     * {@code etaMinutes} ascending; {@code CHEAPEST} (default) leaves the DB's
+     * {@code base_price ASC} order untouched.
+     */
+    private List<ProfessionalCard> enrichAndSort(List<ProfessionalCard> cards, ServiceLocation location,
+                                                  ProfessionalSort sort) {
+        Instant requestTime = Instant.now();
+        List<ProfessionalCard> enriched = cards.stream()
+                .map(card -> {
+                    String profileImageUrl = card.profileImageUrl() == null
+                            ? null
+                            : storageClient.resolveUrl(card.profileImageUrl());
+                    EtaResult eta = distanceEtaStrategy.calculate(card.city(), location, requestTime);
+                    return new ProfessionalCard(card.professionalId(), card.fullName(), card.serviceArea(),
+                            card.basePrice(), card.reliabilityScore(), card.city(), profileImageUrl,
+                            card.averageRating(), card.reviewCount(), card.favorited(), eta.sameCity(),
+                            eta.distanceKm(), eta.baseTravelTimeMinutes(), eta.trafficAdjustmentMinutes(),
+                            eta.etaMinutes());
+                })
+                .toList();
+
+        if (sort == ProfessionalSort.FASTEST) {
+            return enriched.stream()
+                    .sorted(Comparator.comparingInt(ProfessionalCard::etaMinutes))
+                    .toList();
+        }
+        return enriched;
+    }
+
     private OrderResponse toOrderResponse(Order order) {
         return new OrderResponse(order.getId(), order.getIssueId(), order.getCustomerId(),
                 order.getProfessionalId(), order.getOrderStatus(), order.getBookedStart(), order.getBookedEnd(),
-                order.getFinalPrice(), order.getCancelledBy(), order.getCreatedAt(), order.getUpdatedAt());
+                order.getFinalPrice(), order.getBasePriceSnapshot(), order.getSosSurcharge(),
+                order.getServiceCity(), order.getServiceStreet(), order.getServiceHouseNumber(),
+                order.getServiceApartment(), order.getCancelledBy(), order.getCreatedAt(), order.getUpdatedAt());
     }
 
     private ApiException forbidden() {

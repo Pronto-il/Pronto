@@ -44,4 +44,12 @@ class ImageKeyUtilsTest {
         Optional<String> trailingDot = ImageKeyUtils.extractExtension("customers/1/issues/temp/uuid.");
         assertThat(trailingDot).isEmpty();
     }
+
+    @Test
+    void isPubliclyReadable_trueOnlyForProfessionalsPrefix() {
+        assertThat(ImageKeyUtils.isPubliclyReadable("professionals/7/profile/uuid.jpg")).isTrue();
+        assertThat(ImageKeyUtils.isPubliclyReadable("customers/42/issues/temp/uuid.jpg")).isFalse();
+        assertThat(ImageKeyUtils.isPubliclyReadable("garbage")).isFalse();
+        assertThat(ImageKeyUtils.isPubliclyReadable(null)).isFalse();
+    }
 }

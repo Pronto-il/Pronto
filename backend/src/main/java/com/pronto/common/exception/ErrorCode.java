@@ -57,7 +57,12 @@ public enum ErrorCode {
 
     // Milestone 7 additions (slot edit/delete). See
     // docs/architecture/api-contract-bookings.md §2 "Milestone 7 additions".
-    SLOT_IN_USE(HttpStatus.CONFLICT);
+    SLOT_IN_USE(HttpStatus.CONFLICT),
+
+    // Reviews/favorites/matching additions (professional profile, reviews, favorites,
+    // service address, SOS surcharge). Lead-approved design, pronto-planning.
+    REVIEW_ORDER_NOT_COMPLETED(HttpStatus.CONFLICT),
+    REVIEW_ALREADY_EXISTS(HttpStatus.CONFLICT);
 
     private final HttpStatus httpStatus;
 

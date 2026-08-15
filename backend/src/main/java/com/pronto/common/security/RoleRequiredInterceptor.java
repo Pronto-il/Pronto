@@ -6,6 +6,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.servlet.HandlerInterceptor;
 
+import java.util.Set;
+
 /**
  * Enforces a required {@code role} on every request matching the route pattern(s) it's
  * registered against, in {@code DispatcherServlet}'s {@code preHandle} phase — i.e. before
@@ -46,17 +48,44 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * in {@code common} purely as generic infrastructure; it has no built-in knowledge of which
  * routes require which role — see {@code issues.config.IssuesWebConfig} /
  * {@code storage.config.StorageWebConfig} for the registrations).
+ *
+ * <p><b>Optional HTTP-method scoping (added for {@code reviews}/Milestone 8-ish "profile,
+ * reviews, favorites, matching" design).</b> Spring's {@code addPathPatterns} matches on URL
+ * pattern only, not HTTP method — insufficient for a route like {@code POST /api/reviews}
+ * (must be {@code CUSTOMER}-only) sharing an identical literal path with
+ * {@code GET /api/reviews} (must stay either-role/ungated). The varargs
+ * {@link #RoleRequiredInterceptor(String, String...)} constructor lets a registration opt
+ * into checking only specific HTTP methods on a matched path, leaving any other method on
+ * that same path untouched by this interceptor instance. The original single-arg
+ * constructor is unchanged and still applies to every method on its registered path(s) —
+ * every pre-existing registration in this codebase keeps that exact behavior.
  */
 public class RoleRequiredInterceptor implements HandlerInterceptor {
 
     private final String requiredRole;
+    private final Set<String> httpMethods;
 
+    /** Applies to every HTTP method on the registered path pattern(s) — original behavior. */
     public RoleRequiredInterceptor(String requiredRole) {
+        this(requiredRole, new String[0]);
+    }
+
+    /**
+     * Applies only to requests whose HTTP method is one of {@code httpMethods} (e.g.
+     * {@code "POST"}, {@code "PUT"}, {@code "DELETE"}); any other method on the same
+     * registered path is left ungated by this instance. Passing no methods reproduces the
+     * single-arg constructor's "applies to every method" behavior.
+     */
+    public RoleRequiredInterceptor(String requiredRole, String... httpMethods) {
         this.requiredRole = requiredRole;
+        this.httpMethods = Set.of(httpMethods);
     }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+        if (!httpMethods.isEmpty() && !httpMethods.contains(request.getMethod())) {
+            return true;
+        }
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         AuthenticatedUser principal =
                 authentication != null && authentication.getPrincipal() instanceof AuthenticatedUser authenticatedUser

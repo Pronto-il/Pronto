@@ -67,6 +67,24 @@ public class Order {
     @Column(name = "slot_id")
     private Long slotId;
 
+    @Column(name = "service_city", length = 100)
+    private String serviceCity;
+
+    @Column(name = "service_street", length = 150)
+    private String serviceStreet;
+
+    @Column(name = "service_house_number", length = 20)
+    private String serviceHouseNumber;
+
+    @Column(name = "service_apartment", length = 20)
+    private String serviceApartment;
+
+    @Column(name = "base_price_snapshot", precision = 10, scale = 2)
+    private BigDecimal basePriceSnapshot;
+
+    @Column(name = "sos_surcharge", nullable = false, precision = 10, scale = 2)
+    private BigDecimal sosSurcharge;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -82,9 +100,17 @@ public class Order {
      * {@code POST /api/bookings/orders} (§2.4) is the only place a row is created.
      * {@code slotId} is always set for a Standard order (§2.4 step 10); a future SOS order
      * (Milestone 4) would pass {@code null} and leave {@code bookedEnd} null.
+     *
+     * <p>{@code serviceApartment} is the only nullable field of the four service-address
+     * arguments (§1 classification item 5's request/booking snapshot — apartment is optional
+     * on the request DTOs). {@code sosSurcharge} is always explicitly {@code 0.00} for
+     * Standard orders, never relying on the DB column default alone in this insert path (see
+     * {@code BookingsService}'s {@code SOS_SURCHARGE_AMOUNT} Javadoc).
      */
     public Order(Long issueId, Long customerId, Long professionalId, Instant bookedStart,
-                 Instant bookedEnd, BigDecimal finalPrice, Long slotId) {
+                 Instant bookedEnd, BigDecimal finalPrice, Long slotId, String serviceCity, String serviceStreet,
+                 String serviceHouseNumber, String serviceApartment, BigDecimal basePriceSnapshot,
+                 BigDecimal sosSurcharge) {
         this.issueId = issueId;
         this.customerId = customerId;
         this.professionalId = professionalId;
@@ -94,6 +120,12 @@ public class Order {
         this.cancelledBy = null;
         this.finalPrice = finalPrice;
         this.slotId = slotId;
+        this.serviceCity = serviceCity;
+        this.serviceStreet = serviceStreet;
+        this.serviceHouseNumber = serviceHouseNumber;
+        this.serviceApartment = serviceApartment;
+        this.basePriceSnapshot = basePriceSnapshot;
+        this.sosSurcharge = sosSurcharge;
     }
 
     @PrePersist
@@ -146,6 +178,30 @@ public class Order {
 
     public Long getSlotId() {
         return slotId;
+    }
+
+    public String getServiceCity() {
+        return serviceCity;
+    }
+
+    public String getServiceStreet() {
+        return serviceStreet;
+    }
+
+    public String getServiceHouseNumber() {
+        return serviceHouseNumber;
+    }
+
+    public String getServiceApartment() {
+        return serviceApartment;
+    }
+
+    public BigDecimal getBasePriceSnapshot() {
+        return basePriceSnapshot;
+    }
+
+    public BigDecimal getSosSurcharge() {
+        return sosSurcharge;
     }
 
     public Instant getCreatedAt() {

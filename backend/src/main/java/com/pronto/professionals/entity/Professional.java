@@ -50,6 +50,15 @@ public class Professional {
     @Column(name = "base_price", precision = 10, scale = 2)
     private BigDecimal basePrice;
 
+    @Column(name = "bio", columnDefinition = "TEXT")
+    private String bio;
+
+    @Column(name = "profile_image_key", length = 500)
+    private String profileImageKey;
+
+    @Column(name = "city", length = 100)
+    private String city;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -127,6 +136,30 @@ public class Professional {
 
     public void setBasePrice(BigDecimal basePrice) {
         this.basePrice = basePrice;
+    }
+
+    public String getBio() {
+        return bio;
+    }
+
+    public void setBio(String bio) {
+        this.bio = bio;
+    }
+
+    public String getProfileImageKey() {
+        return profileImageKey;
+    }
+
+    public void setProfileImageKey(String profileImageKey) {
+        this.profileImageKey = profileImageKey;
+    }
+
+    public String getCity() {
+        return city;
+    }
+
+    public void setCity(String city) {
+        this.city = city;
     }
 
     public Instant getCreatedAt() {

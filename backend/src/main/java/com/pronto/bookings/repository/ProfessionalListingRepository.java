@@ -23,6 +23,18 @@ import java.util.List;
  * <p>{@code Repository<Professional, Long>} (not {@code JpaRepository}) — this interface
  * exists purely to expose the one query below, not full CRUD over {@code Professional}
  * (already owned by {@code professionals.repository.ProfessionalRepository}).
+ *
+ * <p><b>Reviews/favorites profile design.</b> Both queries below now also thread
+ * {@code p.city}/{@code p.profileImageKey} into the projection (raw values, resolved/consumed
+ * by {@code BookingsService} afterward — see {@code ProfessionalCard}'s Javadoc) and add
+ * correlated scalar subqueries over {@code reviews} (average rating, review count) and
+ * {@code favorites} (scoped to the calling customer) — a narrow cross-package read into two
+ * other packages' tables, same intentional pattern this interface already establishes for
+ * {@code sos_availability}. Deliberately correlated <em>subqueries</em>, not a
+ * {@code LEFT JOIN} + {@code GROUP BY} — avoids a wide, error-prone {@code GROUP BY} column
+ * list across three joined tables' non-aggregated columns for the same result. ETA/distance
+ * are deliberately NOT added to either query (computed in Java after fetch, per the approved
+ * design) and the existing {@code ORDER BY p.basePrice ASC} on both is unchanged.
  */
 public interface ProfessionalListingRepository extends Repository<Professional, Long> {
 
@@ -32,11 +44,15 @@ public interface ProfessionalListingRepository extends Repository<Professional, 
      * ASC} (cheapest first — judgment call, §7 of the contract doc).
      */
     @Query("SELECT new com.pronto.bookings.dto.ProfessionalCard(p.id, u.fullName, p.serviceArea, "
-            + "p.basePrice, p.reliabilityScore) "
+            + "p.basePrice, p.reliabilityScore, p.city, p.profileImageKey, "
+            + "(SELECT AVG(r.rating) FROM com.pronto.reviews.entity.Review r WHERE r.professionalId = p.id), "
+            + "(SELECT COUNT(r) FROM com.pronto.reviews.entity.Review r WHERE r.professionalId = p.id), "
+            + "(SELECT COUNT(f) FROM com.pronto.favorites.entity.Favorite f "
+            + "WHERE f.customerId = :customerId AND f.professionalId = p.id)) "
             + "FROM Professional p, com.pronto.users.entity.User u "
             + "WHERE p.userId = u.id AND p.categoryId = :categoryId AND u.deletedAt IS NULL "
             + "ORDER BY p.basePrice ASC")
-    List<ProfessionalCard> listByCategory(@Param("categoryId") Long categoryId);
+    List<ProfessionalCard> listByCategory(@Param("categoryId") Long categoryId, @Param("customerId") Long customerId);
 
     /**
      * §2.12 step 7: {@code professionals} joined to {@code users} (same soft-delete exclusion
@@ -48,10 +64,15 @@ public interface ProfessionalListingRepository extends Repository<Professional, 
      * independently (§7 of the contract doc).
      */
     @Query("SELECT new com.pronto.bookings.dto.ProfessionalCard(p.id, u.fullName, p.serviceArea, "
-            + "p.basePrice, p.reliabilityScore) "
+            + "p.basePrice, p.reliabilityScore, p.city, p.profileImageKey, "
+            + "(SELECT AVG(r.rating) FROM com.pronto.reviews.entity.Review r WHERE r.professionalId = p.id), "
+            + "(SELECT COUNT(r) FROM com.pronto.reviews.entity.Review r WHERE r.professionalId = p.id), "
+            + "(SELECT COUNT(f) FROM com.pronto.favorites.entity.Favorite f "
+            + "WHERE f.customerId = :customerId AND f.professionalId = p.id)) "
             + "FROM Professional p, com.pronto.users.entity.User u, com.pronto.availability.entity.SosAvailability s "
             + "WHERE p.userId = u.id AND p.id = s.professionalId AND p.categoryId = :categoryId "
             + "AND u.deletedAt IS NULL AND s.isAvailable = true "
             + "ORDER BY p.basePrice ASC")
-    List<ProfessionalCard> listSosAvailableByCategory(@Param("categoryId") Long categoryId);
+    List<ProfessionalCard> listSosAvailableByCategory(@Param("categoryId") Long categoryId,
+                                                        @Param("customerId") Long customerId);
 }

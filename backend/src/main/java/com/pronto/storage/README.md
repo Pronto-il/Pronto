@@ -24,12 +24,20 @@ Implements `docs/architecture/api-contract-issues.md` §2.3–2.4 and §3.2–3.
   and streaming the bytes back (the S3 bucket blocks all public access, so a raw S3 URL
   would always 403 — see `client.S3StorageClient`'s Javadoc). Mapped with a trailing
   wildcard, not `{key}`, since the key itself contains `/` characters (§2.4's
-  implementation-note gotcha). Ownership is enforced purely from the key's embedded
-  `customers/{callerId}/...` prefix — always `403 FORBIDDEN` on a mismatch (never `404`,
-  to avoid leaking existence via a distinguishable error code).
-- Both endpoints require `role = CUSTOMER`, checked via
+  implementation-note gotcha). Authorization is per-key-prefix, enforced in
+  `service.StorageService#retrieve` via `ImageKeyUtils`: `customers/{callerId}/...` keys
+  (issue images) require the caller to be that exact customer — always `403 FORBIDDEN` on
+  a mismatch (never `404`, to avoid leaking existence via a distinguishable error code).
+  `professionals/{professionalId}/...` keys (profile images) have **no** ownership check —
+  any authenticated caller of either role can read them, since profile images are shown to
+  any customer browsing listings, not just their owning professional (post-Milestone-7 bug
+  fix, see "Role enforcement" below).
+- `POST /api/storage/images` requires `role = CUSTOMER`, checked via
   `common.security.RoleRequiredInterceptor` (which itself calls
-  `common.security.RoleGuard`) — see "Role enforcement" below.
+  `common.security.RoleGuard`) — see "Role enforcement" below. `GET /api/storage/images/**`
+  requires only *some* authenticated caller (either role) at the route level —
+  `auth.config.SecurityConfig`'s blanket `.anyRequest().authenticated()` — with the
+  per-key-prefix authorization described above enforced in the service layer.
 
 ## Key classes
 
@@ -41,10 +49,10 @@ Implements `docs/architecture/api-contract-issues.md` §2.3–2.4 and §3.2–3.
 | `client.StoredObject` | `(key, url, contentType, sizeBytes)` — result of a successful upload. |
 | `client.StorageException` | Unchecked, thrown by a `StorageClient` implementation on a genuine I/O failure; callers translate it to `502 STORAGE_SERVICE_ERROR`. |
 | `ImageContentType` | The 3 accepted content-types ↔ file-extension mapping — single source of truth used both when generating an upload key and when re-deriving `Content-Type` for `GET /api/storage/images/**` (local storage doesn't separately persist content-type metadata). |
-| `ImageKeyUtils` | Parses the `customers/{callerId}/...` key format — the sole ownership mechanism (§3.3, no DB row exists to record it). Pure/stateless, used by both this package and `issues`. |
-| `service.StorageService` | Business logic for both endpoints (validation, key generation, ownership/existence checks). |
+| `ImageKeyUtils` | Parses the `customers/{callerId}/...` key format — the sole ownership mechanism (§3.3, no DB row exists to record it). Also exposes `isPubliclyReadable`, `true` for `professionals/`-prefixed keys (profile images, no ownership check — see "Role enforcement" below). Pure/stateless, used by this package, `issues`, and (indirectly, via `StorageService`) `professionals`. |
+| `service.StorageService` | Business logic for both endpoints (validation, key generation, ownership/existence checks). `retrieve` special-cases `professionals/`-prefixed keys as always-allowed; every other key format (in particular `customers/`-prefixed issue images) goes through the original strict `ImageKeyUtils.belongsTo` ownership check, unchanged. |
 | `controller.StorageController` | `/api/storage/images` POST + `/api/storage/images/**` GET. |
-| `config.StorageWebConfig` | Registers `common.security.RoleRequiredInterceptor(role = "CUSTOMER")` for `/api/storage/**` (see "Role enforcement" below). |
+| `config.StorageWebConfig` | Registers `common.security.RoleRequiredInterceptor(role = "CUSTOMER")` for exactly `POST /api/storage/images` (narrowed from a blanket `/api/storage/**` — see "Role enforcement" below). `GET /api/storage/images/**` has no route-level role gate. |
 | `dto.ImageUploadResponse` / `dto.RetrievedImage` | Response/internal-transfer shapes. |
 
 ## Interactions with other packages
@@ -55,13 +63,17 @@ Implements `docs/architecture/api-contract-issues.md` §2.3–2.4 and §3.2–3.
 - Depended on by `ai` (`service.ClassificationService`) to resolve `imageKeys` to raw bytes
   for the real OpenAI client — never via the public `imageUrl` (see `ai/README.md`'s
   "image reachability" note).
+- Depended on by `professionals` (`service.ProfessionalsService#uploadProfileImage`) via
+  `StorageService.uploadWithKey`, for its own `professionals/{professionalId}/profile/...`
+  key template — see "Role enforcement" below for how retrieval of those keys differs from
+  `issues`' `customers/`-prefixed keys.
 - Depends on `common` for the error envelope (`ApiException`/`ErrorCode`) and
   `RoleGuard`/`AuthenticatedUser`.
 
 ## Role enforcement (deviation from `@PreAuthorize`, flagged)
 
-Both endpoints are gated by `common.security.RoleRequiredInterceptor` (registered for
-`/api/storage/**` by `config.StorageWebConfig`), which calls
+`POST /api/storage/images` (upload) is gated by `common.security.RoleRequiredInterceptor`
+(registered for exactly that literal path by `config.StorageWebConfig`), which calls
 `common.security.RoleGuard.requireRole(principal, "CUSTOMER")` from `preHandle` — before
 DispatcherServlet invokes the controller method — rather than declarative `@PreAuthorize`.
 Wiring `@EnableMethodSecurity` plus a custom `AccessDeniedHandler` (so a denial still
@@ -74,14 +86,41 @@ resolution instead of via annotation. Flagged to `pronto-lead`: migrating to
 `@PreAuthorize` is a reasonable follow-up if `auth.SecurityConfig` becomes touchable in a
 later milestone.
 
+`GET /api/storage/images/**` (retrieval) has no route-level role gate — any authenticated
+caller of either role can reach `StorageController#retrieve`
+(`auth.config.SecurityConfig`'s blanket `.anyRequest().authenticated()` still applies).
+Per-key authorization happens in `service.StorageService#retrieve` instead:
+`customers/{callerId}/...` keys (issue images, uploaded via this same `POST` endpoint)
+still require an exact caller-id match via `ImageKeyUtils.belongsTo` — unchanged.
+`professionals/{professionalId}/...` keys (profile images, uploaded by `professionals` via
+its own endpoint, not this package's `POST`) have no ownership check at all
+(`ImageKeyUtils.isPubliclyReadable`) — deliberate, since profile images are shown to any
+customer browsing listings, not just their owning professional.
+
 **Ordering bug, fixed (QA-reported, post-Milestone-2):** the role check originally lived as
 the first line of each controller method body (`RoleGuard.requireRole` called directly),
 which ran *after* Spring resolved `@RequestParam("file") MultipartFile file` for
 `POST /api/storage/images`. A professional-role caller sending no `file` part therefore got
 `400 VALIDATION_ERROR` instead of `403 FORBIDDEN`. Moving the check into
 `RoleRequiredInterceptor.preHandle` (which always runs before argument resolution) fixed
-it; re-verified against a real local Postgres. The in-controller-body `RoleGuard` calls
-were removed as redundant once the interceptor covers every `/api/storage/**` route.
+it; re-verified against a real local Postgres.
+
+**Profile-image `403`-for-everyone bug, fixed (QA-reported, post-Milestone-7):** when
+`professionals.service.ProfessionalsService#uploadProfileImage` (Milestone 7.x) started
+generating `professionals/{professionalId}/profile/...` keys and returning their resolved
+`GET /api/storage/images/**` URL as `profileImageUrl` in listing/profile responses, both
+this route's original blanket-`/api/storage/**` `CUSTOMER`-only gate and
+`ImageKeyUtils`'s `customers/`-only ownership pattern meant *every* caller — including the
+owning professional — got `403 FORBIDDEN` fetching it: the route rejected a
+`PROFESSIONAL`-role caller outright, and even a `CUSTOMER`-role caller failed the
+`customers/{callerId}/...` ownership regex (a `professionals/...` key never matches it).
+Fixed by narrowing `StorageWebConfig`'s interceptor registration to exactly
+`POST /api/storage/images` (leaving `GET` either-role) and adding
+`ImageKeyUtils.isPubliclyReadable`/`StorageService#retrieve`'s special case above.
+`customers/`-prefixed issue-image behavior (route gate now implicit via
+`SecurityConfig`'s blanket authentication instead of this package's interceptor, but the
+service-layer ownership check, error codes, and outcomes) is unchanged — re-verified live:
+cross-customer issue-image retrieval still `403`s, owner retrieval still `200`s.
 
 ## Deviation from the contract doc's exact `StorageClient` interface, flagged
 
@@ -138,3 +177,18 @@ Post-Milestone-2 bug fix (QA-reported): the role-check-ordering bug described ab
 "Role enforcement" has been fixed and re-verified against a real local Postgres —
 professional token + missing `file` part on `POST /api/storage/images` now correctly
 `403`s instead of `400`.
+
+Post-Milestone-7 bug fix (QA-reported): the profile-image `403`-for-everyone bug described
+above under "Role enforcement" has been fixed. `ImageKeyUtilsTest`/`StorageServiceTest`
+gained coverage for `isPubliclyReadable`/the `professionals/`-prefixed public-read retrieval
+path, plus an explicit regression test proving `customers/`-prefixed ownership enforcement
+is untouched. Live-verified against a real local Postgres + local-disk storage + the running
+jar: a freshly-uploaded `professionals/{id}/profile/...` image is retrievable by its owning
+professional, by a different professional, and by a customer (all `200`, byte-for-byte
+match against the owner's fetch); the previously-403ing pre-existing seeded professional's
+`profileImageUrl` now also returns `200`; an unauthenticated request to the same URL still
+`401`s (SecurityConfig's blanket authentication requirement is untouched). Full backend
+suite re-run (83 tests, all passing) and a live `customers/`-prefixed issue-image regression
+(owner `200`, cross-customer `403`, a professional token also `403` on a customer's issue
+image, `POST /api/storage/images` still `403`s for a professional caller) confirm zero
+behavior change to the issue-image path.

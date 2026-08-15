@@ -12,6 +12,7 @@ import com.pronto.common.dto.FieldError;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
+import com.pronto.matching.ServiceLocation;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -55,9 +57,15 @@ public class BookingsController {
     @GetMapping("/professionals")
     public ResponseEntity<ProfessionalListingResponse> listProfessionals(
             @AuthenticationPrincipal AuthenticatedUser principal,
-            @RequestParam(name = "issueId", required = false) String issueIdRaw) {
+            @RequestParam(name = "issueId", required = false) String issueIdRaw,
+            @RequestParam(name = "city", required = false) String city,
+            @RequestParam(name = "street", required = false) String street,
+            @RequestParam(name = "houseNumber", required = false) String houseNumber,
+            @RequestParam(name = "apartment", required = false) String apartment,
+            @RequestParam(name = "sort", required = false) String sort) {
         Long issueId = parseQueryId(issueIdRaw, "issueId");
-        return ResponseEntity.ok(bookingsService.listProfessionals(principal.id(), issueId));
+        ServiceLocation location = parseServiceLocation(city, street, houseNumber, apartment);
+        return ResponseEntity.ok(bookingsService.listProfessionals(principal.id(), issueId, location, sort));
     }
 
     @GetMapping("/professionals/{professionalId}/slots")
@@ -80,9 +88,15 @@ public class BookingsController {
     @GetMapping("/sos-professionals")
     public ResponseEntity<ProfessionalListingResponse> listSosProfessionals(
             @AuthenticationPrincipal AuthenticatedUser principal,
-            @RequestParam(name = "issueId", required = false) String issueIdRaw) {
+            @RequestParam(name = "issueId", required = false) String issueIdRaw,
+            @RequestParam(name = "city", required = false) String city,
+            @RequestParam(name = "street", required = false) String street,
+            @RequestParam(name = "houseNumber", required = false) String houseNumber,
+            @RequestParam(name = "apartment", required = false) String apartment,
+            @RequestParam(name = "sort", required = false) String sort) {
         Long issueId = parseQueryId(issueIdRaw, "issueId");
-        return ResponseEntity.ok(bookingsService.listSosProfessionals(principal.id(), issueId));
+        ServiceLocation location = parseServiceLocation(city, street, houseNumber, apartment);
+        return ResponseEntity.ok(bookingsService.listSosProfessionals(principal.id(), issueId, location, sort));
     }
 
     @PostMapping("/sos-orders")
@@ -138,6 +152,29 @@ public class BookingsController {
                                                           @PathVariable("orderId") String orderIdRaw) {
         Long orderId = parsePathId(orderIdRaw);
         return ResponseEntity.ok(bookingsService.getOrderDetail(principal.id(), principal.role(), orderId));
+    }
+
+    /**
+     * {@code city}/{@code street}/{@code houseNumber} are required (blank/missing →
+     * {@code 400 VALIDATION_ERROR}, one {@link FieldError} per missing field so all three can
+     * be reported in one response, same "collect every failure" spirit as {@code @Valid}
+     * body validation); {@code apartment} is optional. See {@code matching.ServiceLocation}.
+     */
+    private ServiceLocation parseServiceLocation(String city, String street, String houseNumber, String apartment) {
+        List<FieldError> errors = new ArrayList<>();
+        if (city == null || city.isBlank()) {
+            errors.add(new FieldError("city", "is required"));
+        }
+        if (street == null || street.isBlank()) {
+            errors.add(new FieldError("street", "is required"));
+        }
+        if (houseNumber == null || houseNumber.isBlank()) {
+            errors.add(new FieldError("houseNumber", "is required"));
+        }
+        if (!errors.isEmpty()) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request failed validation.", errors);
+        }
+        return new ServiceLocation(city, street, houseNumber, apartment);
     }
 
     /** Query-param id (e.g. {@code issueId}): missing/non-positive/unparsable → {@code 400 VALIDATION_ERROR}. */

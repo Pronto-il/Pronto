@@ -90,4 +90,44 @@ class StorageServiceTest {
         assertThat(image.content()).containsExactly(9, 9, 9);
         assertThat(image.contentType()).isEqualTo("image/png");
     }
+
+    @Test
+    void retrieve_professionalPrefixedKeyIsReadableByItsOwningProfessional() {
+        String key = "professionals/7/profile/photo.jpg";
+        AuthenticatedUser owningProfessional = new AuthenticatedUser(7L, "PROFESSIONAL");
+        when(storageClient.exists(key)).thenReturn(true);
+        when(storageClient.download(key)).thenReturn(new byte[]{1, 2, 3});
+
+        RetrievedImage image = storageService.retrieve(owningProfessional, key);
+
+        assertThat(image.content()).containsExactly(1, 2, 3);
+        assertThat(image.contentType()).isEqualTo("image/jpeg");
+    }
+
+    @Test
+    void retrieve_professionalPrefixedKeyIsAlsoReadableByAnyOtherProfessionalOrCustomer() {
+        String key = "professionals/7/profile/photo.jpg";
+        AuthenticatedUser differentProfessional = new AuthenticatedUser(8L, "PROFESSIONAL");
+        AuthenticatedUser unrelatedCustomer = new AuthenticatedUser(42L, "CUSTOMER");
+        when(storageClient.exists(key)).thenReturn(true);
+        when(storageClient.download(key)).thenReturn(new byte[]{1, 2, 3});
+
+        // No ownership check at all for professionals/-prefixed keys: profile images are
+        // meant to be publicly visible to any customer browsing listings, and to any other
+        // professional too — unlike customers/-prefixed issue images below, which still
+        // strictly enforce per-caller ownership.
+        assertThat(storageService.retrieve(differentProfessional, key).content()).containsExactly(1, 2, 3);
+        assertThat(storageService.retrieve(unrelatedCustomer, key).content()).containsExactly(1, 2, 3);
+    }
+
+    @Test
+    void retrieve_customerPrefixedIssueImageOwnershipCheckIsUnchangedByProfessionalPublicCase() {
+        // Regression guard: adding the professionals/-prefixed public-read branch must not
+        // loosen the customers/-prefixed ownership check in any way.
+        String otherCustomersKey = "customers/99/issues/temp/x.jpg";
+
+        assertThatThrownBy(() -> storageService.retrieve(caller, otherCustomersKey))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.FORBIDDEN));
+    }
 }

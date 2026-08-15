@@ -1,11 +1,13 @@
 # Pronto — System Overview & Architecture
 
-Status: **Milestone 1 (Auth & user management) and Milestone 2 (Issue creation & AI
-classification) both implemented on the backend and QA-signed-off, as of 2026-08-13** (see
-`docs/architecture/implementation-plan.md` for milestone-by-milestone status); Milestones
-3+ and all of `frontend/` remain design-only. This is the living source of truth for
-architecture/decisions — keep it in sync with the actual implementation as it lands (owned
-going forward by the `pronto-documentation` agent).
+Status: **Milestones 1-7 (Auth through Hardening & QA) and the follow-on Milestone 8
+(Professional Profiles, Reviews, Favorites & Matching) are all implemented on the backend
+and QA-signed-off, as of 2026-08-15** (see `docs/architecture/implementation-plan.md` for
+milestone-by-milestone status — this line was stale for several milestones and is corrected
+here as part of Milestone 8's documentation pass); `frontend/` remains entirely design-only
+project-wide, pending the user's design-system decision. This is the living source of truth
+for architecture/decisions — keep it in sync with the actual implementation as it lands
+(owned going forward by the `pronto-documentation` agent).
 
 ## 1. Consolidated understanding
 
@@ -53,6 +55,7 @@ status-transition semantics (including exactly which actor/stage produces `Cance
 | Chat between users | Out of scope for v1.0 | PRD §10.4 |
 | Additional languages | Out of scope for v1.0 | PRD §10.6 |
 | Booking statuses | 7 values: Pending, Confirmed, On the Way, Completed, Cancelled, Rejected, Expired (`Rejected` added as a 7th status) | User decision (2026-08-12), overriding the originally-settled 6-status list (PRD §3.6.1 has no "Rejected"). See `data-model.md` §2.9/§3 item 10 for the precise Rejected-vs-Cancelled-vs-Expired transition rules. |
+| Professional-search distance/ETA | **Now in v1.0 scope** — dynamically computed (never persisted) same-city/different-city + peak-hour approximation, shown on Standard/SOS professional-listing cards and usable as a `sort=FASTEST` mode. | Explicit user instruction (2026-08-15), **overriding** the prior "ETA/tracking display is out of v1.0 scope, permanent (PRD §3.4.8/§3.5.5, 'future version')" ruling recorded in `data-model.md` §4. Scoped to professional search/listing only — the tracking screen gained no new field, and GPS/live-location tracking (the separate row above) remains a completely separate, still-valid, untouched exclusion. Full record: `docs/architecture/api-contract-professionals-reviews.md` §5; `data-model.md` §4 (kept, with the override noted alongside the original text, not silently rewritten). |
 | Team roster | Poster lists 2 members (Yuval Harel, Or Cohen); other docs list 4 | Informational only — no architectural impact. |
 
 ## 3. Proposed architecture
@@ -148,13 +151,16 @@ changes it, per the shared project rule.
 |---|---|
 | `auth` | Registration, login, email verification codes, password hashing, account lockout, token issuance. |
 | `users` | Shared `User` entity/profile logic used by both customer and professional roles. |
-| `professionals` | Professional profile, service area, reliability score. (No approval workflow — v1.0 auto-approves.) |
+| `professionals` | Professional profile, service area/city, standing price offer, reliability score. (No approval workflow — v1.0 auto-approves.) **As of 2026-08-15**, also owns the self-service profile layer (`GET`/`PUT /api/professionals/me`, profile-image upload, public `GET /api/professionals/{id}` detail view) — its first-ever service/controller layer, previously entity+repository only. See `professionals/README.md`. |
 | `availability` | Two distinct concepts, not one table used two ways: `availability_slots` (Standard advance-booking calendar) and `sos_availability` (live SOS "available for urgent work right now" on/off toggle). Decided 2026-08-12 — see `data-model.md` §2.5–§2.6 and §3 item 5. |
 | `issues` | Issue creation, category selection, image metadata; orchestrates the `ai` package for classification. |
 | `ai` | OpenAI client wrapper + classification service, kept separate from `issues` so it's independently testable/mockable. |
-| `bookings` | `Orders` — Standard + SOS booking flows, accept/reject, status transitions. |
+| `bookings` | `Orders` — Standard + SOS booking flows, accept/reject, status transitions. **As of 2026-08-15**, also owns the service-address snapshot/SOS-surcharge pricing on order creation, and consumes `matching` to enrich professional listings with distance/ETA and a `sort=FASTEST` mode. |
 | `notifications` | Notification records + status polling endpoints, plus email dispatch. |
-| `storage` | Image upload/retrieval, backend-proxied, behind a `StorageClient` abstraction swappable between a local-disk fake (dev/QA default) and real S3 (`pronto.storage.mode`). |
+| `storage` | Image upload/retrieval, backend-proxied, behind a `StorageClient` abstraction swappable between a local-disk fake (dev/QA default) and real S3 (`pronto.storage.mode`). **As of 2026-08-15**, also serves professional profile images (`professionals/`-prefixed keys), publicly readable by any authenticated caller of either role — see `storage/README.md`'s "Role enforcement" section. |
+| `reviews` | **New, 2026-08-15.** Customer reviews of a professional (1-5 star rating + optional comment), one per completed order. Full CRUD (`POST`/`GET`/`PUT`/`DELETE /api/reviews`). See `reviews/README.md`. |
+| `favorites` | **New, 2026-08-15.** A customer's bookmarked professionals — add/remove/list (`POST`/`GET /api/favorites`, `DELETE /api/favorites/{professionalId}`). See `favorites/README.md`. |
+| `matching` | **New, 2026-08-15.** Distance/ETA approximation between a professional's city and a customer's service address, plus the "fastest" sort this powers on professional-listing endpoints. Pure computation only — no table, no endpoint of its own, consumed in-process by `bookings`. Implements the ETA-scope override recorded in §2 above — see `matching/README.md`. |
 | `common` | Shared exceptions, base entities/DTOs, config, cross-cutting utilities. |
 
 ### Frontend — `frontend/src/*`

@@ -47,6 +47,15 @@ pronto:
   # Consumed by auth.security.JwtSecretStartupGuard.
   environment: ${PRONTO_ENVIRONMENT:local}
 
+  cors:
+    # Browser CORS allow-list for /api/**, see auth.config.SecurityConfig's Javadoc on
+    # corsConfigurationSource(). Comma-separated list of origins; Spring's relaxed
+    # binding splits a single comma-separated env/default string into List<String>
+    # automatically, so a single default origin needs no bracket/YAML-list syntax.
+    # Default covers the Vite dev server. Override via CORS_ALLOWED_ORIGINS in any
+    # non-local deployment.
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+
   jwt:
     # Local-dev-only default. This is NOT production-safe — every real deployment must
     # override this via the JWT_SECRET env var with a securely generated, kept-secret

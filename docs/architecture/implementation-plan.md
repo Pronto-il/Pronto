@@ -57,6 +57,65 @@ closed).
   endpoint, no refresh-token/logout-revocation mechanism — see `overview.md` §6 and
   `api-contract.md` §4 for detail.
 
+### Frontend Milestone 1 — Auth screens
+
+- **Status: COMPLETE, 2026-08-15.** The first real frontend milestone to land — every
+  prior backend milestone (1-8) shipped with `frontend/` left design-only, per each
+  milestone's own status note above. Not one of the originally-numbered backend
+  milestones in `overview.md` §5; tracked separately as "Frontend Milestone 1" (MS1)
+  since it delivers the UI for this same Milestone 1 auth/user-management scope.
+- **Screens delivered**: `/register` role chooser → `/register/customer` /
+  `/register/professional`, `/verify`, `/login`, `/profile` (any authenticated role,
+  read-only `GET /api/users/me`), and `/pro` (a professional-only placeholder route,
+  customers redirected away).
+- **Built on**: the design tokens/fonts/icons bootstrap, `AppLayout`, a typed
+  `httpClient` + `AuthProvider`/`useAuth`/`RequireAuth`, and the shared component set
+  (`Button`, `Input`, `Select`, `Card`, `PageHeader`, `ImageUploadField`,
+  `DocumentUploadField`, `AddressFormFields`).
+- **Original QA pass** found and fixed two defects:
+  - **(a) Critical** — CORS was entirely unconfigured on the backend: cross-origin
+    requests from the Vite dev server were rejected on the preflight `OPTIONS` request
+    before ever reaching a controller. Fixed via a `CorsConfigurationSource` bean in
+    `auth.config.SecurityConfig` (`pronto.cors.allowed-origins` /
+    `CORS_ALLOWED_ORIGINS`, default `http://localhost:5173`) — see
+    `backend/src/main/java/com/pronto/auth/README.md`.
+  - **(b) Minor** — `/pro` wasn't actually role-gated to professionals. Fixed.
+- **Follow-up pass, same day (2026-08-15)** — aligned this milestone with the backend
+  `auth` package's real registration contract:
+  - `POST /api/auth/register` is `multipart/form-data`, not flat JSON: a `data` JSON
+    part nesting `customer`/`professional` sub-objects, plus optional
+    `verificationDocument`/`profilePhoto` file parts for professionals (per
+    `AuthController`'s own Javadoc, which calls this "a breaking change from the prior
+    flat-JSON contract"). `frontend/src/shared/api/auth.ts` was rewritten to build and
+    send this correctly, and `frontend/src/shared/api/httpClient.ts` gained `FormData`
+    request-body support.
+  - A field-name mismatch between the frontend's address type and the backend's
+    `DefaultAddressRequest` (`notes` vs. `addressNotes`) was found and fixed.
+  - Nested validation-error paths (e.g. `customer.defaultAddress.city`) are now mapped
+    to their leaf field name (`city`) for display, in
+    `frontend/src/shared/api/errorMessages.ts`.
+  - `GET /api/users/me` is unchanged — `/profile` still cannot show address/photo/
+    document. Expected, not a regression.
+  - Two barrel files (`frontend/src/shared/api/index.ts`,
+    `frontend/src/shared/components/index.ts`) that were still stubs got filled in.
+    `frontend/src/shared/hooks/index.ts` was found to still be a stub too — a real gap
+    that would have broken the build — and was fixed alongside them.
+  - CORS: `pronto.cors.allowed-origins` (env `CORS_ALLOWED_ORIGINS`, default
+    `http://localhost:5173`) was added to `application.yml`, wiring up the
+    already-present `SecurityConfig` CORS bean, which previously had no backing config
+    property.
+- **Doc-drift flagged for `pronto-lead`**: `auth/README.md`'s Responsibilities section
+  still describes `POST /api/auth/register` as "one flat JSON shape" — stale text
+  predating the multipart change above; not corrected in this documentation pass
+  (outside the requested scope), noted here for a follow-up edit.
+- **Incident note**: a git mistake during this work caused some in-progress files to be
+  lost; recovered via IDE Local History plus manual reconstruction of a small number of
+  low-risk files. Resolved — does not affect the shipped state described above.
+- **Known gaps, not blockers**: same as backend Milestone 1 above (no password-reset
+  flow, no resend-verification-code endpoint, no refresh-token/logout-revocation
+  mechanism); `/profile` cannot show address/photo/document since `GET /api/users/me`
+  doesn't return them.
+
 ## Milestone 2 — Issue creation & AI classification
 
 - **Status: COMPLETE (backend), 2026-08-13.** `issues`, `ai`, `storage` packages

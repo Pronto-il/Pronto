@@ -2,8 +2,10 @@ package com.pronto.auth.config;
 
 import com.pronto.auth.security.JsonAuthenticationEntryPoint;
 import com.pronto.auth.security.JwtAuthenticationFilter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -11,6 +13,11 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
 
 /**
  * Stateless JWT-based security configuration, per
@@ -24,23 +31,30 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  *
  * <p>CSRF and form-login are disabled: this is a stateless token API with no server-side
  * session/cookie-based auth, so neither applies.
+ *
+ * <p>CORS is enabled for {@code /api/**} so a browser frontend on a different origin (the
+ * Vite dev server by default) can call this API — see {@link #corsConfigurationSource()}.
  */
 @Configuration
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final JsonAuthenticationEntryPoint authenticationEntryPoint;
+    private final List<String> corsAllowedOrigins;
 
     public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter,
-                           JsonAuthenticationEntryPoint authenticationEntryPoint) {
+                           JsonAuthenticationEntryPoint authenticationEntryPoint,
+                           @Value("${pronto.cors.allowed-origins}") List<String> corsAllowedOrigins) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.authenticationEntryPoint = authenticationEntryPoint;
+        this.corsAllowedOrigins = corsAllowedOrigins;
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable)
+                .cors(Customizer.withDefaults())
                 .formLogin(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -50,6 +64,27 @@ public class SecurityConfig {
                 .exceptionHandling(eh -> eh.authenticationEntryPoint(authenticationEntryPoint))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
+    }
+
+    /**
+     * Browser CORS policy for {@code /api/**}, sourced from
+     * {@code pronto.cors.allowed-origins} (env var {@code CORS_ALLOWED_ORIGINS},
+     * comma-separated, defaults to the Vite dev server {@code http://localhost:5173}).
+     * Without this bean Spring Security rejects every cross-origin preflight
+     * {@code OPTIONS} request with a 403 before it reaches any controller.
+     * {@code /actuator/health} is not covered: it's polled server-to-server, not from a
+     * browser, so it doesn't need a CORS policy.
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(corsAllowedOrigins);
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(List.of("Content-Type", "Authorization"));
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/api/**", configuration);
+        return source;
     }
 
     /** BCrypt, Spring Security's default cost factor (10). Never plaintext. */

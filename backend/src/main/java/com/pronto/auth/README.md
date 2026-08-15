@@ -29,6 +29,12 @@ Implements `docs/architecture/api-contract.md` §2.1–2.3 and §3.1–3.3.
 - The `SecurityFilterChain` (`config/SecurityConfig`): stateless, CSRF/form-login
   disabled, `/actuator/health` and `/api/auth/**` public, everything else authenticated.
   Also owns the `BCryptPasswordEncoder` bean.
+- `config/SecurityConfig` also owns a `corsConfigurationSource()` bean, sourced from
+  `pronto.cors.allowed-origins` (env var `CORS_ALLOWED_ORIGINS`, default
+  `http://localhost:5173`, now present in `application.yml` under the `pronto:` block).
+  Without it, cross-origin browser requests from the Vite dev frontend were rejected with
+  a `403` on the CORS preflight `OPTIONS` request before ever reaching a controller — this
+  was found and fixed during Frontend Milestone 1's QA pass.
 - `security/JwtAuthenticationFilter` — per-request JWT validation *and* the
   deleted-account revocation check (rejects a token whose `sub` no longer resolves to a
   non-soft-deleted `users` row), per `api-contract.md` §3.1.

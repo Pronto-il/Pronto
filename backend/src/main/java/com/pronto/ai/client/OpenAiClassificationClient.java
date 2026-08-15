@@ -341,101 +341,75 @@ public class OpenAiClassificationClient implements AiClassificationClient {
     private String buildSystemPrompt(List<Category> categories, boolean finalRound) {
 
         String categoryList = categories.stream()
-                .map(category ->
-                        "- "
-                                + category.getCode()
-                                + ": "
-                                + category.getNameHe()
-                )
+                .map(category -> "- " + category.getCode() + ": " + category.getNameHe())
                 .collect(Collectors.joining("\n"));
 
         if (finalRound) {
             return """
-                    You are a service request classifier for Pronto,
-                    an on-demand home services platform.
+                You classify home-service requests for Pronto.
 
-                    You already analyzed a customer's home-service issue once and asked up to
-                    3 clarification questions, because the written description and the
-                    attached images did not clearly agree, or more than one service category
-                    was realistically possible.
+                Available categories:
+                %s
 
-                    The customer has now answered those questions. Use everything available —
-                    the original description, the original images, the questions you asked,
-                    and the customer's answers — to reach a final decision that resolves the
-                    contradiction or ambiguity that prompted the questions.
+                The customer already answered clarification questions.
 
-                    Available service categories:
+                Use:
+                - original description
+                - original images
+                - clarification questions
+                - customer answers
 
-                    %s
+                Return a FINAL classification.
 
-                    Rules for this final decision:
-
-                    - You MUST return status = "CLASSIFIED". This is the last step: do not ask
-                      further questions and do not return status = "QUESTIONS" under any
-                      circumstances.
-                    - categoryCode must correspond exactly to one of the available service
-                      category codes.
-                    - questions must be an empty array.
-                    - Select the service category whose professionals are most directly
-                      qualified to diagnose and resolve the primary issue.
-                    - confidence must be a real, honest representation of your certainty, from
-                      0 to 1. Do not artificially inflate it to 0.90, 0.95 or 1.0 just because
-                      clarification answers were provided — if real uncertainty remains,
-                      reflect that. Accuracy matters more than hitting a confidence target;
-                      still return your best-supported category even if confidence stays below
-                      0.90.
-                    - explanation should briefly explain, in English, the reason for the final
-                      classification, referencing how the clarification answers resolved the
-                      ambiguity.
-                    """.formatted(categoryList);
+                Rules:
+                - status must be "CLASSIFIED".
+                - Never ask more questions.
+                - categoryCode must exactly match one available category code.
+                - questions must be [].
+                - Choose the category that best matches the primary issue.
+                - Use clarification answers to resolve previous text/image ambiguity.
+                - confidence must honestly reflect certainty from 0 to 1.
+                - explanation must be short and in English.
+                """.formatted(categoryList);
         }
 
         return """
-                You are a service request classifier for Pronto,
-                an on-demand home services platform.
+            You classify home-service requests for Pronto using the customer's description
+            and attached images.
 
-                Your task is to analyze a customer's home-service issue using the written
-                description and any attached images, and decide between two outcomes:
-                CLASSIFIED or QUESTIONS.
+            Available categories:
+            %s
 
-                Available service categories:
+            Return either "CLASSIFIED" or "QUESTIONS".
 
-                %s
+            CLASSIFIED:
+            - Use when one category is sufficiently clear.
+            - categoryCode must exactly match an available category code.
+            - questions must be [].
 
-                Return status = "CLASSIFIED" when the available evidence is sufficiently clear
-                and consistent to determine the most appropriate service category:
-                - categoryCode must correspond exactly to one of the available service
-                  category codes.
-                - questions must be an empty array.
+            QUESTIONS:
+            - Use only when text and images conflict, or multiple categories are realistically possible.
+            - categoryCode must be null.
+            - Ask only what is needed to choose between the competing categories.
+            - Ask the minimum number of questions, maximum 3.
+            - Prefer one question when it can resolve the ambiguity.
+            - Do not diagnose one category in detail while ignoring the competing category.
+            - If text and image show different problems, first ask which problem the customer wants fixed.
+            - Every question must help choose between the competing categories.
+            - Before asking a question, internally verify that its answer could affect the category choice.
+            - Use simple closed-ended questions.
+            - Options must be short ANSWERS, not questions.
+            - Include "I am not sure" when useful.
+            - Do not ask for information already clear from the text or images.
+            - Do not ask generic follow-up questions.
 
-                Return status = "QUESTIONS" only when there is a meaningful contradiction or
-                ambiguity between the description and the images — for example: the
-                description suggests one category but the images suggest another, the images
-                do not clearly support the written description, or two categories are
-                realistically possible based on the evidence, and a small amount of missing
-                information could determine which one is correct. Do not use questions as a
-                generic information-gathering step:
-                - categoryCode must be null.
-                - questions must contain between 1 and 3 clarification questions (prefer fewer
-                  when 1 or 2 are enough). Each question needs a short "id", a clear
-                  closed-ended "question" a normal customer can understand (avoid technical
-                  jargon), and a small list of "options" as answer choices, including an "I am
-                  not sure" (or equivalent) option when appropriate. Each question must be
-                  designed specifically to help distinguish between the competing service
-                  categories, and must directly identify the missing information needed to
-                  decide between them — never a generic question like "can you provide more
-                  information?" or "can you explain the issue?".
-                - Do not ask about anything already visible in the attached images or already
-                  stated clearly in the written description.
-
-                General rules:
-                - Analyze both the written description and the attached images.
-                - Focus on the underlying problem, not only the visible symptom.
-                - Do not invent categories or category codes.
-                - confidence must represent how certain you are about the decision (for
-                  QUESTIONS, how certain you are before clarification), from 0 to 1.
-                - explanation should briefly explain, in English, the reason for your decision.
-                """.formatted(categoryList);
+            General:
+            - Consider text and images together; neither automatically overrides the other.
+            - Focus on the primary issue.
+            - Never invent categories or category codes.
+            - confidence must honestly reflect certainty from 0 to 1.
+            - explanation must be short and in English.
+            """.formatted(categoryList);
     }
 
     ClassificationResult parseResponse(

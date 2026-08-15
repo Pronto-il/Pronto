@@ -645,29 +645,38 @@ call this doc makes is recorded here for traceability.
   generic, English placeholder (e.g. `"Pronto — Order #<id>: status changed to <STATUS>"`) is
   assumed sufficient for this milestone's mock-sender logging, **not** production-ready
   Hebrew copy. Matches the task brief's own example of a flag-don't-decide item.
-- **Genuinely open — a real product-behavior gap surfaced while designing the sweep, not
-  just an implementation detail: can a customer actually rebook an `EXPIRED` issue?**
-  `data-model.md` §3 item 8 says an expired issue's customer can rebook, "in which case the
-  normal `OPEN`/`BOOKED` lifecycle applies to the new order, exactly as with any other
-  reject-and-rebook case." But `api-contract-bookings.md` §2.4 step 6 / §2.13 step 6 (both
-  already shipped, MS3/MS4) require `issue.status == 'OPEN'` to create a new order —
-  `EXPIRED` fails that check with `409 ISSUE_NOT_BOOKABLE`, identically to any other
-  terminal issue state. No endpoint anywhere reopens an `EXPIRED` issue back to `OPEN`. **This
-  doc does not build one** — out of `notifications`' scope, and not requested by any source
-  document — but the gap is real: as of this milestone, an `EXPIRED` issue is a practical
-  dead end via the existing booking endpoints (the customer's only real workaround is
-  creating an entirely new `issues` row describing the same problem again, via `POST
-  /api/issues`, losing continuity with the original one). Flagging this explicitly for
-  `pronto-lead`, matching this same doc family's established style (MS2's S3-privacy flag,
-  MS3's photo-access flag) — needs a decision (a "reopen" endpoint? treat `EXPIRED` as
-  book-able too? accept the new-issue workaround as intended?) before it's resolved either
-  way.
-- **No retry/backoff for `FAILED` email rows.** `EmailDispatchJob` marks a row `FAILED` on any
-  exception and moves on — nothing ever retries it. Accepted MVP gap, consistent with "don't
-  over-engineer"; flag as an M7 hardening candidate if email reliability becomes a concern
-  once a real provider exists.
-- **Multi-instance email-dispatch race** — see §4.4's own flagged paragraph; not repeated
-  here, just cross-referenced.
+- **DECIDED (user ruling, 2026-08-15, Milestone 7 closing documentation pass) — an
+  `EXPIRED` issue cannot be rebooked, and this is intentional, permanent behavior, not an
+  open gap.** `data-model.md` §3 item 8's original text said an expired issue's customer can
+  rebook, "in which case the normal `OPEN`/`BOOKED` lifecycle applies to the new order,
+  exactly as with any other reject-and-rebook case" — but `api-contract-bookings.md` §2.4
+  step 6 / §2.13 step 6 (both already shipped, MS3/MS4) require `issue.status == 'OPEN'` to
+  create a new order, so `EXPIRED` fails that check with `409 ISSUE_NOT_BOOKABLE`,
+  identically to any other terminal issue state, and no endpoint anywhere reopens an
+  `EXPIRED` issue back to `OPEN`. **Resolved**: the user has ruled `EXPIRED` stays a final,
+  terminal state permanently — no reopen endpoint, no relaxed booking guard on
+  `createOrder`/`createSosOrder`, ever. The intended, permanent path for a customer who
+  wants service again is to create an entirely new `issues` row describing the same problem
+  (`POST /api/issues`), accepting the loss of continuity with the original issue as part of
+  the design, not a workaround pending a better answer. No code change results — the
+  existing `409 ISSUE_NOT_BOOKABLE` behavior was already correct and already tested; only
+  the framing changes here, from "open gap" to "intentional, permanent design." See
+  `data-model.md` §4 and `hardening-plan.md` §4.1 for the same resolution recorded from
+  those docs' perspectives.
+- **No retry/backoff for `FAILED` email rows — CONFIRMED DEFERRED, not Milestone 7 scope.**
+  `EmailDispatchJob` marks a row `FAILED` on any exception and moves on — nothing ever
+  retries it. Re-verified during Milestone 7's closing pass that this is not load-bearing
+  for any currently-existing behavior: `EmailDispatchJob` only ever runs against
+  `LoggingEmailSender`, which performs no real I/O and never throws for transient-network
+  reasons, so a `FAILED` row today can only arise from a genuine application bug. **Backlog
+  entry**: revisit when a real SMTP/SES email provider is chosen and implemented, not
+  before. See `hardening-plan.md` §4.2.
+- **Multi-instance email-dispatch race — CONFIRMED DEFERRED, not Milestone 7 scope.** See
+  §4.4's own flagged paragraph; not repeated here, just cross-referenced. Re-verified during
+  Milestone 7's closing pass that this project has never run more than one backend instance
+  in any environment, so this gap is not load-bearing for any currently-existing behavior.
+  **Backlog entry**: revisit if/when a real multi-instance deployment is actually planned.
+  See `hardening-plan.md` §4.3.
 - **Unread-badge UI behavior (when to show it, animation, etc.) is explicitly frontend's
   concern**, not addressed by this backend contract doc, per the task brief.
 - **No rate limiting on any endpoint in this doc** — low risk (`GET /api/notifications` is a

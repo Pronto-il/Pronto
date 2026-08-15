@@ -47,4 +47,28 @@ public interface AvailabilitySlotRepository extends JpaRepository<AvailabilitySl
     @Modifying(clearAutomatically = true)
     @Query("UPDATE AvailabilitySlot s SET s.isAvailable = true, s.updatedAt = :now WHERE s.id = :slotId")
     int releaseSlot(@Param("slotId") Long slotId, @Param("now") Instant now);
+
+    /**
+     * §2.18 step 6 / §3.4 (extended). Affected-row count of {@code 0} means the slot's
+     * {@code isAvailable} flipped to {@code false} between the caller's existence/ownership
+     * check and this write (existence/ownership are already proven by the time this is
+     * called) — the caller maps that to {@code 409 SLOT_IN_USE}.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE AvailabilitySlot s SET s.startTime = :startTime, s.endTime = :endTime, s.updatedAt = :now "
+            + "WHERE s.id = :slotId AND s.professionalId = :professionalId AND s.isAvailable = true")
+    int updateSlotTimes(@Param("slotId") Long slotId, @Param("professionalId") Long professionalId,
+                         @Param("startTime") Instant startTime, @Param("endTime") Instant endTime,
+                         @Param("now") Instant now);
+
+    /**
+     * §2.19 step 5 / §3.4 (extended). Affected-row count of {@code 0} means the slot's
+     * {@code isAvailable} flipped to {@code false} between the caller's existence/ownership
+     * check and this delete (existence/ownership are already proven by the time this is
+     * called) — the caller maps that to {@code 409 SLOT_IN_USE}.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("DELETE FROM AvailabilitySlot s WHERE s.id = :slotId AND s.professionalId = :professionalId "
+            + "AND s.isAvailable = true")
+    int deleteSlotIfAvailable(@Param("slotId") Long slotId, @Param("professionalId") Long professionalId);
 }

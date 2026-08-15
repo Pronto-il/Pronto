@@ -392,14 +392,22 @@ Professional-viewing-issue-images (contract doc §6 item 3 / §7) remains an unr
 item, not built here or anywhere yet. The `EXPIRED`-issue-cannot-be-rebooked gap first
 surfaced while designing Milestone 5's expiry sweep — an `EXPIRED` issue cannot actually be
 rebooked via any existing endpoint, since `createOrder`/`createSosOrder` both require
-`issue.status == 'OPEN'` and nothing transitions `EXPIRED` back to `OPEN` — remains open and
-**unaffected by this milestone**: `on-the-way`/`complete` only ever read/write orders that are
-already `CONFIRMED`/`ON_THE_WAY` (never `OPEN`/`EXPIRED` issues), so neither new endpoint adds,
-removes, or narrows this gap in any way (contract doc §9 verifies this explicitly, not just
-asserts it) — still needing a `pronto-lead`/user decision; see `docs/architecture/data-model.md`
-§4 and `docs/architecture/api-contract-notifications.md` §7 for the full writeup. **Slot
-edit/delete was explicitly considered for this milestone and explicitly declined** — a
-judgment call, not a silently-skipped gap; see `availability/README.md`'s Status section for
-the reasoning (contract doc §8.2). The professional-dashboard **UI** remains entirely deferred
-project-wide, consistent with every prior milestone — nothing in this milestone builds any
-`frontend/` code.
+`issue.status == 'OPEN'` and nothing transitions `EXPIRED` back to `OPEN` — was confirmed
+**unaffected by Milestone 6**: `on-the-way`/`complete` only ever read/write orders that are
+already `CONFIRMED`/`ON_THE_WAY` (never `OPEN`/`EXPIRED` issues), so neither new endpoint
+added, removed, or narrowed this gap in any way (contract doc §9 verifies this explicitly,
+not just asserts it). **Resolved, Milestone 7 (2026-08-15)**: the user has ruled this is
+intentional, permanent design — `EXPIRED` stays a final `issues.status` state forever, no
+reopen endpoint, no relaxed booking guard on `createOrder`/`createSosOrder`; a customer who
+wants service again creates a new issue. See `docs/architecture/data-model.md` §4,
+`docs/architecture/api-contract-notifications.md` §7, and
+`docs/architecture/hardening-plan.md` §4.1 for the full resolution record. **Slot
+edit/delete was explicitly considered for Milestone 6 and explicitly declined at the
+time** — a judgment call, not a silently-skipped gap (contract doc §8.2's original
+reasoning). **That call was reversed in Milestone 7 (2026-08-15) by explicit user product
+decision**: `PUT`/`DELETE /api/availability/slots/{slotId}` are now designed, implemented,
+and QA-passed — see `availability/README.md`'s Status section for the full record (this
+package, `bookings`, received no code changes for that addition; it lives entirely in
+`availability`). The professional-dashboard **UI** remains entirely deferred project-wide,
+consistent with every prior milestone — nothing in this milestone builds any `frontend/`
+code.

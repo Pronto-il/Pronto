@@ -51,6 +51,71 @@ public class AvailabilityService {
     /** §2.10. */
     @Transactional
     public SlotResponse create(Long callerId, CreateSlotRequest request) {
+        validateSlotTimes(request);
+
+        Long professionalId = resolveProfessionalId(callerId);
+
+        AvailabilitySlot slot = new AvailabilitySlot(professionalId, request.startTime(), request.endTime());
+        slot = availabilitySlotRepository.save(slot);
+
+        return new SlotResponse(slot.getId(), slot.getProfessionalId(), slot.getStartTime(),
+                slot.getEndTime(), slot.isAvailable(), slot.getCreatedAt());
+    }
+
+    /**
+     * §2.18. Authorization-first ordering (existence/ownership resolved before the new
+     * values are business-validated) — mirrors {@code accept}/{@code reject}/{@code cancel}'s
+     * path-referenced-{@code orderId} ordering, not §2.4's body-referenced-id ordering (§2.18
+     * "Behavior" intro).
+     */
+    @Transactional
+    public SlotResponse edit(Long callerId, Long slotId, CreateSlotRequest request) {
+        AvailabilitySlot slot = availabilitySlotRepository.findById(slotId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Slot " + slotId + " not found."));
+
+        Long professionalId = resolveProfessionalId(callerId);
+        if (!slot.getProfessionalId().equals(professionalId)) {
+            throw new ApiException(ErrorCode.FORBIDDEN, "This slot does not belong to the caller.");
+        }
+
+        validateSlotTimes(request);
+
+        Instant now = Instant.now();
+        int affected = availabilitySlotRepository.updateSlotTimes(slotId, professionalId,
+                request.startTime(), request.endTime(), now);
+        if (affected == 0) {
+            // §2.18 step 6: existence/ownership already proven above -- a 0-row result here
+            // means isAvailable flipped to false (a concurrent claim) between the read above
+            // and this write.
+            throw new ApiException(ErrorCode.SLOT_IN_USE, "Slot " + slotId + " is in use and cannot be edited.");
+        }
+
+        return new SlotResponse(slotId, professionalId, request.startTime(), request.endTime(), true,
+                slot.getCreatedAt());
+    }
+
+    /** §2.19. Same authorization-first ordering as {@link #edit}. */
+    @Transactional
+    public void delete(Long callerId, Long slotId) {
+        AvailabilitySlot slot = availabilitySlotRepository.findById(slotId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Slot " + slotId + " not found."));
+
+        Long professionalId = resolveProfessionalId(callerId);
+        if (!slot.getProfessionalId().equals(professionalId)) {
+            throw new ApiException(ErrorCode.FORBIDDEN, "This slot does not belong to the caller.");
+        }
+
+        int affected = availabilitySlotRepository.deleteSlotIfAvailable(slotId, professionalId);
+        if (affected == 0) {
+            // §2.19 step 5: existence/ownership already proven above -- a 0-row result here
+            // means isAvailable flipped to false (a concurrent claim) between the read above
+            // and this delete.
+            throw new ApiException(ErrorCode.SLOT_IN_USE, "Slot " + slotId + " is in use and cannot be deleted.");
+        }
+    }
+
+    /** §2.10/§2.18 shared field validation: {@code startTime} strictly future, {@code endTime > startTime}. */
+    private void validateSlotTimes(CreateSlotRequest request) {
         Instant now = Instant.now();
         if (!request.startTime().isAfter(now)) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
@@ -60,14 +125,6 @@ public class AvailabilityService {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
                     List.of(new FieldError("endTime", "must be after startTime")));
         }
-
-        Long professionalId = resolveProfessionalId(callerId);
-
-        AvailabilitySlot slot = new AvailabilitySlot(professionalId, request.startTime(), request.endTime());
-        slot = availabilitySlotRepository.save(slot);
-
-        return new SlotResponse(slot.getId(), slot.getProfessionalId(), slot.getStartTime(),
-                slot.getEndTime(), slot.isAvailable(), slot.getCreatedAt());
     }
 
     /** §2.11. */

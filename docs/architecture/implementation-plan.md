@@ -393,9 +393,10 @@ closed).
     `issue.status == 'OPEN'` requirement makes an `EXPIRED` issue a practical dead end via
     the existing booking endpoints (the customer's only workaround is creating an entirely
     new `issues` row for the same problem). Reconfirmed as still-accurate and non-blocking
-    during QA's live regression pass this milestone (not a new finding) — needs a
-    `pronto-lead`/user decision (a "reopen" endpoint? treat `EXPIRED` as book-able too?
-    accept the new-issue workaround as intended?), not resolved by this milestone.
+    during QA's live regression pass this milestone (not a new finding). **Resolved,
+    Milestone 7 (2026-08-15)**: the user has ruled this workaround is the permanent,
+    intended design — no reopen endpoint, no relaxed booking guard, ever. See
+    `hardening-plan.md` §4.1 and this file's Milestone 7 entry below.
   - No retry/backoff for `FAILED` email rows — `EmailDispatchJob` marks a row `FAILED` on any
     exception and moves on; nothing retries it. Accepted MVP gap, an M7 hardening candidate
     if email reliability becomes a concern once a real provider exists.
@@ -526,19 +527,22 @@ closed).
   - **Final verdict: zero bugs found, full sign-off.**
 - **Known gaps, not blockers**:
   - **The `EXPIRED`-issue-cannot-be-rebooked gap** (`docs/architecture/data-model.md` §4,
-    `docs/architecture/api-contract-notifications.md` §7) remains open and is **confirmed
-    unaffected by this milestone** — `on-the-way`/`complete` only ever read/write orders that
-    are already `CONFIRMED`/`ON_THE_WAY`, never `OPEN`/`EXPIRED` issues, so neither new
-    endpoint adds, removes, or narrows this gap in any way (verified explicitly in the
-    contract doc §9, not just asserted). Still needs a `pronto-lead`/user decision, unchanged
-    from Milestone 5.
+    `docs/architecture/api-contract-notifications.md` §7) is **confirmed unaffected by this
+    milestone** — `on-the-way`/`complete` only ever read/write orders that are already
+    `CONFIRMED`/`ON_THE_WAY`, never `OPEN`/`EXPIRED` issues, so neither new endpoint adds,
+    removes, or narrows this gap in any way (verified explicitly in the contract doc §9, not
+    just asserted). **Resolved, Milestone 7 (2026-08-15)**: the user has ruled this is
+    intentional, permanent design — `EXPIRED` stays a final `issues.status` state forever,
+    no reopen endpoint, no relaxed booking guard. See `hardening-plan.md` §4.1 and this
+    file's Milestone 7 entry below.
   - **No slot edit/delete added to `availability`** — restated explicitly as a **judgment
     call, not a gap**: reviewed this milestone (`api-contract-bookings.md` §8.2) against the
     "manage availability" acceptance criterion and PRD text, and deliberately not built (no
     PRD text mandates it, no load-bearing functional gap exists without it, and frontend is
-    out of scope project-wide anyway). If a future UX review decides otherwise, the addition
-    would be a small independent slice (`DELETE /api/availability/slots/{slotId}`), not
-    designed here.
+    out of scope project-wide anyway). **Superseded, Milestone 7 (2026-08-15)**: this call
+    was reversed by explicit user product decision — `PUT`/`DELETE
+    /api/availability/slots/{slotId}` are now designed, implemented, and QA-passed. See
+    `api-contract-bookings.md` §8.2 and this file's Milestone 7 entry below.
   - **Frontend professional-dashboard UI remains entirely deferred project-wide**, consistent
     with every prior milestone — not built or designed here, pending the user's design-system
     decision.
@@ -574,27 +578,54 @@ Full spec executed: `docs/architecture/hardening-plan.md`.
   `/api/auth/register`\|`login`\|`verify` (hardening-plan.md §5.2). See
   `backend/src/main/java/com/pronto/auth/README.md` for the as-implemented writeup.
 
-**Open items — pending `pronto-lead`/user sign-off, not decided here** (per the project's
-standing rule against silently resolving things that need sign-off; full context for each
-is in `hardening-plan.md` §6):
+### Documentation-closing pass (2026-08-15) — all previously-open items resolved
 
-1. §4.1 — the `EXPIRED`-issue-cannot-be-rebooked product decision (reopen endpoint vs.
-   relax the booking guard vs. formally accept the new-issue workaround as intended).
-2. §2.4 — PRD §5.2.4 "personal data management" scope (does soft-delete + anonymization
-   satisfy it, or is a self-service data-export endpoint also expected).
-3. §2.5 — AWS root-account credential rotation timing (local dev run config currently uses
-   root-account keys; recommendation is to rotate to a scoped IAM user/role, timing is the
-   user's call).
-4. §4.2/§4.3 — confirmation that deferring email retry/backoff and the multi-instance
-   dispatch "claim" mechanism (both recommended as out of Milestone 7 scope) is accepted,
-   not silently agreed.
-5. §4.4 — confirmation nod only (no new decision) that leaving `availability` without
-   slot edit/delete remains correct, as already decided in Milestone 6.
-6. §5.5 — pagination. The load test now supplies a real measured data point: the
-   professionals-listing payload is approximately 1565 bytes for about 7 professionals in
-   one category at current seed scale — comfortably within the "tens of KB, defer" range
-   the plan itself set as its own decision threshold. Still needs `pronto-lead`/user to
-   formally close this out rather than leaving it open by default.
+**Resolved during Milestone 7's closing documentation pass (2026-08-15).** Every item
+below was previously listed here as "pending `pronto-lead`/user sign-off, not decided
+here" — the user has since ruled on all of them directly. Full detail for each is in
+`hardening-plan.md` §6 (updated in place there too, not merely restated here):
+
+1. §4.1 — the `EXPIRED`-issue-cannot-be-rebooked gap. **Decided, permanent.** `EXPIRED`
+   stays a final `issues.status` state forever — no reopen endpoint, no relaxed booking
+   guard, ever. A customer who wants service again creates a new issue. No code change; the
+   existing `409 ISSUE_NOT_BOOKABLE` behavior was already correct and already tested.
+2. §2.4 — PRD §5.2.4 "personal data management" scope. **Decided.** The already-built,
+   already-QA-verified soft-delete + anonymization design is the accepted MVP answer. A
+   self-service data-export endpoint is reclassified as deferred backlog for a possible
+   future version, not an open question.
+3. §2.5 — AWS root-account credentials in the local dev run config. **Language
+   strengthened, no infrastructure change.** Rotating to scoped IAM credentials is now
+   documented as required before any production/deployment, not a soft recommendation. No
+   key was rotated, no AWS/credential file was touched by this pass — the exact timing of
+   the actual rotation remains the user's own future action.
+4. §4.2/§4.3 — email retry/backoff and the multi-instance dispatch "claim" mechanism.
+   **Confirmed deferred**, with the load-bearing check explicitly re-verified (by reading
+   `EmailDispatchJob`/`OrderExpirySweepJob` directly): neither gap affects correctness of
+   any currently-existing behavior. Both are backlog items for when a real email provider /
+   real multi-instance deployment is actually planned.
+5. §4.4 — slot edit/delete. **Reversed and built** (not "leave alone," Milestone 6's
+   original call) — `PUT`/`DELETE /api/availability/slots/{slotId}`
+   (`api-contract-bookings.md` §2.18/§2.19) are implemented and QA-passed this session, full
+   regression + new targeted tests, zero gaps, including live verification across all four
+   order lifecycle states (`PENDING`/`CONFIRMED`/`ON_THE_WAY`/`COMPLETED`) for the
+   booking-protection guard.
+6. §5.5 — pagination. **Confirmed still deferred**, re-confirmed during Milestone 7's
+   closing pass using the load test's real measured payload size (~1565 bytes for ~7
+   professionals — comfortably within the "tens of KB, defer" range this section itself set
+   as its own decision threshold) and a fresh check confirming no accidental partial
+   pagination implementation exists anywhere in the codebase.
+
+### `backend/BACKEND_ARCHITECTURE.md` consolidation (2026-08-15)
+
+The standalone, code-grounded `backend/BACKEND_ARCHITECTURE.md` reference doc has been
+merged into the canonical `docs/architecture/*.md` set and deleted, per this same closing
+documentation pass — genuinely unique, still-accurate content (an entity-relationship
+diagram, a dependency/component diagram, the environment-variable and external-integrations
+reference tables, and a handful of architecture findings not documented anywhere else) was
+relocated into `overview.md` §6/§7 and `data-model.md` §6; substantially duplicative content
+(already covered by the `api-contract-*.md` docs, `hardening-plan.md` §5, or the packages'
+own `.md` files) was not migrated. See `overview.md` §6's 2026-08-15 entry and §7 for the
+merged content.
 
 ## Cross-cutting rules for every milestone
 

@@ -11,7 +11,9 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -20,12 +22,13 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * {@code /api/availability/*} — a professional creating/listing their own Standard
- * advance-booking slots (§2.10-2.11, Milestone 3) and toggling/reading their own SOS
- * availability (§2.14-2.15, Milestone 4). Every endpoint requires {@code role =
- * PROFESSIONAL} (§0.1), enforced by {@code availability.config.AvailabilityWebConfig}'s
- * blanket {@code /api/availability/**} {@code RoleRequiredInterceptor} registration — not in
- * these method bodies, see that class's javadoc for why. See
- * {@code docs/architecture/api-contract-bookings.md} §2.10-2.11/§2.14-2.15.
+ * advance-booking slots (§2.10-2.11, Milestone 3), editing/deleting a not-yet-in-use slot
+ * (§2.18-2.19, Milestone 7), and toggling/reading their own SOS availability (§2.14-2.15,
+ * Milestone 4). Every endpoint requires {@code role = PROFESSIONAL} (§0.1), enforced by
+ * {@code availability.config.AvailabilityWebConfig}'s blanket {@code /api/availability/**}
+ * {@code RoleRequiredInterceptor} registration — not in these method bodies, see that
+ * class's javadoc for why. See {@code docs/architecture/api-contract-bookings.md}
+ * §2.10-2.11/§2.14-2.15/§2.18-2.19.
  */
 @RestController
 @RequestMapping("/api/availability")
@@ -47,6 +50,20 @@ public class AvailabilityController {
     @GetMapping("/slots/me")
     public ResponseEntity<SlotListResponse> listMine(@AuthenticationPrincipal AuthenticatedUser principal) {
         return ResponseEntity.ok(availabilityService.listMine(principal.id()));
+    }
+
+    @PutMapping("/slots/{slotId}")
+    public ResponseEntity<SlotResponse> edit(@AuthenticationPrincipal AuthenticatedUser principal,
+                                              @PathVariable Long slotId,
+                                              @Valid @RequestBody CreateSlotRequest request) {
+        return ResponseEntity.ok(availabilityService.edit(principal.id(), slotId, request));
+    }
+
+    @DeleteMapping("/slots/{slotId}")
+    public ResponseEntity<Void> delete(@AuthenticationPrincipal AuthenticatedUser principal,
+                                        @PathVariable Long slotId) {
+        availabilityService.delete(principal.id(), slotId);
+        return ResponseEntity.noContent().build();
     }
 
     @PutMapping("/sos-availability")

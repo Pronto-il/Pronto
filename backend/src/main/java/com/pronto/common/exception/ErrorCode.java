@@ -53,7 +53,11 @@ public enum ErrorCode {
 
     // Milestone 7 hardening addition (per-IP rate limiting on /api/auth/*). See
     // docs/architecture/hardening-plan.md §5.2.
-    RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS);
+    RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS),
+
+    // Milestone 7 additions (slot edit/delete). See
+    // docs/architecture/api-contract-bookings.md §2 "Milestone 7 additions".
+    SLOT_IN_USE(HttpStatus.CONFLICT);
 
     private final HttpStatus httpStatus;
 

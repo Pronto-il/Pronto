@@ -286,3 +286,171 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
     activate purely via config flags (`pronto.storage.mode=s3`, `pronto.ai.mode=openai`)
     once credentials exist; no code change expected to be needed, but neither has been
     proven against the real service yet.
+- **2026-08-15 — surfaced while consolidating `backend/BACKEND_ARCHITECTURE.md` (a
+  standalone, code-grounded "as-built" reference doc) into this canonical doc set during
+  Milestone 7's closing documentation pass, then deleted once merged.** Most of that doc's
+  content (entity catalog, request-flow walkthroughs, controller→service→repository
+  mapping, DTO mapping, security-flow narrative) duplicated what the `api-contract-*.md`
+  docs and each package's own `.md` already document in more authoritative detail, and was
+  not migrated. §7 below carries forward the genuinely useful reference material
+  (dependency/component diagram, environment-variable table, external-integrations table);
+  `data-model.md` §6 carries forward the entity-relationship diagram. The findings below are
+  the architecture observations that were **not** already documented anywhere in this doc
+  set, cross-checked against `hardening-plan.md` §5 and every package's own `.md` before
+  being judged unique (a few candidates — e.g. the checked-in insecure `JWT_SECRET` default
+  and the missing auth rate-limiting — turned out to already be covered by
+  `hardening-plan.md` §5.1/§5.2 and were correctly left out as pure duplicates; the
+  `professionals` package's lack of a service/controller layer and the `Category`
+  entity's placement inside `professionals` were also already covered, in
+  `professionals/README.md`'s own Responsibilities/Assumptions sections, and likewise
+  correctly left out):
+  - **`bookings.repository.ProfessionalListingRepository` and
+    `professionals.repository.ProfessionalRepository` are two separate Spring Data
+    repository interfaces over the same `Professional` entity, living in two different
+    packages.** Not a bug — `ProfessionalListingRepository` deliberately lives in `bookings`
+    to avoid a reverse `professionals → bookings` dependency (documented in
+    `bookings/README.md`'s Interactions section) — but it is a naming/discovery trap for a
+    future maintainer searching for "the" `Professional` repository, worth knowing about
+    up front rather than rediscovering.
+  - **The `EMAIL_MODE`/`pronto.email.mode` config property is read into
+    `application.yml` but never actually branched on by any `@ConditionalOnProperty`/
+    `@Value` in the codebase.** Only one `EmailSender` implementation exists
+    (`auth.email.LoggingEmailSender`, unconditionally `@Component`) — a real SMTP/SES
+    implementation was never added despite the config scaffolding. Functionally harmless
+    (the property is simply inert today) but worth knowing before assuming the config flag
+    does anything yet; consistent with `api-contract-notifications.md` §4.4's own decision
+    not to build a second `EmailSender` implementation this milestone.
+  - **`common.exception.GlobalExceptionHandler` and
+    `auth.security.JsonAuthenticationEntryPoint` are two independently hand-maintained
+    implementations of the same error-envelope shape** (`ErrorResponse`/`ErrorBody`), not
+    one shared helper — `JsonAuthenticationEntryPoint` exists as a separate code path
+    specifically because Spring-Security-layer authentication failures never reach
+    `@RestControllerAdvice`. Both are documented individually in `common/README.md` and
+    `auth/README.md`, but neither doc previously flagged that they duplicate the same
+    envelope-construction logic. Correct in effect, low priority to consolidate, worth
+    knowing about if either envelope shape ever needs to change.
+  - **Backend unit-test coverage snapshot, current as of Milestone 7's close** (this list
+    goes stale quickly — treat as a snapshot, not a live source of truth): `ai`, `storage`,
+    and, as of this milestone, `availability` (9 new tests added alongside the slot
+    edit/delete addition, §7 below / `availability/README.md`) have unit test coverage. No
+    unit tests exist for `auth`, `users`, `issues`, `bookings`, or `notifications`
+    service/controller logic, `JwtService`/`JwtAuthenticationFilter`, or either
+    `@Scheduled` job — despite these containing the majority of the application's business
+    logic (concurrency-guarded state transitions, authorization branching, lockout logic).
+    Every milestone to date has instead relied on live QA validation against a real
+    Postgres instance (documented per-milestone in `implementation-plan.md`) rather than
+    unit tests for this logic — not a defect by itself, but a real gap if unit-level
+    regression coverage is ever wanted independent of a full QA pass.
+
+## 7. Backend architecture reference (as-built)
+
+Merged from `backend/BACKEND_ARCHITECTURE.md` (a standalone, code-grounded reference doc,
+generated by reading the actual backend source directly, deleted once its genuinely useful
+content had a home here) during Milestone 7's closing documentation pass, 2026-08-15.
+Verified against the current code at merge time, including the Milestone 7 `availability`
+edit/delete addition and hardening fixes (`JwtSecretStartupGuard`, per-IP auth rate
+limiting) that postdated the original doc.
+
+### 7.1 Component / dependency diagram
+
+One Spring Boot jar (a "modular monolith," per `ProntoApplication`'s own Javadoc) — no
+microservice split, no JPA object-graph associations anywhere (every relationship is a
+plain `@Column` FK field, navigated by repository lookups, backed by a real DB FK
+constraint). State transitions go through atomic guarded `UPDATE ... WHERE <expected
+state>` repository methods, not load-mutate-save, across `orders`/`issues`/
+`availability_slots`/`sos_availability`/`notifications`.
+
+```mermaid
+flowchart TB
+    subgraph Client
+        FE[Frontend / HTTP client]
+    end
+
+    subgraph SecurityLayer["Security filter chain + interceptors (auth/common)"]
+        JAF[JwtAuthenticationFilter]
+        JEP[JsonAuthenticationEntryPoint]
+        ARL[AuthRateLimitInterceptor\nMilestone 7]
+        RRI[Per-package RoleRequiredInterceptor]
+    end
+
+    subgraph Controllers["7 REST controllers"]
+        AuthC[auth] --- UsersC[users] --- AvailC[availability] --- IssuesC[issues]
+        BookC[bookings] --- NotifC[notifications] --- StorC[storage]
+    end
+
+    subgraph Services["Service layer"]
+        AuthS[AuthService] --- AvailS[AvailabilityService] --- IssuesS[IssuesService]
+        BookS[BookingsService] --- NotifS[NotificationServiceImpl] --- StorS[StorageService]
+        ClassS[ClassificationService]
+    end
+
+    subgraph Jobs["notifications.scheduler (@Scheduled)"]
+        EDJ[EmailDispatchJob, 20s]
+        OES[OrderExpirySweepJob, 60s]
+    end
+
+    subgraph External
+        DB[(PostgreSQL)]
+        S3[(AWS S3 / local disk\nStorageClient)]
+        OpenAI[(OpenAI / mock\nAiClassificationClient)]
+        EmailLog[LoggingEmailSender\nlogs only]
+    end
+
+    FE -->|Bearer JWT| JAF --> ARL --> RRI --> Controllers
+    JAF -.401.-> JEP
+    Controllers --> Services --> DB
+    IssuesS --> ClassS --> S3
+    ClassS --> OpenAI
+    BookS -->|records notifications, same tx| NotifS
+    OES -->|sweeps PENDING orders| BookS
+    EDJ --> EmailLog
+    AuthS --> EmailLog
+    StorS --> S3
+```
+
+**Deliberate package-level dependency cycle**: `bookings → notifications`
+(`NotificationService`, called after every order transition) and
+`notifications → bookings` (`OrderExpirySweepJob`, which sweeps `PENDING` orders) — not a
+Java-level compile cycle (no single class pair mutually imports each other), and not an
+oversight; documented in both packages' own `.md` files as the direct, unavoidable
+consequence of the sweep's ownership split (`data-model.md` §3 item 8). `issues ↔ bookings`
+has a similar small, deliberate, documented mutual dependency (`GET /api/issues/{id}`'s
+`latestOrder` field reads `bookings`; `bookings` reads `issues` as its primary direction).
+
+### 7.2 Environment variables
+
+All sourced from `application.yml`'s `${VAR:default}` placeholders, current as of
+Milestone 7 (includes the hardening-pass addition, `PRONTO_ENVIRONMENT`).
+
+| Variable | Purpose | Required? |
+|---|---|---|
+| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | PostgreSQL connection | no (all default to local-dev values) |
+| `PRONTO_ENVIRONMENT` | Milestone 7 addition. Selects `local` (default) vs. anything else; consumed by `auth.security.JwtSecretStartupGuard` to decide whether to fail fast on the placeholder `JWT_SECRET`. Not a general Spring-profiles system — a deliberately minimal, single-purpose substitute. | no (defaults `local`) |
+| `JWT_SECRET` | HMAC-SHA256 JWT signing key (≥32 bytes) | **yes, in any real deployment** — enforced at startup by `JwtSecretStartupGuard` when `PRONTO_ENVIRONMENT != local` |
+| `JWT_EXPIRATION_SECONDS` | Token TTL | no (defaults `86400` = 24h) |
+| `STORAGE_MODE` | `local` \| `s3` | no (defaults `local`) |
+| `STORAGE_PUBLIC_BASE_URL` | Base URL for the backend-proxied `GET /api/storage/images/**` URL, both storage modes | no (defaults `http://localhost:${server.port}`) |
+| `STORAGE_LOCAL_BASE_DIR` | Filesystem root for local-mode uploads | no (defaults `./data/uploads`) |
+| `STORAGE_S3_BUCKET` | Target S3 bucket | **yes, when `STORAGE_MODE=s3`** |
+| `STORAGE_S3_REGION` | AWS region | no (defaults `eu-central-1`), meaningless unless `STORAGE_MODE=s3` |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (or instance role) | AWS credentials, resolved by the AWS SDK's `DefaultCredentialsProvider` chain — not read directly by this app's own config classes | **yes, when `STORAGE_MODE=s3`**. See `hardening-plan.md` §2.5: the local dev values currently in use are root-account keys, which **must** be rotated to scoped IAM credentials before any real deployment. |
+| `AI_MODE` | `mock` \| `openai` | no (defaults `mock`) |
+| `OPENAI_API_KEY` | OpenAI authentication | **yes, when `AI_MODE=openai`** |
+| `OPENAI_MODEL` | OpenAI chat model name | no (defaults `gpt-4o-mini`) |
+| `OPENAI_TIMEOUT_MS` | HTTP connect/read timeout | no (defaults `10000`) |
+| `EMAIL_MODE` | Intended to select the email implementation | **not actually consumed by any `@ConditionalOnProperty`/`@Value` in the code** — only `LoggingEmailSender` exists (§6's 2026-08-15 finding above) |
+| `SERVER_PORT` | HTTP listen port | no (defaults `8080`) |
+
+### 7.3 External integrations
+
+| Integration | Class(es) | Activated by | On-failure handling |
+|---|---|---|---|
+| AWS S3 (object storage) | `storage.client.S3StorageClient` | `pronto.storage.mode=s3` | `SdkException` → `502 STORAGE_SERVICE_ERROR`. **Never live-tested** (no AWS credentials in this environment, every milestone). |
+| Local disk storage (default) | `storage.client.LocalDiskStorageClient` | `pronto.storage.mode=local` (default) | `IOException` → `502 STORAGE_SERVICE_ERROR`; defends against path traversal. |
+| OpenAI Chat Completions API | `ai.client.OpenAiClassificationClient` | `pronto.ai.mode=openai` | Retries once, then `502 AI_SERVICE_ERROR`. **Never live-tested** (no OpenAI key in this environment). |
+| Mock AI classifier (default) | `ai.client.MockAiClassificationClient` | `pronto.ai.mode=mock` (default) | Never throws — deterministic Hebrew-keyword heuristic, `general_handyman` fallback. |
+| Email delivery | `auth.email.LoggingEmailSender` (sole implementation) | always | Logs at `INFO`, never throws; `EmailDispatchJob` catches any exception and marks the row `FAILED` (no retry — confirmed deferred, `hardening-plan.md` §4.2). |
+
+No payment processor and no GPS/live-location integration exist anywhere in the codebase —
+consistent with this project's permanent v1.0 exclusion (§2 above), confirmed as not
+present as dead code either.

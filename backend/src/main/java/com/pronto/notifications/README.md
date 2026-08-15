@@ -250,12 +250,28 @@ verified state via direct `psql` queries at every step, not just HTTP status cod
   during the lead's own review of the coding agent's output; QA then live-verified the fix,
   so QA's own pass itself found zero new defects.
 
-**Known gaps, not blockers** (carried forward accurately, per `implementation-plan.md`'s
-Milestone 5 entry): no email retry/backoff for `FAILED` rows; no multi-instance
-email-dispatch claim step (`EmailDispatchJob`); `ON_THE_WAY`/`COMPLETED` notification hooks
-not wired (Milestone 6, once the transition endpoints exist); `auth`'s `EMAIL_VERIFICATION`
-message type is not retrofitted into this table (deliberate scope call, §6 item 6). The
-`EXPIRED`-issue-cannot-be-rebooked gap (`docs/architecture/data-model.md` §4,
-`docs/architecture/api-contract-notifications.md` §7) is real, non-blocking, and needs a
-`pronto-lead`/user decision — not this package's to resolve, since no endpoint in this
-package touches `issues.status`.
+**Known gaps, not blockers** (carried forward and updated through Milestone 7's closing
+documentation pass, 2026-08-15):
+
+- **No email retry/backoff for `FAILED` rows — confirmed still deferred, not Milestone 7
+  scope.** Re-verified this pass that the gap is not load-bearing for any
+  currently-existing behavior: `EmailDispatchJob` only ever runs against
+  `LoggingEmailSender`, which performs no real I/O and never throws for transient-network
+  reasons, so a `FAILED` row today can only arise from a genuine application bug. Backlog
+  item for when a real SMTP/SES provider is chosen (`hardening-plan.md` §4.2).
+- **No multi-instance email-dispatch atomic "claim" step — confirmed still deferred, not
+  Milestone 7 scope.** Re-verified this pass that this project has never run more than one
+  backend instance in any environment. Backlog item for if/when a real multi-instance
+  deployment is planned (`hardening-plan.md` §4.3).
+- `ON_THE_WAY`/`COMPLETED` notification hooks — **stale note corrected**: these were in
+  fact wired in Milestone 6 (`bookings.service.BookingsService.onTheWay`/`.complete`, each
+  calling `recordOrderNotification(...)` to the customer, following the exact pattern this
+  package established) — see `bookings/README.md`'s Milestone 6 section. Not a gap as of
+  Milestone 6 onward; this bullet previously (incorrectly) still described it as pending.
+- `auth`'s `EMAIL_VERIFICATION` message type is not retrofitted into this table (deliberate
+  scope call, §6 item 6 of the contract doc) — unchanged.
+- **The `EXPIRED`-issue-cannot-be-rebooked gap** (`docs/architecture/data-model.md` §4,
+  `docs/architecture/api-contract-notifications.md` §7) — **resolved, Milestone 7
+  (2026-08-15)**: the user has ruled `EXPIRED` stays a final, permanent `issues.status`
+  state; no reopen endpoint, no relaxed booking guard. Not this package's endpoint surface
+  to have implemented either way (no endpoint in this package touches `issues.status`).

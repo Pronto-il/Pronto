@@ -388,14 +388,16 @@ implemented.
   §2.12 step 7 confirm the `users.deleted_at IS NULL` join was in fact built — this test
   closes the loop by verifying it live rather than trusting the cross-reference alone.)
 
-**Flag, not fixed here — genuinely open interpretation question**: PRD §5.2.4 asks for
-"account deletion **and** personal data management." Only deletion (+ PII anonymization) is
-built; there is no self-service data-export/access endpoint (e.g. "download everything
-Pronto has about me"). Whether soft-delete + anonymization alone satisfies "personal data
-management," or whether a data-export capability is also expected, is not decided by any
-source document — flagging for `pronto-lead`/user, not resolved by this checklist.
+**DECIDED — soft-delete + anonymization is the accepted MVP answer; data export is
+deferred backlog, not an open question.** The user has ruled: the already-built,
+already-QA-verified soft-delete + PII-anonymization behavior above (including the
+professional-listing-exclusion check) is sufficient to satisfy PRD §5.2.4's "personal data
+management" clause for MVP/Milestone 7. A self-service data-export/access endpoint (e.g.
+"download everything Pronto has about me") is **not** built and is **not** Milestone 7
+scope — it is reclassified as a genuine, acknowledged backlog item for a possible future
+version, not an open question blocking anything today.
 
-### 2.5 AWS credential hygiene — flagged finding, not resolved here
+### 2.5 AWS credential hygiene — unsafe technical debt, MUST be resolved before any deployment
 
 **Finding**: the local IntelliJ run configuration (`.idea/workspace.xml`) currently injects
 a live `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` pair belonging to the AWS **root
@@ -411,14 +413,25 @@ service) — categorically broader than anything `S3StorageClient` actually need
 exposed by any other means (a misconfigured client, a support-ticket paste, a future
 accidental commit of a `.env` file, etc.), the blast radius is the entire AWS account.
 
-**Recommendation (the user's call, not resolved here)**: rotate to a scoped IAM user (or,
-better, an IAM role assumed by the ECS/Elastic Beanstalk task once a real deployment
-exists, avoiding long-lived keys entirely) with a minimal policy limited to
-`S3StorageClient`'s actual bucket/actions, and deactivate the current root access key pair
-after rotating (AWS's own guidance is that root access keys generally shouldn't exist at
-all). No application code needs to change — `S3StorageClient` picks up credentials purely
-via the AWS SDK's `DefaultCredentialsProvider` env-var chain (`S3StorageClient.java`,
-constructor), so a credential rotation is a pure infrastructure/local-config action.
+**Required before any production/deployment — not a soft recommendation, not the user's
+discretionary call on *whether*, only on exact timing.** These root-account keys **must**
+be rotated to a scoped IAM user (or, better, an IAM role assumed by the ECS/Elastic
+Beanstalk task once a real deployment exists, avoiding long-lived keys entirely) with a
+minimal policy limited to `S3StorageClient`'s actual bucket/actions, and the current root
+access key pair **must** be deactivated after rotating (AWS's own guidance is that root
+access keys generally shouldn't exist at all). **Root-account keys must never be used
+beyond local development.** This is unambiguous, required-before-deployment language,
+matching this project's existing convention for stating hard requirements elsewhere (e.g.
+`overview.md`'s "hard exclusion" framing for the payment-processing/GPS out-of-scope items,
+and the checked-in `JWT_SECRET` default's own "must be overridden ... before any real
+deployment" framing/enforcement, §5.1's `JwtSecretStartupGuard`). No application code needs
+to change — `S3StorageClient` picks up credentials purely via the AWS SDK's
+`DefaultCredentialsProvider` env-var chain (`S3StorageClient.java`, constructor), so a
+credential rotation is a pure infrastructure/local-config action. **No infrastructure
+change was made by this documentation pass** — no AWS CLI command was run, no credential
+file was touched, `.idea/workspace.xml` was not modified; only this document's language was
+strengthened, per explicit instruction. The exact timing of the actual rotation remains the
+user's own future action.
 
 ---
 
@@ -457,67 +470,83 @@ explicitly deferred as out-of-scope feature work. **None of these are decided by
 document** — they are recommendations for `pronto-lead`/the user to rule on before
 `pronto-coding` acts on any of them.
 
-### 4.1 The `EXPIRED`-issue-cannot-be-rebooked gap
+### 4.1 The `EXPIRED`-issue-cannot-be-rebooked gap — DECIDED (final, permanent design)
 
 (`data-model.md` §4, `api-contract-notifications.md` §7, restated unchanged through MS6.)
 
-**Recommendation: this is a product/feature decision, not hardening-bug-fix material —
-out of Milestone 7's scope as a code change, but the decision itself should be made now
-so it doesn't keep rolling forward undecided.** The three options remain exactly as
-previously stated, still unresolved:
-1. Add a "reopen" endpoint (`EXPIRED → OPEN`).
+**Decided by the user, 2026-08-15 — option 3 of the three originally listed below, and
+this is now the settled, permanent v1.0 design, not a placeholder pending a future
+decision.** `EXPIRED` remains a final `issues.status` state permanently: there is no
+reopen endpoint and no relaxed booking guard on `createOrder`/`createSosOrder`. The
+intended, permanent flow for a customer who wants service again after their issue expires
+is to create a new issue (`POST /api/issues`). The three options originally on the table:
+1. Add a "reopen" endpoint (`EXPIRED → OPEN`). **Not chosen.**
 2. Treat `EXPIRED` issues as book-able too (relax the `status == 'OPEN'` guard on
-   `createOrder`/`createSosOrder`).
+   `createOrder`/`createSosOrder`). **Not chosen.**
 3. Accept "create a new `issues` row for the same problem" as the permanently-intended
-   workaround, and consider this gap closed by design rather than open.
+   workaround, and consider this gap closed by design rather than open. **Chosen — this is
+   the final decision.**
 
-This document does not pick one. **Recommendation**: option 3 (accept the workaround as
-intended) is the lowest-cost path if the team wants to close this out without new code —
-it requires zero implementation, only a documentation update declaring it intentional. If
-the user instead wants option 1 or 2 built, that's a small, well-scoped feature addition
-(not disqualifying it from being *done* during the Milestone 7 branch/timeframe if desired)
-but it is feature work being decided, not a defect being hardened — flagged as such so it
-isn't miscategorized in the milestone's own accounting.
+No code change results from this ruling — the existing behavior (`409
+ISSUE_NOT_BOOKABLE` on an `EXPIRED` issue, already implemented and already tested) was
+already correct; only the documentation's framing changes, from "open product question
+pending sign-off" to "intentional, permanent design," across every doc that previously
+described this as unresolved (`data-model.md` §4, `api-contract-notifications.md` §7,
+`api-contract-bookings.md` §9, and this document's own §6 item 1).
 
-### 4.2 No retry/backoff for `FAILED` email rows (`EmailDispatchJob`)
+### 4.2 No retry/backoff for `FAILED` email rows (`EmailDispatchJob`) — CONFIRMED DEFERRED, not Milestone 7 scope
 
-**Recommendation: defer, not Milestone 7 scope.** Reasoning: `pronto.email.mode=log` is the
-**only** implemented email mode (`api-contract-notifications.md` §4.4/§6 item 3) —
-`LoggingEmailSender` logs at `INFO` and does not perform any real I/O that could fail for
-transient-network reasons, so a `FAILED` row under the current configuration would only
-arise from a genuine application-level bug (not a retryable transient failure), making
-retry/backoff logic close to meaningless to build and test against today. Building and
-testing retry logic against a mock sender that essentially never fails would not
-meaningfully harden anything real — the actual failure modes retry/backoff exists to guard
-against (SMTP timeouts, provider rate limits, etc.) don't exist until a real
-SMTP/SES `EmailSender` implementation is built, which is itself still undecided
-(`api-contract-notifications.md` §6 item 3). Revisit this specific gap at the same time a
-real email provider is chosen and implemented, not before.
+**Confirmed deferred, with the load-bearing check explicitly done — not a pending "needs
+confirmation" item.** Verified directly by reading `EmailDispatchJob.java` for this closing
+pass: it only ever runs against `LoggingEmailSender`, which logs at `INFO` and performs no
+real I/O — it never throws for transient-network reasons, so a `FAILED` row under the
+current configuration can only arise from a genuine application-level bug (e.g. a missing
+recipient user), never a retryable transient failure. **Neither gap is load-bearing for
+correctness of any currently-existing behavior — confirmed, not assumed.** Building and
+testing retry logic against a sender that essentially never fails would not meaningfully
+harden anything real — the actual failure modes retry/backoff exists to guard against (SMTP
+timeouts, provider rate limits, etc.) don't exist until a real SMTP/SES `EmailSender`
+implementation is built, which is itself still undecided (`api-contract-notifications.md`
+§6 item 3). **Backlog entry**: revisit this specific gap at the same time a real
+SMTP/SES email provider is chosen and implemented, not before.
 
-### 4.3 No multi-instance email-dispatch atomic "claim" step
+### 4.3 No multi-instance email-dispatch atomic "claim" step — CONFIRMED DEFERRED, not Milestone 7 scope
 
-**Recommendation: defer, not Milestone 7 scope.** `overview.md` §6 already states the
-managed-container/multi-instance deployment question is "not yet confirmed as needed" for
-v1.0, and this project has never run more than one backend instance in any environment to
-date (local, single jar, every milestone). Building an atomic per-row claim mechanism (which
+**Confirmed deferred, with the load-bearing check explicitly done.** `overview.md` §6
+already states the managed-container/multi-instance deployment question is "not yet
+confirmed as needed" for v1.0, and this project has never run more than one backend
+instance in any environment to date (local, single jar, every milestone) — reconfirmed for
+this closing pass, not merely assumed. Building an atomic per-row claim mechanism (which
 `api-contract-notifications.md` §4.4 already scoped as needing an interim `delivery_status`
 value and a new `V15` migration) is infrastructure for a horizontal-scaling scenario this
-project doesn't currently have — premature per the project's own stated
-"don't over-engineer" guidance. Revisit if/when a real multi-instance deployment is actually
-planned, at which point it becomes a concrete, scoped, one-migration fix, not a speculative
-one.
+project doesn't currently have — premature per the project's own stated "don't
+over-engineer" guidance, and **confirmed not load-bearing for correctness of any
+currently-existing behavior**. **Backlog entry**: revisit if/when a real multi-instance
+deployment is actually planned, at which point it becomes a concrete, scoped, one-migration
+fix, not a speculative one.
 
-### 4.4 No slot edit/delete in `availability`
+### 4.4 Slot edit/delete in `availability` — REVERSED during this Milestone 7 pass, now designed, built, and QA-passed
 
-**Confirmed still correct to leave alone — not re-litigated, per the task brief's own
-instruction.** This was already explicitly considered and deliberately declined as a
-judgment call during Milestone 6 (`api-contract-bookings.md` §8.2): no PRD text mandates
-slot edit/delete, no functional flow is currently blocked without it, and frontend (the
-only consumer that would need it) remains deferred project-wide regardless. Reviewed again
-during this pass with no new information that would change that call — **recommendation:
-leave as-is**, exactly as Milestone 6 already decided. If a future UX/design-system pass
-decides otherwise, it remains a small, independently-scoped addition (`DELETE
-/api/availability/slots/{slotId}`), not designed here.
+**Superseded.** This section originally recommended leaving `availability` without slot
+edit/delete alone, reaffirming Milestone 6's judgment call (`api-contract-bookings.md`
+§8.2's original reasoning: no PRD text mandates it, no functional flow was blocked without
+it, frontend remains deferred project-wide). **That recommendation has since been overruled
+by an explicit user product decision, made and acted on during this same Milestone 7
+hardening pass** — not a re-evaluation of the original reasoning's merits, which remained
+defensible at the time it was made (see `api-contract-bookings.md` §8.2's preserved
+historical text for the full record of the reversal).
+
+**What actually happened, for the record**: `PUT`/`DELETE /api/availability/slots/{slotId}`
+(`api-contract-bookings.md` §2.18/§2.19) were designed, implemented, and QA-passed this
+session — full regression plus new targeted tests, zero gaps found, including live
+verification across all four order lifecycle states
+(`PENDING`/`CONFIRMED`/`ON_THE_WAY`/`COMPLETED`) for the booking-protection guard
+(`is_available = true` required, `409 SLOT_IN_USE` otherwise — never a silent no-op, never
+a cascade-cancel of the order the slot backs). See `api-contract-bookings.md` §8.2 and
+`backend/src/main/java/com/pronto/availability/README.md` for full detail, not restated
+here.
+
+This item is **closed, not open** — no further action or sign-off needed.
 
 ---
 
@@ -597,18 +626,21 @@ explicit CORS policy. **Recommendation**: not Milestone 7 scope (no frontend to 
 against yet), but flag as a required first step of whichever milestone starts real frontend
 integration work, so it isn't discovered as a last-minute blocker then.
 
-### 5.5 No pagination on any list endpoint — re-confirmed still true, worth a data point from the load test
+### 5.5 No pagination on any list endpoint — CONFIRMED STILL DEFERRED, re-confirmed during Milestone 7's closing pass
 
 Already flagged as a Milestone 7 hardening candidate in `api-contract-bookings.md` §7 ("flag
 as a Milestone 7 hardening candidate if professional/slot/order counts ever grow large
-enough to matter") and `api-contract-notifications.md` §7. **Recommendation**: use §1.3's
-load-test seed data (hundreds of professionals/issues/orders) to get a real measured
-response-payload size for the largest list endpoints (`GET /api/bookings/professionals`,
-`GET /api/notifications`, `GET /api/bookings/orders/me`) rather than deciding this in the
-abstract. If payload sizes stay in the tens-of-KB range at the seeded scale, recommend
-continuing to defer pagination (consistent with "don't over-engineer" at MVP scale); if any
-endpoint's response becomes unreasonably large (multiple hundreds of KB) at realistic v1.0
-data volumes, escalate as a concrete Milestone 7 fix rather than a deferred nice-to-have.
+enough to matter") and `api-contract-notifications.md` §7. §1.3's load test supplied the
+real measured data point this section originally asked for: the professionals-listing
+payload measured approximately 1565 bytes for about 7 professionals in one category at
+current seed scale — comfortably within the "tens of KB, defer" range this section itself
+set as its own decision threshold. **Re-confirmed still deferred during Milestone 7's
+closing documentation pass, not left open by default** — a fresh check found zero accidental
+partial pagination implementation anywhere in the codebase (no `Pageable`/`Page<`/
+`pagination`/`PageRequest` usage in any application source file; only doc/README mentions
+discussing it as deferred). Not an item expecting near-term action — revisit only if
+professional/slot/order/notification counts grow large enough at real v1.0 data volumes to
+push a list endpoint's response into the multiple-hundreds-of-KB range.
 
 ### 5.6 Actuator exposure — confirmed minimal, no action needed
 
@@ -626,23 +658,36 @@ unauthenticated callers by default — confirmed safe, no gap found here.
 Consolidated list, for `pronto-lead`/the user, of every item in this document that requires
 a decision rather than a straightforward test-and-fix:
 
-1. **§4.1 — the `EXPIRED`-issue-cannot-be-rebooked gap.** Needs a product decision: reopen
-   endpoint, relax the booking guard, or formally accept the new-issue workaround as
-   intended. Recommendation given (accept the workaround, lowest cost) but not decided here.
-2. **§2.4 — PRD §5.2.4's "personal data management" scope.** Does soft-delete +
-   anonymization satisfy this, or is a self-service data-export endpoint also expected?
-   Genuinely open, no source document resolves it.
-3. **§2.5 — AWS root-account credentials in the local dev run config.** Recommend rotating
-   to a scoped IAM user/role; the user's call on timing/priority, not resolved here.
+1. **§4.1 — the `EXPIRED`-issue-cannot-be-rebooked gap. DECIDED, not open.** The user has
+   ruled option 3 (accept the new-issue workaround as intended) as the final, permanent
+   design — no reopen endpoint, no relaxed booking guard, ever. No further sign-off needed.
+2. **§2.4 — PRD §5.2.4's "personal data management" scope. DECIDED, not open.** Soft-delete
+   + anonymization (already built, already QA-verified) is the accepted MVP answer; a
+   self-service data-export endpoint is reclassified as deferred backlog for a possible
+   future version, not an open question.
+3. **§2.5 — AWS root-account credentials in the local dev run config.** Not an open
+   decision on *whether* to rotate — this document's language has been strengthened to
+   required-before-any-deployment (§2.5). Timing of the actual rotation remains the user's
+   own future action; no infrastructure/credential change was made by this documentation
+   pass.
 4. **§5.1 — checked-in insecure `JWT_SECRET` default.** Recommend a startup fail-fast guard
    as a concrete `pronto-coding` fix this milestone; needs sign-off on priority.
 5. **§5.2 — no IP-based rate limiting on auth endpoints.** Recommend as a candidate fix this
    milestone if time allows; needs a priority call, not assumed.
-6. **§4.2/§4.3 — email retry/backoff and multi-instance dispatch claim.** Recommended as
-   deferred (not Milestone 7 scope) — needs confirmation this reasoning is accepted, not
-   silently agreed.
-7. **§4.4 — no slot edit/delete.** Recommended as correctly already-decided (leave alone) —
-   needs only a confirmation nod, not a new decision.
-8. **§5.5 — pagination.** Recommend deciding based on the §1.3 load test's actual measured
-   payload sizes, not in the abstract — a decision to make *after* that test runs, not
-   before.
+6. **§4.2/§4.3 — email retry/backoff and multi-instance dispatch claim. CONFIRMED DEFERRED,
+   not open.** Both re-verified as not load-bearing for any currently-existing behavior
+   (confirmed by reading `EmailDispatchJob`/`OrderExpirySweepJob` directly, and by this
+   project never having run more than one backend instance) — both are backlog items for
+   when a real email provider / real multi-instance deployment is actually planned. No
+   further sign-off needed.
+7. **§4.4 — slot edit/delete. RESOLVED, reversed and built.** The Milestone 6 "leave alone"
+   call was overruled by an explicit user product decision during this same Milestone 7
+   pass — `PUT`/`DELETE /api/availability/slots/{slotId}` are now designed, implemented, and
+   QA-passed (full regression + targeted tests, zero gaps, including all four order
+   lifecycle states for the booking-protection guard). No further sign-off needed; not an
+   open item.
+8. **§5.5 — pagination. CONFIRMED STILL DEFERRED, not open.** The load test's real measured
+   payload size (~1565 bytes for ~7 professionals) is comfortably within this section's own
+   "tens of KB, defer" threshold. Re-confirmed during Milestone 7's closing pass with no
+   accidental partial implementation found. No further sign-off needed unless real v1.0 data
+   volumes later push a list endpoint's payload into the multiple-hundreds-of-KB range.

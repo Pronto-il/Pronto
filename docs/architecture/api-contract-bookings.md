@@ -35,6 +35,18 @@ scope items — that the existing `availability` (§2.10/§2.11/§2.14/§2.15) a
 either. As with the Milestone 4 pass, no new file was created and no UI is designed or
 built here (frontend remains deferred project-wide pending the design-system decision).
 
+**Milestone 7 addition (this pass, 2026-08-15, `pronto-planning`), backend design only —
+ready for `pronto-coding`, no open sign-off items block it.** §8.2's Milestone-6 "not
+building slot edit/delete" call is **reversed by explicit user decision** (not
+re-litigated on the merits — the user overruled it directly, see the updated §8.2 below).
+§2.18–§2.19 (new) add `PUT /api/availability/slots/{slotId}` (edit) and `DELETE
+/api/availability/slots/{slotId}` (delete) to the `availability` package, following the
+existing §2.10/§2.11 conventions and the atomic guarded-`UPDATE`/`DELETE` pattern (§3.2)
+already used everywhere else in this doc. One new error code is introduced,
+`SLOT_IN_USE` (409) — see the new "Error code taxonomy — Milestone 7 additions" table
+below and §2.18/§2.19 for the exact semantics. No new Flyway migration is required (§1.6).
+No other section of this doc's Milestone 3/4/6 design is changed by this pass.
+
 Written by `pronto-planning`. Builds on:
 - `docs/architecture/data-model.md` §2.5 (`availability_slots`), §2.7 (`issues`), §2.9
   (`orders`), §3 items 5/8/9/10 (SOS-vs-Standard availability split, `issues.status`
@@ -58,19 +70,21 @@ Written by `pronto-planning`. Builds on:
   `backend/src/main/resources/db/migration/`, §1.5 below) — no `V15` is introduced.
 
 Scope: the `bookings` package, **the Standard path (Milestone 3, §2.2–§2.11), the SOS path
-(Milestone 4, §2.12–§2.15), and job-status progression (Milestone 6, §2.16–§2.17)**; plus
-the `availability` package slices this implies — Milestone 3's narrow slot-creation/
-self-listing slice (§2.10/§2.11), Milestone 4's SOS-availability toggle/read
-(§2.14/§2.15), and Milestone 6's explicit confirmation (§8) that no new `availability`
-endpoint is needed. Also specifies one small, necessary addition to the `issues` package
-(`GET /api/issues/{id}`, §2.1) — reasoning in that section. Still **not** covered by this
-doc: full slot CRUD/calendar semantics (§8 makes this an explicit "not needed" call for
-v1.0, not a deferral), the professional dashboard **UI** (frontend remains deferred
-project-wide, pending the design-system decision), the `EXPIRED`-issue-reopen gap (§9 —
-confirmed still open, not touched by this pass), and email/in-app notification dispatch
-mechanics (owned by `docs/architecture/api-contract-notifications.md`, though this pass
-does specify the two new `recordOrderNotification(...)` call sites `bookings` makes into
-that package, per §2.16/§2.17 and its own §4.6's prediction).
+(Milestone 4, §2.12–§2.15), job-status progression (Milestone 6, §2.16–§2.17), and slot
+edit/delete (Milestone 7, §2.18–§2.19)**; plus the `availability` package slices this
+implies — Milestone 3's narrow slot-creation/self-listing slice (§2.10/§2.11), Milestone
+4's SOS-availability toggle/read (§2.14/§2.15), Milestone 6's explicit confirmation (§8)
+that no new `availability` *listing/toggle* endpoint was needed at the time, and Milestone
+7's slot edit/delete endpoints (§2.18/§2.19, added after §8.2's original "not needed" call
+was overruled by explicit user decision — see the updated §8.2). Also specifies one small,
+necessary addition to the `issues` package (`GET /api/issues/{id}`, §2.1) — reasoning in
+that section. Still **not** covered by this doc: the professional dashboard **UI**
+(frontend remains deferred project-wide, pending the design-system decision), the
+`EXPIRED`-issue-reopen gap (§9 — confirmed still open, not touched by this pass), and
+email/in-app notification dispatch mechanics (owned by
+`docs/architecture/api-contract-notifications.md`, though this pass does specify the two
+new `recordOrderNotification(...)` call sites `bookings` makes into that package, per
+§2.16/§2.17 and its own §4.6's prediction).
 
 This doc is a **precise contract spec** (request/response JSON shapes, status codes, error
 codes, field-level validation), not literal Java code — writing the controllers/services is
@@ -351,6 +365,20 @@ files beyond `V14`):
 Milestone 6.** Every value these two new endpoints read or write already exists and is
 already tolerated by the schema as of `V14`.
 
+### 1.6 Milestone 7 (slot edit/delete) — no new migration required (verdict, checked
+against the real schema, not assumed)
+
+§2.18/§2.19 below add two new **endpoints**, not new **schema**. Both read/write columns
+that already exist on `availability_slots` (`start_time`, `end_time`, `is_available`,
+`updated_at` — all present since `V5__create_availability_slots.sql`) or delete a row
+outright (no new column/constraint needed for a `DELETE`). No new `order_status`,
+`message_type`, or `issues.status` value is introduced, and no new table is created.
+
+**Verdict: `pronto-coding` does not need to write a `V15` (or any new) migration for
+Milestone 7's slot edit/delete endpoints.** The only artifact this pass requires that
+doesn't already exist is the new `SLOT_IN_USE` `ErrorCode` enum value (Java-only, not a
+schema change — §2's new "Milestone 7 additions" taxonomy table).
+
 ---
 
 ## 2. Error response envelope (reused verbatim from `api-contract.md` §1 / `api-contract-issues.md` §1)
@@ -401,6 +429,12 @@ one).
 |---|---|---|
 | `ORDER_NOT_CONFIRMED` | 409 | `POST /api/bookings/orders/{orderId}/on-the-way` (§2.16) called on an order whose `order_status != 'CONFIRMED'` — already progressed further (`ON_THE_WAY`/`COMPLETED`), still `PENDING`, or terminal (`CANCELLED`/`REJECTED`/`EXPIRED`); also covers losing a race to a concurrent transition on the same order. |
 | `ORDER_NOT_ON_THE_WAY` | 409 | `POST /api/bookings/orders/{orderId}/complete` (§2.17) called on an order whose `order_status != 'ON_THE_WAY'` — **including** a professional attempting to jump directly from `CONFIRMED` to `COMPLETED`, which this design deliberately disallows (§6 item 9); also covers an already-`COMPLETED` order, a still-`CONFIRMED`/`PENDING` order, a terminal order, or a lost race. |
+
+### Error code taxonomy — Milestone 7 additions (slot edit/delete)
+
+| `error.code` | HTTP status | Meaning |
+|---|---|---|
+| `SLOT_IN_USE` | 409 | `PUT`/`DELETE /api/availability/slots/{slotId}` (§2.18/§2.19) called on a slot whose `is_available != true` **after** ownership has already been confirmed (§2.18/§2.19 step 3-4 already ruled out "doesn't exist"/"not yours") — i.e. the slot is currently held by an active order (`PENDING`/`CONFIRMED`/`ON_THE_WAY`) or was consumed by a `COMPLETED` order (§3.4's `is_available` reasoning, extended below), or lost a race to a concurrent claim/edit/delete between the ownership check and the atomic guard. **Deliberately a new code, not a reuse of `SLOT_UNAVAILABLE`** — see §2.18's "why a new code" note for the full reasoning; the two codes now cover disjoint call sites (`SLOT_UNAVAILABLE` is the customer-side booking-claim failure at §2.4 step 9; `SLOT_IN_USE` is the professional-side edit/delete-protection failure here) and are never returned by the same endpoint. |
 
 ---
 
@@ -878,12 +912,13 @@ M1 implicitly used for `/api/users/me` vs. nothing-else-existing.)
 ### 2.10 `POST /api/availability/slots` — new, `availability` package
 
 **Approved, `pronto-lead`, 2026-08-13 (§6 item 2, option (a)).** A professional creates one
-bookable Standard advance-booking window. This is the **entire** create-side scope of the
+bookable Standard advance-booking window. This was the **entire** create-side scope of the
 Milestone-3 `availability` slice — no edit, no delete, no toggle-availability action, no
 listing-other-professionals'-slots capability. It exists solely so §2.3/§2.4 above have
-real `availability_slots` rows to book against without a raw-SQL QA workaround. Full
-CRUD, richer calendar semantics, and any dashboard UI remain **Milestone 6**'s job — see
-`availability/README.md`'s updated status line.
+real `availability_slots` rows to book against without a raw-SQL QA workaround. **Update,
+Milestone 7**: edit/delete now exist — §2.18/§2.19 — per the reversal recorded in §8.2;
+richer calendar semantics beyond edit/delete (e.g. overlap validation, below) and any
+dashboard UI remain out of scope, unaffected by that reversal.
 
 Auth required: **yes**. Role: **PROFESSIONAL**.
 
@@ -1407,6 +1442,232 @@ needed. See §6 item 12.
 
 ---
 
+### 2.18 `PUT /api/availability/slots/{slotId}` — new, Milestone 7, `availability` package
+
+**Reverses §8.2's Milestone-6 "not building" call — by explicit user decision, not a
+re-evaluation of the original reasoning.** The user has decided a professional must be
+able to fully manage their own availability calendar: create (§2.10, already built), edit
+(this section), and delete (§2.19). See the rewritten §8.2 below for the full record of
+what changed and why this is not a silent reversal.
+
+Auth required: **yes**. Role: **PROFESSIONAL**. No `AvailabilityWebConfig` change needed —
+its existing registration already covers `/api/availability/**` with a `PROFESSIONAL`
+`RoleRequiredInterceptor` on a blanket wildcard pattern (§0.1), which already includes this
+new route for free, the same way it already covered §2.14/§2.15 without any config edit.
+
+**Why `PUT`, not `PATCH` — matching this project's own convention, not generic REST
+purism.** The brief's default preference is `PATCH`/`PUT` for edit. This project has
+exactly one existing precedent for "a professional replaces the current value(s) of a
+resource they own": `PUT /api/availability/sos-availability` (§2.14), a full-value
+replace of the resource's one mutable field. This endpoint is the same shape one level
+up — a full-value replace of *both* of a slot's mutable fields (`startTime`/`endTime`
+together, always both required, never one alone) — so `PUT` is the consistent choice, not
+`PATCH` (which would imply partial-field semantics this design deliberately doesn't offer;
+a professional cannot edit `startTime` without also restating `endTime`, mirroring how
+`POST /api/availability/slots`, §2.10, already requires both fields together at creation).
+
+**Why `/api/availability/slots/{slotId}`, not nested any other way.** Mirrors
+`/api/bookings/orders/{orderId}` (§2.5-§2.7/§2.16/§2.17)'s path-referenced-resource shape
+exactly — the slot being edited is a path variable, not a body field, consistent with §0's
+convention that "an id that names *the resource the URL is about*" gets `404 NOT_FOUND`
+treatment (see step 2 below) rather than the body-field `400 VALIDATION_ERROR` treatment
+`professionalId`/`slotId` get inside `POST /api/bookings/orders`'s request body (§2.4).
+
+**Request:** identical wire shape to §2.10's create request — `pronto-coding` may reuse
+`availability.dto.CreateSlotRequest` verbatim for this endpoint's `@RequestBody` (same two
+fields, same Bean Validation annotations, same business-rule validation, §3.4/§3.10 of this
+codebase's existing DRY conventions favor reuse over a near-duplicate `UpdateSlotRequest`
+class) or introduce an identically-shaped sibling type if a future divergence is
+anticipated — **either is acceptable**, this doc does not mandate which; the *wire
+contract* below is what's binding, not the Java class name.
+```json
+{ "startTime": "2026-08-20T09:00:00Z", "endTime": "2026-08-20T11:00:00Z" }
+```
+
+**Field validation** — identical rules to §2.10's create validation, re-applied to the
+*new* values (not the slot's current, pre-edit values):
+
+| Field | Rule |
+|---|---|
+| `startTime` | required, ISO-8601/RFC 3339 timestamp with offset, parseable → `400 VALIDATION_ERROR` otherwise. Must be strictly in the future (`startTime > now()` at request time) → `400 VALIDATION_ERROR` if not — same rule as §2.10, same reasoning (an edited slot must still be a real, bookable future window). |
+| `endTime` | required, same timestamp format → `400 VALIDATION_ERROR` otherwise. Must satisfy `endTime > startTime` → `400 VALIDATION_ERROR` otherwise — same rule as §2.10. |
+
+**Judgment call, stated explicitly: editing does *not* additionally require the slot's
+*current* (pre-edit) `startTime` to still be in the future.** A professional may edit a
+slot whose original `startTime` has already lapsed, as long as it is still
+`is_available = true` (never booked) and the *new* `startTime`/`endTime` satisfy the table
+above. Reasoning: an unbooked slot that aged into the past is exactly the "stale slot with
+no negative functional consequence" case §8.2's original reasoning already described
+(`GET .../slots/me`, §2.11, still lists it, unfiltered) — allowing a professional to
+correct/reuse that row by editing it into a valid future window is a strict improvement
+over their only prior option (leave it stale forever, or create a brand-new row instead).
+Nothing in the booking-protection rule below depends on the slot's *current* `startTime`;
+only `is_available` matters, per the reasoning in §3.4 (extended below).
+
+**Behavior** (evaluated in this order — resource existence/ownership is resolved *before*
+the new values are business-validated, deliberately mirroring the authorization-first
+ordering `accept`/`reject`/`cancel`/`on-the-way`/`complete` already use for their
+path-referenced `{orderId}`, §2.5-§2.7/§2.16/§2.17, rather than §2.4's create-order
+ordering, which validates body-referenced ids before loading anything — that ordering
+doesn't apply here since `{slotId}` is path-referenced, not a body field, per §0's
+convention):
+1. Resolve caller (role already gated to `PROFESSIONAL` by `AvailabilityWebConfig`, no
+   in-method check needed — same as every existing `availability` endpoint, §2.10 step 1 /
+   §2.14 step 1).
+2. Load the slot by `{slotId}` (`availabilitySlotRepository.findById`) → **`404
+   NOT_FOUND`** if it doesn't exist at all.
+3. Resolve caller's `professionals.id` via `ProfessionalRepository.findByUserId(caller.id)`
+   (same existing mechanism as §2.10 step 3 / §3.5) → **`403 FORBIDDEN`** if the caller has
+   no professional profile (same invariant-violation-shouldn't-happen-but-guarded case as
+   `AvailabilityService.resolveProfessionalId`'s existing behavior).
+4. `slot.professionalId != <resolved professional id>` → **`403 FORBIDDEN`** — **not
+   `404`**. See the dedicated "403 vs. 404" note below for why this endpoint follows the
+   `issues`/`notifications`/`bookings` "distinct codes" convention rather than
+   `storage.service.StorageService.retrieve`'s "collapse both to 403" convention.
+5. Validate the new `startTime`/`endTime` per the table above → `400 VALIDATION_ERROR`.
+6. **Atomically apply the edit, guarded on the slot still being unprotected**:
+   `UPDATE availability_slots SET start_time = :startTime, end_time = :endTime,
+   updated_at = now() WHERE id = :slotId AND professional_id = :professionalId AND
+   is_available = true`. If the affected-row count is `0` → **`409 SLOT_IN_USE`** (by this
+   point, existence and ownership are already proven by steps 2-4, so a `0`-row result here
+   can only mean the slot's `is_available` flipped to `false` between step 2's read and this
+   write — a concurrent order claimed it, or it was already protected — a genuine, if
+   narrow, race; §3.2's usual "no explicit locking" convention applies here too). Roll back,
+   return immediately.
+7. Return `200` with the updated slot.
+
+**The booking-protection rule, stated precisely (extends §3.4).** `is_available = false`
+is, and remains, the exact, reliable signal for "this slot is either currently held by an
+active order (`PENDING`/`CONFIRMED`/`ON_THE_WAY`) or was consumed by a `COMPLETED` order" —
+confirmed directly against `BookingsService`: `claimSlot` (§2.4 step 9) sets it `false` at
+order creation; `releaseSlot` (called from `reject`/`cancel`/`expireIfPending`, §2.6 step
+5/§2.7 step 6/§4.5 of the notifications doc) sets it back to `true`; **`accept` and
+`complete` never call `releaseSlot` at all** (confirmed by reading both methods directly —
+`accept` only transitions `orders.order_status`, `complete` only transitions
+`orders.order_status` and `issues.status`, neither touches `availability_slots`). A slot
+with `is_available = true` therefore structurally has no order currently depending on it —
+any order that once referenced it already released it back to `true` on
+`reject`/`cancel`/`expiry`, or never existed. Step 6's guard is exactly this signal,
+applied to edit instead of claim — a professional can never silently invalidate a
+`CONFIRMED`/`ON_THE_WAY` booking or retroactively alter the record of a `COMPLETED` job by
+editing the slot underneath it; any such attempt is rejected outright with `409
+SLOT_IN_USE`, never a silent no-op and never a cascade-cancel of the order.
+
+**Why `SLOT_IN_USE` is a new code, not a reuse of `SLOT_UNAVAILABLE` — decided, not a close
+call.** `SLOT_UNAVAILABLE` (§2, Milestone 3 table) is documented and used exclusively for
+the *customer-side* booking-claim failure at `POST /api/bookings/orders` (§2.4 step 9) —
+"someone/something else already has first claim on this slot, from the perspective of a
+customer trying to book it." Reusing it here would conflate two different call sites and
+two different audiences reading the same `error.code` off the wire (a customer's booking
+attempt vs. a professional's own calendar edit) behind one ambiguous name, and would
+contradict this doc's own established precedent of minting a new, narrowly-named code when
+an existing one's *documented* meaning doesn't fit rather than stretching it (`ORDER_NOT_
+CONFIRMED`/`ORDER_NOT_ON_THE_WAY`, Milestone 6, were minted for exactly this reason instead
+of stretching `ORDER_NOT_PENDING` — §2's Milestone 6 taxonomy note). `SLOT_IN_USE` names
+the professional-side concept precisely: "you can't edit/delete a slot that's in use (held
+by an active order) or was used (consumed by a completed order)" — distinct in both
+audience and meaning from `SLOT_UNAVAILABLE`'s "someone else's turn already claimed it."
+The two codes are never returned by the same endpoint, so there is no ambiguity for a
+frontend branching on `error.code` either.
+
+**Response `200`:** same shape as §2.10's create response.
+```json
+{
+  "id": 77,
+  "professionalId": 43,
+  "startTime": "2026-08-20T09:00:00Z",
+  "endTime": "2026-08-20T11:00:00Z",
+  "isAvailable": true,
+  "createdAt": "2026-08-13T12:00:00Z"
+}
+```
+
+**Status codes**: `200` success · `400 VALIDATION_ERROR` · `401 UNAUTHORIZED` ·
+`403 FORBIDDEN` · `404 NOT_FOUND` · `409 SLOT_IN_USE`.
+
+**No overlap/double-booking validation against the professional's own other slots** —
+same explicit non-scope as §2.10's create endpoint, unchanged by this pass; editing a slot
+to overlap another of the professional's own slots is not blocked.
+
+---
+
+### 2.19 `DELETE /api/availability/slots/{slotId}` — new, Milestone 7, `availability` package
+
+Same reversal-of-§8.2 basis as §2.18 — see that section's opening note.
+
+Auth required: **yes**. Role: **PROFESSIONAL**. Same "no `AvailabilityWebConfig` change
+needed" reasoning as §2.18 (existing blanket-wildcard registration already covers it).
+
+**Why `DELETE`, no body.** Unambiguous, standard REST verb for "remove this resource
+outright" — no existing project precedent to weigh against (no endpoint in this codebase
+has previously needed `DELETE`), so ordinary REST convention applies uncontested.
+
+**Behavior** (same authorization-first ordering as §2.18, no body to validate):
+1. Resolve caller (role already gated, no in-method check — same as §2.18 step 1).
+2. Load the slot by `{slotId}` → **`404 NOT_FOUND`** if it doesn't exist at all.
+3. Resolve caller's `professionals.id` → **`403 FORBIDDEN`** if no professional profile
+   (same as §2.18 step 3).
+4. `slot.professionalId != <resolved professional id>` → **`403 FORBIDDEN`** (same "403,
+   not 404" reasoning as §2.18 step 4 — see the note below).
+5. **Atomically delete, guarded on the slot still being unprotected**:
+   `DELETE FROM availability_slots WHERE id = :slotId AND professional_id =
+   :professionalId AND is_available = true`. If the affected-row count is `0` → **`409
+   SLOT_IN_USE`** (existence/ownership already proven by steps 2-4; a `0`-row result here
+   means the slot was claimed by a concurrent order between step 2's read and this
+   statement — same race as §2.18 step 6, same reasoning). Roll back, return immediately.
+6. Return `204 No Content` (no body — nothing left to return; standard REST convention for
+   a successful delete, and this project has no prior `DELETE` endpoint whose response
+   shape this would need to stay consistent with).
+
+**Booking-protection rule**: identical to §2.18's — `is_available = true` is required for
+the delete to succeed, for the exact same reason (§3.4, extended by §2.18's note above). A
+slot currently backing a `PENDING`/`CONFIRMED`/`ON_THE_WAY` order, or one that was consumed
+by a `COMPLETED` order, can never be deleted — the attempt is rejected outright with `409
+SLOT_IN_USE`, never a silent no-op and never a cascade-cancel of the order it backs.
+
+**FK-safety note, confirmed not merely assumed.** `orders.slot_id` is `ON DELETE SET NULL`
+(`V12`, §1.2) — if this endpoint ever deleted a slot an order still referenced, that
+order's `slot_id` would silently go `NULL`, an unrelated pre-existing FK behavior. Because
+step 5's guard only ever succeeds when `is_available = true`, and (per §2.18's `is_available`
+reasoning) `is_available = true` structurally means no order currently depends on this row,
+this FK's `ON DELETE SET NULL` behavior is **never actually triggered by a live-relevant
+order** through this endpoint — it would only fire in the already-established safe case
+(a `REJECTED`/`CANCELLED`/`EXPIRED` order that already had its `slot_id` released, i.e. this
+same row already went back to `is_available = true` once, meaning that old order's `slot_id`
+FK pointing at this now-deleted row was already historically irrelevant — the order's own
+status already tells the full story without needing `slot_id` to resolve, exactly as
+`OrderDetailResponse`/`OrderSummaryResponse`, §2.4/§2.8/§2.9, already never expose
+`slot_id` in any response body).
+
+**Ownership-error status code — 403, not 404, and why (applies to both §2.18 and §2.19).**
+This doc's precedent for "resource exists but belongs to someone else" is **not** uniform
+across the codebase — two conventions exist:
+- `storage.service.StorageService.retrieve` collapses *both* "doesn't exist" and "exists,
+  not yours" to `403 FORBIDDEN`, deliberately never `404`, specifically to defend against
+  **key enumeration** of opaque, guessable-looking S3 object keys.
+- `issues.service.IssuesService` (`GET /api/issues/{id}`, §2.1), `notifications
+  .service.NotificationServiceImpl`, and `bookings.service.BookingsService` (`loadOrder` +
+  the ownership checks in `accept`/`reject`/`cancel`/`GET .../{orderId}`, §2.5-§2.8) all use
+  **distinct** codes instead: `404 NOT_FOUND` if the sequential-integer id doesn't resolve
+  at all, `403 FORBIDDEN` if it resolves but the caller isn't a party to it.
+
+**`availability_slots.id` follows the second convention (distinct 404/403), matching the
+majority pattern (`issues`/`notifications`/`bookings`), not the `storage` special case.**
+Reasoning: `storage`'s anti-enumeration collapse exists because S3 object keys are the kind
+of opaque, randomly-generated string an attacker might probe to discover other users'
+private image files — the concern is specifically about an attacker *fishing for valid
+keys*. `availability_slots.id` is an ordinary sequential-integer JPA-generated primary key,
+structurally identical in kind to `orders.id`/`notifications.id`/`issues.id` — all of which
+already use the distinct-404/403 convention in this same codebase precisely because
+sequential integer PKs aren't a meaningful enumeration attack surface (an attacker can
+already trivially guess adjacent ids; the interesting question is only ever "is this one
+mine," which `403` already answers without also needing to hide "does it exist"). Following
+`storage`'s collapse here would be inconsistent with the majority, sequential-integer-PK
+convention this codebase has already established three times over, for a resource that
+shares none of `storage`'s enumeration-sensitive properties.
+
+---
+
 ## 4. End-to-end flow summary (PRD §3.4, including the reject → return-to-list branch)
 
 For clarity, the full Standard-path sequence this contract implements:
@@ -1560,6 +1821,13 @@ need to change too; flagging the dependency so it isn't silently broken later.
   order to `EXPIRED`, it must release the slot using this **same** mechanism — ideally by
   calling the same domain-service method `reject`/`cancel` call internally, not
   reimplementing the release logic a third time.
+- **New, Milestone 7 (§2.18/§2.19)**: `is_available` is also now the sole guard for
+  **edit**/**delete** — a professional may only `PUT`/`DELETE` their own slot while
+  `is_available = true`. Because this flag is `false` for the entire span from
+  order-creation (`claimSlot`, above) through `COMPLETED` (never released, above), and
+  `true` for every slot with no order currently depending on it, this single column is a
+  complete, reliable booking-protection signal for edit/delete with no additional query
+  needed — see §2.18's "booking-protection rule" note for the full derivation.
 
 ### 3.5 Professional identity resolution
 
@@ -1901,6 +2169,23 @@ explicitly rather than left ambiguous:**
     has allowed `COMPLETED` since `V6`. §2.16/§2.17 are the first endpoints to *reach* these
     already-tolerated values, not the first to need the schema to allow them.
 
+**Milestone 7 pass (this doc, 2026-08-15, `pronto-planning`) — item 14, a direct reversal
+of a prior decision, not a new judgment call:**
+
+14. **Slot edit/delete — REVERSED from Milestone 6's "not building" call (§8.2), by
+    explicit user decision, not a re-evaluation on the merits.** §8.2's original Milestone
+    6 reasoning, and the Milestone 7 hardening pass's independent re-review of it
+    (`hardening-plan.md` §4.4, both recommending "leave as-is"), are both superseded by the
+    user directly overruling them: a professional must be able to fully manage their own
+    availability calendar (create, edit, delete). Built as `PUT`/`DELETE
+    /api/availability/slots/{slotId}` (§2.18/§2.19) — owner-only, guarded atomically on
+    `is_available = true` so an edit/delete can never silently invalidate a confirmed
+    booking (`409 SLOT_IN_USE`, new error code, if the slot is currently protected). No new
+    Flyway migration required (§1.6) — both endpoints read/write columns that already exist.
+    See §8.2's rewritten text for the full record of what changed and why the original
+    reasoning's safety properties (never silently break a booking) are preserved, not
+    weakened, by adding the capability.
+
 ---
 
 ## 7. Open items / risks (lower-stakes, don't block `pronto-coding`, but flagging)
@@ -1970,6 +2255,18 @@ explicitly rather than left ambiguous:**
 - **The `EXPIRED`-issue-reopen gap is unaffected by this pass, confirmed not silently
   broken or accidentally fixed** — see §9 below for the explicit confirmation.
 
+**Milestone 7 additions:**
+
+- **§2.10's "no overlap/double-booking validation against the professional's own existing
+  slots" carries over unchanged to §2.18's edit** — a professional can edit a slot's
+  `startTime`/`endTime` to overlap another of their own slots; still not requested by any
+  source document, still out of scope, unaffected by the §8.2 reversal (that reversal is
+  specifically about edit/delete existing at all, not about adding overlap-conflict
+  detection on top of them).
+- **No rate limiting specific to `PUT`/`DELETE /api/availability/slots/{slotId}`** — same
+  "harmless, indexed single-row operation, no external API cost" reasoning already stated
+  for `PUT /api/availability/sos-availability` above; not flagged as a real risk.
+
 ---
 
 ## 8. Milestone 6 scope verification — availability management & incoming-requests view
@@ -1994,85 +2291,144 @@ sections, not assumed)
 | See incoming (pending) requests | `GET /api/bookings/orders/me?status=PENDING` (§2.9) | Milestone 3 |
 | See all my orders / any status, e.g. active jobs in progress | `GET /api/bookings/orders/me` (§2.9, optional `status` filter — now covers all 7 values reachably, see §7's Milestone 6 addition above) | Milestone 3 |
 | See one job's full detail | `GET /api/bookings/orders/{orderId}` (§2.8) | Milestone 3 |
-| Progress a job through its statuses | `accept`/`reject` (§2.5/§2.6, Milestone 3), `cancel` (§2.7, Milestone 3), `on-the-way`/`complete` (§2.16/§2.17, **this pass**) | Milestone 3 + 6 |
+| Progress a job through its statuses | `accept`/`reject` (§2.5/§2.6, Milestone 3), `cancel` (§2.7, Milestone 3), `on-the-way`/`complete` (§2.16/§2.17, Milestone 6) | Milestone 3 + 6 |
+| Edit / delete a not-yet-in-use slot | `PUT`/`DELETE /api/availability/slots/{slotId}` (§2.18/§2.19, **Milestone 7 — see §8.2 below, reversing this table's original Milestone 6 "no new endpoint" conclusion for this one row**) | Milestone 7 |
 
 §2.9's own text (written during Milestone 3) already anticipated this exact conclusion:
 *"Milestone 6 is expected to build its dashboard UI on top of this same endpoint, not need
 a new one — this isn't stepping on M6's scope, just building the read API home it will
-consume."* This section confirms that prediction held.
+consume."* This section confirms that prediction held for the incoming-requests/job-status
+rows. It did **not** hold for slot edit/delete — see §8.2.
 
-### 8.2 Explicit call: slot edit/delete/cancel ("full CRUD") is **not** added — reasoning,
-not a silent gap
+### 8.2 REVERSED (Milestone 7, 2026-08-15): slot edit/delete is now built — §8.2's original
+Milestone-6 "not added" call has been overruled by explicit user decision
 
-Several earlier docs speculatively flagged full slot CRUD as a Milestone 6 *candidate* —
-`availability/README.md` ("Full CRUD, richer calendar semantics, and any dashboard UI
-remain Milestone 6 scope"), this doc's own §2.10 ("Flagged as a candidate for Milestone 6's
-richer calendar semantics, not built here"). **Decision: not building slot edit/delete this
-milestone.** Reasoning:
+**Status: reversed, not re-litigated.** The Milestone 6 pass below concluded slot
+edit/delete was not needed and stated so explicitly, calling out its own reasoning as "a
+judgment call, not a certainty." **The user has since directly overruled that call**: a
+professional must be able to fully manage their own availability calendar — create
+(§2.10, unchanged), edit (§2.18, new), and delete (§2.19, new). This is stated by the user
+as a decided product requirement, not a re-opened design question — this section records
+*that the reversal happened and why the original reasoning no longer controls*, not a
+fresh cost/benefit re-evaluation of whether to build it (that evaluation already happened
+below, twice, and was overruled both times: once by the Milestone 6 pass itself
+reaffirming the "leave as-is" position — `docs/architecture/hardening-plan.md` §4.4 — and
+now finally by the user directly).
 
-- **No PRD text mandates it.** PRD §6's `AvailabilitySlots` schema lists exactly
-  `id, professional_id, start_time, end_time, is_available` with no described edit/cancel
-  workflow; no wireframe section (§7.x) describes a slot-editing screen either. The
-  "candidate" language in the docs above was exactly that — a speculative placeholder
-  flagged for later reconsideration, not a confirmed requirement, and the task brief
-  explicitly asks this doc to make the call rather than let that speculation silently become
-  scope.
-- **No load-bearing gap exists without it.** A professional who creates a slot with the
-  wrong start/end time has no way today to correct or remove it before it's booked — but
-  this has no negative *functional* consequence: an unwanted, still-`is_available = true`
-  slot simply might get booked by a customer (at which point the normal `reject`/`cancel`
-  flow, §2.6/§2.7, releases it back to `is_available = true` and reopens the issue — the
-  professional isn't stuck fulfilling a mistaken slot), and a slot nobody ever books simply
-  ages into the past with no cleanup needed (`GET .../slots/me`, §2.11, already returns past
-  slots unfiltered, so it remains visible/auditable, not silently lost). There is no
-  scenario in which lacking slot edit/delete leaves a professional unable to run their
-  business or a customer unable to book — the two properties an MVP dashboard actually needs
-  to guarantee.
-- **"Manage availability" (the acceptance-criterion wording) is satisfied by create + list +
-  the SOS toggle.** A professional can already: publish new availability (§2.10), see what
-  they've published (§2.11), and flip a live "available now" signal on/off (§2.14/§2.15).
-  Read this literally against the acceptance criterion's own wording — "manage" is satisfied
-  by the ability to add and view availability; it does not, on its own, imply mutate/delete
-  of a specific already-published entry.
-- **Frontend is out of scope project-wide this milestone anyway** (deferred pending the
-  design-system decision, per this pass's task brief) — even if a future dashboard UI wanted
-  an "edit slot" affordance, that's a frontend-scope question to raise when UI work actually
-  starts, not a reason to speculatively build a backend endpoint with no current caller.
+**What actually changed, precisely:**
+- Two new endpoints exist: §2.18 (`PUT`, edit) and §2.19 (`DELETE`, delete).
+- Both are owner-only (professional may only touch their own slots, §2.18/§2.19 step 3-4)
+  and both refuse to touch a slot that is currently protecting an active or completed
+  order (`is_available = true` required, guarded atomically — `409 SLOT_IN_USE` otherwise),
+  so the original reasoning's core safety property — "a professional edit/delete must never
+  silently invalidate a confirmed booking" — is preserved exactly, not weakened, by
+  granting the capability.
+- No PRD text newly mandates this (that fact hasn't changed) — the requirement's source is
+  the user's direct product decision, stated in this milestone's task brief, not a
+  rediscovered PRD passage. Recorded here plainly so a future reader doesn't go looking for
+  a PRD citation that doesn't exist.
 
-**This is a judgment call, not a certainty** — flagged explicitly, per the task brief's
-"don't silently pick an interpretation" instruction, as the one place in this section where
-reasonable people could land differently (e.g. if a future UX review decides a professional
-genuinely needs to delete a stale slot for peace of mind, not correctness). If that need is
-confirmed later, the addition would be a small, independent slice (`DELETE
-/api/availability/slots/{slotId}`, professional-owner-only, guarded on `is_available = true`
-so a claimed/booked slot can't be silently deleted out from under an active order) — not
-designed here, since it is not currently requested by any source document.
+**The original Milestone 6 reasoning is preserved verbatim below, unedited, for the
+historical record** — it explains why the call was defensible at the time (no load-bearing
+functional gap, "manage" satisfied by create+list+toggle, frontend deferred project-wide)
+and was always flagged as the one place in that section "reasonable people could land
+differently." That reasoning is superseded, not wrong in hindsight — a legitimate MVP
+scope call that a later, explicit product decision has now overridden. Historical text
+follows unchanged:
+
+> Several earlier docs speculatively flagged full slot CRUD as a Milestone 6 *candidate* —
+> `availability/README.md` ("Full CRUD, richer calendar semantics, and any dashboard UI
+> remain Milestone 6 scope"), this doc's own §2.10 ("Flagged as a candidate for Milestone 6's
+> richer calendar semantics, not built here"). **Decision: not building slot edit/delete this
+> milestone.** Reasoning:
+>
+> - **No PRD text mandates it.** PRD §6's `AvailabilitySlots` schema lists exactly
+>   `id, professional_id, start_time, end_time, is_available` with no described edit/cancel
+>   workflow; no wireframe section (§7.x) describes a slot-editing screen either. The
+>   "candidate" language in the docs above was exactly that — a speculative placeholder
+>   flagged for later reconsideration, not a confirmed requirement, and the task brief
+>   explicitly asks this doc to make the call rather than let that speculation silently become
+>   scope.
+> - **No load-bearing gap exists without it.** A professional who creates a slot with the
+>   wrong start/end time has no way today to correct or remove it before it's booked — but
+>   this has no negative *functional* consequence: an unwanted, still-`is_available = true`
+>   slot simply might get booked by a customer (at which point the normal `reject`/`cancel`
+>   flow, §2.6/§2.7, releases it back to `is_available = true` and reopens the issue — the
+>   professional isn't stuck fulfilling a mistaken slot), and a slot nobody ever books simply
+>   ages into the past with no cleanup needed (`GET .../slots/me`, §2.11, already returns past
+>   slots unfiltered, so it remains visible/auditable, not silently lost). There is no
+>   scenario in which lacking slot edit/delete leaves a professional unable to run their
+>   business or a customer unable to book — the two properties an MVP dashboard actually needs
+>   to guarantee.
+> - **"Manage availability" (the acceptance-criterion wording) is satisfied by create + list +
+>   the SOS toggle.** A professional can already: publish new availability (§2.10), see what
+>   they've published (§2.11), and flip a live "available now" signal on/off (§2.14/§2.15).
+>   Read this literally against the acceptance criterion's own wording — "manage" is satisfied
+>   by the ability to add and view availability; it does not, on its own, imply mutate/delete
+>   of a specific already-published entry.
+> - **Frontend is out of scope project-wide this milestone anyway** (deferred pending the
+>   design-system decision, per this pass's task brief) — even if a future dashboard UI wanted
+>   an "edit slot" affordance, that's a frontend-scope question to raise when UI work actually
+>   starts, not a reason to speculatively build a backend endpoint with no current caller.
+>
+> **This is a judgment call, not a certainty** — flagged explicitly, per the task brief's
+> "don't silently pick an interpretation" instruction, as the one place in this section where
+> reasonable people could land differently (e.g. if a future UX review decides a professional
+> genuinely needs to delete a stale slot for peace of mind, not correctness). If that need is
+> confirmed later, the addition would be a small, independent slice (`DELETE
+> /api/availability/slots/{slotId}`, professional-owner-only, guarded on `is_available = true`
+> so a claimed/booked slot can't be silently deleted out from under an active order) — not
+> designed here, since it is not currently requested by any source document.
+
+**That last paragraph's predicted shape (`DELETE`, owner-only, guarded on
+`is_available = true`) is exactly what §2.19 builds** — the original judgment call's own
+fallback plan turned out to be the correct design once the capability was actually
+requested, requiring no rework beyond also adding the edit (`PUT`) counterpart the original
+note didn't separately anticipate.
 
 ### 8.3 SOS availability and incoming-requests need no further work
 
 `sos_availability` (§2.14/§2.15) is inherently a single row per professional with a live
 toggle — there is no "CRUD" concept that applies to it beyond read/write, both of which
-already exist. `GET /api/bookings/orders/me?status=PENDING` (§2.9) is exactly the
-"incoming-requests view" backend need — already built, already generic, already exercises
-correctly for both Standard and SOS orders (§3.7). Neither needs anything new.
+already exist. **Confirmed explicitly for this pass, not silently skipped**: unlike
+`availability_slots`, "edit" and "delete" don't map onto `sos_availability` at all.
+`PUT /api/availability/sos-availability` (§2.14) already **is** the edit operation — a
+full-value replace of the row's one mutable field (`is_available`), the exact same verb
+and shape this doc would otherwise reach for. "Delete" has no coherent meaning here: every
+professional has exactly one `sos_availability` row, created at registration
+(`data-model.md` §2.6) and relied upon as an invariant by both `AvailabilityService`
+(§2.14 step 5/§2.15 step 3 — a missing row is treated as a data-integrity bug, `500
+INTERNAL_ERROR`) and `BookingsService` (§2.13 step 9's read-check). Deleting it would
+create exactly the missing-row condition those two call sites already treat as a bug, not
+a valid state — so no `DELETE` endpoint is added for `sos_availability`, a deliberate
+judgment call considered and rejected, not an oversight.
 
-**Conclusion for deliverable 2**: the existing `availability` and `bookings` endpoint
-surface (Milestones 3/4, listed in §8.1) is sufficient for v1.0's professional-dashboard
-backend needs. No new endpoint is added by this pass beyond §2.16/§2.17 (job-status
-progression, which was never in question — every prior milestone's doc already named it as
-the one genuinely missing piece).
+`GET /api/bookings/orders/me?status=PENDING` (§2.9) is exactly the "incoming-requests view"
+backend need — already built, already generic, already exercises correctly for both
+Standard and SOS orders (§3.7). Needs nothing new.
+
+**Conclusion for deliverable 2 (updated, Milestone 7):** the existing `availability` and
+`bookings` endpoint surface (Milestones 3/4/6, listed in §8.1) covers every
+professional-dashboard backend need this doc has identified, **plus** §2.18/§2.19's new
+slot edit/delete, added this pass by explicit user decision reversing the original
+Milestone 6 "not needed" call. `sos_availability` genuinely needs nothing further (§8.3
+above, unchanged) — its existing read/write pair already covers the full scope "edit"
+could mean for a singleton toggle row.
 
 ---
 
-## 9. Confirmation — the `EXPIRED`-issue-reopen gap is unaffected by this pass (not
-resolved, not touched, per the task brief's explicit instruction not to attempt it)
+## 9. Confirmation — the `EXPIRED`-issue-reopen gap is unaffected by this pass, and is now
+DECIDED (Milestone 7) as intentional, permanent behavior
 
-`data-model.md` §4 and `api-contract-notifications.md` §7 both already document a real,
-open gap: an issue that reaches `issues.status = 'EXPIRED'` has no endpoint anywhere that
-transitions it back to `'OPEN'`, so `POST /api/bookings/orders` (§2.4 step 6) and `POST
-/api/bookings/sos-orders` (§2.13 step 6) both reject a rebooking attempt against it with
-`409 ISSUE_NOT_BOOKABLE`, contradicting `data-model.md` §3 item 8's own aspirational text
-that a customer should be able to rebook after expiry.
+`data-model.md` §4 and `api-contract-notifications.md` §7 document that an issue that
+reaches `issues.status = 'EXPIRED'` has no endpoint anywhere that transitions it back to
+`'OPEN'`, so `POST /api/bookings/orders` (§2.4 step 6) and `POST /api/bookings/sos-orders`
+(§2.13 step 6) both reject a rebooking attempt against it with `409 ISSUE_NOT_BOOKABLE`.
+**As of Milestone 7, this is confirmed intentional, permanent design (user ruling,
+2026-08-15) — not an open gap.** See `data-model.md` §4 and
+`api-contract-notifications.md` §7 for the full resolution record. This section's
+verification below (that Milestone 6's `on-the-way`/`complete` endpoints don't touch this
+behavior) remains accurate and is kept for the historical record.
 
 **Confirmed still accurately described as open, and confirmed unaffected by §2.16/§2.17
 above** — checked explicitly, not assumed, per the task brief:
@@ -2092,9 +2448,12 @@ above** — checked explicitly, not assumed, per the task brief:
   `data-model.md` §4 and `api-contract-notifications.md` §7 already describe it, unchanged
   by this pass.
 
-**Not attempted here, per the task brief's explicit instruction** — this remains a
-`pronto-lead`/user decision (add a "reopen" endpoint? treat `EXPIRED` as book-able too?
-accept the new-issue-workaround as intended?), tracked in `data-model.md` §4 and
-`api-contract-notifications.md` §7, restated here only for cross-reference completeness so a
-reader of this doc's Milestone 6 pass doesn't have to wonder whether it was silently
-resolved or silently broken by the new endpoints above. It was neither.
+**Resolved, Milestone 7 (2026-08-15) — not attempted as a code change here, decided as a
+permanent behavior in the docs.** The user has ruled `EXPIRED` stays a final,
+permanent `issues.status` state: no reopen endpoint, no relaxed booking guard, ever. The
+intended path for a customer who wants service again is to create a new `issues` row for
+the same problem. Tracked in `data-model.md` §4, `api-contract-notifications.md` §7, and
+`hardening-plan.md` §4.1; restated here only for cross-reference completeness so a reader of
+this doc's Milestone 6 pass doesn't have to wonder whether it was silently resolved or
+silently broken by the new endpoints above. It was neither — it was decided explicitly,
+elsewhere, with no code change to this doc's endpoints required.

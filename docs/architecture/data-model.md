@@ -403,9 +403,11 @@ task brief's instruction not to silently pick an interpretation.
    specifying hard-vs-soft; soft delete + anonymizing PII fields (`full_name`, `email`) on
    request is the standard approach and is assumed here, but the actual anonymization
    procedure (which fields, whether historical orders keep a "deleted user" placeholder
-   name, etc.) is application logic beyond this schema doc. **Flagging, not blocking** —
-   reasonable default, but worth confirming this satisfies whatever "personal data
-   management" is meant to cover.
+   name, etc.) is application logic beyond this schema doc. **Resolved, Milestone 7
+   (2026-08-15)**: the user has confirmed this soft-delete + anonymization design does
+   satisfy PRD §5.2.4's "personal data management" clause for MVP; a self-service
+   data-export endpoint is deferred backlog, not an open question — see
+   `hardening-plan.md` §2.4 for the full ruling.
 
 7. **`issues` rows are only persisted after the customer confirms/edits the AI-suggested
    category** (making `issues.category_id NOT NULL` always) — the AI classification
@@ -524,19 +526,23 @@ task brief's instruction not to silently pick an interpretation.
 
 ## 4. Open questions (lower-stakes, don't block Milestone 0 migrations, but flagging)
 
-- **2026-08-13 — surfaced while designing Milestone 5's expiry sweep
-  (`docs/architecture/api-contract-notifications.md` §7), genuinely open, not resolved by
-  that doc.** This item 8's own text says a customer can rebook after an issue reaches
-  `EXPIRED` ("the normal `OPEN`/`BOOKED` lifecycle applies to the new order, exactly as with
-  any other reject-and-rebook case"). But the already-shipped Milestone 3/4 booking-creation
-  endpoints (`api-contract-bookings.md` §2.4 step 6 / §2.13 step 6) require
-  `issue.status == 'OPEN'`, and no endpoint anywhere transitions an issue from `EXPIRED` back
-  to `OPEN` — so as designed and built through Milestone 4, an `EXPIRED` issue cannot
-  actually be rebooked via any existing endpoint (`409 ISSUE_NOT_BOOKABLE`), contradicting
-  this item's own aspirational text. Not fixed by the Milestone 5 notifications doc (out of
-  that package's scope) — needs a `pronto-lead` decision (add a "reopen" endpoint? treat
-  `EXPIRED` as book-able too? accept "create a new `issues` row for the same problem" as the
-  intended workaround?) before it's resolved either way.
+- **DECIDED (user ruling, 2026-08-15, Milestone 7 closing documentation pass) — `EXPIRED`
+  remains a final `issues.status` state permanently. This is intentional, permanent
+  behavior, not an open gap.** Originally surfaced 2026-08-13 while designing Milestone 5's
+  expiry sweep as a tension between this item 8's aspirational text ("the normal
+  `OPEN`/`BOOKED` lifecycle applies to the new order, exactly as with any other
+  reject-and-rebook case") and the already-shipped Milestone 3/4 booking-creation endpoints'
+  `issue.status == 'OPEN'` requirement (`api-contract-bookings.md` §2.4 step 6 / §2.13 step
+  6), which correctly reject a rebooking attempt against an `EXPIRED` issue with `409
+  ISSUE_NOT_BOOKABLE`. **Resolved**: the user has ruled that this `409 ISSUE_NOT_BOOKABLE`
+  behavior is correct and permanent — no reopen endpoint, no relaxed booking guard on
+  `createOrder`/`createSosOrder`, ever. The intended, permanent path for a customer who
+  wants service again after their issue expires is to create a new `issues` row (`POST
+  /api/issues`) describing the same problem. This item 8's own "unless/until the customer
+  rebooks" phrasing above should be read as referring to a *new* issue, not a reopened one
+  — no code or schema change results from this ruling; see `hardening-plan.md` §4.1 and
+  `api-contract-notifications.md` §7 for the same resolution recorded from those docs'
+  perspectives.
 - **2026-08-13 — confirmed implementation divergence, both since fixed.** The
   already-applied `V5__create_availability_slots.sql` and `V8__create_orders.sql`
   migrations originally implemented the **pre-decision** designs (surfaced by
@@ -603,3 +609,125 @@ task brief's instruction not to silently pick an interpretation.
   and the `professionals`/`orders`/`notifications` column additions all fit inside the
   existing Milestone 0/1/3/5 scopes as written, they just weren't enumerated at the field
   level before.
+
+---
+
+## 6. Entity-relationship diagram (as-built)
+
+Merged from `backend/BACKEND_ARCHITECTURE.md` during Milestone 7's closing documentation
+pass, 2026-08-15 (that standalone doc has since been deleted — its genuinely useful,
+still-accurate content was relocated here and to `overview.md` §7). Verified against the
+current schema, including `V14` (`notifications.message_type` gains `ORDER_REJECTED`) — the
+most recent migration as of this pass; the Milestone 7 `availability` slot edit/delete
+addition (`api-contract-bookings.md` §2.18/§2.19) required no schema change, so this
+diagram is unaffected by it. All relationships below are real DB-level foreign keys (from
+the Flyway migrations, §2 above) — none are JPA object-graph associations (§0's convention:
+every FK is a plain `@Column`, never `@ManyToOne`/`@OneToMany`/etc., navigated by
+application code via repository lookups, not Hibernate-managed navigation).
+
+```mermaid
+erDiagram
+    USERS ||--o| PROFESSIONALS : "user_id (unique FK, RESTRICT)"
+    USERS ||--o{ VERIFICATION_CODES : "user_id (CASCADE)"
+    USERS ||--o{ ISSUES : "customer_id (RESTRICT)"
+    USERS ||--o{ ORDERS : "customer_id (RESTRICT)"
+    USERS ||--o{ NOTIFICATIONS : "user_id (CASCADE)"
+
+    CATEGORIES ||--o{ PROFESSIONALS : "category_id (RESTRICT)"
+    CATEGORIES ||--o{ ISSUES : "category_id (RESTRICT)"
+
+    PROFESSIONALS ||--o{ AVAILABILITY_SLOTS : "professional_id (CASCADE)"
+    PROFESSIONALS ||--o| SOS_AVAILABILITY : "professional_id (PK+FK, CASCADE)"
+    PROFESSIONALS ||--o{ ORDERS : "professional_id (RESTRICT)"
+
+    ISSUES ||--o{ ISSUE_IMAGES : "issue_id (CASCADE)"
+    ISSUES ||--o{ ORDERS : "issue_id (RESTRICT)"
+
+    AVAILABILITY_SLOTS |o--o{ ORDERS : "slot_id (nullable, SET NULL)"
+
+    ORDERS |o--o{ NOTIFICATIONS : "related_order_id (nullable, SET NULL)"
+
+    USERS {
+        bigint id PK
+        varchar full_name
+        varchar email
+        varchar password_hash
+        varchar role
+        boolean email_verified
+        smallint failed_login_attempts
+        timestamptz locked_until
+        timestamptz deleted_at
+    }
+    PROFESSIONALS {
+        bigint id PK
+        bigint user_id FK
+        bigint category_id FK
+        varchar service_area
+        varchar approval_status
+        numeric reliability_score
+        numeric base_price
+    }
+    CATEGORIES {
+        bigint id PK
+        varchar code
+        varchar name_he
+        varchar name_en
+        smallint display_order
+    }
+    VERIFICATION_CODES {
+        bigint id PK
+        bigint user_id FK
+        varchar code
+        varchar purpose
+        timestamptz expires_at
+        timestamptz consumed_at
+    }
+    AVAILABILITY_SLOTS {
+        bigint id PK
+        bigint professional_id FK
+        timestamptz start_time
+        timestamptz end_time
+        boolean is_available
+    }
+    SOS_AVAILABILITY {
+        bigint professional_id PK_FK
+        boolean is_available
+        timestamptz updated_at
+    }
+    ISSUES {
+        bigint id PK
+        bigint customer_id FK
+        bigint category_id FK
+        text description
+        varchar urgency_type
+        varchar status
+    }
+    ISSUE_IMAGES {
+        bigint id PK
+        bigint issue_id FK
+        varchar image_url
+        timestamptz uploaded_at
+    }
+    ORDERS {
+        bigint id PK
+        bigint issue_id FK
+        bigint customer_id FK
+        bigint professional_id FK
+        bigint slot_id FK
+        timestamptz booked_start
+        timestamptz booked_end
+        varchar order_status
+        varchar cancelled_by
+        numeric final_price
+    }
+    NOTIFICATIONS {
+        bigint id PK
+        bigint user_id FK
+        bigint related_order_id FK
+        varchar message_type
+        varchar channel
+        varchar delivery_status
+        timestamptz read_at
+        timestamptz sent_at
+    }
+```

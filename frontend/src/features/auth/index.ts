@@ -1,3 +1,5 @@
-// Stub barrel file — no implementation yet.
-// See ./README.md for this module's purpose and the milestone it's implemented in.
-export {}
+export { default as RegisterChoicePage } from './RegisterChoicePage';
+export { default as CustomerRegisterPage } from './CustomerRegisterPage';
+export { default as ProfessionalRegisterPage } from './ProfessionalRegisterPage';
+export { default as VerifyPage } from './VerifyPage';
+export { default as LoginPage } from './LoginPage';

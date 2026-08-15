@@ -4,10 +4,13 @@ Status: **Milestones 1-7 (Auth through Hardening & QA) and the follow-on Milesto
 (Professional Profiles, Reviews, Favorites & Matching) are all implemented on the backend
 and QA-signed-off, as of 2026-08-15** (see `docs/architecture/implementation-plan.md` for
 milestone-by-milestone status — this line was stale for several milestones and is corrected
-here as part of Milestone 8's documentation pass); `frontend/` remains entirely design-only
-project-wide, pending the user's design-system decision. This is the living source of truth
-for architecture/decisions — keep it in sync with the actual implementation as it lands
-(owned going forward by the `pronto-documentation` agent).
+here as part of Milestone 8's documentation pass). On the frontend, **Frontend Milestone 1
+(auth screens) is implemented, as of 2026-08-15** — see §6 below and
+`implementation-plan.md`'s Milestone 1 entry for full status detail; the rest of
+`frontend/` remains design-only, pending the user's design-system decision for later
+milestones. This is the living source of truth for architecture/decisions — keep it in
+sync with the actual implementation as it lands (owned going forward by the
+`pronto-documentation` agent).
 
 ## 1. Consolidated understanding
 
@@ -167,7 +170,7 @@ changes it, per the shared project rule.
 
 | Folder | Responsibility |
 |---|---|
-| `features/auth` | Registration, verification, login screens. |
+| `features/auth` | Registration, verification, login screens. **Implemented, Frontend Milestone 1 (2026-08-15)** — see §6 below and `implementation-plan.md`'s Milestone 1 entry. |
 | `features/issues` | Home/New Issue screen, AI Review + service-path-selection screen. |
 | `features/booking` | Standard professional list, SOS professional list, booking confirmation, tracking screen. |
 | `features/professionals` | Professional card/list components shared by Standard and SOS (per PRD §7.4, SOS reuses the professional-selection component with urgent filtering rather than a fully separate screen). |
@@ -191,8 +194,9 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
 2. Auth & user management — registration, verification, login, professional profile,
    account lockout. (No approval-flag step — v1.0 auto-approves professionals.)
    **Backend implemented and QA-signed-off, 2026-08-13** — see
-   `implementation-plan.md`'s Milestone 1 entry for status detail; corresponding frontend
-   screens (`features/auth`) are intentionally deferred, not yet started.
+   `implementation-plan.md`'s Milestone 1 entry for status detail. Corresponding frontend
+   screens (`features/auth`) are **implemented as Frontend Milestone 1, 2026-08-15** — see
+   §6 below and `implementation-plan.md`'s Milestone 1 entry for full detail.
 3. Issue creation & AI classification — issue form, image upload, OpenAI integration,
    confirm/edit category, seeded against the fixed 8-category list (§3.8).
    **Backend implemented and QA-signed-off, 2026-08-13** — see
@@ -347,6 +351,44 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
     Postgres instance (documented per-milestone in `implementation-plan.md`) rather than
     unit tests for this logic — not a defect by itself, but a real gap if unit-level
     regression coverage is ever wanted independent of a full QA pass.
+- **2026-08-15 — Frontend Milestone 1 (auth screens) landed.** First real frontend
+  milestone to ship, after `frontend/` sat design-only through Milestones 1-8 of the
+  backend. Screens delivered: `/register` role chooser → `/register/customer` /
+  `/register/professional`, `/verify`, `/login`, `/profile` (any authenticated role,
+  read-only `GET /api/users/me`), and `/pro` (a professional-only placeholder route,
+  customers redirected away). Built on the design tokens/fonts/icons bootstrap,
+  `AppLayout`, a typed `httpClient` + `AuthProvider`/`useAuth`/`RequireAuth`, and the
+  shared component set (`Button`, `Input`, `Select`, `Card`, `PageHeader`,
+  `ImageUploadField`, `DocumentUploadField`, `AddressFormFields`).
+  - The original QA pass found and fixed two defects: **(a) critical** — CORS was
+    entirely unconfigured on the backend, so the browser's preflight `OPTIONS` request
+    was rejected before ever reaching a controller; fixed via a `CorsConfigurationSource`
+    bean in `auth.config.SecurityConfig` (see `auth/README.md`'s CORS note and §7.2's
+    environment-variable table, both updated with the new `pronto.cors.allowed-origins` /
+    `CORS_ALLOWED_ORIGINS` property this pass introduced). **(b) minor** — `/pro` wasn't
+    actually role-gated to professionals; fixed.
+  - A follow-up pass, same day, aligned this milestone with the backend `auth` package's
+    real registration contract: `POST /api/auth/register` is `multipart/form-data` (a
+    `data` JSON part nesting `customer`/`professional` sub-objects, per
+    `RegisterRequest`/`AuthController`'s own Javadoc — "breaking change from the prior
+    flat-JSON contract"), plus optional `verificationDocument`/`profilePhoto` file parts
+    for professionals. `shared/api/auth.ts` was rewritten to build and send this
+    correctly, and `shared/api/httpClient.ts` gained `FormData` request-body support. A
+    field-name mismatch between the frontend's address type and the backend's
+    `DefaultAddressRequest` (`notes` vs. `addressNotes`) was found and fixed, and nested
+    validation-error paths (e.g. `customer.defaultAddress.city`) are now mapped to their
+    leaf field name for display. `GET /api/users/me` was unchanged by this pass, so
+    `/profile` still cannot show address/photo/document — expected, not a regression.
+    Two barrel files (`shared/api/index.ts`, `shared/components/index.ts`) that were
+    still stubs got filled in, and `shared/hooks/index.ts` was found to still be a stub
+    too (a real gap that would have broken the build) and was fixed alongside them.
+  - **Doc-drift note, flagged for `pronto-lead`**: `auth/README.md`'s Responsibilities
+    section still describes `POST /api/auth/register` as "one flat JSON shape" — that
+    text predates this multipart change and is now stale; not corrected as part of this
+    documentation pass (out of the requested scope), but worth a follow-up edit.
+  - **Incident note**: a git mistake during this work caused some in-progress files to be
+    lost; they were recovered via IDE Local History plus manual reconstruction of a small
+    number of low-risk files. Resolved, does not affect the shipped state described above.
 
 ## 7. Backend architecture reference (as-built)
 
@@ -426,12 +468,15 @@ has a similar small, deliberate, documented mutual dependency (`GET /api/issues/
 ### 7.2 Environment variables
 
 All sourced from `application.yml`'s `${VAR:default}` placeholders, current as of
-Milestone 7 (includes the hardening-pass addition, `PRONTO_ENVIRONMENT`).
+Milestone 7 (includes the hardening-pass addition, `PRONTO_ENVIRONMENT`) plus the
+`CORS_ALLOWED_ORIGINS` addition that landed with Frontend Milestone 1 (2026-08-15, see §6
+above).
 
 | Variable | Purpose | Required? |
 |---|---|---|
 | `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | PostgreSQL connection | no (all default to local-dev values) |
 | `PRONTO_ENVIRONMENT` | Milestone 7 addition. Selects `local` (default) vs. anything else; consumed by `auth.security.JwtSecretStartupGuard` to decide whether to fail fast on the placeholder `JWT_SECRET`. Not a general Spring-profiles system — a deliberately minimal, single-purpose substitute. | no (defaults `local`) |
+| `CORS_ALLOWED_ORIGINS` | Frontend Milestone 1 addition (2026-08-15). Comma-separated browser CORS allow-list for `/api/**`, consumed by `auth.config.SecurityConfig`'s `corsConfigurationSource()` bean. Added because cross-origin requests from the Vite dev server were being rejected on preflight before this existed. | no (defaults `http://localhost:5173`) |
 | `JWT_SECRET` | HMAC-SHA256 JWT signing key (≥32 bytes) | **yes, in any real deployment** — enforced at startup by `JwtSecretStartupGuard` when `PRONTO_ENVIRONMENT != local` |
 | `JWT_EXPIRATION_SECONDS` | Token TTL | no (defaults `86400` = 24h) |
 | `STORAGE_MODE` | `local` \| `s3` | no (defaults `local`) |

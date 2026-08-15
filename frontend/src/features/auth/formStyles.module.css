@@ -1,0 +1,35 @@
+/* Shared layout primitives for the auth forms (login/register/verify) — imported by
+   each form component rather than duplicated per-file. */
+
+.form {
+  display: flex;
+  flex-direction: column;
+}
+
+.banner {
+  padding: var(--space-4);
+  margin-block-end: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.banner p {
+  margin: 0;
+}
+
+.bannerLink {
+  display: inline-block;
+  margin-block-start: var(--space-2);
+  color: var(--color-error);
+  font-weight: 600;
+}
+
+.sectionTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-block: var(--space-4) var(--space-2);
+}

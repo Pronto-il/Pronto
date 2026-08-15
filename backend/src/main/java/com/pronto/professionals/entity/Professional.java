@@ -56,6 +56,17 @@ public class Professional {
     @Column(name = "profile_image_key", length = 500)
     private String profileImageKey;
 
+    /**
+     * Object-storage key for the required verification document uploaded at
+     * registration (backend registration flow separation task §12) — never the raw
+     * document bytes, same pattern as {@link #profileImageKey}. Populated by
+     * {@code auth.service.AuthService#register} as part of the same registration
+     * transaction, immediately after this row is first saved (needs {@link #id} for the
+     * upload key).
+     */
+    @Column(name = "verification_document_key", length = 500)
+    private String verificationDocumentKey;
+
     @Column(name = "city", length = 100)
     private String city;
 
@@ -152,6 +163,14 @@ public class Professional {
 
     public void setProfileImageKey(String profileImageKey) {
         this.profileImageKey = profileImageKey;
+    }
+
+    public String getVerificationDocumentKey() {
+        return verificationDocumentKey;
+    }
+
+    public void setVerificationDocumentKey(String verificationDocumentKey) {
+        this.verificationDocumentKey = verificationDocumentKey;
     }
 
     public String getCity() {

@@ -53,6 +53,35 @@ public class User {
     @Column(name = "deleted_at")
     private Instant deletedAt;
 
+    /**
+     * Customer default address, collected at registration (backend registration flow
+     * separation task §4). Always {@code null} for a {@code PROFESSIONAL} account.
+     * {@code defaultCity}/{@code defaultStreet}/{@code defaultHouseNumber} are required
+     * at the API layer for a {@code CUSTOMER} registration; the rest are optional. Set
+     * via setters rather than the constructor, mirroring how {@code Professional}'s
+     * optional {@code bio}/{@code city} are populated after construction.
+     */
+    @Column(name = "default_city", length = 100)
+    private String defaultCity;
+
+    @Column(name = "default_street", length = 150)
+    private String defaultStreet;
+
+    @Column(name = "default_house_number", length = 20)
+    private String defaultHouseNumber;
+
+    @Column(name = "default_apartment", length = 20)
+    private String defaultApartment;
+
+    @Column(name = "default_floor", length = 20)
+    private String defaultFloor;
+
+    @Column(name = "default_entrance", length = 20)
+    private String defaultEntrance;
+
+    @Column(name = "default_address_notes", length = 500)
+    private String defaultAddressNotes;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -142,6 +171,62 @@ public class User {
 
     public void setDeletedAt(Instant deletedAt) {
         this.deletedAt = deletedAt;
+    }
+
+    public String getDefaultCity() {
+        return defaultCity;
+    }
+
+    public void setDefaultCity(String defaultCity) {
+        this.defaultCity = defaultCity;
+    }
+
+    public String getDefaultStreet() {
+        return defaultStreet;
+    }
+
+    public void setDefaultStreet(String defaultStreet) {
+        this.defaultStreet = defaultStreet;
+    }
+
+    public String getDefaultHouseNumber() {
+        return defaultHouseNumber;
+    }
+
+    public void setDefaultHouseNumber(String defaultHouseNumber) {
+        this.defaultHouseNumber = defaultHouseNumber;
+    }
+
+    public String getDefaultApartment() {
+        return defaultApartment;
+    }
+
+    public void setDefaultApartment(String defaultApartment) {
+        this.defaultApartment = defaultApartment;
+    }
+
+    public String getDefaultFloor() {
+        return defaultFloor;
+    }
+
+    public void setDefaultFloor(String defaultFloor) {
+        this.defaultFloor = defaultFloor;
+    }
+
+    public String getDefaultEntrance() {
+        return defaultEntrance;
+    }
+
+    public void setDefaultEntrance(String defaultEntrance) {
+        this.defaultEntrance = defaultEntrance;
+    }
+
+    public String getDefaultAddressNotes() {
+        return defaultAddressNotes;
+    }
+
+    public void setDefaultAddressNotes(String defaultAddressNotes) {
+        this.defaultAddressNotes = defaultAddressNotes;
     }
 
     public Instant getCreatedAt() {

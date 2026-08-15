@@ -83,46 +83,86 @@ dependencies.
 
 Auth required: no.
 
-Single endpoint, `role` field discriminates the two shapes. Not modeled as two separate
-DTOs at the JSON level (the wire format is one flat object) — validated conditionally in
-the service layer (professional-only fields are required *iff* `role == PROFESSIONAL`),
-not via unconditional Bean Validation annotations, since those fields don't exist at all
-for a customer registration.
+**Updated by the backend registration flow separation task (post-Milestone-7) — breaking
+change from the original `application/json` contract below.** Single endpoint kept
+(`role` still discriminates the two shapes), but the request body is now
+`multipart/form-data`, not JSON, and Customer/Professional payloads are nested,
+role-specific objects (`customer`/`professional`) rather than one flat object of
+nullable fields. Validated conditionally in the service layer (each nested payload is
+required *iff* `role` matches) plus `@Valid` cascading Bean Validation on whichever
+nested object is present. Frontend consumers of the original JSON contract need to
+switch to multipart and the new nested shape.
 
-**Request — customer:**
+**Why multipart, not JSON:** a Professional registration requires a verification
+document (§ below), and there's no authenticated session yet at registration time to
+drive a separate pre-upload call the way `professionals.service.ProfessionalsService`'s
+post-registration profile-image upload does — so the file travels as a part on this same
+request instead.
+
+**Request parts:**
+
+| Part name | Content-Type | Required | Notes |
+|---|---|---|---|
+| `data` | `application/json` | always | The JSON payload below. |
+| `verificationDocument` | `application/pdf` \| `image/jpeg` \| `image/png` | iff `data.role = PROFESSIONAL` | Ignored if sent for a `CUSTOMER` registration. |
+| `profilePhoto` | `image/jpeg` \| `image/png` \| `image/webp` | never (optional) | Only meaningful when `data.role = PROFESSIONAL`; ignored otherwise. |
+
+**`data` — customer:**
 ```json
 {
   "role": "CUSTOMER",
   "fullName": "ישראל ישראלי",
   "email": "israel@example.com",
-  "password": "at-least-8-chars"
+  "password": "at-least-8-chars",
+  "customer": {
+    "defaultAddress": {
+      "city": "תל אביב",
+      "street": "דיזנגוף",
+      "houseNumber": "100",
+      "apartment": "4",
+      "floor": "2",
+      "entrance": "A",
+      "addressNotes": "כניסה מהחצר"
+    }
+  }
 }
 ```
 
-**Request — professional:**
+**`data` — professional:**
 ```json
 {
   "role": "PROFESSIONAL",
   "fullName": "דוד כהן",
   "email": "david@example.com",
   "password": "at-least-8-chars",
-  "categoryId": 1,
-  "serviceArea": "תל אביב",
-  "basePrice": 150.00
+  "professional": {
+    "categoryId": 1,
+    "serviceArea": "תל אביב",
+    "basePrice": 150.00
+  }
 }
 ```
+
+`confirmPassword` is deliberately not a field anywhere in this contract — it's
+frontend-only validation (`password == confirmPassword` before submitting), never sent
+to or persisted by the backend.
 
 **Field validation:**
 
 | Field | Rule |
 |---|---|
-| `role` | required, one of `CUSTOMER` \| `PROFESSIONAL`. |
+| `role` | required, one of `CUSTOMER` \| `PROFESSIONAL`. Any other value is unparseable JSON to this enum → `400 VALIDATION_ERROR` before the service layer runs at all; there is no way for a client to register as `ADMIN` or any other role. |
 | `fullName` | required, 2–150 chars (matches `users.full_name VARCHAR(150)`). |
 | `email` | required, valid email format, ≤255 chars. Uniqueness checked case-insensitively against `ux_users_email_lower`. |
-| `password` | required, **min 8 characters**. **Assumption, flagged**: no source document specifies a password policy; 8 chars / no additional complexity rule is a deliberately simple MVP default, easy to tighten later without a migration (it's not a stored/derived column, just request validation). |
-| `categoryId` | required *iff* `role = PROFESSIONAL`; must reference an existing `categories.id` (1–8, per the seeded `V10` list). Absent/invalid → `VALIDATION_ERROR`. |
-| `serviceArea` | required *iff* `role = PROFESSIONAL`; 1–150 chars. |
-| `basePrice` | required *iff* `role = PROFESSIONAL`; `> 0`, ≤2 decimal places. **API-layer decision, narrower than the DB**: `professionals.base_price` is nullable in the schema (to allow future edit-only-later flexibility), but this endpoint requires it at registration time, because PRD §1/§7.3/§7.4 show a price offer on every professional's card *before* any request is sent — a professional with a `NULL` price would render incorrectly on Standard/SOS listing screens (Milestones 3–4). Flagged as a judgment call, not a hard requirement from a source doc. |
+| `password` | required, **min 8 characters**. Same MVP-default judgment call as before, unchanged. |
+| `customer` / `customer.defaultAddress` | required *iff* `role = CUSTOMER`; absent → `VALIDATION_ERROR` on `customer.defaultAddress`. |
+| `customer.defaultAddress.city` / `.street` / `.houseNumber` | required, non-blank, size-capped (100/150/20 chars, matching `users.default_*` column lengths). |
+| `customer.defaultAddress.apartment` / `.floor` / `.entrance` / `.addressNotes` | optional. |
+| `professional.categoryId` | required *iff* `role = PROFESSIONAL`; must reference an existing `categories.id` (1–8, per the seeded `V10` list). Absent/invalid → `VALIDATION_ERROR`. |
+| `professional.serviceArea` | required *iff* `role = PROFESSIONAL`; 1–150 chars. |
+| `professional.basePrice` | required *iff* `role = PROFESSIONAL`; `> 0`, ≤2 decimal places. Same judgment call as before (PRD §1/§7.3/§7.4 price-on-card requirement), unchanged. |
+| `verificationDocument` (multipart part) | required *iff* `role = PROFESSIONAL`; absent/empty → `VALIDATION_ERROR`; unsupported content-type → `400 UNSUPPORTED_DOCUMENT_TYPE`; >8MB → `413 IMAGE_TOO_LARGE` (shared error code with image uploads). |
+| `profilePhoto` (multipart part) | always optional; unsupported content-type → `400 UNSUPPORTED_IMAGE_TYPE`; >8MB → `413 IMAGE_TOO_LARGE`. |
 
 **Behavior:**
 1. Reject with `409 DUPLICATE_EMAIL` if `lower(email)` already exists in `users` (including
@@ -130,12 +170,23 @@ for a customer registration.
    `deleted_at`, since the unique index has no partial/`WHERE deleted_at IS NULL` clause;
    see §4 open item for the tension this creates with anonymized-email reuse).
 2. Hash the password (BCrypt, see §3.2).
-3. Insert the `users` row (`email_verified = false`, `role` as given).
+3. Insert the `users` row (`email_verified = false`, `role` as given). If
+   `role = CUSTOMER`, the `default_city`/`default_street`/`default_house_number`/
+   `default_apartment`/`default_floor`/`default_entrance`/`default_address_notes`
+   columns (added by `V20__alter_users_add_default_address.sql`) are populated in the
+   same insert.
 4. If `role = PROFESSIONAL`: also insert the `professionals` row
    (`category_id`, `service_area`, `base_price`, `approval_status` defaults to
-   `'APPROVED'` per the inert-column decision — nothing else to do, no workflow step), plus
+   `'APPROVED'` per the inert-column decision — nothing else to do, no workflow step),
+   upload `verificationDocument` and persist its key to
+   `verification_document_key` (added by
+   `V21__alter_professionals_add_verification_document.sql`), upload `profilePhoto` if
+   supplied and persist its key to the pre-existing `profile_image_key`, plus
    an `sos_availability` row defaulting to `isAvailable = false` — see §4, added by the
    `V13__create_sos_availability.sql` schema-gap fix (2026-08-13, ahead of Milestone 4).
+   All of the above (`users` + `professionals` + document upload) happens on one
+   `@Transactional` service method — a failure at any step rolls back the whole
+   registration, no orphaned `users` row.
 5. Generate a 6-digit numeric verification code, insert into `verification_codes`
    (`purpose = 'EMAIL_VERIFICATION'`, `expires_at = now() + 15 minutes` — see §3.3 for the
    duration rationale), and dispatch it via the configured `EmailSender` (§3.3).
@@ -143,7 +194,7 @@ for a customer registration.
    verified (login enforces `EMAIL_NOT_VERIFIED` otherwise), so registration and login are
    deliberately kept as separate steps rather than auto-logging-in an unverified account.
 
-**Response `201`:**
+**Response `201`** (unchanged from the original contract):
 ```json
 {
   "userId": 42,
@@ -153,7 +204,8 @@ for a customer registration.
 }
 ```
 
-**Status codes**: `201` success · `400 VALIDATION_ERROR` · `409 DUPLICATE_EMAIL`.
+**Status codes**: `201` success · `400 VALIDATION_ERROR` · `400 UNSUPPORTED_DOCUMENT_TYPE`
+· `400 UNSUPPORTED_IMAGE_TYPE` · `413 IMAGE_TOO_LARGE` · `409 DUPLICATE_EMAIL`.
 
 ---
 

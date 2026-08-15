@@ -154,6 +154,7 @@ Reasoning:
 |---|---|
 | `description` | required, 10–2000 characters. **Assumption, flagged**: no source document specifies a length bound; 10 is a floor to avoid classifying near-empty junk, 2000 bounds OpenAI token usage/cost. Trivial to tune later — request validation only, not a stored-column constraint (the `issues.description` column is `TEXT`, unbounded). |
 | `imageKeys` | optional; if present, array of strings, each a key previously returned by `POST /api/storage/images`. **Recommendation, flagged**: capped at 6 images per call — no DB-level cap exists (`data-model.md` §2.8 explicitly leaves this to the API layer), 6 is a judgment call for cost/latency control, easy to change without a migration. Each key must exist in storage and belong to the caller (§3.3) — otherwise `400 IMAGE_KEY_INVALID`. |
+| `clarificationAnswers` | optional, at most 3 entries, each `{ "question": "...", "answer": "..." }` (both required, non-blank). See "Clarification-question extension" below — omitted/empty for the initial call. |
 
 **Behavior:**
 1. Resolve caller from JWT; reject `403 FORBIDDEN` if `role != CUSTOMER`.
@@ -161,34 +162,97 @@ Reasoning:
 3. For each `imageKeys` entry: verify it exists in storage and its embedded owner matches
    the caller (§3.3). Any failure → `400 IMAGE_KEY_INVALID` (do not partially process —
    fail the whole request if any key is bad).
-4. Call `ai.ClassificationService.classify(description, imageKeys)`. Internally, the
-   service resolves each key to raw bytes via the `storage` package's `StorageClient`
-   (**not** via the public `imageUrl`, see §3.1's reachability note) and delegates to the
-   configured `AiClassificationClient` (mock or real OpenAI, per `pronto.ai.mode`, §3.1).
-5. Map the AI's returned category identifier to a `categories` row (join on `code`). If the
-   AI response doesn't match any seeded category code, apply the fallback in §3.1 (flagged
-   recommendation, not a hard requirement).
-6. On AI client failure (timeout, non-2xx, malformed/unparseable response) after the
-   configured retry policy → `502 AI_SERVICE_ERROR`. No DB state to roll back (nothing was
-   written).
-7. Return `200` with the suggestion. **Nothing is persisted at any step above.**
+4. If `clarificationAnswers` is absent/empty, call
+   `ai.ClassificationService.classify(description, imageKeys)` (the initial pass — may
+   return `CLASSIFIED` or `QUESTIONS`, see below). If `clarificationAnswers` is present,
+   call `ai.ClassificationService.classifyWithClarification(description, imageKeys,
+   clarificationAnswers)` instead (the single allowed clarification round — always
+   resolves to `CLASSIFIED`). Internally, the service resolves each key to raw bytes via
+   the `storage` package's `StorageClient` (**not** via the public `imageUrl`, see §3.1's
+   reachability note) and delegates to the configured `AiClassificationClient` (mock or
+   real OpenAI, per `pronto.ai.mode`, §3.1).
+5. When the AI result is `CLASSIFIED`, map its returned category identifier to a
+   `categories` row (join on `code`). If the AI response doesn't match any seeded category
+   code, apply the fallback in §3.1 (flagged recommendation, not a hard requirement). When
+   the result is `QUESTIONS`, no category mapping is attempted.
+6. On AI client failure (timeout, non-2xx, malformed/unparseable response, or a
+   clarification round that fails to resolve to `CLASSIFIED`) after the configured retry
+   policy → `502 AI_SERVICE_ERROR`. No DB state to roll back (nothing was written).
+7. Return `200` with the suggestion or the clarification questions. **Nothing is persisted
+   at any step above.**
 
-**Response `200`:**
+**Response `200` (`CLASSIFIED`):**
 ```json
 {
+  "status": "CLASSIFIED",
   "suggestedCategoryId": 1,
   "suggestedCategoryCode": "plumbing",
   "confidence": 0.87,
-  "explanation": "התיאור מזכיר נזילת מים מתחת לכיור, מה שמעיד באופן מובהק על בעיה באינסטלציה."
+  "explanation": "התיאור מזכיר נזילת מים מתחת לכיור, מה שמעיד באופן מובהק על בעיה באינסטלציה.",
+  "questions": []
 }
 ```
 
 | Field | Notes |
 |---|---|
-| `suggestedCategoryId` | FK-able `categories.id`, ready to be echoed back (as-is or overridden) in `POST /api/issues`'s `categoryId`. |
-| `suggestedCategoryCode` | `categories.code`, included for convenience/debugging (frontend can display without a second lookup). |
+| `status` | `"CLASSIFIED"` \| `"QUESTIONS"` — see "Clarification-question extension" below. |
+| `suggestedCategoryId` | FK-able `categories.id` when `status = CLASSIFIED`, `null` when `status = QUESTIONS`. Ready to be echoed back (as-is or overridden) in `POST /api/issues`'s `categoryId`. |
+| `suggestedCategoryCode` | `categories.code` when `status = CLASSIFIED`, `null` when `status = QUESTIONS` — included for convenience/debugging (frontend can display without a second lookup). |
 | `confidence` | `0.0`–`1.0`, nullable. **Assumption, flagged**: the PRD never mentions a confidence score; included because it's a natural, low-cost byproduct of an LLM classification and gives the AI Review screen a way to signal "AI wasn't sure" (e.g. low value → nudge the customer to double-check). If `pronto-coding`/the real OpenAI prompt doesn't reliably produce a usable confidence number, this field returning `null` is acceptable — **not a hard requirement**, remove if it proves more trouble than value. |
-| `explanation` | Hebrew, short human-readable justification (PRD/`overview.md` §3.4 explicitly requires "a short explanation"). |
+| `explanation` | Hebrew, short human-readable justification (PRD/`overview.md` §3.4 explicitly requires "a short explanation"). English when the real OpenAI client is active — its prompt is written/validated in English (see §3.1); switching to Hebrew is a prompt-only change, not attempted this pass. |
+| `questions` | Empty when `status = CLASSIFIED`; 1-3 clarification questions when `status = QUESTIONS`. |
+
+### Clarification-question extension
+
+**Problem this solves**: a written description and its attached images can meaningfully
+disagree (e.g. "the air conditioner is leaking water" over a photo that looks like a
+plumbing leak near a wall), or genuinely support two different categories equally well.
+Guessing in that situation produces a worse suggestion than asking one or two short,
+closed-ended questions would.
+
+**Decision**: the *same* `POST /api/issues/classify` endpoint handles both the initial pass
+and the clarification round — no new endpoint. This keeps the stateless, repeatable-call
+design of §2.1/§3.4 intact (no server-side session is created to link the two calls); the
+frontend simply echoes the original `description`/`imageKeys` back on the second call,
+together with `clarificationAnswers`.
+
+**Response `200` (`QUESTIONS`)** — returned by the *initial* call only, never by a call that
+already included `clarificationAnswers`:
+```json
+{
+  "status": "QUESTIONS",
+  "suggestedCategoryId": null,
+  "suggestedCategoryCode": null,
+  "confidence": 0.61,
+  "explanation": "The description suggests an air-conditioning issue, while the image may indicate a plumbing leak.",
+  "questions": [
+    {
+      "id": "q1",
+      "question": "Where does the water appear to be coming from?",
+      "options": ["Directly from the air conditioner", "From a pipe or wall near the air conditioner", "I am not sure"]
+    }
+  ]
+}
+```
+
+**Round trip**: the frontend displays `questions`, collects the customer's answers, and
+calls `POST /api/issues/classify` again with the *same* `description`/`imageKeys` plus:
+```json
+{
+  "description": "The air conditioner is leaking water.",
+  "imageKeys": [],
+  "clarificationAnswers": [
+    { "question": "Where does the water appear to be coming from?", "answer": "Directly from the air conditioner" }
+  ]
+}
+```
+This second call always performs exactly one additional AI request and always returns
+`status = "CLASSIFIED"` — the backend never returns `QUESTIONS` again for a request that
+already carries `clarificationAnswers` (enforced in `OpenAiClassificationClient`; a
+non-compliant AI response is treated as `502 AI_SERVICE_ERROR`, same as any other malformed
+response). At most 3 questions are ever returned, and OpenAI is instructed not to inflate
+confidence just because clarification answers were provided — see
+`backend/src/main/java/com/pronto/ai/README.md` for the full prompt/schema design.
 
 **Status codes**: `200` success · `400 VALIDATION_ERROR` · `400 IMAGE_KEY_INVALID` ·
 `401 UNAUTHORIZED` · `403 FORBIDDEN` · `502 AI_SERVICE_ERROR`.

@@ -52,4 +52,18 @@ class ImageKeyUtilsTest {
         assertThat(ImageKeyUtils.isPubliclyReadable("garbage")).isFalse();
         assertThat(ImageKeyUtils.isPubliclyReadable(null)).isFalse();
     }
+
+    @Test
+    void verificationDocumentKey_ownershipResolvesByUploadingUserId() {
+        // Backend registration flow separation task §12: a verification document is a
+        // private compliance artifact, not a public profile image -- it must NOT match
+        // isPubliclyReadable's professionals/ prefix, but still needs the same strict
+        // per-caller ownership check issue images get.
+        String key = "verification-documents/100/9f1c2e4a-3b7d-4e21-9a10-2f8e1c6b5a90.pdf";
+
+        assertThat(ImageKeyUtils.isPubliclyReadable(key)).isFalse();
+        assertThat(ImageKeyUtils.extractOwnerId(key)).contains(100L);
+        assertThat(ImageKeyUtils.belongsTo(key, 100L)).isTrue();
+        assertThat(ImageKeyUtils.belongsTo(key, 101L)).isFalse();
+    }
 }

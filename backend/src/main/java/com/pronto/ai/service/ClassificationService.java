@@ -1,8 +1,10 @@
 package com.pronto.ai.service;
 
 import com.pronto.ai.client.AiClassificationClient;
+import com.pronto.ai.client.ClarificationAnswer;
 import com.pronto.ai.client.ClassificationResult;
 import com.pronto.ai.client.ImageAttachment;
+import com.pronto.ai.dto.ClassificationStatus;
 import com.pronto.ai.dto.ClassificationSuggestion;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
@@ -19,6 +21,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Orchestrates {@code POST /api/issues/classify} (§2.1 steps 4-5): resolves each image key
@@ -51,15 +54,47 @@ public class ClassificationService {
 
     public ClassificationSuggestion classify(String description, List<String> imageKeys) {
         List<ImageAttachment> images = resolveImages(imageKeys);
+        ClassificationResult result = callClient(() -> aiClassificationClient.classify(description, images));
+        return toSuggestion(result);
+    }
 
-        ClassificationResult result;
+    /**
+     * Exactly one additional AI request after the customer answered the clarification
+     * questions from a prior {@link #classify} call that returned
+     * {@code ClassificationStatus.QUESTIONS} — see
+     * {@code docs/architecture/api-contract-issues.md} §2.1's clarification-question
+     * extension. {@code description}/{@code imageKeys} are the same original values passed
+     * to {@link #classify}; there is no server-side session linking the two calls (mirrors
+     * this endpoint's existing stateless design), so the caller round-trips them.
+     */
+    public ClassificationSuggestion classifyWithClarification(String description, List<String> imageKeys,
+                                                                List<ClarificationAnswer> clarificationAnswers) {
+        List<ImageAttachment> images = resolveImages(imageKeys);
+        ClassificationResult result = callClient(() ->
+                aiClassificationClient.classifyWithClarification(description, images, clarificationAnswers));
+        return toSuggestion(result);
+    }
+
+    private ClassificationResult callClient(Supplier<ClassificationResult> call) {
         try {
-            result = aiClassificationClient.classify(description, images);
+            return call.get();
         } catch (ApiException e) {
             throw e;
         } catch (Exception e) {
             log.warn("AI classification client threw an unexpected exception.", e);
             throw new ApiException(ErrorCode.AI_SERVICE_ERROR, "AI classification service failed to produce a result.");
+        }
+    }
+
+    /**
+     * A {@code QUESTIONS} result has no category to resolve — it's passed straight through.
+     * A {@code CLASSIFIED} result gets the existing category-code-to-row mapping, with the
+     * {@code general_handyman} fallback if the AI's code doesn't match any seeded category.
+     */
+    private ClassificationSuggestion toSuggestion(ClassificationResult result) {
+        if (result.status() == ClassificationStatus.QUESTIONS) {
+            return new ClassificationSuggestion(ClassificationStatus.QUESTIONS, null, null,
+                    result.confidence(), result.explanation(), result.questions());
         }
 
         List<Category> categories = categoryRepository.findAll();
@@ -82,7 +117,8 @@ public class ClassificationService {
             confidence = null;
         }
 
-        return new ClassificationSuggestion(matched.getId(), matched.getCode(), confidence, explanation);
+        return new ClassificationSuggestion(ClassificationStatus.CLASSIFIED, matched.getId(), matched.getCode(),
+                confidence, explanation, List.of());
     }
 
     private List<ImageAttachment> resolveImages(List<String> imageKeys) {

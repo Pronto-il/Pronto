@@ -17,6 +17,15 @@ Implements `docs/architecture/api-contract-issues.md` §2.1–2.2 and
   called repeatedly (e.g. after the customer edits their description) with zero side
   effects. Lives under `/api/issues/*`, not a standalone `/api/ai/*` route — see the
   controller's Javadoc for the full "package placement" rationale from the contract doc.
+  **Clarification-question extension**: when `ai` can't confidently pick one category
+  (description/image contradiction, or two categories realistically possible), the
+  response comes back `status = QUESTIONS` with 1-3 clarification questions instead of a
+  suggestion. The frontend re-calls this same endpoint with the original
+  `description`/`imageKeys` plus `clarificationAnswers`; `IssuesService.classify` detects
+  that field and routes to `ClassificationService.classifyWithClarification` (the single
+  allowed follow-up) instead of a fresh initial pass. See
+  `docs/architecture/api-contract-issues.md` §2.1's "Clarification-question extension" and
+  `ai/README.md` for the full design.
 - `POST /api/issues` — persists the `issues` row and any `issue_images` rows in a single
   transaction, only meaningfully reachable after the customer has seen/confirmed-or-overridden
   the AI suggestion (there is no server-side link back to a specific prior `/classify` call
@@ -50,7 +59,8 @@ Implements `docs/architecture/api-contract-issues.md` §2.1–2.2 and
 | `entity.IssueUrgencyType` / `entity.IssueStatus` | Enums mirroring the `issues` table's `CHECK` constraints. |
 | `repository.IssueRepository` | `JpaRepository`, plus (since Milestone 3) `bookIfOpen`/`revertToOpen` — the atomic `UPDATE ... WHERE <status guard>` transitions `bookings.service.BookingsService` uses for the booking flow (`docs/architecture/api-contract-bookings.md` §3.2/§3.3) — and (since Milestone 5) `expireIfBooked`, the same guarded-`UPDATE` shape targeting `EXPIRED` instead of `OPEN`, called by `bookings.service.BookingsService.expireIfPending` as part of the `PENDING`-order timeout sweep (`docs/architecture/api-contract-notifications.md` §4.5). |
 | `repository.IssueImageRepository` | `JpaRepository`, plus `findByIssueId` (used by `GET /api/issues/{id}`). |
-| `dto.ClassifyRequest` / `dto.ClassifyResponse` | `POST /api/issues/classify` wire shapes. |
+| `dto.ClassifyRequest` / `dto.ClassifyResponse` | `POST /api/issues/classify` wire shapes. `ClassifyRequest.clarificationAnswers` (optional, max 3) is the second-call shape of the clarification extension. |
+| `dto.ClarificationAnswerRequest` | One `{question, answer}` entry inside `ClassifyRequest.clarificationAnswers`. |
 | `dto.CreateIssueRequest` / `dto.IssueResponse` / `dto.IssueImageResponse` | `POST /api/issues` wire shapes. `CreateIssueRequest` deliberately carries no AI-suggestion field (see "Responsibilities" above). |
 | `dto.IssueDetailResponse` / `dto.LatestOrderSummary` | `GET /api/issues/{id}` wire shapes (Milestone 3). `LatestOrderSummary` is the one place this package depends on `bookings.entity.OrderStatus`/`bookings.repository.OrderRepository` — a deliberate, documented exception to the otherwise one-directional `bookings -> issues` dependency, per the contract doc §2.1. |
 | `service.IssuesService` | All business logic for all three endpoints, including the shared `imageKeys` ownership/existence validation and (Milestone 3) `getById`'s ownership/professional-order-existence authorization. |

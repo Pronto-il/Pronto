@@ -15,6 +15,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class ProntoApplication {
 
     public static void main(String[] args) {
+        System.out.println("WORKING DIR = " + System.getProperty("user.dir"));
         SpringApplication.run(ProntoApplication.class, args);
     }
 

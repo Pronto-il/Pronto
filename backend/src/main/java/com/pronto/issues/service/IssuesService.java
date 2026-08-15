@@ -1,5 +1,6 @@
 package com.pronto.issues.service;
 
+import com.pronto.ai.client.ClarificationAnswer;
 import com.pronto.ai.dto.ClassificationSuggestion;
 import com.pronto.ai.service.ClassificationService;
 import com.pronto.bookings.entity.Order;
@@ -71,12 +72,27 @@ public class IssuesService {
         this.userRepository = userRepository;
     }
 
-    /** §2.1. Stateless — no DB write, may be called repeatedly with no side effects. */
+    /**
+     * §2.1. Stateless — no DB write, may be called repeatedly with no side effects. When
+     * {@code request.clarificationAnswers()} is present (the customer answered a prior
+     * {@code QUESTIONS} response), performs the single allowed clarification round instead of
+     * a fresh initial classification — see the clarification-question extension in §2.1.
+     */
     public ClassifyResponse classify(Long callerId, ClassifyRequest request) {
         List<String> imageKeys = validateImageKeys(callerId, request.imageKeys());
-        ClassificationSuggestion suggestion = classificationService.classify(request.description(), imageKeys);
-        return new ClassifyResponse(suggestion.categoryId(), suggestion.categoryCode(),
-                suggestion.confidence(), suggestion.explanation());
+
+        ClassificationSuggestion suggestion;
+        if (request.clarificationAnswers() != null && !request.clarificationAnswers().isEmpty()) {
+            List<ClarificationAnswer> answers = request.clarificationAnswers().stream()
+                    .map(a -> new ClarificationAnswer(a.question(), a.answer()))
+                    .toList();
+            suggestion = classificationService.classifyWithClarification(request.description(), imageKeys, answers);
+        } else {
+            suggestion = classificationService.classify(request.description(), imageKeys);
+        }
+
+        return new ClassifyResponse(suggestion.status(), suggestion.categoryId(), suggestion.categoryCode(),
+                suggestion.confidence(), suggestion.explanation(), suggestion.questions());
     }
 
     /** §2.2. First (and only) DB write in this milestone's request flow. */

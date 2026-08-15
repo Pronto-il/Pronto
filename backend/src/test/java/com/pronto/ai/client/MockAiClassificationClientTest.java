@@ -1,5 +1,6 @@
 package com.pronto.ai.client;
 
+import com.pronto.ai.dto.ClassificationStatus;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -25,15 +26,18 @@ class MockAiClassificationClientTest {
     void classify_matchesExpectedCategoryByKeyword(String description, String expectedCode) {
         ClassificationResult result = client.classify(description, List.of());
 
+        assertThat(result.status()).isEqualTo(ClassificationStatus.CLASSIFIED);
         assertThat(result.categoryCode()).isEqualTo(expectedCode);
         assertThat(result.confidence()).isNotNull();
         assertThat(result.explanation()).startsWith("[מוק]");
+        assertThat(result.questions()).isEmpty();
     }
 
     @Test
     void classify_fallsBackToGeneralHandymanWhenNoKeywordMatches() {
         ClassificationResult result = client.classify("יש לי בעיה מוזרה בבית שלא ברור מה היא", List.of());
 
+        assertThat(result.status()).isEqualTo(ClassificationStatus.CLASSIFIED);
         assertThat(result.categoryCode()).isEqualTo("general_handyman");
         assertThat(result.confidence()).isNull();
         assertThat(result.explanation()).startsWith("[מוק]");
@@ -54,5 +58,24 @@ class MockAiClassificationClientTest {
     void classify_handlesNullDescriptionWithoutThrowing() {
         ClassificationResult result = client.classify(null, List.of());
         assertThat(result.categoryCode()).isEqualTo("general_handyman");
+    }
+
+    @Test
+    void classify_neverReturnsQuestions_mockHasNoContradictionDetection() {
+        ClassificationResult result = client.classify("יש נזילת מים מתחת לכיור במטבח", List.of());
+
+        assertThat(result.status()).isEqualTo(ClassificationStatus.CLASSIFIED);
+    }
+
+    @Test
+    void classifyWithClarification_ignoresAnswersAndDelegatesToClassify() {
+        List<ClarificationAnswer> answers = List.of(new ClarificationAnswer("Where is the water coming from?",
+                "Directly from the air conditioner"));
+
+        ClassificationResult result = client.classifyWithClarification("יש נזילת מים מתחת לכיור במטבח", List.of(),
+                answers);
+
+        assertThat(result.status()).isEqualTo(ClassificationStatus.CLASSIFIED);
+        assertThat(result.categoryCode()).isEqualTo("plumbing");
     }
 }

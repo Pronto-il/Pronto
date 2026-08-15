@@ -62,7 +62,11 @@ public enum ErrorCode {
     // Reviews/favorites/matching additions (professional profile, reviews, favorites,
     // service address, SOS surcharge). Lead-approved design, pronto-planning.
     REVIEW_ORDER_NOT_COMPLETED(HttpStatus.CONFLICT),
-    REVIEW_ALREADY_EXISTS(HttpStatus.CONFLICT);
+    REVIEW_ALREADY_EXISTS(HttpStatus.CONFLICT),
+
+    // Backend registration flow separation (customer default address, professional
+    // verification document upload as part of POST /api/auth/register).
+    UNSUPPORTED_DOCUMENT_TYPE(HttpStatus.BAD_REQUEST);
 
     private final HttpStatus httpStatus;
 

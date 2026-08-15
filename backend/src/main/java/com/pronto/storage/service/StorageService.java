@@ -4,6 +4,7 @@ import com.pronto.common.dto.FieldError;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
+import com.pronto.storage.DocumentContentType;
 import com.pronto.storage.ImageContentType;
 import com.pronto.storage.ImageKeyUtils;
 import com.pronto.storage.client.StorageClient;
@@ -63,6 +64,39 @@ public class StorageService {
         } catch (StorageException e) {
             throw new ApiException(ErrorCode.STORAGE_SERVICE_ERROR, "Failed to store uploaded image.");
         }
+    }
+
+    /**
+     * Document counterpart to {@link #uploadWithKey} — same "caller resolves its own
+     * key template, hand the finished key here" contract, but validated against
+     * {@link DocumentContentType} (PDF/image) instead of {@link ImageContentType}.
+     * Used by {@code auth.service.AuthService} for a Professional registration's
+     * required verification document (backend registration flow separation task §12).
+     */
+    public StoredObject uploadDocumentWithKey(String key, MultipartFile file) {
+        DocumentContentType type = validateAndResolveDocumentType(file);
+        byte[] content = readBytes(file);
+        try {
+            return storageClient.upload(key, content, type.contentType());
+        } catch (StorageException e) {
+            throw new ApiException(ErrorCode.STORAGE_SERVICE_ERROR, "Failed to store uploaded document.");
+        }
+    }
+
+    private DocumentContentType validateAndResolveDocumentType(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
+                    List.of(new FieldError("verificationDocument", "is required")));
+        }
+
+        DocumentContentType type = DocumentContentType.fromContentType(file.getContentType())
+                .orElseThrow(() -> new ApiException(ErrorCode.UNSUPPORTED_DOCUMENT_TYPE,
+                        "Unsupported document content type: " + file.getContentType()));
+
+        if (file.getSize() > MAX_SIZE_BYTES) {
+            throw new ApiException(ErrorCode.IMAGE_TOO_LARGE, "File exceeds the maximum allowed size of 8 MB.");
+        }
+        return type;
     }
 
     private ImageContentType validateAndResolveType(MultipartFile file) {

@@ -15,7 +15,18 @@ import java.util.regex.Pattern;
  */
 public final class ImageKeyUtils {
 
-    private static final Pattern OWNER_PATTERN = Pattern.compile("^customers/(\\d+)/.*");
+    /**
+     * Matches both {@code customers/{callerId}/...} (issue images) and
+     * {@code verification-documents/{callerId}/...} (Professional registration
+     * verification documents, backend registration flow separation task §12) — the
+     * latter is deliberately NOT under the public {@link #PUBLIC_PREFIX}: unlike a
+     * profile image, a verification document is a private compliance artifact, so it
+     * keeps the same strict per-caller ownership check as issue images, just keyed by
+     * the uploading user's id rather than a professional row id (registration runs
+     * before the caller has a JWT/{@code AuthenticatedUser} tied to a professional id).
+     */
+    private static final Pattern OWNER_PATTERN =
+            Pattern.compile("^(?:customers|verification-documents)/(\\d+)/.*");
 
     /** Prefix for professional profile-image keys (see
      * {@code professionals.service.ProfessionalsService#uploadProfileImage}'s

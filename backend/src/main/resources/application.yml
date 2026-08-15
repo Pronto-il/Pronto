@@ -25,11 +25,17 @@ spring:
 
   servlet:
     multipart:
-      # §2.3's recommended 8 MB cap on an uploaded image. Exceeding this throws
-      # MaxUploadSizeExceededException, mapped to 413 IMAGE_TOO_LARGE by
-      # common.exception.GlobalExceptionHandler. See docs/architecture/api-contract-issues.md §2.3.
+      # §2.3's recommended 8 MB cap on any single uploaded file (image or, per the
+      # backend registration flow separation task, a Professional's verification
+      # document). Exceeding this throws MaxUploadSizeExceededException, mapped to 413
+      # IMAGE_TOO_LARGE by common.exception.GlobalExceptionHandler. See
+      # docs/architecture/api-contract-issues.md §2.3.
       max-file-size: 8MB
-      max-request-size: 8MB
+      # POST /api/auth/register can carry up to two files in one request (required
+      # verification document + optional profile photo) plus the JSON data part, so the
+      # whole-request cap must exceed the single-file cap above -- 20MB comfortably
+      # covers two 8MB files with headroom for multipart overhead.
+      max-request-size: 20MB
 
 pronto:
   # Milestone 7 hardening (docs/architecture/hardening-plan.md §5.1). This codebase has no

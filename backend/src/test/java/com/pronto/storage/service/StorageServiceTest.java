@@ -14,7 +14,9 @@ import org.springframework.mock.web.MockMultipartFile;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 class StorageServiceTest {
@@ -129,5 +131,59 @@ class StorageServiceTest {
         assertThatThrownBy(() -> storageService.retrieve(caller, otherCustomersKey))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.FORBIDDEN));
+    }
+
+    // --- uploadDocumentWithKey (backend registration flow separation task §12) ---
+
+    @Test
+    void uploadDocumentWithKey_rejectsMissingFile() {
+        assertThatThrownBy(() -> storageService.uploadDocumentWithKey("verification-documents/42/x.pdf", null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+    }
+
+    @Test
+    void uploadDocumentWithKey_rejectsUnsupportedContentType() {
+        MockMultipartFile file = new MockMultipartFile("file", "malware.exe",
+                "application/octet-stream", "content".getBytes());
+
+        assertThatThrownBy(() -> storageService.uploadDocumentWithKey("verification-documents/42/x.exe", file))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.UNSUPPORTED_DOCUMENT_TYPE));
+    }
+
+    @Test
+    void uploadDocumentWithKey_rejectsFileLargerThan8Mb() {
+        byte[] tooLarge = new byte[(int) StorageService.MAX_SIZE_BYTES + 1];
+        MockMultipartFile file = new MockMultipartFile("file", "big.pdf", "application/pdf", tooLarge);
+
+        assertThatThrownBy(() -> storageService.uploadDocumentWithKey("verification-documents/42/x.pdf", file))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.IMAGE_TOO_LARGE));
+    }
+
+    @Test
+    void uploadDocumentWithKey_acceptsPdfAndDelegatesToStorageClient() {
+        MockMultipartFile file = new MockMultipartFile("file", "license.pdf", "application/pdf", "bytes".getBytes());
+        String key = "verification-documents/42/uuid.pdf";
+        when(storageClient.upload(eq(key), any(), eq("application/pdf")))
+                .thenReturn(new StoredObject(key, "http://localhost:8080/x", "application/pdf", 5));
+
+        StoredObject result = storageService.uploadDocumentWithKey(key, file);
+
+        assertThat(result.key()).isEqualTo(key);
+        assertThat(result.contentType()).isEqualTo("application/pdf");
+    }
+
+    @Test
+    void uploadDocumentWithKey_alsoAcceptsAPhotographedDocumentAsAnImage() {
+        MockMultipartFile file = new MockMultipartFile("file", "license.jpg", "image/jpeg", "bytes".getBytes());
+        String key = "verification-documents/42/uuid.jpg";
+        when(storageClient.upload(eq(key), any(), eq("image/jpeg")))
+                .thenReturn(new StoredObject(key, "http://localhost:8080/x", "image/jpeg", 5));
+
+        StoredObject result = storageService.uploadDocumentWithKey(key, file);
+
+        assertThat(result.contentType()).isEqualTo("image/jpeg");
     }
 }

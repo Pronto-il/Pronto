@@ -1,5 +1,6 @@
 package com.pronto.ai.client;
 
+import com.pronto.ai.dto.ClassificationStatus;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -56,13 +57,27 @@ public class MockAiClassificationClient implements AiClassificationClient {
                             + "\" שזוהתה בתיאור, המתאימה לקטגוריה \"" + rule.categoryCode() + "\".";
                     // Fixed confidence for a deterministic keyword hit — a mock has no real
                     // notion of certainty; 0.7 is a judgment call, not a hard requirement.
-                    return new ClassificationResult(rule.categoryCode(), 0.7, explanation);
+                    return new ClassificationResult(ClassificationStatus.CLASSIFIED, rule.categoryCode(), 0.7,
+                            explanation, List.of());
                 }
             }
         }
 
         String explanation = "[מוק] לא זוהתה מילת מפתח מתאימה בתיאור; הוחזרה קטגוריית ברירת המחדל \"הנדימן כללי\".";
-        return new ClassificationResult(FALLBACK_CATEGORY_CODE, null, explanation);
+        return new ClassificationResult(ClassificationStatus.CLASSIFIED, FALLBACK_CATEGORY_CODE, null, explanation,
+                List.of());
+    }
+
+    /**
+     * Mock has no contradiction-detection/vision capability — {@link #classify} never
+     * returns {@code QUESTIONS} in the first place (keyword heuristic only), so there is
+     * nothing to reconcile here. {@code clarificationAnswers} is accepted (to satisfy the
+     * interface contract) but ignored, same spirit as {@link #classify} ignoring images.
+     */
+    @Override
+    public ClassificationResult classifyWithClarification(String description, List<ImageAttachment> images,
+                                                            List<ClarificationAnswer> clarificationAnswers) {
+        return classify(description, images);
     }
 
     private record KeywordRule(String categoryCode, List<String> keywords) {

@@ -1,7 +1,10 @@
 package com.pronto.auth.service;
 
+import com.pronto.auth.dto.CustomerRegistrationData;
+import com.pronto.auth.dto.DefaultAddressRequest;
 import com.pronto.auth.dto.LoginRequest;
 import com.pronto.auth.dto.LoginResponse;
+import com.pronto.auth.dto.ProfessionalRegistrationData;
 import com.pronto.auth.dto.RegisterRequest;
 import com.pronto.auth.dto.RegisterResponse;
 import com.pronto.auth.dto.UserSummary;
@@ -20,12 +23,17 @@ import com.pronto.common.exception.ErrorCode;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.CategoryRepository;
 import com.pronto.professionals.repository.ProfessionalRepository;
+import com.pronto.storage.DocumentContentType;
+import com.pronto.storage.ImageContentType;
+import com.pronto.storage.client.StoredObject;
+import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.entity.UserRole;
 import com.pronto.users.repository.UserRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.security.SecureRandom;
@@ -33,6 +41,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Registration, email verification, and login, per
@@ -59,6 +68,7 @@ public class AuthService {
     private final EmailSender emailSender;
     private final JwtService jwtService;
     private final LoginAttemptRecorder loginAttemptRecorder;
+    private final StorageService storageService;
 
     public AuthService(UserRepository userRepository,
                         ProfessionalRepository professionalRepository,
@@ -68,7 +78,8 @@ public class AuthService {
                         PasswordEncoder passwordEncoder,
                         EmailSender emailSender,
                         JwtService jwtService,
-                        LoginAttemptRecorder loginAttemptRecorder) {
+                        LoginAttemptRecorder loginAttemptRecorder,
+                        StorageService storageService) {
         this.userRepository = userRepository;
         this.professionalRepository = professionalRepository;
         this.sosAvailabilityRepository = sosAvailabilityRepository;
@@ -78,11 +89,20 @@ public class AuthService {
         this.emailSender = emailSender;
         this.jwtService = jwtService;
         this.loginAttemptRecorder = loginAttemptRecorder;
+        this.storageService = storageService;
     }
 
+    /**
+     * {@code verificationDocument}/{@code profilePhoto} are the multipart file parts
+     * from {@code AuthController#register} — only consulted (and only validated) when
+     * {@code request.role() == PROFESSIONAL}; a Customer registration ignores both,
+     * even if a client mistakenly sends them (backend registration flow separation
+     * task §4-15).
+     */
     @Transactional
-    public RegisterResponse register(RegisterRequest request) {
-        validateRoleSpecificFields(request);
+    public RegisterResponse register(RegisterRequest request, MultipartFile verificationDocument,
+                                      MultipartFile profilePhoto) {
+        validateRoleSpecificFields(request, verificationDocument);
 
         if (userRepository.existsByEmailIgnoreCase(request.email())) {
             // Includes soft-deleted rows — the unique index has no `WHERE deleted_at IS
@@ -92,11 +112,41 @@ public class AuthService {
 
         String passwordHash = passwordEncoder.encode(request.password());
         User user = new User(request.fullName(), request.email(), passwordHash, request.role());
+
+        if (request.role() == UserRole.CUSTOMER) {
+            applyDefaultAddress(user, request.customer());
+        }
         user = userRepository.save(user);
 
         if (request.role() == UserRole.PROFESSIONAL) {
-            Professional professional = new Professional(
-                    user.getId(), request.categoryId(), request.serviceArea(), request.basePrice());
+            ProfessionalRegistrationData professionalData = request.professional();
+            Professional professional = new Professional(user.getId(), professionalData.categoryId(),
+                    professionalData.serviceArea(), professionalData.basePrice());
+            // Saved once here (IDENTITY generation assigns the id immediately) so the
+            // storage key templates below — same {professionalId}-keyed shape as
+            // professionals.service.ProfessionalsService#uploadProfileImage — have a
+            // real id to build on, then saved again once the keys are set.
+            professional = professionalRepository.save(professional);
+
+            String documentExtension = DocumentContentType.fromContentType(
+                            verificationDocument == null ? null : verificationDocument.getContentType())
+                    .map(DocumentContentType::extension)
+                    .orElse("bin"); // unresolved type: uploadDocumentWithKey rejects it below regardless.
+            String documentKey = "verification-documents/" + user.getId() + "/" + UUID.randomUUID()
+                    + "." + documentExtension;
+            StoredObject storedDocument = storageService.uploadDocumentWithKey(documentKey, verificationDocument);
+            professional.setVerificationDocumentKey(storedDocument.key());
+
+            if (profilePhoto != null && !profilePhoto.isEmpty()) {
+                String photoExtension = ImageContentType.fromContentType(profilePhoto.getContentType())
+                        .map(ImageContentType::extension)
+                        .orElse("bin"); // unresolved type: uploadWithKey rejects it below regardless.
+                String photoKey = "professionals/" + professional.getId() + "/profile/" + UUID.randomUUID()
+                        + "." + photoExtension;
+                StoredObject storedPhoto = storageService.uploadWithKey(photoKey, profilePhoto);
+                professional.setProfileImageKey(storedPhoto.key());
+            }
+
             professional = professionalRepository.save(professional);
             // data-model.md §2.6 row-lifecycle requirement: one sos_availability row per
             // professional from creation, defaulting to isAvailable = false, so a future
@@ -111,6 +161,17 @@ public class AuthService {
         emailSender.sendVerificationCode(user.getEmail(), code);
 
         return new RegisterResponse(user.getId(), user.getRole(), user.getEmail(), user.isEmailVerified());
+    }
+
+    private void applyDefaultAddress(User user, CustomerRegistrationData customer) {
+        DefaultAddressRequest address = customer.defaultAddress();
+        user.setDefaultCity(address.city());
+        user.setDefaultStreet(address.street());
+        user.setDefaultHouseNumber(address.houseNumber());
+        user.setDefaultApartment(address.apartment());
+        user.setDefaultFloor(address.floor());
+        user.setDefaultEntrance(address.entrance());
+        user.setDefaultAddressNotes(address.addressNotes());
     }
 
     @Transactional
@@ -209,34 +270,51 @@ public class AuthService {
     }
 
     /**
-     * {@code categoryId}/{@code serviceArea}/{@code basePrice} are required *iff*
-     * {@code role == PROFESSIONAL} — validated here (not via unconditional Bean
-     * Validation annotations on {@code RegisterRequest}), per api-contract.md §2.1.
+     * Cross-field, role-conditional rules that plain Bean Validation annotations can't
+     * express on their own (backend registration flow separation task §6/§19):
+     * {@code customer}/{@code professional} — and, for a Professional, the
+     * {@code verificationDocument} multipart part — are required *iff* {@code role}
+     * matches. Field-level rules within an already-present {@link CustomerRegistrationData}
+     * (city/street/houseNumber non-blank, sizes) are instead enforced by {@code @Valid}
+     * cascading from {@link RegisterRequest}, since that nested object is unconditionally
+     * required once present.
      */
-    private void validateRoleSpecificFields(RegisterRequest request) {
-        if (request.role() != UserRole.PROFESSIONAL) {
-            return;
-        }
+    private void validateRoleSpecificFields(RegisterRequest request, MultipartFile verificationDocument) {
         List<FieldError> errors = new ArrayList<>();
 
-        if (request.categoryId() == null) {
-            errors.add(new FieldError("categoryId", "is required for professional registration"));
-        } else if (!categoryRepository.existsById(request.categoryId())) {
-            errors.add(new FieldError("categoryId", "must reference an existing category"));
-        }
+        if (request.role() == UserRole.CUSTOMER) {
+            if (request.customer() == null || request.customer().defaultAddress() == null) {
+                errors.add(new FieldError("customer.defaultAddress", "is required for customer registration"));
+            }
+        } else if (request.role() == UserRole.PROFESSIONAL) {
+            ProfessionalRegistrationData professional = request.professional();
+            if (professional == null) {
+                errors.add(new FieldError("professional", "is required for professional registration"));
+            } else {
+                if (professional.categoryId() == null) {
+                    errors.add(new FieldError("professional.categoryId", "is required for professional registration"));
+                } else if (!categoryRepository.existsById(professional.categoryId())) {
+                    errors.add(new FieldError("professional.categoryId", "must reference an existing category"));
+                }
 
-        if (request.serviceArea() == null || request.serviceArea().isBlank()) {
-            errors.add(new FieldError("serviceArea", "is required for professional registration"));
-        } else if (request.serviceArea().length() > 150) {
-            errors.add(new FieldError("serviceArea", "must be at most 150 characters"));
-        }
+                if (professional.serviceArea() == null || professional.serviceArea().isBlank()) {
+                    errors.add(new FieldError("professional.serviceArea", "is required for professional registration"));
+                } else if (professional.serviceArea().length() > 150) {
+                    errors.add(new FieldError("professional.serviceArea", "must be at most 150 characters"));
+                }
 
-        if (request.basePrice() == null) {
-            errors.add(new FieldError("basePrice", "is required for professional registration"));
-        } else if (request.basePrice().compareTo(BigDecimal.ZERO) <= 0) {
-            errors.add(new FieldError("basePrice", "must be greater than 0"));
-        } else if (request.basePrice().scale() > 2) {
-            errors.add(new FieldError("basePrice", "must have at most 2 decimal places"));
+                if (professional.basePrice() == null) {
+                    errors.add(new FieldError("professional.basePrice", "is required for professional registration"));
+                } else if (professional.basePrice().compareTo(BigDecimal.ZERO) <= 0) {
+                    errors.add(new FieldError("professional.basePrice", "must be greater than 0"));
+                } else if (professional.basePrice().scale() > 2) {
+                    errors.add(new FieldError("professional.basePrice", "must have at most 2 decimal places"));
+                }
+            }
+
+            if (verificationDocument == null || verificationDocument.isEmpty()) {
+                errors.add(new FieldError("verificationDocument", "is required for professional registration"));
+            }
         }
 
         if (!errors.isEmpty()) {

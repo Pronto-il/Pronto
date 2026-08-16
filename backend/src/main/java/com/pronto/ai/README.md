@@ -124,6 +124,11 @@ No tables owned by this package. Reads `categories` (read-only) —
   request/response record hierarchies — a deliberate simplicity choice for external-API
   code that isn't live-testable this milestone (no credentials available); revisit if/when
   `pronto.ai.mode=openai` is actually activated against a real key.
+- The system prompt explicitly requires clarification `question`/`options` text to be
+  written in Hebrew — the customer reads these directly in the New Issue flow's UI
+  (`ClarifyQuestionsStep`, all-Hebrew/RTL). `explanation` stays English per §2.1's earlier
+  decision, since the frontend never renders it to the customer (internal/debugging use
+  only).
 
 ## Status
 

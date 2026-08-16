@@ -1,0 +1,66 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.intro {
+  font-size: 17px;
+  line-height: 26px;
+  color: var(--color-text-primary);
+  margin-block-end: var(--space-6);
+}
+
+.banner {
+  padding: var(--space-4);
+  margin-block-end: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.banner p {
+  margin: 0;
+}
+
+.questionGroup {
+  border: none;
+  padding: 0;
+  margin: 0 0 var(--space-6);
+}
+
+.question {
+  padding: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-block-end: var(--space-3);
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.option {
+  text-align: start;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.option:hover {
+  border-color: var(--color-primary);
+}
+
+.optionSelected {
+  border: 2px solid var(--color-primary);
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}

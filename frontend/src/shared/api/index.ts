@@ -20,3 +20,18 @@ export { CATEGORIES, getCategoryNameHe } from './categories';
 export type { Category } from './categories';
 
 export { GENERIC_ERROR_MESSAGE, getFieldErrorMessages } from './errorMessages';
+
+export { uploadImage } from './storage';
+export type { UploadImageResponse } from './storage';
+
+export { classifyIssue, createIssue } from './issues';
+export type {
+  IssueUrgencyType,
+  ClarificationAnswer,
+  ClassifyIssueRequest,
+  ClassifyQuestion,
+  ClassifyIssueResponse,
+  CreateIssueRequest,
+  IssueImage,
+  IssueResponse,
+} from './issues';

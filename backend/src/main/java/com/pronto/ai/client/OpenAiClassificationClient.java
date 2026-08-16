@@ -399,9 +399,11 @@ public class OpenAiClassificationClient implements AiClassificationClient {
             - Before asking a question, internally verify that its answer could affect the category choice.
             - Use simple closed-ended questions.
             - Options must be short ANSWERS, not questions.
-            - Include "I am not sure" when useful.
+            - Include a Hebrew "not sure" option (e.g. "אני לא בטוח/ה") when useful.
             - Do not ask for information already clear from the text or images.
             - Do not ask generic follow-up questions.
+            - Write every "question" and every entry in "options" in Hebrew — the customer
+              reads these directly in the app's UI, which is Hebrew.
 
             General:
             - Consider text and images together; neither automatically overrides the other.

@@ -16,6 +16,12 @@ export type { PageHeaderProps } from './PageHeader';
 export { ImageUploadField } from './ImageUploadField';
 export type { ImageUploadFieldProps } from './ImageUploadField';
 
+export { Textarea } from './Textarea';
+export type { TextareaProps } from './Textarea';
+
+export { PhotoUploader } from './PhotoUploader';
+export type { PhotoUploaderProps, UploadedPhoto } from './PhotoUploader';
+
 export { DocumentUploadField } from './DocumentUploadField';
 export type { DocumentUploadFieldProps } from './DocumentUploadField';
 

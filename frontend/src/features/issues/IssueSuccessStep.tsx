@@ -11,11 +11,9 @@ export interface IssueSuccessStepProps {
 /**
  * Calm confirmation state (DESIGN_SYSTEM.md §78) after `POST /api/issues` succeeds.
  * Frontend Milestone 3 hand-off: a `STANDARD` issue routes into `features/booking`'s
- * `/issues/:issueId/booking`. `SOS` isn't built yet (still `features/booking`'s SOS-flow
- * scope, Milestone 4 frontend) — rather than link into a flow that doesn't exist or
- * silently do nothing, this shows the same calm success state with honest copy
- * acknowledging the urgent request was recorded and that urgent-professional matching
- * isn't available yet.
+ * `/issues/:issueId/booking`. Frontend Milestone 4 adds the `SOS` hand-off: an `SOS` issue
+ * routes into `features/booking`'s `/issues/:issueId/sos-booking` the same way — urgent
+ * professional matching is now built.
  */
 export function IssueSuccessStep({ issueId, urgencyType }: IssueSuccessStepProps) {
   const navigate = useNavigate();
@@ -30,22 +28,19 @@ export function IssueSuccessStep({ issueId, urgencyType }: IssueSuccessStepProps
       <p className={styles.text}>
         {isStandard
           ? 'קיבלנו את הפרטים. עכשיו אפשר לבחור בעל מקצוע ותור שמתאים לכם.'
-          : 'קיבלנו את הבקשה הדחופה שלכם. בקרוב נוסיף חיפוש בעלי מקצוע זמינים לתקלות דחופות.'}
+          : 'קיבלנו את הבקשה הדחופה שלכם. עכשיו אפשר לחפש בעל מקצוע זמין לעבודה דחופה.'}
       </p>
-      {isStandard ? (
-        <div className={styles.actions}>
-          <Button onClick={() => navigate(`/issues/${issueId}/booking`)} fullWidth>
-            בחירת בעל מקצוע
-          </Button>
-          <Button variant="secondary" onClick={() => navigate('/')} fullWidth>
-            חזרה לדף הבית
-          </Button>
-        </div>
-      ) : (
-        <Button onClick={() => navigate('/')} fullWidth>
+      <div className={styles.actions}>
+        <Button
+          onClick={() => navigate(isStandard ? `/issues/${issueId}/booking` : `/issues/${issueId}/sos-booking`)}
+          fullWidth
+        >
+          {isStandard ? 'בחירת בעל מקצוע' : 'חיפוש בעל מקצוע זמין'}
+        </Button>
+        <Button variant="secondary" onClick={() => navigate('/')} fullWidth>
           חזרה לדף הבית
         </Button>
-      )}
+      </div>
     </div>
   );
 }

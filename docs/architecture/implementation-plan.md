@@ -412,6 +412,82 @@ closed).
   booking-flow screens remain entirely deferred project-wide, consistent with Milestones
   1-3.
 
+### Frontend Milestone 4 — SOS booking flow UI
+
+- **Status: COMPLETE, 2026-08-17.** Built on top of backend Milestone 4 (SOS booking flow,
+  above) and Frontend Milestone 3's Standard-flow shared primitives/components (`Button`,
+  `Card`, `AddressFormFields`, `features/professionals`'s `ProfessionalList`). On branch
+  `frontend/MS4`, local only — uncommitted, not pushed/merged; that remains the user's own
+  explicit git action, not implied by this status line. Not one of the originally-numbered
+  backend milestones in `overview.md` §5; tracked separately as "Frontend Milestone 4" (MS4)
+  since it delivers the UI for this same Milestone 4 SOS-booking scope, following the naming
+  convention Frontend Milestone 1/3 established.
+- **Screens/routes delivered** (see `frontend/src/app/router.tsx`): `/issues/:issueId/sos-booking`
+  (`SosBookingFlowPage`, `CUSTOMER`-only) — a 3-step machine mirroring `BookingFlowPage`'s
+  pattern but with no slot-picking step: service address → available-now professional list
+  (reusing `features/professionals`'s `ProfessionalList` unmodified, calling `GET
+  /api/bookings/sos-professionals` instead of `.../professionals`) → confirmation
+  (`SosBookingSummary`, `POST /api/bookings/sos-orders`) → a calm success state. Shows an
+  "SOS פעיל" banner (DESIGN_SYSTEM.md §49 exact copy) on every step but the success screen.
+  On the professional side, `SosAvailabilityToggle` (new component) is rendered at the top
+  of the existing `/pro/availability` (`AvailabilityPage`), above the Standard-slot section
+  — not a new dashboard tab. `features/issues/IssueSuccessStep.tsx`'s SOS branch now routes
+  into `/issues/${issueId}/sos-booking` instead of showing the old "not available yet" stub
+  message. See `frontend/src/features/booking/README.md` and
+  `frontend/src/features/dashboard/README.md` for full per-component detail (routes, error
+  handling, endpoints) rather than restating it here.
+- **`shared/api` additions**: `shared/api/bookings.ts` gained `getSosProfessionalsForIssue`,
+  `createSosOrder`, and the `CreateSosOrderRequest` type, reusing the existing
+  `ProfessionalCard`/`ProfessionalListingResponse`/`OrderResponse` types verbatim — the SOS
+  listing/order response shapes are identical to the already-documented Standard ones.
+  `shared/api/availability.ts` gained `getSosAvailability`, `updateSosAvailability`, and the
+  `SosAvailabilityResponse` type.
+- **Notable design decisions**:
+  - **SOS-surcharge frontend placeholder constant**: `SosBookingSummary` shows a price
+    breakdown (base price + a flat SOS surcharge = estimated total) before confirmation, per
+    DESIGN_SYSTEM.md §49's fee-disclosure requirement. Since no endpoint exposes the
+    surcharge value ahead of order creation, the frontend hardcodes its own
+    `SOS_SURCHARGE_AMOUNT = 50` constant, explicitly flagged in-code as a placeholder that
+    mirrors — and must be kept in sync with — the backend's `BookingsService.SOS_SURCHARGE_AMOUNT`.
+    The real, authoritative `finalPrice`/`sosSurcharge` from `OrderResponse` is what's shown
+    after order creation (success screen / `/orders/:id`); the frontend constant is only ever
+    used for the pre-confirmation estimate.
+  - **Toggle lives on `AvailabilityPage`, not a new dashboard tab**: `SosAvailabilityToggle`
+    is rendered above the existing Standard-slot section on `/pro/availability` rather than
+    getting its own `ProDashboardLayout` tab. Both the toggle and the Standard slot calendar
+    are the same `availability` backend domain (`/api/availability/*`), and
+    `ProDashboardLayout`'s three tabs deliberately avoid dead/thin nav items (per that page's
+    own Frontend Milestone 3 reasoning) — a fourth tab for a single toggle would contradict
+    that. No new `Switch` primitive was added to `shared/components`; `SosAvailabilityToggle`
+    is a one-off accessible `role="switch"` button, since this is a single-usage control, not
+    a generic one.
+- **QA summary**: full pass, **PASS**, sign-off 2026-08-17. One trivial defect found and
+  fixed: `features/professionals/ProfessionalCard.tsx`'s doc comment was stale, claiming SOS
+  reuse of the component was "a later milestone's scope" — corrected to reflect that both the
+  Standard and SOS flows now reuse this component via `ProfessionalList`. No functional code
+  change. `frontend/src/features/dashboard/IncomingRequestCard.tsx` also got a doc-comment-
+  only update (SOS orders are now real/reachable through this frontend) — QA confirmed live
+  that the existing `sosTag` rendering and `order.bookedEnd == null` handling needed no
+  functional change. QA also live-confirmed (against a real backend) that
+  `OrderTrackingPage`, `MyOrdersPage`, `MyJobsPage`, `IncomingRequestsPage`, `useOrderStatus`,
+  and `usePolling` all needed zero changes for SOS orders — all are generic by
+  `orderId`/`GET .../me` and already handle `bookedEnd: null` correctly (conditional
+  rendering, no `Invalid Date`/`NaN`).
+  - **One non-blocking judgment-call note, recorded rather than silently dropped**: on the
+    SOS paths, `CATEGORY_MISMATCH`/`404`/`403` fall back to the generic error message rather
+    than an SOS-specific one — intentionally consistent with how the already-shipped Standard
+    `BookingSummary.tsx` treats the same defensive-only, not-normally-reachable cases. Not
+    treated as a gap; flagged as a possible future follow-up if `pronto-lead` ever wants both
+    flows upgraded together.
+- **Known gaps/deferred, not blockers**:
+  - Job-status progression UI for professionals (on-the-way / complete action buttons) —
+    Frontend Milestone 6 scope, not this pass; `MyJobsPage` remains intentionally read-only.
+  - Slot edit/delete UI — Frontend Milestone 7 scope, not this pass.
+  - Favorites/reviews UI — not in this pass's scope, unchanged from Frontend Milestone 3.
+  - The one cosmetic nit noted in Frontend Milestone 3 (the professional's
+    `OrderTrackingPage` back button targets `/pro` rather than `/pro/jobs`) is unchanged by
+    this pass — not re-litigated here, still explicitly non-blocking.
+
 ## Milestone 5 — Notifications & real-time status
 
 - **Status: COMPLETE (backend), QA-signed-off on branch `MS5`, 2026-08-13.** Not yet merged

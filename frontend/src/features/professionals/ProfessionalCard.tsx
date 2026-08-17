@@ -20,10 +20,11 @@ function initials(fullName: string): string {
 /**
  * Professional profile-summary card, per DESIGN_SYSTEM.md §29-33: photo, name, rating +
  * review count (omitted entirely when `averageRating` is null — never shown as "0
- * reviews"), distance + ETA, price, single primary CTA. Reused by both the Standard
- * listing (`features/booking`) — SOS reuse is a later milestone's scope. `favorited` is
- * rendered read-only this pass (no toggle interaction — that needs `POST`/`DELETE
- * /api/favorites`, out of scope).
+ * reviews"), distance + ETA, price, single primary CTA. Reused by both the Standard and
+ * SOS listings (`features/booking`'s `BookingFlowPage`/`SosBookingFlowPage`, both via
+ * `ProfessionalList`) — identical card structure for both flows. `favorited` is rendered
+ * read-only this pass (no toggle interaction — that needs `POST`/`DELETE /api/favorites`,
+ * out of scope).
  */
 export function ProfessionalCard({ professional, sort, onSelect }: ProfessionalCardProps) {
   const {

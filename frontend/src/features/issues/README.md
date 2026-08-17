@@ -32,11 +32,13 @@ uploads each photo immediately via `POST /api/storage/images` on selection, unli
 created `IssueResponse` up to `NewIssuePage`, which threads `{ issueId, urgencyType }` into
 `IssueSuccessStep`. A `STANDARD` issue's success screen now offers a real "בחירת בעל
 מקצוע" CTA into `/issues/${issueId}/booking` (`features/booking`, no longer a stub) in
-addition to "חזרה לדף הבית". An `SOS` issue's success screen does **not** link into a
-booking flow — SOS booking still isn't built (Milestone 4 frontend scope) — and instead
-shows honest copy acknowledging the urgent request was recorded with no urgent-matching
-available yet, with only the "חזרה לדף הבית" action. `DescribeIssueStep`'s existing
-Standard/SOS urgency selector was not touched by this pass.
+addition to "חזרה לדף הבית".
+
+**Frontend Milestone 4 update (2026-08-17)**: An `SOS` issue's success screen now also
+offers a real CTA — "חיפוש בעל מקצוע זמין" into `/issues/${issueId}/sos-booking`
+(`features/booking`'s new SOS flow, no longer a stub), alongside "חזרה לדף הבית", same
+pattern as the `STANDARD` branch. `DescribeIssueStep`'s existing Standard/SOS urgency
+selector was not touched by this pass.
 
 Not built here, by design: no `GET /api/issues/{id}` read-back screen within this feature
 folder (that endpoint is consumed by `features/booking`/`features/dashboard` instead, per

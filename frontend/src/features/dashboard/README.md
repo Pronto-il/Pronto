@@ -10,9 +10,26 @@ The professional-facing dashboard.
 
 ## Status
 **Partially implemented, Frontend Milestone 3 (2026-08-16); post-QA bug-fix pass
-(2026-08-17)**: incoming-request accept/reject, a read-only job history, and
-availability-slot create/list. Job-status progression (On the Way / Completed) is **not**
+(2026-08-17); SOS-availability toggle added Frontend Milestone 4 (2026-08-17)**:
+incoming-request accept/reject, a read-only job history, availability-slot create/list, and
+the SOS-availability toggle. Job-status progression (On the Way / Completed) is **not**
 built this pass — out of this milestone's scope (see the brief's explicit exclusion list).
+
+**Frontend Milestone 4 (2026-08-17):**
+- `SosAvailabilityToggle` (new component, rendered at the top of `AvailabilityPage`, above
+  the existing Standard-slot section) — a one-off accessible toggle button (`role="switch"`)
+  for the professional's `sos_availability` flag (`GET`/`PUT
+  /api/availability/sos-availability`), labeled "זמין/ה לעבודות דחופות (SOS) כרגע" per PRD
+  §3.5.2's framing, with its own loading/error handling mirroring `SlotForm`'s
+  submit-in-flight pattern. Lives on `AvailabilityPage` rather than a new dashboard tab —
+  both are the `availability` domain (same `/api/availability/*` backend package as the
+  Standard slot calendar), and `ProDashboardLayout`'s three tabs deliberately avoid
+  dead/thin nav items, so a fourth tab for a single toggle would contradict that. No new
+  `Switch` primitive was added to `shared/components` — this is a single-usage toggle, not a
+  generic one.
+- `IncomingRequestCard`'s doc comment updated: SOS orders are now a real, reachable case
+  (previously "not produced by this frontend yet"), no functional change — the `sosTag` and
+  `order.bookedEnd == null` handling were already correct.
 
 - `ProDashboardLayout` (`/pro`, `PROFESSIONAL`-only) replaces the old `ProPlaceholderPage`
   with a simple tab shell (בקשות חדשות / העבודות שלי / יומן זמינות) wrapping an
@@ -48,5 +65,5 @@ of a bare processing id, and the card takes separate `isAccepting`/`isRejecting`
 while Reject was the one running; both buttons still disable together during any in-flight
 action).
 
-Not built here: job-status action buttons (on-the-way/complete), SOS-availability toggle,
-the fuller professional dashboard sidebar (ביקורות/הגדרות — no backing screens yet).
+Not built here: job-status action buttons (on-the-way/complete), the fuller professional
+dashboard sidebar (ביקורות/הגדרות — no backing screens yet).

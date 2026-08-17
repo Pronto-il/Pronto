@@ -19,9 +19,10 @@ export interface IncomingRequestCardProps {
 /**
  * New-request card, per DESIGN_SYSTEM.md §55: category, description quote, date/time,
  * decision-critical info immediately visible. No location/distance line — no endpoint
- * returns that for an order, so it isn't fabricated. SOS orders aren't produced by this
- * frontend yet (SOS booking isn't built), but the tag is shown defensively if one ever
- * appears (e.g. seeded directly in the DB), per FRONTEND_AGENT.md §13.
+ * returns that for an order, so it isn't fabricated. SOS orders are a real, reachable case
+ * as of Frontend Milestone 4 (the customer-facing SOS booking flow) — the `sosTag` below
+ * already renders per DESIGN_SYSTEM.md §55, and `order.bookedEnd == null` (SOS orders have
+ * no scheduled end time) is already handled gracefully in the time row.
  */
 export function IncomingRequestCard({
   order,

@@ -47,6 +47,8 @@ export {
   cancelOrder,
   getOrder,
   getMyOrders,
+  getSosProfessionalsForIssue,
+  createSosOrder,
 } from './bookings';
 export type {
   OrderStatus,
@@ -62,7 +64,19 @@ export type {
   OrderDetailResponse,
   OrderSummary,
   MyOrdersResponse,
+  CreateSosOrderRequest,
 } from './bookings';
 
-export { createAvailabilitySlot, getMyAvailabilitySlots } from './availability';
-export type { CreateSlotRequest, SlotResponse, SlotListItem, SlotListResponse } from './availability';
+export {
+  createAvailabilitySlot,
+  getMyAvailabilitySlots,
+  getSosAvailability,
+  updateSosAvailability,
+} from './availability';
+export type {
+  CreateSlotRequest,
+  SlotResponse,
+  SlotListItem,
+  SlotListResponse,
+  SosAvailabilityResponse,
+} from './availability';

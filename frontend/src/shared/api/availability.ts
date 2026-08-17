@@ -43,3 +43,24 @@ export interface SlotListResponse {
 export function getMyAvailabilitySlots(): Promise<SlotListResponse> {
   return httpClient.get<SlotListResponse>('/api/availability/slots/me');
 }
+
+/**
+ * `sos_availability` table — a professional's single on/off toggle for urgent (SOS) work,
+ * distinct from the Standard-booking `availability_slots` calendar above but exposed via
+ * the same `AvailabilityController`/URL base path.
+ */
+export interface SosAvailabilityResponse {
+  professionalId: number;
+  isAvailable: boolean;
+  updatedAt: string;
+}
+
+/** `GET /api/availability/sos-availability` — PROFESSIONAL only, reads the caller's current toggle state. */
+export function getSosAvailability(): Promise<SosAvailabilityResponse> {
+  return httpClient.get<SosAvailabilityResponse>('/api/availability/sos-availability');
+}
+
+/** `PUT /api/availability/sos-availability` — PROFESSIONAL only. */
+export function updateSosAvailability(isAvailable: boolean): Promise<SosAvailabilityResponse> {
+  return httpClient.put<SosAvailabilityResponse>('/api/availability/sos-availability', { isAvailable });
+}

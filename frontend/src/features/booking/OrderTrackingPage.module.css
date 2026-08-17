@@ -1,0 +1,77 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.statusCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.statusRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.professionalName {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.rowLabel {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.rowValue {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.divider {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 0;
+}
+
+.totalRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.totalLabel {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.totalPrice {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.banner {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.banner p {
+  margin: 0;
+}

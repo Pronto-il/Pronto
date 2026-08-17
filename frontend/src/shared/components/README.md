@@ -30,11 +30,20 @@ primitives, etc.) — not feature-specific components, which live under their ow
   required; apartment/floor/entrance/addressNotes optional) driven by a `value`/`onChange`
   pair (`AddressValue`, `EMPTY_ADDRESS` in `addressTypes.ts`). Field names match
   `DefaultAddressRequest.java` exactly. Not coupled to "registration" — built for reuse by
-  a later milestone's per-request service address field.
+  a later milestone's per-request service address field; that reuse landed in Frontend
+  Milestone 3 (`features/booking/BookingFlowPage.tsx`'s service-address step).
+- `StatusBadge` — maps an `OrderStatus` (`shared/api/bookings.ts`) to a Hebrew label +
+  color, per DESIGN_SYSTEM.md §56 ("use consistent statuses globally... do not assign new
+  colors independently on different pages"). Covers all 7 statuses (`PENDING`,
+  `CONFIRMED`, `ON_THE_WAY`, `COMPLETED`, `CANCELLED`, `REJECTED`, `EXPIRED`; `EXPIRED`
+  shares its color with `CANCELLED`). Every screen that shows an order's status — the
+  tracking screen, the customer's my-orders list, the professional's incoming-requests
+  feed and jobs list — goes through this one component rather than a per-page badge.
 
 Each CSS-module file (`ComponentName.module.css`) sits next to its component.
 
 ## Status
 Implemented in **Milestone 1 — Auth & user management**
 (`docs/architecture/implementation-plan.md`), first consumed by `features/auth`'s
-registration/login/verify screens. Extended as later milestones need new shared UI.
+registration/login/verify screens. Extended as later milestones need new shared UI —
+`StatusBadge` was added in **Frontend Milestone 3 — Standard booking flow (2026-08-16)**.

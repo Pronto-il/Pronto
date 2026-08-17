@@ -1,4 +1,5 @@
 import { httpClient } from './httpClient';
+import type { OrderStatus } from './bookings';
 
 export type IssueUrgencyType = 'STANDARD' | 'SOS';
 
@@ -69,4 +70,42 @@ export interface IssueResponse {
  */
 export function createIssue(payload: CreateIssueRequest): Promise<IssueResponse> {
   return httpClient.post<IssueResponse>('/api/issues', payload);
+}
+
+/**
+ * Milestone 3 addition, per `docs/architecture/api-contract-bookings.md` §2.1 — this DTO,
+ * unlike the `bookings` package's own DTOs, was NOT touched by the Milestone 8 merge, so it
+ * matches that doc's §2.1 prose exactly.
+ */
+export interface LatestOrderSummary {
+  id: number;
+  professionalId: number;
+  professionalName: string;
+  orderStatus: OrderStatus;
+  bookedStart: string;
+  bookedEnd: string | null;
+  finalPrice: number;
+  createdAt: string;
+}
+
+export interface IssueDetailResponse {
+  id: number;
+  customerId: number;
+  categoryId: number;
+  categoryCode: string;
+  description: string;
+  urgencyType: IssueUrgencyType;
+  status: string;
+  images: IssueImage[];
+  latestOrder: LatestOrderSummary | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * `GET /api/issues/{id}` — either CUSTOMER (must own the issue) or PROFESSIONAL (must have
+ * an order against it, any status). See `docs/architecture/api-contract-bookings.md` §2.1.
+ */
+export function getIssue(issueId: number): Promise<IssueDetailResponse> {
+  return httpClient.get<IssueDetailResponse>(`/api/issues/${issueId}`);
 }

@@ -28,7 +28,16 @@ mirrors `Input`) and `PhotoUploader` (Pronto-specific, named in DESIGN_SYSTEM.md
 uploads each photo immediately via `POST /api/storage/images` on selection, unlike
 `ImageUploadField` which just holds a `File` for a later multipart submit).
 
-Not built here, by design: no route into `features/booking` after a successful create
-(still a stub — Milestone 3+ frontend); no `GET /api/issues/{id}` read-back screen (not
-needed by this flow, and the endpoint itself lives in the bookings contract, not this
-milestone's).
+**Frontend Milestone 3 update (2026-08-16)**: `ReviewStep`'s `onConfirmed` now passes the
+created `IssueResponse` up to `NewIssuePage`, which threads `{ issueId, urgencyType }` into
+`IssueSuccessStep`. A `STANDARD` issue's success screen now offers a real "בחירת בעל
+מקצוע" CTA into `/issues/${issueId}/booking` (`features/booking`, no longer a stub) in
+addition to "חזרה לדף הבית". An `SOS` issue's success screen does **not** link into a
+booking flow — SOS booking still isn't built (Milestone 4 frontend scope) — and instead
+shows honest copy acknowledging the urgent request was recorded with no urgent-matching
+available yet, with only the "חזרה לדף הבית" action. `DescribeIssueStep`'s existing
+Standard/SOS urgency selector was not touched by this pass.
+
+Not built here, by design: no `GET /api/issues/{id}` read-back screen within this feature
+folder (that endpoint is consumed by `features/booking`/`features/dashboard` instead, per
+`docs/architecture/api-contract-bookings.md` §2.1).

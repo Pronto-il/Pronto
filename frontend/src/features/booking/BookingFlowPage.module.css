@@ -1,4 +1,35 @@
-.wrapper {
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.banner {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.banner p {
+  margin: 0;
+}
+
+.transitionText {
+  font-size: 15px;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.successWrapper {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -6,7 +37,7 @@
   padding-block: var(--space-16) var(--space-8);
 }
 
-.check {
+.successCheck {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -20,7 +51,7 @@
   margin-block-end: var(--space-6);
 }
 
-.title {
+.successTitle {
   font-size: 24px;
   line-height: 32px;
   font-weight: 700;
@@ -28,7 +59,7 @@
   margin-block-end: var(--space-2);
 }
 
-.text {
+.successText {
   font-size: 16px;
   line-height: 24px;
   color: var(--color-text-secondary);
@@ -36,9 +67,10 @@
   max-width: 360px;
 }
 
-.actions {
+.successActions {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   width: 100%;
+  max-width: 360px;
 }

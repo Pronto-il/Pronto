@@ -1,3 +1,4 @@
-// Stub barrel file — no implementation yet.
-// See ./README.md for this module's purpose and the milestone it's implemented in.
-export {}
+export { default as ProDashboardLayout } from './ProDashboardLayout';
+export { default as IncomingRequestsPage } from './IncomingRequestsPage';
+export { default as AvailabilityPage } from './AvailabilityPage';
+export { default as MyJobsPage } from './MyJobsPage';

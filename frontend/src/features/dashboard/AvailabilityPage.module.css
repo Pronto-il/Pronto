@@ -1,0 +1,21 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.sectionTitle {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-block-end: var(--space-4);
+}
+
+.banner {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  font-size: 14px;
+  line-height: 20px;
+}

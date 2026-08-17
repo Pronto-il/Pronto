@@ -5,12 +5,14 @@ Status: **Milestones 1-7 (Auth through Hardening & QA) and the follow-on Milesto
 and QA-signed-off, as of 2026-08-15** (see `docs/architecture/implementation-plan.md` for
 milestone-by-milestone status — this line was stale for several milestones and is corrected
 here as part of Milestone 8's documentation pass). On the frontend, **Frontend Milestone 1
-(auth screens) is implemented, as of 2026-08-15** — see §6 below and
-`implementation-plan.md`'s Milestone 1 entry for full status detail; the rest of
-`frontend/` remains design-only, pending the user's design-system decision for later
-milestones. This is the living source of truth for architecture/decisions — keep it in
-sync with the actual implementation as it lands (owned going forward by the
-`pronto-documentation` agent).
+(auth screens) is implemented, as of 2026-08-15, and Frontend Milestone 3 (Standard
+booking flow) is implemented, as of 2026-08-16** — see §6 below and
+`implementation-plan.md`'s Milestone 1 / Milestone 3 entries for full status detail; the
+rest of `frontend/` (SOS booking, notifications, job-status progression UI, favorites/
+reviews UI) remains design-only or backend-only, pending later frontend milestones. This
+is the living source of truth for architecture/decisions — keep it in sync with the
+actual implementation as it lands (owned going forward by the `pronto-documentation`
+agent).
 
 ## 1. Consolidated understanding
 
@@ -171,15 +173,15 @@ changes it, per the shared project rule.
 | Folder | Responsibility |
 |---|---|
 | `features/auth` | Registration, verification, login screens. **Implemented, Frontend Milestone 1 (2026-08-15)** — see §6 below and `implementation-plan.md`'s Milestone 1 entry. |
-| `features/issues` | Home/New Issue screen, AI Review + service-path-selection screen. |
-| `features/booking` | Standard professional list, SOS professional list, booking confirmation, tracking screen. |
-| `features/professionals` | Professional card/list components shared by Standard and SOS (per PRD §7.4, SOS reuses the professional-selection component with urgent filtering rather than a fully separate screen). |
-| `features/dashboard` | Professional dashboard — availability management, incoming requests, job status actions. |
-| `features/notifications` | Notification display / status-polling hook consumers. |
-| `shared/api` | Backend API client. |
-| `shared/components` | Reusable UI components. |
-| `shared/hooks` | Reusable React hooks (e.g. status-polling hook, auth context). |
-| `app` | Routing, layout, root configuration. |
+| `features/issues` | Home/New Issue screen, AI Review + service-path-selection screen. **Implemented, Frontend Milestone 2** (see `implementation-plan.md`); `NewIssuePage`/`IssueSuccessStep` gained a Frontend Milestone 3 follow-up linking into the new booking flow. |
+| `features/booking` | Standard professional list, SOS professional list, booking confirmation, tracking screen. **Standard flow implemented, Frontend Milestone 3 (2026-08-16)** — `BookingFlowPage`, `MyOrdersPage`, `OrderTrackingPage`; SOS flow still not built. See §6 below and `implementation-plan.md`'s Frontend Milestone 3 entry. |
+| `features/professionals` | Professional card/list components shared by Standard and SOS (per PRD §7.4, SOS reuses the professional-selection component with urgent filtering rather than a fully separate screen). **Implemented, Frontend Milestone 3 (2026-08-16)**, Standard-listing consumer only; SOS reuse not yet built. |
+| `features/dashboard` | Professional dashboard — availability management, incoming requests, job status actions. **Partially implemented, Frontend Milestone 3 (2026-08-16)**: incoming-request accept/reject, a read-only job list, availability-slot create/list. Job-status progression (on-the-way/complete) not yet built. |
+| `features/notifications` | Notification display / status-polling hook consumers. Not yet built — the status-polling primitive itself (`usePolling`/`useOrderStatus`) shipped early, in Frontend Milestone 3, and is consumed directly by `features/booking`/`features/dashboard`; a dedicated notification-bell/feed screen is still design-only. |
+| `shared/api` | Backend API client. **Grew in Frontend Milestone 3 (2026-08-16)**: `bookings.ts`, `availability.ts`, and a `getIssue` addition to `issues.ts`. |
+| `shared/components` | Reusable UI components. **Grew in Frontend Milestone 3 (2026-08-16)**: `StatusBadge`. |
+| `shared/hooks` | Reusable React hooks (e.g. status-polling hook, auth context). **Grew in Frontend Milestone 3 (2026-08-16)**: `usePolling`/`useOrderStatus`. |
+| `app` | Routing, layout, root configuration. **Updated, Frontend Milestone 3 (2026-08-16)**: `/pro` now renders a real professional dashboard instead of a placeholder; booking/tracking/orders routes added. |
 
 ### Docs
 
@@ -389,6 +391,39 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
   - **Incident note**: a git mistake during this work caused some in-progress files to be
     lost; they were recovered via IDE Local History plus manual reconstruction of a small
     number of low-risk files. Resolved, does not affect the shipped state described above.
+- **2026-08-16 — Frontend Milestone 3 (Standard booking flow UI) landed.** Branch
+  `frontend/MS3`, local only — uncommitted, not pushed/merged; that remains the user's own
+  explicit git action. Built on top of backend Milestone 3's booking endpoints and backend
+  Milestone 8's enriched listing/order DTOs. Screens delivered: `/issues/:issueId/booking`
+  (`BookingFlowPage`, address → professional list → slot picker → confirmation → success),
+  `/orders` (`MyOrdersPage`), `/orders/:orderId` (`OrderTrackingPage`, either role,
+  short-polling). `/pro`'s old placeholder was replaced with a real `ProDashboardLayout`
+  shell (`IncomingRequestsPage`, `MyJobsPage`, `AvailabilityPage`). New shared primitives:
+  `StatusBadge`, `usePolling`/`useOrderStatus` (per §3.3's short-polling design),
+  `shared/api/bookings.ts`/`availability.ts`, and a `getIssue` addition to
+  `shared/api/issues.ts`. Full detail, including the feature-folder ownership split and
+  every screen's behavior, is in `implementation-plan.md`'s "Frontend Milestone 3" entry
+  (nested under Milestone 3) — not restated here.
+  - **Doc-drift found and flagged for `pronto-lead`**: `api-contract-bookings.md` §2.2/§2.4
+    predate backend Milestone 8, which changed several of the underlying DTOs in place
+    (enriched `ProfessionalCard`, required service-address fields on listing/order
+    creation) without that doc's prose being updated. Discovered by reading the real
+    backend DTO source directly; `shared/api/bookings.ts` was written against the real
+    DTOs, with the divergence recorded in that file's own comments and in
+    `shared/api/README.md`. `api-contract-bookings.md` itself still needs a correcting
+    addendum to §2.2/§2.4 — not done as part of this frontend-only pass.
+  - **QA**: full pass, zero open bugs at final sign-off, one bug-fix round (four minor
+    issues found, fixed, and re-verified — a role-unaware back button, an unmapped `409
+    ISSUE_URGENCY_MISMATCH` error message, a shared loading-spinner state on the
+    incoming-request card, and a missing professional "my accepted jobs" view). Method:
+    live backend contract-conformance via `curl` against the real jar/Postgres plus
+    code-level review, since no browser-automation tool exists in this environment.
+  - **Known gaps/deferred**: SOS booking UI (Frontend Milestone 4), job-status progression
+    UI for professionals (Frontend Milestone 6), slot edit/delete UI (Frontend Milestone
+    7), favorites/reviews UI (not this pass, though the API already returns
+    `favorited`/`averageRating`). One trivial, explicitly non-blocking cosmetic nit left as-
+    is: the professional's `OrderTrackingPage` back button targets `/pro` rather than
+    `/pro/jobs`, its actual only entry point.
 
 ## 7. Backend architecture reference (as-built)
 

@@ -14,12 +14,16 @@ feature modules together into the single-page app described in
 
 ## Structure
 - `App.tsx` — wraps `RouterProvider` in `AuthProvider` (from `shared/hooks`).
-- `router.tsx` — route tree. All routes render inside `AppLayout`; `/profile` and `/pro`
-  are additionally nested under `RequireAuth`.
-- `AppLayout.tsx` — minimal top nav shell (brand + login/register or profile/logout links
-  depending on auth state). Deliberately does not build a real primary nav
-  (home/bookings/favorites/profile) or a mobile bottom nav yet (DESIGN_SYSTEM.md §50-52) —
-  those destinations don't exist as real screens until later milestones.
+- `router.tsx` — route tree. All routes render inside `AppLayout`; `/profile` and
+  `/orders/:orderId` are nested under a bare `RequireAuth` (either role); `/issues/new`,
+  `/issues/:issueId/booking`, and `/orders` are nested under `RequireAuth role="CUSTOMER"`;
+  `/pro` and `/pro/availability` are nested under `RequireAuth role="PROFESSIONAL"` and,
+  within that, under `features/dashboard`'s `ProDashboardLayout` (a shared two-tab shell).
+- `AppLayout.tsx` — top nav shell (brand + login/register or profile/logout links
+  depending on auth state). Frontend Milestone 3 added the first two real primary-nav
+  destinations now that they exist as real screens: a customer's "ההזמנות שלי" (`/orders`)
+  and a professional's own "לוח בקרה" (`/pro`) link. Favorites/a full mobile bottom nav
+  (DESIGN_SYSTEM.md §50-51) still have no backing screen and are not added.
 - `RequireAuth.tsx` — route guard. Redirects to `/login` when not authenticated (after
   the auth provider's initial rehydration finishes); supports an optional `role` prop to
   gate a route to one role.
@@ -28,12 +32,15 @@ feature modules together into the single-page app described in
   `<main>` landmark).
 - `ProfilePage.tsx` — read-only display of `GET /api/users/me` + logout, behind
   `RequireAuth`.
-- `ProPlaceholderPage.tsx` — minimal "בקרוב" landing spot for a professional after login,
-  behind `RequireAuth`; the real dashboard is Milestone 6 scope.
 
 ## Status
-**Milestone 1 (Auth & user management) implemented.** Router now includes the auth routes
+**Frontend Milestone 3 (2026-08-16, Standard booking flow) implemented.** `ProPlaceholderPage`
+was removed — the professional's `/pro` route now renders a real dashboard
+(`features/dashboard`'s `ProDashboardLayout` + `IncomingRequestsPage`/`AvailabilityPage`).
+Router now also includes `/issues/:issueId/booking`, `/orders`, and `/orders/:orderId`
+(`features/booking`). Further feature routes are added here incrementally as each
+milestone lands (SOS routes in Milestone 4, notifications in Milestone 6, etc.).
+
+Prior status: **Milestone 1 (Auth & user management) implemented** — the auth routes
 (`/register`, `/register/customer`, `/register/professional`, `/verify`, `/login`) from
-`features/auth`, plus the authenticated `/profile` and `/pro` placeholder routes. Further
-feature routes are added here incrementally as each milestone lands (issue routes in
-Milestone 2, booking routes in Milestone 3/4, etc.).
+`features/auth`, plus the authenticated `/profile` route.

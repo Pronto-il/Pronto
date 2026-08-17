@@ -1,0 +1,68 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.row:hover {
+  border-color: var(--color-border-strong);
+}
+
+.rowMain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.rowDate {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.rowPrice {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding-block: var(--space-16) var(--space-8);
+  color: var(--color-text-secondary);
+}
+
+.emptyTitle {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-block-end: var(--space-2);
+}
+
+.banner {
+  padding: var(--space-4);
+  margin-block-end: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  font-size: 14px;
+  line-height: 20px;
+}

@@ -1,0 +1,31 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tab {
+  padding-block: var(--space-3);
+  padding-inline: var(--space-4);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-block-end: -1px;
+}
+
+.tab:hover {
+  color: var(--color-text-primary);
+}
+
+.tabActive {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}

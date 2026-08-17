@@ -1,0 +1,33 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+.banner {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.banner p {
+  margin: 0;
+}
+
+.success {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  font-size: 14px;
+  line-height: 20px;
+}

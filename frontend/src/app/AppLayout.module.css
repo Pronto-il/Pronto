@@ -20,10 +20,24 @@
 }
 
 .brand {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--color-primary);
+  display: inline-flex;
+  align-items: center;
   text-decoration: none;
+}
+
+/*
+ * Logo asset (src/assets/pronto-logo.jpg) is a 1024x1024 square dominated by
+ * whitespace around the actual wordmark+mascot. Cropped via background-image
+ * sizing/position rather than shipping a pre-cropped asset, so the source file
+ * can be swapped without recomputing layout.
+ */
+.logo {
+  display: block;
+  width: 96px;
+  height: 32px;
+  background-size: 112px 112px;
+  background-position: -8px -43px;
+  background-repeat: no-repeat;
 }
 
 .nav {

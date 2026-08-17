@@ -229,6 +229,91 @@ closed).
   tracking remain permanent v1.0 exclusions (not milestone-specific deferrals) — the
   tracking endpoint (§2.8) is status-only, no map/location data.
 
+### Frontend Milestone 3 — Standard booking flow UI
+
+- **Status: COMPLETE, 2026-08-16.** Built on top of backend Milestone 3 (Standard booking
+  flow, above) and backend Milestone 8 (Professional Profiles, Reviews, Favorites &
+  Matching)'s enriched listing/order DTOs. On branch `frontend/MS3`, local only —
+  uncommitted, not pushed/merged; that remains the user's own explicit git action, not
+  implied by this status line. Not one of the originally-numbered backend milestones in
+  `overview.md` §5; tracked separately as "Frontend Milestone 3" (MS3) since it delivers
+  the UI for this same Milestone 3 booking scope, following the naming convention Frontend
+  Milestone 1 established.
+- **Screens/routes delivered** (see `frontend/src/app/router.tsx`): `/issues/:issueId/booking`
+  (`BookingFlowPage`, `CUSTOMER`-only — the step machine: service address →
+  professional list → slot picker → confirmation → success), `/orders` (`MyOrdersPage`,
+  `CUSTOMER`-only, the caller's own order list), `/orders/:orderId` (`OrderTrackingPage`,
+  either role, short-polling status tracking). On the professional side, the old
+  `ProPlaceholderPage` was removed and `/pro` now nests a real `ProDashboardLayout` shell
+  with three tabs: `/pro` (`IncomingRequestsPage`, short-polls pending requests),
+  `/pro/jobs` (`MyJobsPage`, a read-only list of the professional's own orders — added
+  post-QA as a bug fix, see below), and `/pro/availability` (`AvailabilityPage`, slot
+  create/list).
+- **Shared primitives added**: `shared/components/StatusBadge.tsx` (one component mapping
+  `OrderStatus` to a Hebrew label + color, used by every screen that displays an order's
+  status — tracking, my-orders, incoming-requests, jobs); `shared/hooks/usePolling.ts` +
+  `useOrderStatus.ts` (generic short-polling hook and an order-tracking-specific wrapper
+  that stops polling once a terminal status is reached, per `overview.md` §3.3);
+  `shared/api/bookings.ts` (professional listing, slot listing, order lifecycle) and
+  `shared/api/availability.ts` (a professional's own slot create/list), plus a `getIssue`
+  addition to the existing `shared/api/issues.ts`.
+- **Feature-folder ownership decision**: `features/booking` owns the customer-facing
+  Standard flow (`BookingFlowPage`, `MyOrdersPage`) *and* the shared tracking screen
+  (`OrderTrackingPage`, since either role can view it); `features/dashboard` owns
+  everything professional-only (`IncomingRequestsPage`, `AvailabilityPage`, `MyJobsPage`);
+  `features/professionals` owns the shared `ProfessionalCard`/`ProfessionalList`
+  components, consumed by `features/booking`'s listing step now and intended for the SOS
+  flow's reuse later (per PRD §7.4 — SOS is a filtered reuse of this same component, not a
+  separate screen). See each folder's own `README.md` for full detail.
+- **API-contract drift found and flagged for `pronto-lead`**: `docs/architecture/api-contract-bookings.md`
+  §2.2 (professional listing) and §2.4 (order creation) predate backend Milestone 8, which
+  changed several of the underlying DTOs in place — the enriched `ProfessionalCard`
+  (profile image, rating/review count, `favorited`, distance/ETA fields), `city`/`street`/
+  `houseNumber` becoming *required* (not optional) listing query params, and required
+  `serviceCity`/`serviceStreet`/`serviceHouseNumber` fields on order creation — without
+  that doc's prose being updated to match. This was discovered during this pass by reading
+  the real backend DTO source directly rather than trusting the doc, and `shared/api/bookings.ts`
+  was written against the real DTOs (with per-type comments recording each divergence).
+  `api-contract-bookings.md` itself still needs a correcting addendum to its §2.2/§2.4 text
+  — not done as part of this frontend pass (doc-content edits to that specific file were
+  outside this pass's scope), flagged here the same way Frontend Milestone 1 flagged
+  `auth/README.md`'s stale registration-contract text.
+- **QA summary**: full pass, zero open bugs at final sign-off. Method: live backend
+  contract-conformance testing via `curl` against the real built jar and a real Postgres
+  instance (verifying request/response shapes and status-transition behavior match what
+  the frontend code assumes), plus code-level review — there is no browser-automation tool
+  available in this environment, so screen-level interaction wasn't driven through an
+  actual browser. One bug-fix round: QA found four minor issues, `pronto-coding` fixed all
+  four, QA re-verified each and signed off clean:
+  1. A role-unaware back button — `OrderTrackingPage`'s back action always went to the
+     `CUSTOMER`-only `/orders`, silently redirecting a professional to `/`. Fixed to check
+     the caller's role (`useAuth`) and navigate to `/orders` or `/pro` accordingly.
+  2. An unmapped error message — `BookingFlowPage`'s error-message map didn't cover `409
+     ISSUE_URGENCY_MISMATCH` (reachable via a manually-edited URL to an SOS issue's
+     booking route), falling back to a generic banner. Fixed with an honest Hebrew message.
+  3. A shared loading-spinner state — `IncomingRequestCard`'s Accept button showed a
+     spinner while Reject was the action actually in flight (a single `isProcessing`
+     boolean covered both). Fixed by tracking `{ orderId, action }` and passing separate
+     `isAccepting`/`isRejecting` props.
+  4. A missing "my accepted jobs" view for professionals — once an order left the pending
+     feed (accepted or rejected) there was no in-app way to see it again short of typing
+     `/orders/{id}` directly. Fixed by adding `MyJobsPage` at `/pro/jobs`.
+- **Known gaps/deferred, not blockers**:
+  - SOS booking UI — Frontend Milestone 4 scope, not this pass.
+  - Job-status progression UI for professionals (on-the-way / complete action buttons) —
+    Frontend Milestone 6 scope, not this pass; `MyJobsPage` is intentionally read-only.
+  - Slot edit/delete UI — Frontend Milestone 7 scope, not this pass; `AvailabilityPage`'s
+    `SlotList` is read-only, deliberately not stubbed with disabled buttons.
+  - Favorites/reviews UI — not in this pass's scope, even though the professional-listing
+    API already returns `favorited`/`averageRating`/`reviewCount` (rendered read-only by
+    `features/professionals/ProfessionalCard`, no favorite-toggle or review-submission
+    interaction built).
+  - One trivial, explicitly non-blocking cosmetic item, noted rather than silently left:
+    the professional's `OrderTrackingPage` back button still targets `/pro` rather than
+    `/pro/jobs`, its actual only entry point (`/pro/jobs` was added post-QA, after this nav
+    target was already in place, and re-pointing it wasn't re-litigated as part of the
+    fix). QA flagged this as cosmetic and explicitly non-blocking; not fixed this pass.
+
 ## Milestone 4 — SOS booking flow
 
 - **Status: COMPLETE (backend), QA-signed-off on branch `MS4`, 2026-08-13.** Not yet

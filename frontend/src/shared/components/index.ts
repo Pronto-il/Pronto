@@ -30,3 +30,6 @@ export type { AddressFormFieldsProps } from './AddressFormFields';
 
 export { EMPTY_ADDRESS } from './addressTypes';
 export type { AddressValue } from './addressTypes';
+
+export { StatusBadge } from './StatusBadge';
+export type { StatusBadgeProps } from './StatusBadge';

@@ -1,0 +1,74 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.category {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.sosTag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-sos-bg);
+  color: var(--color-sos);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.description {
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--color-text-secondary);
+}
+
+.timeRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.timeDate {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.timeRange {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.priceRow {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.actions > * {
+  flex: 1;
+}
+
+.skeleton {
+  height: 16px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-secondary);
+  width: 60%;
+}

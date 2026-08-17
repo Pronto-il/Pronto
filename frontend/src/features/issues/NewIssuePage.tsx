@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '../../shared/components';
 import type { UploadedPhoto } from '../../shared/components';
-import type { ClassifyIssueResponse, IssueUrgencyType } from '../../shared/api';
+import type { ClassifyIssueResponse, IssueResponse, IssueUrgencyType } from '../../shared/api';
 import { DescribeIssueStep } from './DescribeIssueStep';
 import { ClarifyQuestionsStep } from './ClarifyQuestionsStep';
 import { ReviewStep } from './ReviewStep';
@@ -12,7 +12,7 @@ type Step =
   | { name: 'describe' }
   | { name: 'clarify'; classification: ClassifyIssueResponse }
   | { name: 'review'; classification: ClassifyIssueResponse }
-  | { name: 'success' };
+  | { name: 'success'; issue: IssueResponse };
 
 const STEP_LABELS: Partial<Record<Step['name'], string>> = {
   describe: 'שלב 1 מתוך 3',
@@ -77,10 +77,10 @@ export default function NewIssuePage() {
           description={description}
           photos={photos}
           urgencyType={urgencyType}
-          onConfirmed={() => setStep({ name: 'success' })}
+          onConfirmed={(issue) => setStep({ name: 'success', issue })}
         />
       )}
-      {step.name === 'success' && <IssueSuccessStep />}
+      {step.name === 'success' && <IssueSuccessStep issueId={step.issue.id} urgencyType={step.issue.urgencyType} />}
     </div>
   );
 }

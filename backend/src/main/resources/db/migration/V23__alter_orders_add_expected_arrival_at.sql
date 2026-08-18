@@ -1,0 +1,13 @@
+-- Persists the ETA computed at the moment a professional marks an order ON_THE_WAY
+-- (BookingsService.onTheWay), reusing DistanceEtaStrategy.calculate -- the same
+-- strategy BookingsService.enrichAndSort already calls for listing-card ETA. Supersedes
+-- the prior "ETA is never persisted, tracking screen gains no new field" ruling
+-- (overview.md §2 professional-search-distance/ETA row, 2026-08-15) -- see
+-- docs/architecture/active-booking-floating-indicator.md §0.1.
+--
+-- Nullable: null for every order that never reached ON_THE_WAY (PENDING/CONFIRMED, or an
+-- order that went CONFIRMED -> CANCELLED/REJECTED without ever going ON_THE_WAY). Set
+-- exactly once, at the ON_THE_WAY transition, and never modified by any later transition
+-- (complete/cancel) -- an immutable snapshot of "what we told the customer to expect,"
+-- not a live-recomputed figure.
+ALTER TABLE orders ADD COLUMN expected_arrival_at TIMESTAMP;

@@ -29,9 +29,9 @@ const ORDER_ERROR_MESSAGES: Record<string, string> = {
  * `ReviewStep`'s self-contained pattern), so it also owns the double-submission guard
  * (button `loading` state disables it while the request is in flight).
  *
- * Only `city`/`street`/`houseNumber`/`apartment` are forwarded to the API —
- * `AddressFormFields` also collects `floor`/`entrance`/`addressNotes`, which the booking
- * endpoints don't accept. Accepted simplification (per this milestone's brief), not a bug.
+ * All 7 `AddressValue` fields (`city`/`street`/`houseNumber`/`apartment`/`floor`/
+ * `entrance`/`addressNotes`) are forwarded to the API, per `ms3-ms4-corrections-design.md`
+ * §2.7.
  */
 export function BookingSummary({
   issueId,
@@ -57,6 +57,9 @@ export function BookingSummary({
         serviceStreet: address.street,
         serviceHouseNumber: address.houseNumber,
         serviceApartment: address.apartment || undefined,
+        serviceFloor: address.floor || undefined,
+        serviceEntrance: address.entrance || undefined,
+        serviceAddressNotes: address.addressNotes || undefined,
       });
       onConfirmed(order);
     } catch (error) {

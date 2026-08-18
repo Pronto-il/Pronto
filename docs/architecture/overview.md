@@ -61,7 +61,7 @@ status-transition semantics (including exactly which actor/stage produces `Cance
 | Chat between users | Out of scope for v1.0 | PRD §10.4 |
 | Additional languages | Out of scope for v1.0 | PRD §10.6 |
 | Booking statuses | 7 values: Pending, Confirmed, On the Way, Completed, Cancelled, Rejected, Expired (`Rejected` added as a 7th status) | User decision (2026-08-12), overriding the originally-settled 6-status list (PRD §3.6.1 has no "Rejected"). See `data-model.md` §2.9/§3 item 10 for the precise Rejected-vs-Cancelled-vs-Expired transition rules. |
-| Professional-search distance/ETA | **Now in v1.0 scope** — dynamically computed (never persisted) same-city/different-city + peak-hour approximation, shown on Standard/SOS professional-listing cards and usable as a `sort=FASTEST` mode. | Explicit user instruction (2026-08-15), **overriding** the prior "ETA/tracking display is out of v1.0 scope, permanent (PRD §3.4.8/§3.5.5, 'future version')" ruling recorded in `data-model.md` §4. Scoped to professional search/listing only — the tracking screen gained no new field, and GPS/live-location tracking (the separate row above) remains a completely separate, still-valid, untouched exclusion. Full record: `docs/architecture/api-contract-professionals-reviews.md` §5; `data-model.md` §4 (kept, with the override noted alongside the original text, not silently rewritten). |
+| Professional-search distance/ETA | **Now in v1.0 scope** — dynamically computed (never persisted) same-city/different-city + peak-hour approximation, shown on Standard/SOS professional-listing cards and usable as a `sort=FASTEST` mode. | Explicit user instruction (2026-08-15), **overriding** the prior "ETA/tracking display is out of v1.0 scope, permanent (PRD §3.4.8/§3.5.5, 'future version')" ruling recorded in `data-model.md` §4. Scoped to professional search/listing only — the tracking screen gained no new field, and GPS/live-location tracking (the separate row above) remains a completely separate, still-valid, untouched exclusion. Full record: `docs/architecture/api-contract-professionals-reviews.md` §5; `data-model.md` §4 (kept, with the override noted alongside the original text, not silently rewritten). **Further overridden (2026-08-17, Active Booking Floating Indicator feature)**: the "never persisted" / "tracking screen gained no new field" clause above no longer holds for the `ON_THE_WAY` transition specifically. `orders.expected_arrival_at` (new nullable column, `V23`) is now computed once — via this same `DistanceEtaStrategy.calculate(...)` call `enrichAndSort` already makes for listing cards — and persisted by `BookingsService.onTheWay` at the moment a professional marks an order `ON_THE_WAY`, then surfaced on `OrderResponse`/`OrderDetailResponse`/`OrderSummaryResponse` and rendered as a live countdown on the tracking screen and the new floating active-order indicator. The `matching` package itself is unchanged by this — it still computes nothing to disk, owns no table, and remains pure/stateless; it is the caller (`bookings`) that now persists the *result* of one specific `calculate()` call, once, at one specific transition. GPS/live-location tracking remains untouched and still fully out of scope. Full record: `docs/architecture/active-booking-floating-indicator.md` §0.1. |
 | Team roster | Poster lists 2 members (Yuval Harel, Or Cohen); other docs list 4 | Informational only — no architectural impact. |
 
 ## 3. Proposed architecture
@@ -175,13 +175,13 @@ changes it, per the shared project rule.
 |---|---|
 | `features/auth` | Registration, verification, login screens. **Implemented, Frontend Milestone 1 (2026-08-15)** — see §6 below and `implementation-plan.md`'s Milestone 1 entry. |
 | `features/issues` | Home/New Issue screen, AI Review + service-path-selection screen. **Implemented, Frontend Milestone 2** (see `implementation-plan.md`); `NewIssuePage`/`IssueSuccessStep` gained a Frontend Milestone 3 follow-up linking into the new booking flow, and a Frontend Milestone 4 follow-up linking the SOS branch into the new SOS booking flow. |
-| `features/booking` | Standard professional list, SOS professional list, booking confirmation, tracking screen. **Standard and SOS flows both implemented** — Standard: Frontend Milestone 3 (2026-08-16), `BookingFlowPage`/`MyOrdersPage`/`OrderTrackingPage`; SOS: Frontend Milestone 4 (2026-08-17), `SosBookingFlowPage`/`SosBookingSummary`. See §6 below and `implementation-plan.md`'s Frontend Milestone 3 / Frontend Milestone 4 entries. |
-| `features/professionals` | Professional card/list components shared by Standard and SOS (per PRD §7.4, SOS reuses the professional-selection component with urgent filtering rather than a fully separate screen). **Implemented, Frontend Milestone 3 (2026-08-16)**; SOS reuse landed Frontend Milestone 4 (2026-08-17) — both flows now consume `ProfessionalCard`/`ProfessionalList` via `ProfessionalList`. |
+| `features/booking` | Standard professional list, SOS professional list, booking confirmation, tracking screen. **Standard and SOS flows both implemented** — Standard: Frontend Milestone 3 (2026-08-16), `BookingFlowPage`/`MyOrdersPage`/`OrderTrackingPage`; SOS: Frontend Milestone 4 (2026-08-17), `SosBookingFlowPage`/`SosBookingSummary`. **Extended in the MS3/MS4 product-corrections pass (2026-08-17)**: `AddressSelectionStep` (default-vs-custom address chooser), full 7-field service address, booking-draft resume. See §6 below and `implementation-plan.md`'s entries. |
+| `features/professionals` | Professional card/list components shared by Standard and SOS (per PRD §7.4, SOS reuses the professional-selection component with urgent filtering rather than a fully separate screen). **Implemented, Frontend Milestone 3 (2026-08-16)**; SOS reuse landed Frontend Milestone 4 (2026-08-17) — both flows now consume `ProfessionalCard`/`ProfessionalList` via `ProfessionalList`. **Sort-toggle reconciled in the MS3/MS4 product-corrections pass (2026-08-17)**: both flows now expose an identical 2-way `Recommended | Cheapest` chip toggle. |
 | `features/dashboard` | Professional dashboard — availability management, incoming requests, job status actions. **Partially implemented**, Frontend Milestone 3 (2026-08-16): incoming-request accept/reject, a read-only job list, availability-slot create/list; SOS-availability toggle (`SosAvailabilityToggle`) added Frontend Milestone 4 (2026-08-17). Job-status progression (on-the-way/complete) not yet built. |
 | `features/notifications` | Notification display / status-polling hook consumers. Not yet built — the status-polling primitive itself (`usePolling`/`useOrderStatus`) shipped early, in Frontend Milestone 3, and is consumed directly by `features/booking`/`features/dashboard`; a dedicated notification-bell/feed screen is still design-only. |
 | `shared/api` | Backend API client. **Grew in Frontend Milestone 3 (2026-08-16)**: `bookings.ts`, `availability.ts`, and a `getIssue` addition to `issues.ts`; grew again in Frontend Milestone 4 (2026-08-17): SOS-listing/order functions in `bookings.ts` and SOS-availability functions in `availability.ts`. |
 | `shared/components` | Reusable UI components. **Grew in Frontend Milestone 3 (2026-08-16)**: `StatusBadge`. |
-| `shared/hooks` | Reusable React hooks (e.g. status-polling hook, auth context). **Grew in Frontend Milestone 3 (2026-08-16)**: `usePolling`/`useOrderStatus`. |
+| `shared/hooks` | Reusable React hooks (e.g. status-polling hook, auth context). **Grew in Frontend Milestone 3 (2026-08-16)**: `usePolling`/`useOrderStatus`. **Grew in the MS3/MS4 product-corrections pass (2026-08-17)**: booking-draft persistence (`bookingDraftContext.ts`/`BookingDraftProvider.tsx`/`useBookingDraft.ts`). |
 | `app` | Routing, layout, root configuration. **Updated, Frontend Milestone 3 (2026-08-16)**: `/pro` now renders a real professional dashboard instead of a placeholder; booking/tracking/orders routes added. |
 
 ### Docs
@@ -463,6 +463,51 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
     favorites/reviews UI (not yet in scope), and the same cosmetic `OrderTrackingPage`
     back-button nit noted in Frontend Milestone 3 (still explicitly non-blocking, not
     re-litigated this pass).
+- **2026-08-17 — MS3/MS4 product-corrections pass landed, QA-signed-off.** Branch
+  `frontend/MS3-MS4-corrections`, local only — uncommitted, not pushed/merged. Full design
+  record: `docs/architecture/ms3-ms4-corrections-design.md`. Four corrections to the
+  already-shipped Standard/SOS booking flows:
+  1. `GET /api/users/me` now returns a nested `defaultAddress` object (`DefaultAddressInfo`,
+     new file) for a `CUSTOMER` caller with a saved default address — backend-only,
+     response-shape addition, no migration. `ProfilePage.tsx` now displays it (a live QA fix
+     during this pass — the page previously did not render it at all, even though the
+     backend already returned it).
+  2. `orders` gains 3 more service-address columns — `service_floor`/`service_entrance`/
+     `service_address_notes` (`V22__alter_orders_add_service_address_details.sql`) —
+     extending the existing 4-field snapshot (`V18`) to the full 7-field shape already used
+     by `users.default_*` (`V20`). New frontend component `AddressSelectionStep.tsx`
+     (default-saved-address vs. custom-one-off-address chooser) replaces the bare
+     `AddressFormFields` both booking flows' address step previously rendered directly; all
+     7 fields are now forwarded to `createOrder`/`createSosOrder` (previously only 4);
+     `OrderTrackingPage.tsx` now also displays floor/entrance/notes.
+  3. Professional-listing `sort` gained a genuine third value, `RECOMMENDED` (rating-based
+     ranking), but the frontend exposes only a 2-way `Recommended | Cheapest` chip toggle,
+     identical on both the Standard and SOS flows, both defaulting to `CHEAPEST`. This item
+     required a **mid-implementation reconciliation**: a coding agent dispatched for an
+     unrelated, backend-only task went out of scope and implemented a different, 3-way-ish
+     sort scheme without authorization (SOS defaulting to `FASTEST`, a `Recommended |
+     Fastest` chip pair for SOS instead of the 2-way spec, and an unauthorized "SOS
+     prioritizes speed by default" product-decision paragraph asserted directly in
+     `api-contract-professionals-reviews.md`). The user chose to keep the underlying
+     `RECOMMENDED` ranking logic (grounded in `frontend/Pronto — DESIGN_SYSTEM.md` §31, a
+     source the original draft of this design section hadn't consulted) but reconciled the
+     chip exposure back to the originally-specified 2-way toggle, matching
+     `DESIGN_SYSTEM.md` §34's chip ordering (Recommended shown first) — see the design doc's
+     §3 for the full record. `FASTEST` remains a valid, working backend enum value/ranking,
+     not user-facing in this pass.
+  4. New booking-draft persistence (`shared/hooks/bookingDraftContext.ts`/
+     `BookingDraftProvider.tsx`/`useBookingDraft.ts`, mirroring `authContext.ts`'s existing
+     shape/location, wired into `App.tsx` nested inside `AuthProvider`) plus a persistent nav
+     indicator (`app/BookingDraftIndicator.tsx`) — a customer's in-progress issue-creation or
+     booking-flow state now survives navigation/reload and can be resumed without re-entering
+     already-completed data. Supporting fix: `PhotoUploader.tsx` now also threads through the
+     durable `imageUrl` from the upload response (previously discarded), so draft-persisted
+     photos survive a reload.
+  - **QA**: full pass, **PASS**, signed off 2026-08-17.
+  - **Stale-doc corrections made as part of this pass**: `bookings/README.md` and
+    `ProfessionalSort.java`'s Javadoc both still described the unauthorized "SOS defaults to
+    `FASTEST`" behavior from the out-of-scope draft above — corrected to match the actual,
+    reconciled code (both listing endpoints default to `CHEAPEST`).
 
 ## 7. Backend architecture reference (as-built)
 

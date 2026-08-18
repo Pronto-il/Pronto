@@ -7,6 +7,10 @@ import styles from './PhotoUploader.module.css';
 export interface UploadedPhoto {
   imageKey: string;
   previewUrl: string;
+  /** Durable backend URL from the upload response, unlike `previewUrl` (an ephemeral
+   *  `URL.createObjectURL(file)` blob that doesn't survive a full page reload). Used for
+   *  booking-draft persistence (`BookingDraftPhoto`, see `shared/hooks/bookingDraftContext.ts`). */
+  imageUrl: string;
 }
 
 export interface PhotoUploaderProps {
@@ -54,7 +58,7 @@ export function PhotoUploader({ label, photos, onChange, maxCount = 6, hint, onU
       uploadImage(file)
         .then((result) => {
           setPending((prev) => prev.filter((item) => item.id !== id));
-          onChange([...photos, { imageKey: result.imageKey, previewUrl }]);
+          onChange([...photos, { imageKey: result.imageKey, previewUrl, imageUrl: result.imageUrl }]);
         })
         .catch(() => {
           setPending((prev) =>

@@ -15,7 +15,8 @@ import java.time.Instant;
  * <p>{@code basePriceSnapshot}/{@code sosSurcharge} are the SOS-surcharge line-item split
  * (§1 classification item 10) — {@code finalPrice = basePriceSnapshot + sosSurcharge} when
  * both are non-null. {@code serviceCity}/{@code serviceStreet}/{@code serviceHouseNumber}/
- * {@code serviceApartment} are the service-address snapshot (§1 classification item 5).
+ * {@code serviceApartment}/{@code serviceFloor}/{@code serviceEntrance}/
+ * {@code serviceAddressNotes} are the service-address snapshot (§1 classification item 5).
  */
 public record OrderResponse(
         Long id,
@@ -25,6 +26,7 @@ public record OrderResponse(
         OrderStatus orderStatus,
         Instant bookedStart,
         Instant bookedEnd,
+        Instant expectedArrivalAt,
         BigDecimal finalPrice,
         BigDecimal basePriceSnapshot,
         BigDecimal sosSurcharge,
@@ -32,6 +34,9 @@ public record OrderResponse(
         String serviceStreet,
         String serviceHouseNumber,
         String serviceApartment,
+        String serviceFloor,
+        String serviceEntrance,
+        String serviceAddressNotes,
         CancelledBy cancelledBy,
         Instant createdAt,
         Instant updatedAt

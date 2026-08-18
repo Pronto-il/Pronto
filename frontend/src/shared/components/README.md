@@ -47,3 +47,14 @@ Implemented in **Milestone 1 — Auth & user management**
 (`docs/architecture/implementation-plan.md`), first consumed by `features/auth`'s
 registration/login/verify screens. Extended as later milestones need new shared UI —
 `StatusBadge` was added in **Frontend Milestone 3 — Standard booking flow (2026-08-16)**.
+
+**MS3/MS4 product-corrections pass (2026-08-17)**: `PhotoUploader`'s `UploadedPhoto` shape
+gained a durable `imageUrl` field (`result.imageUrl` from `POST /api/storage/images`'s
+response, previously received but discarded — only the ephemeral `previewUrl`
+(`URL.createObjectURL(file)`) was kept). `previewUrl` is a blob URL tied to the current
+document session and does not survive a full page reload; `imageUrl` does. This was a
+supporting fix for `shared/hooks`' new booking-draft persistence
+(`BookingDraftPhoto.imageUrl`, see that package's README) — without it, a draft rehydrated
+after a hard reload would have valid `imageKey`s but broken/blank photo thumbnails. Both
+fields are populated together on every successful upload; nothing else about
+`PhotoUploader`'s behavior changed.

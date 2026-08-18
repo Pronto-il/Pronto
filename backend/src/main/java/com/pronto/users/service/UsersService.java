@@ -4,6 +4,7 @@ import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRepository;
+import com.pronto.users.dto.DefaultAddressInfo;
 import com.pronto.users.dto.ProfessionalInfo;
 import com.pronto.users.dto.UserMeResponse;
 import com.pronto.users.entity.User;
@@ -40,8 +41,15 @@ public class UsersService {
                     .orElse(null);
         }
 
+        DefaultAddressInfo defaultAddress = null;
+        if (user.getRole() == UserRole.CUSTOMER && user.getDefaultCity() != null) {
+            defaultAddress = new DefaultAddressInfo(user.getDefaultCity(), user.getDefaultStreet(),
+                    user.getDefaultHouseNumber(), user.getDefaultApartment(), user.getDefaultFloor(),
+                    user.getDefaultEntrance(), user.getDefaultAddressNotes());
+        }
+
         return new UserMeResponse(user.getId(), user.getFullName(), user.getEmail(),
-                user.getRole(), user.isEmailVerified(), professionalInfo);
+                user.getRole(), user.isEmailVerified(), professionalInfo, defaultAddress);
     }
 
     /**

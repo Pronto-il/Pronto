@@ -8,6 +8,12 @@ Reusable React hooks shared across features.
 - Short-polling status hook (per `docs/architecture/overview.md` §3.3) used by the
   booking tracking screen and the professional's incoming-request feed — shipped in
   Frontend Milestone 3 (2026-08-16).
+- Booking-draft persistence context/hook (issue-creation + booking-flow in-progress state,
+  survives reload via `localStorage`) — shipped in the MS3/MS4 product-corrections pass
+  (2026-08-17), see below.
+- Active-booking floating-indicator context/hooks (cross-order priority selection, ETA
+  countdown, review-acknowledgement persistence) — shipped in the Active Booking Floating
+  Indicator feature (2026-08-17), see below.
 
 ## Structure
 - `authContext.ts` — the `AuthContext` (React context) + `AuthContextValue` type. Kept
@@ -35,6 +41,79 @@ Reusable React hooks shared across features.
   change again. Consumed by `features/booking/OrderTrackingPage.tsx`; the professional's
   incoming-request feed (`features/dashboard/IncomingRequestsPage.tsx`) consumes
   `usePolling` directly instead (it polls a list endpoint, not a single order).
+- `bookingDraftContext.ts` — the `BookingDraftContext` (React context) + `BookingDraft`/
+  `BookingDraftStage`/`BookingDraftPhoto`/`BookingDraftContextValue` types, kept separate
+  from the provider component for the same Fast-Refresh-lint reason `authContext.ts` is.
+  Also exports the pure helper `resolveDraftRoute(draft)`, which maps a draft's `stage` to
+  its resume route (`/issues/new` for the three issue-creation stages; `/issues/{issueId}
+  /booking` or `.../sos-booking`, by `urgencyType`, for every later stage). `BookingDraft`
+  holds: `version` (schema version, `1`; an unreadable/mismatched-version draft found in
+  storage is discarded, not migrated), `ownerId` (the user this draft belongs to, see the
+  leakage guard below), `stage`, `urgencyType`, the issue-creation fields
+  (`description`/`photos`/`clarificationAnswers`/`categoryId`), `issueId` (once the issue
+  is persisted), the address-selection fields (`addressMode`/`address`, the full 7-field
+  `AddressValue`), and the professional/slot-selection fields (`professionalId`/`sort`,
+  narrowed to `'RECOMMENDED' | 'CHEAPEST'` — not the 3-value API `ProfessionalSort` type,
+  since a draft only round-trips a value the UI itself set/could set — and `slotId`,
+  STANDARD-only).
+- `BookingDraftProvider.tsx` — the context provider. Mirrors `AuthProvider`'s shape/location
+  exactly (global, cross-feature, `localStorage`-backed state, consumed by both the app
+  shell and multiple `features/*` folders — deliberately placed here rather than in a new
+  `shared/booking-draft/` folder, since this project already has a home for exactly this
+  class of thing). Reads `localStorage['pronto_booking_draft']` on mount (mirrors
+  `AuthProvider`'s `pronto_auth_token` naming). `updateDraft(patch)` is an upsert — creates
+  the draft (with sensible defaults) if none exists, else shallow-merges the patch, always
+  refreshing `updatedAt` and re-writing storage; called on every step transition, forward
+  and backward, in `NewIssuePage`/`BookingFlowPage`/`SosBookingFlowPage`. `clearDraft()` has
+  exactly two call sites: each booking flow page's post-order-creation success handler, and
+  `BookingDraftIndicator`'s explicit dismiss action — never anywhere else. **Cross-account
+  leakage guard**: nested inside `AuthProvider` in `App.tsx` specifically so it can call
+  `useAuth()` internally; watches `user` and auto-clears the draft if `user` becomes `null`
+  (logout) or `user.id !== draft.ownerId` (a different account logs in on the same browser)
+  — `localStorage` isn't otherwise user-scoped, so this is necessary data hygiene, not a new
+  product decision.
+- `useBookingDraft.ts` — the `useBookingDraft()` hook, throws if used outside
+  `BookingDraftProvider`.
+- `activeOrderContext.ts` — the `ActiveOrderContext` (React context) + `ActiveOrderContextValue`/
+  `ActiveOrderSelection`/`ActiveOrderIndicatorState` types, kept separate from the provider
+  component for the same Fast-Refresh-lint reason `authContext.ts`/`bookingDraftContext.ts`
+  are. Also exports the pure helpers `selectActiveOrder(orders, acknowledgedOrderIds)` — the
+  priority-selection algorithm (§5 of the design doc below): `ON_THE_WAY` > `PENDING`/
+  `CONFIRMED` > unacknowledged `COMPLETED`, with `CANCELLED`/`REJECTED`/`EXPIRED` excluded
+  from the candidate set entirely and a documented, explicitly-flagged-as-a-recommendation
+  tie-break within each tier (soonest-`expectedArrivalAt` for `ON_THE_WAY`, most-recently-
+  created for `PENDING`/`CONFIRMED`, most-recently-`updatedAt` for unacknowledged
+  `COMPLETED`) — and `resolveActiveOrderRoute(selection)`, which routes a
+  `COMPLETED_UNACKNOWLEDGED` selection to `/orders/{id}/review` and every other state to
+  `/orders/{id}`. No business logic lives in the indicator component itself — both helpers
+  are the single source of truth.
+- `ActiveOrderProvider.tsx` — the context provider. Nested inside `AuthProvider` in
+  `App.tsx` (alongside `BookingDraftProvider`) so it can call `useAuth()` internally. Polls
+  `GET /api/bookings/orders/me` (`getMyOrders`) via `usePolling`, enabled only for an
+  authenticated `CUSTOMER` — a second, independent instance of the same `usePolling`
+  primitive `useOrderStatus` already uses, at list granularity rather than per-order detail
+  granularity (deliberate: the priority-selection algorithm needs to see every one of the
+  customer's orders in one call, which only the list endpoint can supply; the lean
+  `OrderSummaryResponse` shape already contains 100% of what the compact indicator renders —
+  `orderStatus`/`expectedArrivalAt`/`id` — so no follow-up detail-poll is made). Also owns
+  the acknowledged-completed-order-ids state, persisted to
+  `localStorage['pronto_ack_completed_orders']` as `{ ownerId, orderIds }`, with the same
+  cross-account-leakage guard `BookingDraftProvider` already established for its own key: on
+  mount and whenever `useAuth().user` changes, a stored record that doesn't belong to the
+  current session's user is cleared outright (logout, or a different account logging in on
+  the same browser), never merged/reconciled. `acknowledgeOrder(orderId)` is idempotent (a
+  no-op if already present). Exposes `{ selection, acknowledgeOrder, refetch }`.
+- `useActiveOrder.ts` — the `useActiveOrder()` hook, throws if used outside
+  `ActiveOrderProvider` (mirrors `useBookingDraft.ts` exactly).
+- `useEtaCountdown.ts` — pure presentational hook: given `expectedArrivalAt: string | null`,
+  ticks every 1 second (a `setInterval`, cleaned up on unmount/dependency change) and returns
+  `{ remainingMinutes: number | null; isArriving: boolean }`. **Always recomputed from
+  `Date.now()` vs. the persisted absolute `expectedArrivalAt` timestamp — never a
+  locally-decremented counter.** This is what makes the countdown survive a remount or page
+  refresh by construction: the source of truth is the absolute timestamp the backend
+  persisted (`orders.expected_arrival_at`, see `backend/.../bookings/README.md`), not any
+  client-held countdown state. Shared by `app/ActiveOrderIndicator.tsx` and
+  `features/booking/OrderTrackingPage.tsx` (the only two consumers).
 
 ## Status
 `AuthProvider`/`useAuth` implemented in **Milestone 1 — Auth & user management**
@@ -43,3 +122,26 @@ Reusable React hooks shared across features.
 doc previously (incorrectly) said — Milestone 5's backend work (the `notifications`
 package's email-dispatch and order-expiry scheduler jobs) is unrelated server-side
 scheduling, already complete separately, and never blocked this hook's frontend delivery.
+
+**MS3/MS4 product-corrections pass (2026-08-17)**: `bookingDraftContext.ts`/
+`BookingDraftProvider.tsx`/`useBookingDraft.ts` are new (see "Structure" above).
+`BookingDraftProvider` is wired into `App.tsx` nested inside `AuthProvider` (needed for the
+cross-account leakage guard). Consumed by `features/issues/NewIssuePage.tsx`,
+`features/booking/BookingFlowPage.tsx`/`SosBookingFlowPage.tsx`, and
+`app/BookingDraftIndicator.tsx` (the persistent nav indicator, see `app/README.md`). Full
+design record: `docs/architecture/ms3-ms4-corrections-design.md` §4.
+
+**Active Booking Floating Indicator feature (2026-08-17)**: `activeOrderContext.ts`/
+`ActiveOrderProvider.tsx`/`useActiveOrder.ts`/`useEtaCountdown.ts` are new (see "Structure"
+above). `ActiveOrderProvider` is wired into `App.tsx` nested inside `AuthProvider`, alongside
+`BookingDraftProvider` (needed for both its own `useAuth()` call and the cross-account
+acknowledgement-state guard). Consumed by `app/ActiveOrderIndicator.tsx` (the new floating
+nav-shell widget, see `app/README.md`) and `features/booking/CompletionReviewPage.tsx`/
+`OrderTrackingPage.tsx` (see `features/booking/README.md`). Structurally and data-wise
+independent from `BookingDraftProvider`/`useBookingDraft` — a `BookingDraft` (client-only) and
+an `Order` (backend row) can never represent the same booking simultaneously, and the two
+context/indicator pairs can coexist on screen for two different, unrelated bookings without
+conflict. QA-passed (12/12 checklist items, zero bugs). Full design record:
+`docs/architecture/active-booking-floating-indicator.md`, particularly §3 (list-poll-only
+sync mechanism), §5 (priority-selection algorithm), and §6 (acknowledgement-tracking
+mechanism).

@@ -1,10 +1,12 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { PageHeader, AddressFormFields, EMPTY_ADDRESS, Button } from '../../shared/components';
+import { PageHeader, EMPTY_ADDRESS, Button } from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
 import { getSosProfessionalsForIssue, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { OrderResponse, ProfessionalCard as ProfessionalCardData, ProfessionalSort } from '../../shared/api';
-import { ProfessionalList } from '../professionals';
+import { ProfessionalList, SOS_SORT_OPTIONS } from '../professionals';
+import { useBookingDraft } from '../../shared/hooks';
+import { AddressSelectionStep, type AddressMode } from './AddressSelectionStep';
 import { SosBookingSummary } from './SosBookingSummary';
 import styles from './SosBookingFlowPage.module.css';
 
@@ -25,6 +27,13 @@ const LISTING_ERROR_MESSAGES: Record<string, string> = {
   ISSUE_URGENCY_MISMATCH: 'הבקשה הזו אינה בקשה דחופה (SOS). יש להשתמש בתהליך ההזמנה הרגיל.',
 };
 
+/** `SOS_SORT_OPTIONS` only ever produces `RECOMMENDED`/`CHEAPEST` (§3.2/§3.3) — `sort`'s
+ *  static type is the 3-value `ProfessionalSort`, but `FASTEST` is unreachable via this
+ *  flow's chips, so narrowing to the draft's `sort` field is safe. */
+function toDraftSort(sort: ProfessionalSort): 'RECOMMENDED' | 'CHEAPEST' {
+  return sort === 'RECOMMENDED' ? 'RECOMMENDED' : 'CHEAPEST';
+}
+
 /**
  * `/issues/:issueId/sos-booking` — the SOS-booking step machine: service address →
  * available-now professional list → confirmation → success. Mirrors
@@ -36,13 +45,20 @@ const LISTING_ERROR_MESSAGES: Record<string, string> = {
  * for a non-SOS issue, the mirror-image of the defensive case `BookingFlowPage` already
  * handles) and `ISSUE_NOT_BOOKABLE` are mapped to honest Hebrew messages rather than shown
  * as a raw error.
+ *
+ * Booking-draft persistence (`ms3-ms4-corrections-design.md` §4): hydrates from an
+ * in-progress draft on mount when `draft.issueId` matches this route's `issueId` and
+ * `draft.urgencyType === 'SOS'`, writes through `updateDraft` on every step transition
+ * (forward and backward), and `clearDraft()`s on order-creation success — the only trigger.
  */
 export default function SosBookingFlowPage() {
   const navigate = useNavigate();
   const { issueId: issueIdParam } = useParams<{ issueId: string }>();
   const issueId = Number(issueIdParam);
+  const { draft, updateDraft, clearDraft } = useBookingDraft();
 
   const [address, setAddress] = useState<AddressValue>(EMPTY_ADDRESS);
+  const [addressMode, setAddressMode] = useState<AddressMode>('CUSTOM');
   const [addressErrors, setAddressErrors] = useState<Partial<Record<keyof AddressValue, string>>>({});
 
   const [categoryId, setCategoryId] = useState<number | null>(null);
@@ -52,6 +68,7 @@ export default function SosBookingFlowPage() {
   const [professionalsError, setProfessionalsError] = useState<string | null>(null);
 
   const [step, setStep] = useState<Step>({ name: 'address' });
+  const hasAttemptedResume = useRef(false);
 
   const fetchProfessionals = useCallback(
     async (nextSort: ProfessionalSort, currentAddress: AddressValue) => {
@@ -74,6 +91,72 @@ export default function SosBookingFlowPage() {
     [issueId],
   );
 
+  // Resume-hydration (§4.4's table). SOS has no slot-selection stage, so BOOKING_CONFIRM only
+  // needs to reconstruct the professional card, not slots. Falls back to 'professionals' (the
+  // same fallback `handleProfessionalUnavailable` already uses) if the professional is no
+  // longer in the re-fetched list.
+  useEffect(() => {
+    // Marked immediately (before the match check) so this only ever runs once, on mount —
+    // otherwise this page's own subsequent `updateDraft` calls (which change `draft`'s
+    // reference) would re-trigger the resume logic and clobber whatever step the customer
+    // has since navigated to live.
+    if (hasAttemptedResume.current) {
+      return;
+    }
+    hasAttemptedResume.current = true;
+    if (!draft || draft.issueId !== issueId || draft.urgencyType !== 'SOS') {
+      return;
+    }
+
+    if (draft.address) {
+      setAddress(draft.address);
+    }
+    if (draft.addressMode) {
+      setAddressMode(draft.addressMode);
+    }
+
+    if (draft.stage === 'ADDRESS_SELECTION' || !draft.address) {
+      setStep({ name: 'address' });
+      return;
+    }
+
+    const resumeSort = draft.sort ?? 'CHEAPEST';
+    setSort(resumeSort);
+
+    (async () => {
+      setStep({ name: 'professionals' });
+      setIsLoadingProfessionals(true);
+      setProfessionalsError(null);
+      try {
+        const listing = await getSosProfessionalsForIssue(issueId, draft.address!, resumeSort);
+        setProfessionals(listing.professionals);
+        setCategoryId(listing.categoryId);
+
+        if (draft.stage === 'PROFESSIONAL_SELECTION') {
+          return;
+        }
+
+        const professional = listing.professionals.find((item) => item.professionalId === draft.professionalId);
+        if (!professional) {
+          // Professional no longer SOS-available — stays on 'professionals', the same
+          // fallback `handleProfessionalUnavailable` already relies on.
+          return;
+        }
+        setStep({ name: 'confirm', professional });
+      } catch (error) {
+        if (error instanceof ApiError && LISTING_ERROR_MESSAGES[error.code]) {
+          setProfessionalsError(LISTING_ERROR_MESSAGES[error.code]);
+        } else {
+          setProfessionalsError(GENERIC_ERROR_MESSAGE);
+        }
+      } finally {
+        setIsLoadingProfessionals(false);
+      }
+    })();
+    // Intentionally run once on mount only — see comment above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function validateAddress(): boolean {
     const errors: Partial<Record<keyof AddressValue, string>> = {};
     if (!address.city.trim()) errors.city = 'יש להזין עיר.';
@@ -89,15 +172,25 @@ export default function SosBookingFlowPage() {
     }
     setStep({ name: 'professionals' });
     void fetchProfessionals(sort, address);
+    updateDraft({
+      stage: 'PROFESSIONAL_SELECTION',
+      urgencyType: 'SOS',
+      issueId,
+      addressMode,
+      address,
+      sort: toDraftSort(sort),
+    });
   }
 
   function handleSortChange(nextSort: ProfessionalSort) {
     setSort(nextSort);
     void fetchProfessionals(nextSort, address);
+    updateDraft({ sort: toDraftSort(nextSort) });
   }
 
   function handleSelectProfessional(professional: ProfessionalCardData) {
     setStep({ name: 'confirm', professional });
+    updateDraft({ stage: 'BOOKING_CONFIRM', professionalId: professional.professionalId });
   }
 
   function handleProfessionalUnavailable() {
@@ -106,6 +199,7 @@ export default function SosBookingFlowPage() {
     }
     setStep({ name: 'professionals' });
     void fetchProfessionals(sort, address);
+    updateDraft({ stage: 'PROFESSIONAL_SELECTION', professionalId: undefined });
   }
 
   function handleConfirmed(order: OrderResponse) {
@@ -113,6 +207,7 @@ export default function SosBookingFlowPage() {
       return;
     }
     setStep({ name: 'success', order, professionalName: step.professional.fullName });
+    clearDraft();
   }
 
   function handleBack() {
@@ -120,8 +215,10 @@ export default function SosBookingFlowPage() {
       navigate('/');
     } else if (step.name === 'professionals') {
       setStep({ name: 'address' });
+      updateDraft({ stage: 'ADDRESS_SELECTION' });
     } else if (step.name === 'confirm') {
       setStep({ name: 'professionals' });
+      updateDraft({ stage: 'PROFESSIONAL_SELECTION', professionalId: undefined });
     }
   }
 
@@ -142,10 +239,14 @@ export default function SosBookingFlowPage() {
 
       {step.name === 'address' && (
         <div className={styles.step}>
-          <AddressFormFields value={address} onChange={setAddress} errors={addressErrors} />
-          <Button onClick={handleAddressContinue} fullWidth>
-            המשך
-          </Button>
+          <AddressSelectionStep
+            value={address}
+            onChange={setAddress}
+            mode={addressMode}
+            onModeChange={setAddressMode}
+            errors={addressErrors}
+            onContinue={handleAddressContinue}
+          />
         </div>
       )}
 
@@ -160,6 +261,7 @@ export default function SosBookingFlowPage() {
             <ProfessionalList
               professionals={professionals}
               sort={sort}
+              sortOptions={SOS_SORT_OPTIONS}
               onSortChange={handleSortChange}
               onSelect={handleSelectProfessional}
               isLoading={isLoadingProfessionals}

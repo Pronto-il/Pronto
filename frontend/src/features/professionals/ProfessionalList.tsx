@@ -2,25 +2,45 @@ import { ProfessionalCard } from './ProfessionalCard';
 import type { ProfessionalCard as ProfessionalCardData, ProfessionalSort } from '../../shared/api';
 import styles from './ProfessionalList.module.css';
 
+export interface SortOption {
+  value: ProfessionalSort;
+  label: string;
+}
+
 export interface ProfessionalListProps {
   professionals: ProfessionalCardData[];
   sort: ProfessionalSort;
+  sortOptions: SortOption[];
   onSortChange: (sort: ProfessionalSort) => void;
   onSelect: (professional: ProfessionalCardData) => void;
   isLoading?: boolean;
 }
 
-const SORT_OPTIONS: { value: ProfessionalSort; label: string }[] = [
+/** Standard-booking flow's sort chips (§34): highest-rated first, or cheapest first. */
+export const STANDARD_SORT_OPTIONS: SortOption[] = [
+  { value: 'RECOMMENDED', label: 'הכי מומלצים' },
   { value: 'CHEAPEST', label: 'הזולים ביותר' },
-  { value: 'FASTEST', label: 'הכי מהירים' },
+];
+
+/** SOS-booking flow's sort chips: identical to Standard's, per §3.2 reconciliation. */
+export const SOS_SORT_OPTIONS: SortOption[] = [
+  { value: 'RECOMMENDED', label: 'הכי מומלצים' },
+  { value: 'CHEAPEST', label: 'הזולים ביותר' },
 ];
 
 /**
- * Professional-listing results, per DESIGN_SYSTEM.md §42: count heading, sort chips
- * (§34 — there is no server-side "Recommended" mode, only `CHEAPEST`/`FASTEST`, so only
- * those two chips are offered), then cards. Reused by `features/booking`'s listing step.
+ * Professional-listing results, per DESIGN_SYSTEM.md §42: count heading, sort chips, then
+ * cards. Reused by `features/booking`'s listing step — the Standard and SOS flows each pass
+ * their own `sortOptions` (§34).
  */
-export function ProfessionalList({ professionals, sort, onSortChange, onSelect, isLoading }: ProfessionalListProps) {
+export function ProfessionalList({
+  professionals,
+  sort,
+  sortOptions,
+  onSortChange,
+  onSelect,
+  isLoading,
+}: ProfessionalListProps) {
   if (isLoading) {
     return (
       <div className={styles.wrapper}>
@@ -37,7 +57,7 @@ export function ProfessionalList({ professionals, sort, onSortChange, onSelect, 
     <div className={styles.wrapper}>
       <p className={styles.heading}>מצאנו {professionals.length} בעלי מקצוע מתאימים</p>
       <div className={styles.chips}>
-        {SORT_OPTIONS.map((option) => (
+        {sortOptions.map((option) => (
           <button
             key={option.value}
             type="button"

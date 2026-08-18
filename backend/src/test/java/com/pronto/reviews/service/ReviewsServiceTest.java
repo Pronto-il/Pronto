@@ -81,7 +81,7 @@ class ReviewsServiceTest {
 
     private Order completedOrder() {
         Order order = new Order(1L, CUSTOMER_ID, PROFESSIONAL_ID, Instant.now(), null, BigDecimal.TEN, null,
-                "Tel Aviv", "Herzl", "1", null, BigDecimal.TEN, BigDecimal.ZERO);
+                "Tel Aviv", "Herzl", "1", null, null, null, null, BigDecimal.TEN, BigDecimal.ZERO);
         setField(order, "id", ORDER_ID);
         setField(order, "orderStatus", OrderStatus.COMPLETED);
         return order;

@@ -56,7 +56,7 @@ export function ProfessionalCard({ professional, sort, onSelect }: ProfessionalC
           </h3>
           <p className={styles.serviceArea}>{serviceArea}</p>
           {averageRating !== null && (
-            <span className={styles.rating}>
+            <span className={`${styles.rating} ${sort === 'RECOMMENDED' ? styles.ratingEmphasis : ''}`}>
               <Star size={14} className={styles.ratingStar} aria-hidden="true" fill="currentColor" />
               {averageRating.toFixed(1)}
               <span className={styles.reviewCount}>· {reviewCount} ביקורות</span>

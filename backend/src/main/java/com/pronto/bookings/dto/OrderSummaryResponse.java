@@ -16,7 +16,9 @@ public record OrderSummaryResponse(
         OrderStatus orderStatus,
         Instant bookedStart,
         Instant bookedEnd,
+        Instant expectedArrivalAt,
         BigDecimal finalPrice,
-        Instant createdAt
+        Instant createdAt,
+        Instant updatedAt
 ) {
 }

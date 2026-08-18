@@ -67,6 +67,10 @@
   color: var(--color-warning);
 }
 
+.ratingEmphasis {
+  color: var(--color-primary);
+}
+
 .reviewCount {
   color: var(--color-text-secondary);
   font-weight: 400;

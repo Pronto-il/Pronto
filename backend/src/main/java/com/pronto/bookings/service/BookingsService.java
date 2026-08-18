@@ -122,7 +122,7 @@ public class BookingsService {
         }
         List<ProfessionalCard> professionals =
                 professionalListingRepository.listByCategory(issue.getCategoryId(), callerId);
-        professionals = enrichAndSort(professionals, location, parseSort(sortParam));
+        professionals = enrichAndSort(professionals, location, parseSort(sortParam, ProfessionalSort.CHEAPEST));
         return new ProfessionalListingResponse(issue.getId(), issue.getCategoryId(), professionals);
     }
 
@@ -204,7 +204,8 @@ public class BookingsService {
         BigDecimal finalPrice = basePriceSnapshot == null ? null : basePriceSnapshot.add(sosSurcharge);
         Order order = new Order(issue.getId(), callerId, professional.getId(), slot.getStartTime(),
                 slot.getEndTime(), finalPrice, slot.getId(), request.serviceCity(), request.serviceStreet(),
-                request.serviceHouseNumber(), request.serviceApartment(), basePriceSnapshot, sosSurcharge);
+                request.serviceHouseNumber(), request.serviceApartment(), request.serviceFloor(),
+                request.serviceEntrance(), request.serviceAddressNotes(), basePriceSnapshot, sosSurcharge);
         order = orderRepository.save(order);
 
         notificationService.recordOrderNotification(order.getId(), professional.getUserId(),
@@ -228,7 +229,7 @@ public class BookingsService {
         }
         List<ProfessionalCard> professionals =
                 professionalListingRepository.listSosAvailableByCategory(issue.getCategoryId(), callerId);
-        professionals = enrichAndSort(professionals, location, parseSort(sortParam));
+        professionals = enrichAndSort(professionals, location, parseSort(sortParam, ProfessionalSort.CHEAPEST));
         return new ProfessionalListingResponse(issue.getId(), issue.getCategoryId(), professionals);
     }
 
@@ -283,7 +284,8 @@ public class BookingsService {
         BigDecimal finalPrice = basePriceSnapshot == null ? null : basePriceSnapshot.add(sosSurcharge);
         Order order = new Order(issue.getId(), callerId, professional.getId(), now, null, finalPrice, null,
                 request.serviceCity(), request.serviceStreet(), request.serviceHouseNumber(),
-                request.serviceApartment(), basePriceSnapshot, sosSurcharge);
+                request.serviceApartment(), request.serviceFloor(), request.serviceEntrance(),
+                request.serviceAddressNotes(), basePriceSnapshot, sosSurcharge);
         order = orderRepository.save(order);
 
         notificationService.recordOrderNotification(order.getId(), professional.getUserId(),
@@ -359,7 +361,13 @@ public class BookingsService {
         return toOrderResponse(loadOrder(orderId));
     }
 
-    /** §2.16. */
+    /**
+     * §2.16, extended by the active-booking-floating-indicator design to also compute and
+     * persist {@code expectedArrivalAt} at the moment of transition, reusing the same
+     * {@link DistanceEtaStrategy#calculate} call {@link #enrichAndSort} already makes for
+     * listing-card ETA. See {@code docs/architecture/active-booking-floating-indicator.md}
+     * §1.4/§0.1 (supersedes the prior "ETA never persisted" ruling).
+     */
     @Transactional
     public OrderResponse onTheWay(Long callerId, Long orderId) {
         Order order = loadOrder(orderId);
@@ -369,7 +377,15 @@ public class BookingsService {
         }
 
         Instant now = Instant.now();
-        int affected = orderRepository.onTheWayIfConfirmed(orderId, now);
+        Professional professional = professionalRepository.findById(professionalId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND,
+                        "Professional " + professionalId + " not found."));
+        ServiceLocation customerLocation = new ServiceLocation(order.getServiceCity(), order.getServiceStreet(),
+                order.getServiceHouseNumber(), order.getServiceApartment());
+        EtaResult eta = distanceEtaStrategy.calculate(professional.getCity(), customerLocation, now);
+        Instant expectedArrivalAt = now.plus(Duration.ofMinutes(eta.etaMinutes()));
+
+        int affected = orderRepository.onTheWayIfConfirmed(orderId, now, expectedArrivalAt);
         if (affected == 0) {
             throw orderNotConfirmed(orderId);
         }
@@ -420,9 +436,11 @@ public class BookingsService {
 
         return new OrderDetailResponse(order.getId(), order.getIssueId(), order.getCustomerId(), customerName,
                 order.getProfessionalId(), professionalName, order.getOrderStatus(), order.getBookedStart(),
-                order.getBookedEnd(), order.getFinalPrice(), order.getBasePriceSnapshot(), order.getSosSurcharge(),
+                order.getBookedEnd(), order.getExpectedArrivalAt(), order.getFinalPrice(),
+                order.getBasePriceSnapshot(), order.getSosSurcharge(),
                 order.getServiceCity(), order.getServiceStreet(), order.getServiceHouseNumber(),
-                order.getServiceApartment(), order.getCancelledBy(), order.getCreatedAt(), order.getUpdatedAt());
+                order.getServiceApartment(), order.getServiceFloor(), order.getServiceEntrance(),
+                order.getServiceAddressNotes(), order.getCancelledBy(), order.getCreatedAt(), order.getUpdatedAt());
     }
 
     /** §2.9. */
@@ -444,7 +462,8 @@ public class BookingsService {
 
         List<OrderSummaryResponse> summaries = orders.stream()
                 .map(o -> new OrderSummaryResponse(o.getId(), o.getIssueId(), o.getOrderStatus(),
-                        o.getBookedStart(), o.getBookedEnd(), o.getFinalPrice(), o.getCreatedAt()))
+                        o.getBookedStart(), o.getBookedEnd(), o.getExpectedArrivalAt(), o.getFinalPrice(),
+                        o.getCreatedAt(), o.getUpdatedAt()))
                 .toList();
         return new OrdersListResponse(summaries);
     }
@@ -559,20 +578,22 @@ public class BookingsService {
     }
 
     /**
-     * {@code sort} query param: missing/blank defaults to {@link ProfessionalSort#CHEAPEST}
-     * (mirrors {@link #parseStatus}'s "blank means no filter" convention, adapted for this
-     * param's "blank means default" semantics); any non-blank value that isn't a valid enum
-     * constant is {@code 400 VALIDATION_ERROR}, same convention as {@link #parseStatus}.
+     * {@code sort} query param: missing/blank defaults to {@code defaultSort} ({@link
+     * ProfessionalSort#CHEAPEST} for the Standard listing, {@link ProfessionalSort#FASTEST}
+     * for the SOS listing — mirrors {@link #parseStatus}'s "blank means no filter" convention,
+     * adapted for this param's "blank means default" semantics); any non-blank value that
+     * isn't a valid enum constant is {@code 400 VALIDATION_ERROR}, same convention as
+     * {@link #parseStatus}.
      */
-    private ProfessionalSort parseSort(String raw) {
+    private ProfessionalSort parseSort(String raw, ProfessionalSort defaultSort) {
         if (raw == null || raw.isBlank()) {
-            return ProfessionalSort.CHEAPEST;
+            return defaultSort;
         }
         try {
             return ProfessionalSort.valueOf(raw);
         } catch (IllegalArgumentException e) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request failed validation.",
-                    List.of(new FieldError("sort", "must be one of CHEAPEST, FASTEST")));
+                    List.of(new FieldError("sort", "must be one of CHEAPEST, RECOMMENDED, FASTEST")));
         }
     }
 
@@ -584,7 +605,9 @@ public class BookingsService {
      * {@link DistanceEtaStrategy#calculate} using a single, uniform {@code requestTime =
      * Instant.now()} for the whole listing — applied unconditionally regardless of
      * {@code sort} (§7). When {@code sort == FASTEST}, the resulting list is re-sorted by
-     * {@code etaMinutes} ascending; {@code CHEAPEST} (default) leaves the DB's
+     * {@code etaMinutes} ascending; when {@code sort == RECOMMENDED}, by
+     * {@code averageRating} descending (professionals with no reviews yet sort last), then
+     * {@code reviewCount} descending as a tiebreak; {@code CHEAPEST} leaves the DB's
      * {@code base_price ASC} order untouched.
      */
     private List<ProfessionalCard> enrichAndSort(List<ProfessionalCard> cards, ServiceLocation location,
@@ -609,15 +632,24 @@ public class BookingsService {
                     .sorted(Comparator.comparingInt(ProfessionalCard::etaMinutes))
                     .toList();
         }
+        if (sort == ProfessionalSort.RECOMMENDED) {
+            return enriched.stream()
+                    .sorted(Comparator.comparing(ProfessionalCard::averageRating,
+                                    Comparator.nullsLast(Comparator.reverseOrder()))
+                            .thenComparing(Comparator.comparingLong(ProfessionalCard::reviewCount).reversed()))
+                    .toList();
+        }
         return enriched;
     }
 
     private OrderResponse toOrderResponse(Order order) {
         return new OrderResponse(order.getId(), order.getIssueId(), order.getCustomerId(),
                 order.getProfessionalId(), order.getOrderStatus(), order.getBookedStart(), order.getBookedEnd(),
-                order.getFinalPrice(), order.getBasePriceSnapshot(), order.getSosSurcharge(),
-                order.getServiceCity(), order.getServiceStreet(), order.getServiceHouseNumber(),
-                order.getServiceApartment(), order.getCancelledBy(), order.getCreatedAt(), order.getUpdatedAt());
+                order.getExpectedArrivalAt(), order.getFinalPrice(), order.getBasePriceSnapshot(),
+                order.getSosSurcharge(), order.getServiceCity(), order.getServiceStreet(),
+                order.getServiceHouseNumber(), order.getServiceApartment(), order.getServiceFloor(),
+                order.getServiceEntrance(), order.getServiceAddressNotes(), order.getCancelledBy(),
+                order.getCreatedAt(), order.getUpdatedAt());
     }
 
     private ApiException forbidden() {

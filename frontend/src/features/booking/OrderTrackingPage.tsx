@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, Link } from 'react-router-dom';
 import { PageHeader, Card, Button, StatusBadge } from '../../shared/components';
-import { useAuth, useOrderStatus } from '../../shared/hooks';
+import { useAuth, useOrderStatus, useEtaCountdown } from '../../shared/hooks';
 import { cancelOrder, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { OrderStatus } from '../../shared/api';
 import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
@@ -16,8 +16,11 @@ const CANCEL_ERROR_MESSAGES: Record<string, string> = {
 /**
  * `/orders/:orderId` — the tracking screen (either party, ownership enforced server-side).
  * Status-only real-time updates via short-polling (`useOrderStatus`, `overview.md` §3.3) —
- * no GPS/map, no ETA field here (Milestone 8's `etaMinutes` lives only on the
- * professional-listing card, `OrderDetailResponse` has no such field — not fabricated).
+ * no GPS/map. `expectedArrivalAt` IS a real, persisted field on `OrderDetailResponse` as of
+ * `active-booking-floating-indicator.md` (supersedes the prior "ETA never persisted / no
+ * new field here" ruling, see that doc's §0.1) — rendered below as a live countdown while
+ * `orderStatus === 'ON_THE_WAY'`, via the same `useEtaCountdown` hook the floating
+ * indicator uses.
  */
 export default function OrderTrackingPage() {
   const navigate = useNavigate();
@@ -28,6 +31,10 @@ export default function OrderTrackingPage() {
   const { order, error, isLoading, refetch } = useOrderStatus(orderId);
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+
+  const { remainingMinutes, isArriving } = useEtaCountdown(
+    order?.orderStatus === 'ON_THE_WAY' ? order.expectedArrivalAt : null,
+  );
 
   async function handleCancel() {
     setCancelError(null);
@@ -47,6 +54,7 @@ export default function OrderTrackingPage() {
   }
 
   const canCancel = user?.role === 'CUSTOMER' && order && CUSTOMER_CANCELLABLE_STATUSES.includes(order.orderStatus);
+  const canReview = user?.role === 'CUSTOMER' && order?.orderStatus === 'COMPLETED';
   const backPath = user?.role === 'PROFESSIONAL' ? '/pro' : '/orders';
 
   return (
@@ -69,6 +77,13 @@ export default function OrderTrackingPage() {
               <StatusBadge status={order.orderStatus} />
             </div>
 
+            {order.orderStatus === 'ON_THE_WAY' && remainingMinutes !== null && (
+              <div className={styles.row}>
+                <span className={styles.rowLabel}>זמן הגעה משוער</span>
+                <span className={styles.rowValue}>{isArriving ? 'מגיע/ה עכשיו' : `כ־${remainingMinutes} דקות`}</span>
+              </div>
+            )}
+
             <hr className={styles.divider} />
 
             <div className={styles.row}>
@@ -83,7 +98,10 @@ export default function OrderTrackingPage() {
               <span className={styles.rowValue}>
                 {order.serviceCity}, {order.serviceStreet} {order.serviceHouseNumber}
                 {order.serviceApartment ? `, דירה ${order.serviceApartment}` : ''}
+                {order.serviceFloor ? `, קומה ${order.serviceFloor}` : ''}
+                {order.serviceEntrance ? `, כניסה ${order.serviceEntrance}` : ''}
               </span>
+              {order.serviceAddressNotes && <span className={styles.rowValue}>{order.serviceAddressNotes}</span>}
             </div>
 
             <hr className={styles.divider} />
@@ -104,6 +122,12 @@ export default function OrderTrackingPage() {
             <Button variant="destructive" onClick={handleCancel} loading={isCancelling} fullWidth>
               ביטול ההזמנה
             </Button>
+          )}
+
+          {canReview && (
+            <Link to={`/orders/${orderId}/review`} className={styles.reviewLink}>
+              השאירו ביקורת
+            </Link>
           )}
         </div>
       )}

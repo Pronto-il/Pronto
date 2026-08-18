@@ -1,6 +1,8 @@
 import { Link, Outlet } from 'react-router-dom';
 import { LogOut, User, ClipboardList, LayoutDashboard } from 'lucide-react';
 import { useAuth } from '../shared/hooks';
+import { BookingDraftIndicator } from './BookingDraftIndicator';
+import { ActiveOrderIndicator } from './ActiveOrderIndicator';
 import logoUrl from '../assets/pronto-logo.jpg';
 import styles from './AppLayout.module.css';
 
@@ -27,6 +29,7 @@ export default function AppLayout() {
           <nav className={styles.nav}>
             {user ? (
               <>
+                <BookingDraftIndicator />
                 {user.role === 'CUSTOMER' && (
                   <Link to="/orders" className={styles.navLink}>
                     <ClipboardList size={18} aria-hidden="true" />
@@ -64,6 +67,7 @@ export default function AppLayout() {
       <main className={styles.main}>
         <Outlet />
       </main>
+      {user?.role === 'CUSTOMER' && <ActiveOrderIndicator />}
     </div>
   );
 }

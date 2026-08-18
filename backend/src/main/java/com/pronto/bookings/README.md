@@ -8,8 +8,8 @@ Implements `docs/architecture/api-contract-bookings.md` §2.2-2.9 (Standard path
 Milestone 3), §2.12-2.13 (SOS path, Milestone 4), and §2.16-2.17 (job-status
 progression, `ON_THE_WAY`/`COMPLETED`, Milestone 6). **As of Milestone 8**, also implements
 `docs/architecture/api-contract-professionals-reviews.md` §7 (service-location query params,
-`sort=CHEAPEST|FASTEST`, the enriched `ProfessionalCard`, service-address snapshot on order
-creation, and the SOS-surcharge price split) — that doc is the authoritative source for the
+`sort=CHEAPEST|RECOMMENDED|FASTEST`, the enriched `ProfessionalCard`, service-address snapshot
+on order creation, and the SOS-surcharge price split) — that doc is the authoritative source for the
 Milestone 8 delta; this README's Responsibilities/Key classes sections below summarize it
 in place rather than restating it in full.
 
@@ -30,11 +30,14 @@ in place rather than restating it in full.
   `favorites`, resolved/converted in `BookingsService`) and `sameCity`/`distanceKm`/
   `baseTravelTimeMinutes`/`trafficAdjustmentMinutes`/`etaMinutes` (via
   `matching.DistanceEtaStrategy`, one uniform `requestTime = Instant.now()` per listing
-  call). An optional `sort` param (`CHEAPEST` default/`FASTEST`) controls final ordering —
-  `CHEAPEST` leaves the DB's `base_price ASC` order untouched; `FASTEST` re-sorts the
-  already-enriched list in-memory by `etaMinutes` ascending (necessarily in-memory —
-  `etaMinutes` is never a database column). See
-  `docs/architecture/api-contract-professionals-reviews.md` §7.1-§7.3 for the full spec.
+  call). An optional `sort` param (`CHEAPEST`/`RECOMMENDED`/`FASTEST`, default `CHEAPEST`
+  for this endpoint) controls final ordering — `CHEAPEST` leaves the DB's `base_price ASC`
+  order untouched; `RECOMMENDED` re-sorts the already-enriched list in-memory by
+  `averageRating` descending (professionals with a `null` `averageRating` — no reviews yet —
+  sort last), tiebroken by `reviewCount` descending; `FASTEST` re-sorts the already-enriched
+  list in-memory by `etaMinutes` ascending (necessarily in-memory — `etaMinutes` is never a
+  database column). See `docs/architecture/api-contract-professionals-reviews.md` §7.1-§7.3
+  for the full spec.
 - `GET /api/bookings/professionals/{professionalId}/slots?issueId=` — one professional's
   open, future `availability_slots`, ordered by `start_time ASC`. Same
   issue-ownership/urgency-type/bookable checks as the listing endpoint (including the
@@ -68,7 +71,13 @@ in place rather than restating it in full.
   `houseNumber`/`apartment`/`sort` query params and produces the identical enriched
   `ProfessionalCard` shape as the Standard listing above — same enrichment/sort code path
   (`BookingsService#enrichAndSort`), applied independently to whichever list this endpoint
-  fetched.
+  fetched. **Its `sort` default matches the Standard listing's**: both endpoints default to
+  `CHEAPEST` when `sort` is blank/omitted — `parseSort(String, ProfessionalSort)` takes an
+  explicit per-call default rather than a single hardcoded one, but both call sites currently
+  pass the same `ProfessionalSort.CHEAPEST` value. (An earlier, uncommitted draft of the
+  MS3/MS4 product-corrections pass briefly had this endpoint defaulting to `FASTEST`; that was
+  reconciled back to `CHEAPEST` before the corrections branch was finalized — see
+  `docs/architecture/ms3-ms4-corrections-design.md` §3.)
 - `POST /api/bookings/sos-orders` — **new, Milestone 4.** Creates an SOS order: no slot
   selection at all (`CreateSosOrderRequest` has one fewer field than `CreateOrderRequest`).
   Same issue-ownership/`urgencyType = SOS`/bookable checks, then a **plain read-check** (not
@@ -114,7 +123,20 @@ in place rather than restating it in full.
   affected rows. `issues.status` is **not** touched — stays `BOOKED`, exactly as `accept`
   leaves it. Notifies the customer (`ORDER_ON_THE_WAY`) — the professional acted and doesn't
   need telling about their own action, same reasoning as every other transition in this
-  package.
+  package. **As of the Active Booking Floating Indicator feature (2026-08-17)**: this
+  endpoint now also computes and persists `expectedArrivalAt`. Before the guarded `UPDATE`,
+  `onTheWay` looks up the professional's `city` and calls
+  `matching.DistanceEtaStrategy#calculate(professional.getCity(), customerLocation, now)` —
+  the exact same call `enrichAndSort` already makes for listing-card ETA, `customerLocation`
+  built from the order's own already-persisted `service*` snapshot (no new request-body
+  field) — then sets `expectedArrivalAt = now.plus(Duration.ofMinutes(eta.etaMinutes()))` and
+  passes it into the now-3-arg `onTheWayIfConfirmed(orderId, now, expectedArrivalAt)`, which
+  sets `orders.expected_arrival_at` (`V23`) atomically in the same guarded `UPDATE`. This
+  narrowly overrides the previously-settled "ETA is never persisted" ruling
+  (`overview.md` §2, `data-model.md` §4) — see
+  `docs/architecture/active-booking-floating-indicator.md` §0.1 for the full record. The
+  `matching` package itself is unchanged — it still computes nothing to disk (see
+  `matching/README.md`).
 - `POST /api/bookings/orders/{orderId}/complete` — **new, Milestone 6.** `ON_THE_WAY ->
   COMPLETED`, professional-owner only, same ownership check. Single guarded `UPDATE ...
   WHERE order_status = 'ON_THE_WAY'` (`OrderRepository.completeIfOnTheWay`), `409
@@ -178,12 +200,12 @@ not just re-asserted).
 
 | Class | Role |
 |---|---|
-| `entity.Order` | JPA entity for `orders`. Exposes no setters for `orderStatus`/`cancelledBy` — every transition goes through `repository.OrderRepository`'s atomic `UPDATE` methods, never a load-mutate-save round trip. Unchanged in Milestone 4 — its constructor already accepted nullable `slotId`/`bookedEnd`, used by `createSosOrder` with no entity change needed. |
+| `entity.Order` | JPA entity for `orders`. Exposes no setters for `orderStatus`/`cancelledBy` — every transition goes through `repository.OrderRepository`'s atomic `UPDATE` methods, never a load-mutate-save round trip. Unchanged in Milestone 4 — its constructor already accepted nullable `slotId`/`bookedEnd`, used by `createSosOrder` with no entity change needed. **As of the Active Booking Floating Indicator feature**: gained `expectedArrivalAt` (`@Column(name = "expected_arrival_at")`, `Instant`) — getter-only, no setter, and **not** a constructor parameter (always `null` at order-creation time, same convention as `cancelledBy` starting `null`), same "never loaded-mutated-saved, only written via the repository's atomic guarded `UPDATE`" rule this class's own Javadoc already states for every other transition field. |
 | `entity.OrderStatus` / `entity.CancelledBy` | Enums mirroring `orders.order_status` (7 values, post-`V11`) / `orders.cancelled_by`. |
-| `repository.OrderRepository` | `JpaRepository`, plus `acceptIfPending`/`rejectIfPending`/`cancelIfStatus` (the atomic guarded transitions, §3.2) and the self-listing/`latestOrder`/professional-authorization finder methods. Unchanged in Milestone 4 — no `urgency_type`/`slot_id` branching in any `@Query`. **As of Milestone 5**, two new methods: `expireIfPending` (mirrors `rejectIfPending` exactly, target status `EXPIRED`) and `findPendingExpiryCandidateIds` (cross-entity comma-join JPQL against `Order`/`Issue`, same style as `ProfessionalListingRepository`'s existing joins — returns candidate order ids past their per-`urgencyType` cutoff for the sweep). **As of Milestone 6**, two new guarded-transition methods following the exact same shape: `onTheWayIfConfirmed` (`UPDATE ... WHERE order_status = 'CONFIRMED'`, target `ON_THE_WAY`) and `completeIfOnTheWay` (`UPDATE ... WHERE order_status = 'ON_THE_WAY'`, target `COMPLETED`) — both single-hop guards, no skip-ahead `WHERE` clause. |
+| `repository.OrderRepository` | `JpaRepository`, plus `acceptIfPending`/`rejectIfPending`/`cancelIfStatus` (the atomic guarded transitions, §3.2) and the self-listing/`latestOrder`/professional-authorization finder methods. Unchanged in Milestone 4 — no `urgency_type`/`slot_id` branching in any `@Query`. **As of Milestone 5**, two new methods: `expireIfPending` (mirrors `rejectIfPending` exactly, target status `EXPIRED`) and `findPendingExpiryCandidateIds` (cross-entity comma-join JPQL against `Order`/`Issue`, same style as `ProfessionalListingRepository`'s existing joins — returns candidate order ids past their per-`urgencyType` cutoff for the sweep). **As of Milestone 6**, two new guarded-transition methods following the exact same shape: `onTheWayIfConfirmed` (`UPDATE ... WHERE order_status = 'CONFIRMED'`, target `ON_THE_WAY`) and `completeIfOnTheWay` (`UPDATE ... WHERE order_status = 'ON_THE_WAY'`, target `COMPLETED`) — both single-hop guards, no skip-ahead `WHERE` clause. **As of the Active Booking Floating Indicator feature**: `onTheWayIfConfirmed`'s signature changed (breaking, single caller updated in lockstep) — now `onTheWayIfConfirmed(Long orderId, Instant now, Instant expectedArrivalAt)`, extending the same guarded `UPDATE` to also set `o.expectedArrivalAt = :expectedArrivalAt` in the identical atomic statement. `expectedArrivalAt` is computed by the caller (`BookingsService`, a pure call to `DistanceEtaStrategy`, no I/O) and passed in already-resolved — never computed inside the repository. |
 | `repository.ProfessionalListingRepository` | A narrow, read-only query interface over `professionals`/`users` (§2.2) projected into `dto.ProfessionalCard` — deliberately lives here, not in `professionals`, to avoid a reverse `professionals -> bookings` dependency (see its Javadoc). As of Milestone 4, exposes two queries: `listByCategory` (§2.2, Standard) and `listSosAvailableByCategory` (§2.12, SOS — additionally joined to `com.pronto.availability.entity.SosAvailability` filtering on `isAvailable = true`). **As of Milestone 8**: both queries' `SELECT NEW ProfessionalCard(...)` projections gained `p.city`/`p.profileImageKey` and three correlated scalar subqueries — `AVG(r.rating)`/`COUNT(r)` over `com.pronto.reviews.entity.Review` (rating aggregate) and `COUNT(f)` over `com.pronto.favorites.entity.Favorite` scoped to `:customerId` (the `favorited` flag) — deliberately correlated subqueries, not a `LEFT JOIN + GROUP BY`, to avoid a wide `GROUP BY` column list across three joined tables. ETA/distance are deliberately **not** added to either query — computed in Java, post-fetch, never in SQL (see `service.BookingsService#enrichAndSort` below). |
-| `dto.*` | Wire shapes for all twelve endpoints (§2.2-2.9, §2.12-2.13, §2.16-2.17) — `OrderResponse` is shared by create/accept/reject, `createSosOrder`, **and, as of Milestone 6, `onTheWay`/`complete`** (identical shape, differing only in values — `OrderStatus` already had `ON_THE_WAY`/`COMPLETED` as enum constants, no new field needed); `OrderDetailResponse`/`OrderSummaryResponse` are the richer/leaner shapes for get-by-id vs. list-mine, mirroring the pattern M1 used for `/api/users/me`. `dto.CreateSosOrderRequest` (new, Milestone 4) is `CreateOrderRequest` minus `slotId` — SOS has no slot selection. **No new DTO added in Milestone 6. As of Milestone 8**: `ProfessionalCard` gained `profileImageUrl`/`averageRating`/`reviewCount`/`favorited`/`sameCity`/`distanceKm`/`baseTravelTimeMinutes`/`trafficAdjustmentMinutes`/`etaMinutes` — a two-stage-construction record (see its own Javadoc): the JPQL-projection constructor `ProfessionalListingRepository` calls carries raw column values and rating/favorite subquery results with placeholder ETA fields; `BookingsService#enrichAndSort` produces the final card via the canonical (all-fields) constructor. `CreateOrderRequest`/`CreateSosOrderRequest` gained required `serviceCity`/`serviceStreet`/`serviceHouseNumber` (+ optional `serviceApartment`). `OrderResponse`/`OrderDetailResponse` gained `basePriceSnapshot`/`sosSurcharge` and the four `service*` fields. New enum `dto.ProfessionalSort` (`CHEAPEST`/`FASTEST`). `OrderSummaryResponse` (list-mine) was **not** changed — the new fields are detail/create-response-only. |
-| `service.BookingsService` | All business logic for §2.2-2.9, §2.12-2.13, and §2.16-2.17, including the atomic-transaction sequencing in `createOrder`/`createSosOrder` and the actor/authorization resolution for `cancel`/`getOrderDetail`/`listMine`. Milestone 4 added `listSosProfessionals`/`createSosOrder` plus a shared `urgencyMismatch(...)` helper/exception factory called from `listProfessionals`/`listSlots`/`createOrder` (Standard) and `listSosProfessionals`/`createSosOrder` (SOS) alike. **As of Milestone 5**: constructor gains a new required `notifications.service.NotificationService` dependency; `createOrder`/`createSosOrder`/`accept`/`reject`/`cancel` each gained a trailing `recordOrderNotification(...)` call; two new public methods, `findExpiredOrderCandidateIds()`/`expireIfPending(Long)`, plus the two hardcoded timeout constants (`STANDARD_PENDING_TIMEOUT`/`SOS_PENDING_TIMEOUT`) — see Responsibilities above for the full writeup. **As of Milestone 6**: two new public methods, `onTheWay(Long callerId, Long orderId)` and `complete(Long callerId, Long orderId)`, each resolving the caller's `professionals.id` (same `resolveProfessionalId` helper `accept`/`reject` already use), calling the matching `OrderRepository` guarded transition, and finishing with a `recordOrderNotification(...)` call to the customer — see Responsibilities above for the full writeup, including `complete`'s additional `issueRepository.completeIfBooked(...)` call. **As of Milestone 8**: constructor gains two new required dependencies, `matching.DistanceEtaStrategy` and `storage.client.StorageClient`; `listProfessionals`/`listSosProfessionals` now take a `matching.ServiceLocation`/sort-param pair and call the new private `enrichAndSort(...)` helper (resolves each card's profile-image URL, computes distance/ETA via `DistanceEtaStrategy#calculate` with one uniform `Instant.now()` per listing call, and re-sorts by `etaMinutes` when `sort == FASTEST`); `createOrder`/`createSosOrder` gained the service-address snapshot (persisted verbatim onto the new `Order` constructor params) and the `basePriceSnapshot`/`sosSurcharge` computation (`sosSurcharge` always `0.00` for Standard, always the new `SOS_SURCHARGE_AMOUNT` constant for SOS); new private helpers `parseSort(String)` (mirrors `parseStatus`'s "blank means default/no-filter" convention) and the `SOS_SURCHARGE_AMOUNT` constant. |
+| `dto.*` | Wire shapes for all twelve endpoints (§2.2-2.9, §2.12-2.13, §2.16-2.17) — `OrderResponse` is shared by create/accept/reject, `createSosOrder`, **and, as of Milestone 6, `onTheWay`/`complete`** (identical shape, differing only in values — `OrderStatus` already had `ON_THE_WAY`/`COMPLETED` as enum constants, no new field needed); `OrderDetailResponse`/`OrderSummaryResponse` are the richer/leaner shapes for get-by-id vs. list-mine, mirroring the pattern M1 used for `/api/users/me`. `dto.CreateSosOrderRequest` (new, Milestone 4) is `CreateOrderRequest` minus `slotId` — SOS has no slot selection. **No new DTO added in Milestone 6. As of Milestone 8**: `ProfessionalCard` gained `profileImageUrl`/`averageRating`/`reviewCount`/`favorited`/`sameCity`/`distanceKm`/`baseTravelTimeMinutes`/`trafficAdjustmentMinutes`/`etaMinutes` — a two-stage-construction record (see its own Javadoc): the JPQL-projection constructor `ProfessionalListingRepository` calls carries raw column values and rating/favorite subquery results with placeholder ETA fields; `BookingsService#enrichAndSort` produces the final card via the canonical (all-fields) constructor. `CreateOrderRequest`/`CreateSosOrderRequest` gained required `serviceCity`/`serviceStreet`/`serviceHouseNumber` (+ optional `serviceApartment`). `OrderResponse`/`OrderDetailResponse` gained `basePriceSnapshot`/`sosSurcharge` and the four `service*` fields. New enum `dto.ProfessionalSort` (`CHEAPEST`/`RECOMMENDED`/`FASTEST`). `OrderSummaryResponse` (list-mine) was **not** changed — the new fields are detail/create-response-only. **As of the MS3/MS4 product-corrections pass**: `CreateOrderRequest`/`CreateSosOrderRequest`/`OrderResponse`/`OrderDetailResponse` all gained 3 further optional fields — `serviceFloor`/`serviceEntrance`/`serviceAddressNotes` (`V22`, see Data model/Assumptions below) — bringing the service-address snapshot to the full 7-field shape. **As of the Active Booking Floating Indicator feature**: `OrderResponse`/`OrderDetailResponse`/`OrderSummaryResponse` all gained `Instant expectedArrivalAt` (positioned directly after `bookedEnd`), mirrored 1:1 from `Order.getExpectedArrivalAt()`; `OrderSummaryResponse` additionally gained `Instant updatedAt` (not previously on that lean list-mine shape at all — needed by the frontend's floating-indicator tie-break logic to express "most recently completed" among several unacknowledged `COMPLETED` orders, see `docs/architecture/active-booking-floating-indicator.md` §2.3/§5). `listMine`'s stream-mapping call site was updated for the new `OrderSummaryResponse` shape. |
+| `service.BookingsService` | All business logic for §2.2-2.9, §2.12-2.13, and §2.16-2.17, including the atomic-transaction sequencing in `createOrder`/`createSosOrder` and the actor/authorization resolution for `cancel`/`getOrderDetail`/`listMine`. Milestone 4 added `listSosProfessionals`/`createSosOrder` plus a shared `urgencyMismatch(...)` helper/exception factory called from `listProfessionals`/`listSlots`/`createOrder` (Standard) and `listSosProfessionals`/`createSosOrder` (SOS) alike. **As of Milestone 5**: constructor gains a new required `notifications.service.NotificationService` dependency; `createOrder`/`createSosOrder`/`accept`/`reject`/`cancel` each gained a trailing `recordOrderNotification(...)` call; two new public methods, `findExpiredOrderCandidateIds()`/`expireIfPending(Long)`, plus the two hardcoded timeout constants (`STANDARD_PENDING_TIMEOUT`/`SOS_PENDING_TIMEOUT`) — see Responsibilities above for the full writeup. **As of Milestone 6**: two new public methods, `onTheWay(Long callerId, Long orderId)` and `complete(Long callerId, Long orderId)`, each resolving the caller's `professionals.id` (same `resolveProfessionalId` helper `accept`/`reject` already use), calling the matching `OrderRepository` guarded transition, and finishing with a `recordOrderNotification(...)` call to the customer — see Responsibilities above for the full writeup, including `complete`'s additional `issueRepository.completeIfBooked(...)` call. **As of Milestone 8**: constructor gains two new required dependencies, `matching.DistanceEtaStrategy` and `storage.client.StorageClient`; `listProfessionals`/`listSosProfessionals` now take a `matching.ServiceLocation`/sort-param pair and call the new private `enrichAndSort(...)` helper (resolves each card's profile-image URL, computes distance/ETA via `DistanceEtaStrategy#calculate` with one uniform `Instant.now()` per listing call, and re-sorts by `etaMinutes` when `sort == FASTEST`); `createOrder`/`createSosOrder` gained the service-address snapshot (persisted verbatim onto the new `Order` constructor params) and the `basePriceSnapshot`/`sosSurcharge` computation (`sosSurcharge` always `0.00` for Standard, always the new `SOS_SURCHARGE_AMOUNT` constant for SOS); new private helpers `parseSort(String)` (mirrors `parseStatus`'s "blank means default/no-filter" convention) and the `SOS_SURCHARGE_AMOUNT` constant. **As of the Active Booking Floating Indicator feature**: `onTheWay(Long callerId, Long orderId)` gained an ETA-computation step before its guarded transition — resolves the professional via `professionalRepository.findById(professionalId)` (a second lookup mirroring `resolveProfessionalName`'s existing "second lookup by id" pattern already present in this class), builds a `matching.ServiceLocation` from the order's own persisted `service*` snapshot, calls `distanceEtaStrategy.calculate(professional.getCity(), customerLocation, now)`, and derives `expectedArrivalAt = now.plus(Duration.ofMinutes(eta.etaMinutes()))`, passed into the now-3-arg `orderRepository.onTheWayIfConfirmed(...)`. No new constructor dependency — `distanceEtaStrategy`/`ServiceLocation`/`EtaResult`/`Duration` were all already present (`enrichAndSort` already uses the first three; `Duration` was already imported for the pending-timeout constants). |
 | `controller.BookingsController` | `/api/bookings/professionals`, `/api/bookings/professionals/{id}/slots`, `/api/bookings/orders` (+ `/accept`/`/reject`/`/cancel`/`/{orderId}`/`/me`), as of Milestone 4 `/api/bookings/sos-professionals` + `/api/bookings/sos-orders`, and, **as of Milestone 6, `/api/bookings/orders/{orderId}/on-the-way` + `/api/bookings/orders/{orderId}/complete`** (`POST`, same manual path-id-parsing convention as `accept`/`reject`). Path/query ids are parsed manually so a malformed value produces this app's standard error envelope (`404` for a path id, `400 VALIDATION_ERROR` for a query id) rather than Spring's default type-mismatch handling. **As of Milestone 8**: `listProfessionals`/`listSosProfessionals` gained `city`/`street`/`houseNumber`/`apartment`/`sort` query params and a new private `parseServiceLocation(...)` helper (collects all missing required fields into one `400 VALIDATION_ERROR` response, same "collect every failure" spirit as `@Valid` body validation). |
 | `config.BookingsWebConfig` | Two separate, precisely-scoped `RoleRequiredInterceptor` registrations (`CUSTOMER` on the customer-only routes, `PROFESSIONAL` on `accept`/`reject`) — no blanket pattern, since this package mixes roles per-route. As of Milestone 4, the `CUSTOMER` registration's literal path list also includes `/api/bookings/sos-professionals` and `/api/bookings/sos-orders` (added explicitly — this package's literal-list design doesn't pick up new routes via a wildcard the way `availability`'s config does). **As of Milestone 6**, the `PROFESSIONAL` registration's literal path list also includes `/api/bookings/orders/*/on-the-way` and `/api/bookings/orders/*/complete` — same "literal-list doesn't pick up new routes automatically" reasoning. Nothing registered for `cancel`/get-by-id/get-me (service-layer authorization only). |
 
@@ -285,6 +307,23 @@ surcharge amount). Both migrations are owned by this package (the `orders` table
 `docs/architecture/api-contract-professionals-reviews.md` §1.4-§1.5 for the full column
 specs.
 
+**MS3/MS4 product-corrections pass added one further migration to `orders`**:
+`V22__alter_orders_add_service_address_details.sql` (`service_floor VARCHAR(20)`/
+`service_entrance VARCHAR(20)`/`service_address_notes VARCHAR(500)`, nullable at the DB level,
+optional at the API layer — same convention as `V18`'s `service_apartment`), extending the
+service-address snapshot from 4 to the full 7 fields already established on `users.default_*`
+(`V20`). See `docs/architecture/data-model.md` §2.9.
+
+**Active Booking Floating Indicator feature added one further migration to `orders`**:
+`V23__alter_orders_add_expected_arrival_at.sql` (`expected_arrival_at TIMESTAMP`, nullable —
+`NULL` for every order that never reached `ON_THE_WAY`; set exactly once, atomically, at the
+`ON_THE_WAY` transition, never modified by any later transition). This is a single
+absolute-timestamp column rather than a second `onTheWayAt` + `etaMinutes` pair — it's
+exactly what the frontend countdown needs (`remainingTime = expectedArrivalAt - now`), and
+`orders.updated_at` already gets overwritten by later transitions (complete/cancel), so it
+can't double as "when did on-the-way happen." See `docs/architecture/data-model.md` §2.9 and
+`docs/architecture/active-booking-floating-indicator.md` §1.1 for the full column spec.
+
 ## Assumptions / judgment calls made during implementation
 
 All judgment calls below follow the contract doc's explicitly stated default — no
@@ -362,11 +401,48 @@ deviation:
   genuine defensive measure (contract doc §6 item 11 has the full comparison against
   `SosAvailabilityRepository`'s different "row unexpectedly missing" precedent, which *does*
   branch, because that case lacks an equivalent invariant-based proof).
-- **Milestone 8 — `sort=FASTEST` is necessarily an in-memory re-sort, not a second SQL query
-  variant.** `etaMinutes` is computed in Java, never persisted, so no `ORDER BY` could sort by
-  it at the DB level; both `sort` values fetch the identical DB-level `base_price ASC`-ordered
-  result set and enrich every card identically — `sort` only changes the *final* ordering
-  step, never which cards are enriched or how.
+- **Milestone 8 — `sort=RECOMMENDED`/`FASTEST` are necessarily in-memory re-sorts, not a
+  second SQL query variant.** `averageRating`/`reviewCount` are read via correlated subqueries
+  and `etaMinutes` is computed in Java, never persisted, so no single `ORDER BY` could sort by
+  either at the DB level; every `sort` value fetches the identical DB-level `base_price
+  ASC`-ordered result set and enrich every card identically — `sort` only changes the *final*
+  ordering step, never which cards are enriched or how. `RECOMMENDED` orders by `averageRating`
+  descending (a `null` average — no reviews yet — sorts last), tiebroken by `reviewCount`
+  descending. `parseSort(String, ProfessionalSort)` takes an explicit default per call site
+  rather than a single hardcoded one, but **both** the Standard and SOS listings pass
+  `ProfessionalSort.CHEAPEST` as that default when `sort` is blank/omitted. Invalid non-blank
+  `sort` values still `400 VALIDATION_ERROR`, message "must be one of CHEAPEST, RECOMMENDED,
+  FASTEST".
+- **MS3/MS4 product-corrections pass (2026-08-17) — sort-toggle scope reconciled.** The
+  `RECOMMENDED` ranking above is a genuinely new mode (not a relabel of `FASTEST`), added along
+  with the enum's third value during this pass. On the frontend, both `BookingFlowPage`
+  (Standard) and `SosBookingFlowPage` (SOS) expose an **identical 2-way `Recommended |
+  Cheapest` chip toggle** (`STANDARD_SORT_OPTIONS`/`SOS_SORT_OPTIONS` in
+  `frontend/src/features/professionals/ProfessionalList.tsx`, both `[RECOMMENDED, CHEAPEST]`,
+  Recommended shown first) — grounded in `frontend/Pronto — DESIGN_SYSTEM.md` §31-34 and the
+  user's own correction-spec wording ("Recommended... and Cheapest"). `FASTEST` is **not**
+  dropped from the backend — it stays a valid `ProfessionalSort` enum value with working
+  ranking logic, reachable via a direct API call, kept dormant for a possible future SOS-specific
+  enhancement — it is simply not wired to any chip in either flow this pass. An earlier,
+  uncommitted draft of this same work briefly gave the SOS listing a `FASTEST` default and a
+  `Recommended | Fastest` chip pair (with `Cheapest` dropped from SOS); that draft was not
+  authorized and was reconciled back to the state described here before the corrections branch
+  was finalized. See `docs/architecture/ms3-ms4-corrections-design.md` §3 for the full
+  reconciliation record and `docs/architecture/api-contract-professionals-reviews.md` §7.2 for
+  the corrected API-contract-level description.
+- **MS3/MS4 product-corrections pass — `orders` service-address snapshot extended to 7
+  fields.** `V22__alter_orders_add_service_address_details.sql` adds `service_floor
+  VARCHAR(20)`/`service_entrance VARCHAR(20)`/`service_address_notes VARCHAR(500)` to
+  `orders`, matching the field set already established on `users.default_*` (`V20`). Nullable
+  at the DB level (no backfillable source for existing orders) and optional at the API layer
+  too (no `@NotBlank`), same convention as the pre-existing `serviceApartment`. `Order`,
+  `CreateOrderRequest`/`CreateSosOrderRequest`, and `OrderResponse`/`OrderDetailResponse` all
+  carry the 3 new fields alongside the original 4. `BookingsService`'s `createOrder`/
+  `createSosOrder` persist whatever address fields arrive in the request body regardless of
+  whether the frontend's `AddressSelectionStep` used the customer's saved default address or a
+  one-off custom address — the "default vs. custom" distinction is a frontend/UX concern only;
+  the backend contract is address-source-agnostic by design, with no `addressSource` field
+  added anywhere.
 - **Milestone 8 — `SOS_SURCHARGE_AMOUNT = 50.00` is an explicitly-flagged placeholder, not a
   sourced business figure** — a single hardcoded `static final BigDecimal` constant, same
   category of judgment call as Milestone 5's `STANDARD_PENDING_TIMEOUT`/
@@ -388,6 +464,22 @@ deviation:
   documented here because it's directly observable in this package's own response shape; the
   root cause and full record live in `professionals/README.md` and
   `docs/architecture/implementation-plan.md`'s Milestone 8 entry.
+
+- **Active Booking Floating Indicator feature — `expectedArrivalAt` is a single, immutable,
+  absolute-timestamp column, computed once and never re-derived.** It is set exactly once,
+  atomically alongside the `ON_THE_WAY` transition, and never touched by `complete`/`cancel`
+  — a deliberate snapshot of "what we told the customer to expect" at that moment, not a
+  live-recomputed figure that would drift if recomputed later. This narrowly overrides the
+  previously-settled "ETA is never persisted" architectural ruling
+  (`docs/architecture/overview.md` §2, `docs/architecture/data-model.md` §4) — flagged
+  explicitly there and in `docs/architecture/active-booking-floating-indicator.md` §0.1,
+  not silently reversed. The `matching` package itself is unchanged by this — see
+  `matching/README.md`.
+- **`onTheWay`'s ETA computation had zero test coverage before this feature** — confirmed by
+  grepping `BookingsServiceTest.java` prior to this pass (`onTheWay`/`ON_THE_WAY` didn't
+  appear at all). 3 new tests were added covering the ETA computation/persistence path
+  (bounds-checked `expectedArrivalAt` derivation, the `orderNotConfirmed` failure path, and
+  the caller-forbidden path never invoking `onTheWayIfConfirmed`).
 
 ## Status
 
@@ -515,3 +607,31 @@ its one recorded non-blocking known gap, the `professionals.city = NULL` default
 registered professionals, which this package's listing enrichment directly surfaces via
 `sameCity: false`/worse ETA figures). Full design/contract:
 `docs/architecture/api-contract-professionals-reviews.md` §7-§9.
+
+**MS3/MS4 product-corrections pass (2026-08-17)**: this package gained one new migration
+(`V22`, the 3 remaining service-address fields — `serviceFloor`/`serviceEntrance`/
+`serviceAddressNotes`, see "Data model" above) and the sort-toggle reconciliation described
+under "Assumptions" above (`RECOMMENDED` ranking logic and the enum's third value are
+unchanged/confirmed-correct; the SOS listing's `sort` default, which an out-of-scope,
+unauthorized draft of this same work had briefly changed to `FASTEST`, was reverted to
+`CHEAPEST` to match the Standard listing). No new `ErrorCode` values. Full change record:
+`docs/architecture/ms3-ms4-corrections-design.md`.
+
+**Active Booking Floating Indicator feature (2026-08-17)**: this package gained one new
+migration (`V23`, `expected_arrival_at` on `orders`), one entity field
+(`Order.expectedArrivalAt`, getter-only), a breaking signature change to
+`OrderRepository.onTheWayIfConfirmed` (single caller, updated in lockstep), an ETA-computation
+step inside `BookingsService.onTheWay`, and new fields across `OrderResponse`/
+`OrderDetailResponse`/`OrderSummaryResponse` (`expectedArrivalAt` on all three, plus
+`updatedAt` on `OrderSummaryResponse`) — see "Responsibilities"/"Key classes"/"Data
+model"/"Assumptions" above for the full writeup. No new `ErrorCode` values, no new
+`availability`/`notifications`/`issues` dependency edges. **QA-passed, 12/12 checklist items,
+zero bugs found.** Full design/decision record:
+`docs/architecture/active-booking-floating-indicator.md` (also narrowly overrides the
+previously-settled "ETA is never persisted" ruling — see that doc's §0.1, and
+`docs/architecture/overview.md` §2 / `docs/architecture/data-model.md` §4 for the recorded
+override). This is a **separate, additive pass from the MS3/MS4 product-corrections pass
+above** — not an extension of that pass's own still-partially-undocumented scope (address
+selection, sort-toggle reconciliation, booking-draft indicator); see
+`docs/architecture/ms3-ms4-corrections-design.md` for that separate, still-open documentation
+item.

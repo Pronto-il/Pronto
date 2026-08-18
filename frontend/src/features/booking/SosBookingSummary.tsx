@@ -63,6 +63,9 @@ export function SosBookingSummary({
         serviceStreet: address.street,
         serviceHouseNumber: address.houseNumber,
         serviceApartment: address.apartment || undefined,
+        serviceFloor: address.floor || undefined,
+        serviceEntrance: address.entrance || undefined,
+        serviceAddressNotes: address.addressNotes || undefined,
       });
       onConfirmed(order);
     } catch (error) {

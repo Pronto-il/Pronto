@@ -12,7 +12,7 @@ import { httpClient } from './httpClient';
 
 export type OrderStatus = 'PENDING' | 'CONFIRMED' | 'ON_THE_WAY' | 'COMPLETED' | 'CANCELLED' | 'REJECTED' | 'EXPIRED';
 export type CancelledBy = 'CUSTOMER' | 'PROFESSIONAL' | 'SYSTEM';
-export type ProfessionalSort = 'CHEAPEST' | 'FASTEST';
+export type ProfessionalSort = 'CHEAPEST' | 'RECOMMENDED' | 'FASTEST';
 
 export interface ServiceLocation {
   city: string;
@@ -103,7 +103,9 @@ export function getProfessionalSlots(professionalId: number, issueId: number): P
 /**
  * `serviceCity`/`serviceStreet`/`serviceHouseNumber` (+ optional `serviceApartment`) are a
  * real Milestone 8 addition to the request body (`orders.service_*` columns) — not present
- * in api-contract-bookings.md §2.4's original prose.
+ * in api-contract-bookings.md §2.4's original prose. `serviceFloor`/`serviceEntrance`/
+ * `serviceAddressNotes` are a further optional addition (V22 — orders schema gap fix, see
+ * `ms3-ms4-corrections-design.md` §2).
  */
 export interface CreateOrderRequest {
   issueId: number;
@@ -113,6 +115,9 @@ export interface CreateOrderRequest {
   serviceStreet: string;
   serviceHouseNumber: string;
   serviceApartment?: string;
+  serviceFloor?: string;
+  serviceEntrance?: string;
+  serviceAddressNotes?: string;
 }
 
 export interface OrderResponse {
@@ -123,6 +128,12 @@ export interface OrderResponse {
   orderStatus: OrderStatus;
   bookedStart: string;
   bookedEnd: string | null;
+  /**
+   * Set exactly once, at the `ON_THE_WAY` transition (`BookingsService.onTheWay`), computed
+   * from `DistanceEtaStrategy.calculate` — an immutable snapshot, `null` for every order that
+   * never reached `ON_THE_WAY`. See `docs/architecture/active-booking-floating-indicator.md`.
+   */
+  expectedArrivalAt: string | null;
   finalPrice: number;
   basePriceSnapshot: number;
   sosSurcharge: number;
@@ -130,6 +141,9 @@ export interface OrderResponse {
   serviceStreet: string;
   serviceHouseNumber: string;
   serviceApartment: string | null;
+  serviceFloor: string | null;
+  serviceEntrance: string | null;
+  serviceAddressNotes: string | null;
   cancelledBy: CancelledBy | null;
   createdAt: string;
   updatedAt: string;
@@ -206,6 +220,9 @@ export interface CreateSosOrderRequest {
   serviceStreet: string;
   serviceHouseNumber: string;
   serviceApartment?: string;
+  serviceFloor?: string;
+  serviceEntrance?: string;
+  serviceAddressNotes?: string;
 }
 
 /**
@@ -227,8 +244,11 @@ export interface OrderSummary {
   orderStatus: OrderStatus;
   bookedStart: string;
   bookedEnd: string | null;
+  /** Same as `OrderResponse.expectedArrivalAt` — `null` unless the order reached `ON_THE_WAY`. */
+  expectedArrivalAt: string | null;
   finalPrice: number;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface MyOrdersResponse {

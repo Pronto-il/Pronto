@@ -71,13 +71,17 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     int expireIfPending(@Param("orderId") Long orderId, @Param("now") Instant now);
 
     /**
-     * §2.16 step 4 (Milestone 6). {@code 0} affected rows means the order wasn't
-     * {@code CONFIRMED}.
+     * §2.16 step 4, extended by the active-booking-floating-indicator design to also persist
+     * the ETA the service layer already computed (DistanceEtaStrategy.calculate is a pure,
+     * stateless call made in BookingsService.onTheWay, never inside this repository) at the
+     * moment of transition. 0 affected rows means the order wasn't CONFIRMED.
      */
     @Modifying(clearAutomatically = true)
     @Query("UPDATE Order o SET o.orderStatus = com.pronto.bookings.entity.OrderStatus.ON_THE_WAY, "
-            + "o.updatedAt = :now WHERE o.id = :orderId AND o.orderStatus = com.pronto.bookings.entity.OrderStatus.CONFIRMED")
-    int onTheWayIfConfirmed(@Param("orderId") Long orderId, @Param("now") Instant now);
+            + "o.updatedAt = :now, o.expectedArrivalAt = :expectedArrivalAt "
+            + "WHERE o.id = :orderId AND o.orderStatus = com.pronto.bookings.entity.OrderStatus.CONFIRMED")
+    int onTheWayIfConfirmed(@Param("orderId") Long orderId, @Param("now") Instant now,
+                             @Param("expectedArrivalAt") Instant expectedArrivalAt);
 
     /**
      * §2.17 step 4 (Milestone 6). {@code 0} affected rows means the order wasn't

@@ -516,6 +516,23 @@ the three places a reader might look):
    it clearly from the still-valid, separate GPS/live-tracking exclusion row.
 3. This section (§5), the canonical full write-up both of the above point back to.
 
+**FURTHER OVERRIDDEN (Active Booking Floating Indicator feature, 2026-08-17)** — the "no ETA
+value is ever persisted" / "the tracking screen (`GET /api/bookings/orders/{orderId}`) gained
+**no** new field" claims two paragraphs above are now narrowly superseded, kept verbatim
+above per the same preserve-the-historical-record convention. `orders` gained a new nullable
+column, `expected_arrival_at` (`V23__alter_orders_add_expected_arrival_at.sql`), computed
+once via this same `matching.DistanceEtaStrategy#calculate` call and persisted by
+`bookings.service.BookingsService.onTheWay` at the `ON_THE_WAY` transition — `GET
+/api/bookings/orders/{orderId}` now does carry this field, and it drives a live countdown on
+the tracking screen plus the new floating active-order indicator. What is still true and
+unchanged: `EtaResult` (§6.2) is still computed fresh on every listing request and the
+`matching` package itself still persists nothing and owns no table — it is the **caller**
+(`bookings`) that persists the *result* of one specific `calculate()` call, once, at one
+specific transition, not a new responsibility inside `matching`. GPS/live-location tracking
+remains completely untouched. Full record: `docs/architecture/active-booking-floating-
+indicator.md` §0.1 (canonical write-up); also reflected in `overview.md` §2 and
+`data-model.md` §4.
+
 ---
 
 ## 6. `matching` package — distance/ETA design (no endpoint, consumed in-process)
@@ -606,17 +623,55 @@ elsewhere) — parsed manually in `BookingsController`, not via `@RequestParam` 
 checks alone, so multiple simultaneous missing fields are all reported at once rather than
 failing fast on the first.
 
-### 7.2 New optional query param: `sort` (`CHEAPEST` | `FASTEST`, default `CHEAPEST`)
+### 7.2 New optional query param: `sort` (`CHEAPEST` | `RECOMMENDED` | `FASTEST`, both
+endpoints default to `CHEAPEST`)
 
-- `CHEAPEST` (default, and the value if `sort` is omitted/blank): the pre-existing DB-level
-  `ORDER BY base_price ASC` — **unchanged behavior**, not a re-sort.
+`ProfessionalSort` has three values. `parseSort(String raw, ProfessionalSort defaultSort)`
+takes an explicit default **per call site** (not a single hardcoded default shared by both
+endpoints), but both listing endpoints currently pass the same value:
+- `GET /api/bookings/professionals` (Standard): defaults to `CHEAPEST`.
+- `GET /api/bookings/sos-professionals` (SOS): also defaults to `CHEAPEST`.
+
+**Reconciliation note (MS3/MS4 product-corrections pass, 2026-08-17)**: an earlier,
+uncommitted draft of this work briefly had the SOS listing defaulting to `FASTEST` instead,
+paired with a frontend `Recommended | Fastest` chip pair for SOS (dropping `Cheapest` from
+that flow) — introduced without authorization by an agent that went out of scope on an
+unrelated task, and asserted in this section's prose as if it were a settled product
+decision ("SOS prioritizes speed by default..."). That was reconciled back to the state
+described above before the corrections branch was finalized: **both flows now expose an
+identical, 2-way `Recommended | Cheapest` chip toggle** (Recommended shown first), and both
+listing endpoints default to `CHEAPEST` when `sort` is omitted. `FASTEST` remains a valid
+enum value and ranking (see below) — reachable via a direct API call — but is not wired to
+any chip in either flow this pass. See `docs/architecture/ms3-ms4-corrections-design.md` §3
+for the full reconciliation record.
+
+Sort-value behavior:
+- `CHEAPEST`: the pre-existing DB-level `ORDER BY base_price ASC` — **unchanged behavior**,
+  not a re-sort.
+- `RECOMMENDED`: an **in-memory re-sort** of the already-fetched, already-enriched list by
+  `averageRating` descending — professionals with a `null` `averageRating` (no reviews yet)
+  sort last — tiebroken by `reviewCount` descending. Necessarily in-memory, not a DB
+  `ORDER BY` — the average/count are read via correlated subqueries per §7.3, not a
+  precomputed, sortable column.
 - `FASTEST`: an **in-memory re-sort** of the already-fetched, already-ETA-enriched list by
   `etaMinutes` ascending. Necessarily in-memory, not a DB `ORDER BY` — `etaMinutes` is never
   a database column (§5/§6.5, computed fresh per request), so no SQL query could sort by it.
-- Any non-blank value that isn't `CHEAPEST`/`FASTEST` → `400 VALIDATION_ERROR`.
-- Distance/ETA enrichment itself (§6.5) happens **unconditionally**, regardless of `sort` —
-  even a `CHEAPEST`-sorted response carries fully-computed `distanceKm`/`etaMinutes`/etc. on
-  every card; `sort` only controls ordering, never whether the fields are populated.
+- Any non-blank value that isn't `CHEAPEST`/`RECOMMENDED`/`FASTEST` → `400 VALIDATION_ERROR`
+  (message: "must be one of CHEAPEST, RECOMMENDED, FASTEST").
+- Distance/ETA enrichment and the rating/review-count/favorited enrichment (§6.5/§7.3) both
+  happen **unconditionally**, regardless of `sort` — even a `CHEAPEST`-sorted response carries
+  fully-computed `distanceKm`/`etaMinutes`/`averageRating`/`reviewCount`/etc. on every card;
+  `sort` only controls final ordering, never whether the fields are populated.
+
+**Frontend consumption** (`frontend/src/features/professionals/ProfessionalList.tsx`): both
+the Standard booking flow (`BookingFlowPage.tsx`) and the SOS booking flow
+(`SosBookingFlowPage.tsx`) offer the identical `RECOMMENDED`/`CHEAPEST` chip pair
+(`STANDARD_SORT_OPTIONS`/`SOS_SORT_OPTIONS`, both `[RECOMMENDED, CHEAPEST]`, label "הכי
+מומלצים" for `RECOMMENDED` and "הזולים ביותר" for `CHEAPEST`), each defaulting to `CHEAPEST`
+on first load. Neither flow exposes a `FASTEST` chip — `FASTEST` is a valid backend
+enum/query value and ranking (below), reachable only via a direct API call, not through
+either flow's UI in this pass. See the reconciliation note above for why this replaced an
+earlier, differently-scoped (and unauthorized) draft of this same feature.
 
 ### 7.3 `ProfessionalCard`'s new fields
 
@@ -631,7 +686,8 @@ correlated `COUNT` subquery over `favorites` scoped to the calling customer, `tr
 itself only ever reads `professionals.city`/`profile_image_key`, threading the raw values
 through for the service layer to resolve/compute afterward).
 
-**Example, one entry** (Standard listing, `sort=FASTEST`):
+**Example, one entry** (`sort=FASTEST` — an API-level example only; neither the Standard nor
+the SOS listing's frontend UI can currently produce this value, see §7.2):
 ```json
 {
   "professionalId": 43,
@@ -662,6 +718,18 @@ validation beyond non-blank presence — no format/geocoding check against `matc
 anywhere else (the value isn't re-validated against the listing request's own `city`/
 `street`/`houseNumber`, so a customer could in principle book against a different address
 than the one they searched with; not prevented, not flagged as a defect — see §9).
+
+**Extended, MS3/MS4 product-corrections pass (2026-08-17)**: both request DTOs gain 3 further
+**optional** fields — `serviceFloor`/`serviceEntrance`/`serviceAddressNotes` — persisted onto
+3 new `orders` columns added by `V22__alter_orders_add_service_address_details.sql`
+(`service_floor VARCHAR(20)`/`service_entrance VARCHAR(20)`/`service_address_notes
+VARCHAR(500)`, all nullable at the DB level, no `@NotBlank`), bringing the service-address
+snapshot to the full 7-field shape already established on `users.default_*` (§1). Persisted
+regardless of whether the customer's `AddressSelectionStep` (frontend) used their saved
+default address or a one-off custom address — the backend accepts and stores whatever 7
+values arrive in the request body without needing to know which source they came from; no
+`addressSource` field was added to either request or to `orders`. `OrderResponse`/
+`OrderDetailResponse` (§7.5) mirror the same 3 new fields.
 
 ### 7.5 SOS surcharge — `basePriceSnapshot` / `sosSurcharge` split
 

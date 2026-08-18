@@ -61,6 +61,9 @@ public class Order {
     @Column(name = "cancelled_by", length = 20)
     private CancelledBy cancelledBy;
 
+    @Column(name = "expected_arrival_at")
+    private Instant expectedArrivalAt;
+
     @Column(name = "final_price", precision = 10, scale = 2)
     private BigDecimal finalPrice;
 
@@ -78,6 +81,15 @@ public class Order {
 
     @Column(name = "service_apartment", length = 20)
     private String serviceApartment;
+
+    @Column(name = "service_floor", length = 20)
+    private String serviceFloor;
+
+    @Column(name = "service_entrance", length = 20)
+    private String serviceEntrance;
+
+    @Column(name = "service_address_notes", length = 500)
+    private String serviceAddressNotes;
 
     @Column(name = "base_price_snapshot", precision = 10, scale = 2)
     private BigDecimal basePriceSnapshot;
@@ -109,8 +121,8 @@ public class Order {
      */
     public Order(Long issueId, Long customerId, Long professionalId, Instant bookedStart,
                  Instant bookedEnd, BigDecimal finalPrice, Long slotId, String serviceCity, String serviceStreet,
-                 String serviceHouseNumber, String serviceApartment, BigDecimal basePriceSnapshot,
-                 BigDecimal sosSurcharge) {
+                 String serviceHouseNumber, String serviceApartment, String serviceFloor, String serviceEntrance,
+                 String serviceAddressNotes, BigDecimal basePriceSnapshot, BigDecimal sosSurcharge) {
         this.issueId = issueId;
         this.customerId = customerId;
         this.professionalId = professionalId;
@@ -124,6 +136,9 @@ public class Order {
         this.serviceStreet = serviceStreet;
         this.serviceHouseNumber = serviceHouseNumber;
         this.serviceApartment = serviceApartment;
+        this.serviceFloor = serviceFloor;
+        this.serviceEntrance = serviceEntrance;
+        this.serviceAddressNotes = serviceAddressNotes;
         this.basePriceSnapshot = basePriceSnapshot;
         this.sosSurcharge = sosSurcharge;
     }
@@ -172,6 +187,10 @@ public class Order {
         return cancelledBy;
     }
 
+    public Instant getExpectedArrivalAt() {
+        return expectedArrivalAt;
+    }
+
     public BigDecimal getFinalPrice() {
         return finalPrice;
     }
@@ -194,6 +213,18 @@ public class Order {
 
     public String getServiceApartment() {
         return serviceApartment;
+    }
+
+    public String getServiceFloor() {
+        return serviceFloor;
+    }
+
+    public String getServiceEntrance() {
+        return serviceEntrance;
+    }
+
+    public String getServiceAddressNotes() {
+        return serviceAddressNotes;
     }
 
     public BigDecimal getBasePriceSnapshot() {

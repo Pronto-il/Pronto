@@ -14,7 +14,7 @@ export type {
 } from './auth';
 
 export { getMe } from './users';
-export type { ProfessionalInfo, UserMeResponse } from './users';
+export type { ProfessionalInfo, UserMeResponse, UserMeDefaultAddress } from './users';
 
 export { CATEGORIES, getCategoryNameHe } from './categories';
 export type { Category } from './categories';
@@ -80,3 +80,6 @@ export type {
   SlotListResponse,
   SosAvailabilityResponse,
 } from './availability';
+
+export { createReview } from './reviews';
+export type { CreateReviewRequest, ReviewResponse } from './reviews';

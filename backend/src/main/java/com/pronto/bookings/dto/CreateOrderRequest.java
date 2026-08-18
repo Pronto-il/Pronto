@@ -12,8 +12,8 @@ import jakarta.validation.constraints.Positive;
  * (non-null, positive).
  *
  * <p>{@code serviceCity}/{@code serviceStreet}/{@code serviceHouseNumber} are required
- * (service-address snapshot, §1 classification item 5); {@code serviceApartment} is
- * optional.
+ * (service-address snapshot, §1 classification item 5); {@code serviceApartment}/
+ * {@code serviceFloor}/{@code serviceEntrance}/{@code serviceAddressNotes} are optional.
  */
 public record CreateOrderRequest(
         @NotNull @Positive Long issueId,
@@ -22,6 +22,9 @@ public record CreateOrderRequest(
         @NotBlank String serviceCity,
         @NotBlank String serviceStreet,
         @NotBlank String serviceHouseNumber,
-        String serviceApartment
+        String serviceApartment,
+        String serviceFloor,
+        String serviceEntrance,
+        String serviceAddressNotes
 ) {
 }

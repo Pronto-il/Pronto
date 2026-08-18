@@ -337,14 +337,23 @@ Minimal addition beyond the brief's explicit list, needed to make the contract u
 end-to-end (frontend needs a way to fetch "who am I / what role am I" after login/on app
 load, rather than only ever trusting decoded JWT claims client-side).
 
-**Response `200` (customer):**
+**Response `200` (customer, with a saved default address):**
 ```json
 {
   "id": 42,
   "fullName": "ישראל ישראלי",
   "email": "israel@example.com",
   "role": "CUSTOMER",
-  "emailVerified": true
+  "emailVerified": true,
+  "defaultAddress": {
+    "city": "תל אביב",
+    "street": "אלנבי",
+    "houseNumber": "12",
+    "apartment": "4",
+    "floor": "2",
+    "entrance": "א",
+    "addressNotes": "קוד כניסה 1234"
+  }
 }
 ```
 
@@ -360,9 +369,22 @@ load, rather than only ever trusting decoded JWT claims client-side).
     "categoryId": 1,
     "serviceArea": "תל אביב",
     "basePrice": 150.00
-  }
+  },
+  "defaultAddress": null
 }
 ```
+
+**`defaultAddress`** — added by the MS3/MS4 product-corrections pass (2026-08-17), a nested
+object (`DefaultAddressInfo`), mirroring `professional`'s own "absent means no such object"
+convention: `null` for a `PROFESSIONAL` caller (the `users.default_*` columns are always null
+for that role) and also `null` for a `CUSTOMER` with no recorded default city (a pre-`V20`
+account). When present, always carries all 7 fields (`city`/`street`/`houseNumber` are
+required at registration per `V20`; `apartment`/`floor`/`entrance`/`addressNotes` may
+individually be `null`). Read-only — no endpoint exists in this API to update the default
+address; it is only ever set once, at registration (§2.1 step 3, `V20`'s
+`default_city`/`default_street`/`default_house_number`/`default_apartment`/`default_floor`/
+`default_entrance`/`default_address_notes` columns). See
+`docs/architecture/ms3-ms4-corrections-design.md` §1.
 
 **Status codes**: `200` success · `401 UNAUTHORIZED` (missing/invalid/expired token, or the
 token's user no longer exists / is soft-deleted).

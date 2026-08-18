@@ -9,8 +9,11 @@ import com.pronto.bookings.dto.OrderResponse;
 import com.pronto.bookings.dto.ProfessionalCard;
 import com.pronto.bookings.dto.ProfessionalListingResponse;
 import com.pronto.bookings.entity.Order;
+import com.pronto.bookings.entity.OrderStatus;
 import com.pronto.bookings.repository.OrderRepository;
 import com.pronto.bookings.repository.ProfessionalListingRepository;
+import com.pronto.common.exception.ApiException;
+import com.pronto.common.exception.ErrorCode;
 import com.pronto.issues.entity.Issue;
 import com.pronto.issues.entity.IssueStatus;
 import com.pronto.issues.entity.IssueUrgencyType;
@@ -32,15 +35,19 @@ import org.mockito.Mockito;
 
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -123,6 +130,18 @@ class BookingsServiceTest {
         return slot;
     }
 
+    private static final Long ORDER_ID = 6L;
+    private static final Long PROFESSIONAL_USER_ID = 99L;
+
+    private Order confirmedOrder() {
+        Order order = new Order(ISSUE_ID, CUSTOMER_ID, PROFESSIONAL_ID, Instant.now(), null,
+                new BigDecimal("100.00"), null, "Tel Aviv", "Herzl", "10", null, null, null, null,
+                new BigDecimal("100.00"), BigDecimal.ZERO);
+        setField(order, "id", ORDER_ID);
+        setField(order, "orderStatus", OrderStatus.CONFIRMED);
+        return order;
+    }
+
     // ---- SOS surcharge ----
 
     @Test
@@ -138,7 +157,7 @@ class BookingsServiceTest {
         when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
 
         CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, SLOT_ID,
-                "Tel Aviv", "Herzl", "10", null);
+                "Tel Aviv", "Herzl", "10", null, null, null, null);
         OrderResponse response = bookingsService.createOrder(CUSTOMER_ID, request);
 
         assertThat(response.sosSurcharge()).isEqualByComparingTo("0.00");
@@ -165,7 +184,7 @@ class BookingsServiceTest {
         when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
 
         CreateSosOrderRequest request = new CreateSosOrderRequest(ISSUE_ID, PROFESSIONAL_ID,
-                "Haifa", "Ben Gurion", "5", "3B");
+                "Haifa", "Ben Gurion", "5", "3B", null, null, null);
         OrderResponse response = bookingsService.createSosOrder(CUSTOMER_ID, request);
 
         assertThat(response.sosSurcharge()).isEqualByComparingTo("50.00");
@@ -190,10 +209,10 @@ class BookingsServiceTest {
         when(orderRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
         CreateOrderRequest first = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, SLOT_ID,
-                "Tel Aviv", "Herzl", "10", "2");
+                "Tel Aviv", "Herzl", "10", "2", null, null, null);
         bookingsService.createOrder(CUSTOMER_ID, first);
         CreateOrderRequest second = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, SLOT_ID,
-                "Jerusalem", "Jaffa Rd", "99", null);
+                "Jerusalem", "Jaffa Rd", "99", null, null, null, null);
         bookingsService.createOrder(CUSTOMER_ID, second);
 
         List<Order> saved = captor.getAllValues();
@@ -264,5 +283,71 @@ class BookingsServiceTest {
         // differs from the ETA-based order.
         assertThat(response.professionals()).extracting(ProfessionalCard::professionalId)
                 .containsExactly(10L, 20L);
+    }
+
+    // ---- onTheWay: expectedArrivalAt computation/persistence ----
+
+    @Test
+    void onTheWay_confirmedOrder_computesExpectedArrivalAtFromEtaAndPersistsIt() {
+        Order order = confirmedOrder();
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        Professional professional = activeProfessional();
+        when(professionalRepository.findByUserId(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(professional));
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
+        when(distanceEtaStrategy.calculate(eq("Tel Aviv"), any(ServiceLocation.class), any()))
+                .thenReturn(new EtaResult(true, new BigDecimal("5.0"), 18, 0, 18));
+        when(orderRepository.onTheWayIfConfirmed(eq(ORDER_ID), any(), any())).thenReturn(1);
+
+        Instant before = Instant.now();
+        OrderResponse response = bookingsService.onTheWay(PROFESSIONAL_USER_ID, ORDER_ID);
+        Instant after = Instant.now();
+
+        ArgumentCaptor<ServiceLocation> locationCaptor = ArgumentCaptor.forClass(ServiceLocation.class);
+        verify(distanceEtaStrategy).calculate(eq("Tel Aviv"), locationCaptor.capture(), any());
+        assertThat(locationCaptor.getValue().city()).isEqualTo("Tel Aviv");
+        assertThat(locationCaptor.getValue().street()).isEqualTo("Herzl");
+        assertThat(locationCaptor.getValue().houseNumber()).isEqualTo("10");
+
+        ArgumentCaptor<Instant> expectedArrivalCaptor = ArgumentCaptor.forClass(Instant.class);
+        verify(orderRepository).onTheWayIfConfirmed(eq(ORDER_ID), any(), expectedArrivalCaptor.capture());
+        Instant expectedArrivalAt = expectedArrivalCaptor.getValue();
+        // expectedArrivalAt = the transition's "now" + etaMinutes (18); bounded by the
+        // now-values observed immediately before/after the call, +/- the 18-minute ETA.
+        assertThat(expectedArrivalAt).isBetween(before.plus(Duration.ofMinutes(18)),
+                after.plus(Duration.ofMinutes(18)));
+        assertThat(response).isNotNull();
+    }
+
+    @Test
+    void onTheWay_orderNotConfirmed_throwsOrderNotConfirmedAndNeverNotifies() {
+        Order order = confirmedOrder();
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        Professional professional = activeProfessional();
+        when(professionalRepository.findByUserId(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(professional));
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
+        when(distanceEtaStrategy.calculate(eq("Tel Aviv"), any(ServiceLocation.class), any()))
+                .thenReturn(new EtaResult(true, new BigDecimal("5.0"), 18, 0, 18));
+        when(orderRepository.onTheWayIfConfirmed(eq(ORDER_ID), any(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> bookingsService.onTheWay(PROFESSIONAL_USER_ID, ORDER_ID))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.ORDER_NOT_CONFIRMED));
+
+        verify(notificationService, never()).recordOrderNotification(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    void onTheWay_callerNotOwningProfessional_throwsForbidden() {
+        Order order = confirmedOrder();
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        Professional otherProfessional = activeProfessional();
+        setField(otherProfessional, "id", 999L);
+        when(professionalRepository.findByUserId(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(otherProfessional));
+
+        assertThatThrownBy(() -> bookingsService.onTheWay(PROFESSIONAL_USER_ID, ORDER_ID))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.FORBIDDEN));
+
+        verify(orderRepository, never()).onTheWayIfConfirmed(anyLong(), any(), any());
     }
 }

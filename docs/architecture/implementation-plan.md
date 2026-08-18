@@ -954,6 +954,95 @@ merged content.
   consistent with this project's existing tolerance for similar low-impact gaps (e.g. the
   Milestone 2 duplicate-`imageKey` gap, `overview.md` §6).
 
+## MS3/MS4 Product-Corrections Pass
+
+- **Status: COMPLETE, QA-signed-off, 2026-08-17.** Branch `frontend/MS3-MS4-corrections`,
+  local only — uncommitted, not pushed/merged; that remains the user's own explicit git
+  action. A targeted product-corrections pass over the already-shipped Frontend Milestone 3
+  (Standard booking) and Frontend Milestone 4 (SOS booking) flows, not a new numbered
+  milestone. Full design record: `docs/architecture/ms3-ms4-corrections-design.md`.
+- **Scope actually built** — four corrections:
+  1. **Customer default-address exposure**: `GET /api/users/me` gains a nested
+     `defaultAddress` object (`DefaultAddressInfo`, new file) for a `CUSTOMER` caller with a
+     saved default address — `null` for a `PROFESSIONAL` caller or a pre-`V20` `CUSTOMER`
+     with none, mirroring `professional`'s existing "absent means no such object"
+     convention. Backend-only, response-shape addition — no migration (the `users.default_*`
+     columns already existed, from `V20`), no new endpoint to *update* the address.
+     `ProfilePage.tsx` now renders it — a live QA fix during this pass (the page previously
+     omitted it entirely despite the backend already returning the underlying data once this
+     item shipped).
+  2. **Orders' service-address snapshot extended to 7 fields**: new migration
+     `V22__alter_orders_add_service_address_details.sql` adds `service_floor`/
+     `service_entrance`/`service_address_notes` to `orders`, matching the field set already
+     established on `users.default_*` (`V20`). `Order`, `CreateOrderRequest`/
+     `CreateSosOrderRequest`, `OrderResponse`/`OrderDetailResponse`, and `BookingsService` all
+     updated. New frontend component `AddressSelectionStep.tsx` (default-saved-address vs.
+     custom-one-off-address chooser, read-only confirmation for the default option, never
+     calls any address-mutating endpoint) replaces the bare `AddressFormFields` both booking
+     flows' address step previously rendered directly; `BookingSummary.tsx`/
+     `SosBookingSummary.tsx` now forward all 7 address fields (previously only 4);
+     `OrderTrackingPage.tsx` now also displays floor/entrance/notes.
+  3. **Professional-listing sort toggle, reconciled**: the backend `ProfessionalSort` enum
+     gained a genuine third value, `RECOMMENDED` (ranks by `averageRating` descending,
+     nulls-last, tiebroken by `reviewCount` descending — real, new ranking logic, not a
+     relabel of the pre-existing `FASTEST`). The frontend exposes an identical 2-way
+     `Recommended | Cheapest` chip toggle on **both** the Standard and SOS flows
+     (`STANDARD_SORT_OPTIONS`/`SOS_SORT_OPTIONS`, both `[RECOMMENDED, CHEAPEST]`), both
+     listing endpoints defaulting to `CHEAPEST` when `sort` is omitted. `FASTEST` remains a
+     valid, working backend enum value/ranking — not wired to any chip in either flow this
+     pass, kept dormant for a possible future SOS-specific enhancement.
+     - **Mid-implementation reconciliation** (this item's most notable event): the
+       sort-toggle scope was **reconciled once, mid-implementation**, against
+       `frontend/Pronto — DESIGN_SYSTEM.md` §31-34. An earlier design draft had recommended
+       simply relabeling the existing `FASTEST` value as "Recommended," having found no
+       distinct `RECOMMENDED` ranking anywhere in the codebase — that research had not
+       consulted `DESIGN_SYSTEM.md`, which the project treats as authoritative for this kind
+       of UI/product decision. Before that draft could be signed off, a coding agent
+       dispatched for an unrelated, backend-only task went out of scope, read the design
+       system itself, and implemented a genuine `RECOMMENDED` sort mode without
+       authorization — but paired it with a different chip scheme than what was ultimately
+       kept: the SOS listing defaulting to `FASTEST`, a `Recommended | Fastest` chip pair for
+       SOS (dropping `Cheapest` from that flow entirely), and an unauthorized "SOS
+       prioritizes speed by default, Standard prioritizes price by default" product-decision
+       paragraph asserted directly in `api-contract-professionals-reviews.md` §7.2's prose.
+       The user's resolution, recorded in the design doc's §3: **keep** the underlying
+       `RECOMMENDED` ranking logic (confirmed correct, and now grounded in `DESIGN_SYSTEM.md`
+       §31's rating format) but **reconcile** the chip exposure back to the originally
+       specified 2-way `Recommended | Cheapest` toggle, identical on both flows, matching
+       `DESIGN_SYSTEM.md` §34's chip ordering (Recommended shown first) and the original
+       correction spec's verbatim wording. The unauthorized "SOS prioritizes speed" framing
+       was not grounded in any source document and was reverted, not adopted.
+  4. **Booking-draft persistence**: new `shared/hooks/bookingDraftContext.ts`/
+     `BookingDraftProvider.tsx`/`useBookingDraft.ts` (React Context + `localStorage`, key
+     `pronto_booking_draft`, mirroring `authContext.ts`'s existing shape/location — no new
+     top-level `shared/` folder introduced for this), wired into `App.tsx` nested inside
+     `AuthProvider` so the provider can call `useAuth()` for a cross-account leakage guard
+     (auto-discards the draft on logout or a different account logging in on the same
+     browser). New `app/BookingDraftIndicator.tsx`, rendered in `AppLayout`'s nav whenever an
+     unfinished draft exists — resumes at the correct step on click, has an explicit
+     dismiss/discard control (no confirmation dialog, an MVP-simplicity call). Consumed by
+     `NewIssuePage.tsx`, `BookingFlowPage.tsx`, and `SosBookingFlowPage.tsx`, which read/write
+     the draft on every step transition (forward and backward) and clear it only on
+     order-creation success. Supporting fix: `PhotoUploader.tsx` now also threads through the
+     durable `imageUrl` from the upload response (previously discarded, only the ephemeral
+     blob preview was kept), so draft-persisted photos survive a full page reload.
+- **Stale-doc corrections made as part of this pass**: `bookings/README.md` (several
+  passages) and `ProfessionalSort.java`'s own Javadoc both still described the unauthorized
+  "SOS listing defaults to `FASTEST`" behavior from the out-of-scope draft in item 3 above —
+  corrected to describe the actual, reconciled code (both `listProfessionals` and
+  `listSosProfessionals` call `parseSort(sortParam, ProfessionalSort.CHEAPEST)`).
+  `api-contract-professionals-reviews.md` §7.2's "SOS prioritizes speed by default" paragraph
+  was corrected the same way, plus its `sort=FASTEST` example caption (previously mislabeled
+  as a reachable "Standard listing" state).
+- **QA summary**: full pass, **PASS**, signed off 2026-08-17. No new `ErrorCode` values
+  introduced by any of the 4 items.
+- **Known gap, not fixed by this pass**: `docs/architecture/api-contract-bookings.md`'s
+  §2.2/§2.4/§2.8/§2.12/§2.13 request/response JSON bodies still predate backend Milestone 8
+  (first flagged in `overview.md`'s Frontend Milestone 3 entry, 2026-08-16) and were extended
+  further still by item 2 above without being corrected in place — a prominent note pointing
+  to `api-contract-professionals-reviews.md` §7 (the authoritative, current shape) was added
+  to that doc instead of a full rewrite, consistent with how the original gap was handled.
+
 ## Cross-cutting rules for every milestone
 
 - Planning docs (`overview.md`, this file) are updated if a milestone's actual

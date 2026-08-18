@@ -43,3 +43,26 @@ selector was not touched by this pass.
 Not built here, by design: no `GET /api/issues/{id}` read-back screen within this feature
 folder (that endpoint is consumed by `features/booking`/`features/dashboard` instead, per
 `docs/architecture/api-contract-bookings.md` §2.1).
+
+**MS3/MS4 product-corrections pass (2026-08-17) — booking-draft persistence.**
+`NewIssuePage` is the **only** component in this feature that touches `useBookingDraft()`
+(`shared/hooks`, see that package's README) — its three child step components
+(`DescribeIssueStep`/`ClarifyQuestionsStep`/`ReviewStep`) stay draft-unaware, unchanged in
+their own prop contracts. On mount, `NewIssuePage` snapshots the current draft once (via
+`useRef`, deliberately not re-derived on every render, so its own later `updateDraft` calls
+during a live session don't re-trigger resume logic) and, if it belongs to an in-progress
+*issue-creation* stage (`ISSUE_DESCRIBE`/`ISSUE_CLARIFY`/`ISSUE_REVIEW`), hydrates local
+`description`/`photos`/`urgencyType` from it. For `ISSUE_CLARIFY`/`ISSUE_REVIEW`, the AI's
+raw response is **not** persisted in the draft (kept small, avoids a stale cached AI
+response) — it's cheaply re-derived by re-calling `classifyIssue` with the persisted
+`description`/`photos`/`clarificationAnswers` on mount, feeding the result into the existing
+`handleClassified` step-transition logic (no new branching). `handleClassified`/`handleBack`
+write through to `updateDraft(...)` on every step transition (forward and backward).
+**Issue creation itself is explicitly not a clear-trigger**: `handleConfirmed` moves the
+draft **forward** to `stage: 'ADDRESS_SELECTION'` (with the new `issueId`/`categoryId`)
+instead of calling `clearDraft()` — the draft is only ever cleared by
+`features/booking`'s two flow pages, on order-creation success. If a customer starts a
+*fresh* issue (via "יש לי תקלה") while a draft already past issue creation exists (has an
+`issueId` — i.e. a booking is still mid-flow for a different issue), a dismissible warning
+banner ("יש לך בקשה פעילה בתהליך הזמנה — התחלת תקלה חדשה תבטל אותה") is shown rather than
+silently overwriting that in-progress booking draft the next time this page writes through.

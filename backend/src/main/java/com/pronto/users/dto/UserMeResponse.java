@@ -12,6 +12,7 @@ public record UserMeResponse(
         String email,
         UserRole role,
         boolean emailVerified,
-        ProfessionalInfo professional
+        ProfessionalInfo professional,
+        DefaultAddressInfo defaultAddress
 ) {
 }

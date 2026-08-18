@@ -75,3 +75,20 @@
 .banner p {
   margin: 0;
 }
+
+.reviewLink {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.reviewLink:hover {
+  background: var(--color-primary-light);
+}

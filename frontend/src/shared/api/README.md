@@ -25,7 +25,10 @@ API described in `docs/architecture/overview.md` §3.2.
   `customer`/`professional` shape) plus, for professionals, `verificationDocument`
   (required) and `profilePhoto` (optional) file parts. See
   `docs/architecture/api-contract.md` §2.1.
-- `users.ts` — `getMe` (`GET /api/users/me`).
+- `users.ts` — `getMe` (`GET /api/users/me`). **As of the MS3/MS4 product-corrections pass**:
+  `UserMeResponse` gained a nested `defaultAddress` (`UserMeDefaultAddress | null`) field —
+  `null` for a `PROFESSIONAL` caller or a pre-`V20` `CUSTOMER` with no recorded default
+  address, mirroring `professional`'s existing "absent means no such object" convention.
 - `categories.ts` — static mirror of the fixed 8-category list seeded by
   `V10__seed_categories.sql` (no public categories endpoint exists yet).
 - `errorMessages.ts` — `GENERIC_ERROR_MESSAGE` fallback copy, and
@@ -34,27 +37,58 @@ API described in `docs/architecture/overview.md` §3.2.
 - `issues.ts` — `classifyIssue`, `createIssue` (Milestone 2), plus a Frontend Milestone 3
   addition: `getIssue` (`GET /api/issues/{id}`, either CUSTOMER-owner or PROFESSIONAL-
   with-an-order), returning `IssueDetailResponse` including a `latestOrder` summary.
-- `bookings.ts` — **new, Frontend Milestone 3.** Standard booking-flow domain: professional
-  listing (`getProfessionalsForIssue`, `GET /api/bookings/professionals`, `city`/`street`/
-  `houseNumber` required query params + optional `sort`), slot listing
-  (`getProfessionalSlots`), order lifecycle (`createOrder`, `acceptOrder`, `rejectOrder`,
-  `cancelOrder`, `getOrder`, `getMyOrders`). **Important nuance**: per this file's own
+- `bookings.ts` — **new, Frontend Milestone 3; extended, Frontend Milestone 4 (SOS) and the
+  MS3/MS4 product-corrections pass.** Standard + SOS booking-flow domain: professional
+  listing (`getProfessionalsForIssue`/`getSosProfessionalsForIssue`, `GET
+  /api/bookings/professionals`/`.../sos-professionals`, `city`/`street`/`houseNumber`
+  required query params + optional `sort: ProfessionalSort` — `'CHEAPEST' | 'RECOMMENDED' |
+  'FASTEST'`), slot listing (`getProfessionalSlots`), order lifecycle (`createOrder`/
+  `createSosOrder`, `acceptOrder`, `rejectOrder`, `cancelOrder`, `getOrder`, `getMyOrders`).
+  **As of the MS3/MS4 product-corrections pass**: `CreateOrderRequest`/
+  `CreateSosOrderRequest`/`OrderResponse`/`OrderDetailResponse` all gained 3 optional
+  fields — `serviceFloor`/`serviceEntrance`/`serviceAddressNotes` — bringing the
+  service-address shape to the full 7 fields (`V22`); `ProfessionalSort` gained its third
+  value, `RECOMMENDED` (only `RECOMMENDED`/`CHEAPEST` are reachable via either flow's UI
+  chips, see `features/professionals/README.md`). **Important nuance**: per this file's own
   header comment, its shapes were verified directly against the real backend DTO source,
-  not copied from `docs/architecture/api-contract-bookings.md`'s prose — that doc's §2.2
-  and §2.4 predate Milestone 8 (Professional Profiles, Reviews, Favorites & Matching),
-  which changed several of these DTOs in place (the enriched `ProfessionalCard`, the
-  required service-address query params/body fields) without the doc being updated. A
-  future reader should not trust that doc's §2.2/§2.4 text at face value — read the real
-  backend DTOs, or this file's own per-type comments, instead.
+  not copied from `docs/architecture/api-contract-bookings.md`'s prose — that doc's
+  §2.2/§2.4/§2.8/§2.12/§2.13 predate Milestone 8 (Professional Profiles, Reviews, Favorites
+  & Matching), which changed several of these DTOs in place (the enriched
+  `ProfessionalCard`, the required service-address query params/body fields), and were
+  extended further still by the MS3/MS4 corrections pass, without either update being
+  reflected in that doc's own JSON examples (a prominent note was added there instead of a
+  full rewrite — see that doc's header). A future reader should not trust that doc's
+  §2.2/§2.4/§2.8/§2.12/§2.13 text at face value — read the real backend DTOs, or this file's
+  own per-type comments, instead.
 - `availability.ts` — **new, Frontend Milestone 3.** A professional's own Standard-booking
   calendar: `createAvailabilitySlot` (`POST /api/availability/slots`),
   `getMyAvailabilitySlots` (`GET /api/availability/slots/me`). Type names match the real
   backend DTO names directly (`SlotResponse`/`SlotListItem`/`SlotListResponse`/
   `CreateSlotRequest`).
+- `reviews.ts` — **new, Active Booking Floating Indicator feature (2026-08-17).**
+  `CreateReviewRequest`/`ReviewResponse` types + `createReview(payload)` wrapping
+  `POST /api/reviews`. **First frontend consumer of this endpoint** — the backend endpoint
+  itself was already implemented and QA-signed-off with no UI caller (Milestone 8); this file
+  is what `features/booking/CompletionReviewPage.tsx` calls. Shapes verified directly against
+  `reviews.dto.CreateReviewRequest`/`reviews.dto.ReviewResponse`, same "read the real backend
+  DTOs" convention `bookings.ts`'s own header comment already established.
+
+**As of the Active Booking Floating Indicator feature**: `bookings.ts` also gained
+`expectedArrivalAt: string | null` on `OrderResponse`/`OrderDetailResponse`/`OrderSummary`
+(non-`null` once an order reaches `ON_THE_WAY`), and `updatedAt: string` on `OrderSummary`
+(not previously present on that lean list-mine shape — needed by
+`shared/hooks/activeOrderContext.ts`'s completed-order tie-break logic). No new functions —
+`getMyOrders`/`getOrder` are unchanged, only their response shapes grew.
 
 ## Status
 Implemented in **Milestone 1 — Auth & user management**
 (`docs/architecture/implementation-plan.md`), covering the `auth`/`users` endpoints. Grows
 with each subsequent milestone as new backend endpoints ship — **Frontend Milestone 3
 (Standard booking flow, 2026-08-16)** added `bookings.ts`, `availability.ts`, and
-`issues.ts`'s `getIssue`.
+`issues.ts`'s `getIssue`. **MS3/MS4 product-corrections pass (2026-08-17)**: `users.ts`
+gained `defaultAddress`; `bookings.ts` gained the 3 new service-address fields and the
+`RECOMMENDED` sort value (see above). **Active Booking Floating Indicator feature
+(2026-08-17)**: `reviews.ts` is new (first frontend consumer of `POST /api/reviews`);
+`bookings.ts` gained `expectedArrivalAt`/`OrderSummary.updatedAt` (see above). QA-passed
+(12/12 checklist items, zero bugs). Full design record:
+`docs/architecture/active-booking-floating-indicator.md`.

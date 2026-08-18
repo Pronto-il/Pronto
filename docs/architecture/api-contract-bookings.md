@@ -47,6 +47,38 @@ already used everywhere else in this doc. One new error code is introduced,
 below and §2.18/§2.19 for the exact semantics. No new Flyway migration is required (§1.6).
 No other section of this doc's Milestone 3/4/6 design is changed by this pass.
 
+**Known gap, still open**: §2.2/§2.4/§2.8/§2.12/§2.13's request/response JSON bodies below
+**predate backend Milestone 8** (professional profiles/reviews/favorites/matching) and were
+never corrected in place — first flagged in `overview.md`'s Frontend Milestone 3 entry
+(2026-08-16), still true as of the MS3/MS4 product-corrections pass (2026-08-17), which
+extended the same order-creation/response shapes further still (3 more optional
+`serviceFloor`/`serviceEntrance`/`serviceAddressNotes` fields, `V22`). The **authoritative,
+current** shape for the professional-listing endpoints (§2.2/§2.12) and the order-creation/
+response bodies (§2.4/§2.8/§2.13) — required `city`/`street`/`houseNumber`/optional
+`apartment` listing query params, `sort`, the enriched `ProfessionalCard`, the full 7-field
+`serviceCity`/`serviceStreet`/`serviceHouseNumber`/`serviceApartment`/`serviceFloor`/
+`serviceEntrance`/`serviceAddressNotes` request/response fields, and the
+`basePriceSnapshot`/`sosSurcharge` split — lives in
+`docs/architecture/api-contract-professionals-reviews.md` §7 ("amends this doc's §2.2/§2.12
+in place," and by extension §2.4/§2.8/§2.13 for the order-address/pricing fields), and is
+mirrored in `frontend/src/shared/api/bookings.ts`'s own doc comments (written directly
+against the real backend DTOs, not this file's prose). Rewriting §2.2/§2.4/§2.8/§2.12/§2.13
+below in place remains a follow-up, not done as part of either the Milestone 8 pass or this
+corrections pass (both frontend-adjacent, documentation-only passes that found the gap
+rather than caused it).
+
+**Same known gap, one more field, Active Booking Floating Indicator feature (2026-08-17)**:
+§2.4/§2.5/§2.6/§2.8/§2.9/§2.16/§2.17's JSON response examples below are now *also* missing
+`expectedArrivalAt` (added to `OrderResponse`/`OrderDetailResponse`/`OrderSummaryResponse`,
+nullable — non-`null` only once an order has reached `ON_THE_WAY`) and, for
+`OrderSummaryResponse` specifically (§2.9's `GET /api/bookings/orders/me` array entries), a
+new `updatedAt` field (not previously on that lean summary shape at all). Both are computed/
+persisted at the `ON_THE_WAY` transition (§2.16) — see
+`docs/architecture/active-booking-floating-indicator.md` §0.1/§2 for the authoritative
+field-by-field record and `docs/architecture/data-model.md` §2.9 for the backing column
+(`expected_arrival_at`, `V23`). Not rewritten into the JSON examples below, same deferral as
+the Milestone 8 gap immediately above.
+
 Written by `pronto-planning`. Builds on:
 - `docs/architecture/data-model.md` §2.5 (`availability_slots`), §2.7 (`issues`), §2.9
   (`orders`), §3 items 5/8/9/10 (SOS-vs-Standard availability split, `issues.status`

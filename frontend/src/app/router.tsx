@@ -11,7 +11,13 @@ import {
   LoginPage,
 } from '../features/auth';
 import { NewIssuePage } from '../features/issues';
-import { BookingFlowPage, SosBookingFlowPage, MyOrdersPage, OrderTrackingPage } from '../features/booking';
+import {
+  BookingFlowPage,
+  SosBookingFlowPage,
+  MyOrdersPage,
+  OrderTrackingPage,
+  CompletionReviewPage,
+} from '../features/booking';
 import { ProDashboardLayout, IncomingRequestsPage, MyJobsPage, AvailabilityPage } from '../features/dashboard';
 
 /**
@@ -54,6 +60,7 @@ export const router = createBrowserRouter([
           { path: 'issues/:issueId/booking', element: <BookingFlowPage /> },
           { path: 'issues/:issueId/sos-booking', element: <SosBookingFlowPage /> },
           { path: 'orders', element: <MyOrdersPage /> },
+          { path: 'orders/:orderId/review', element: <CompletionReviewPage /> },
         ],
       },
       {

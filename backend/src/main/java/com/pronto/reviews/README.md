@@ -45,6 +45,15 @@ Implements `docs/architecture/api-contract-professionals-reviews.md` §4.5-4.8.
 
 ## Interactions with other packages
 
+- **Frontend consumer, as of the Active Booking Floating Indicator feature (2026-08-17)**:
+  `POST /api/reviews` gained its first real frontend caller —
+  `frontend/src/shared/api/reviews.ts` (`createReview`), used by
+  `frontend/src/features/booking/CompletionReviewPage.tsx` (the new
+  `/orders/:orderId/review` route). This package's backend implementation is reused
+  completely as-is — no backend changes were made for this feature; see
+  `docs/architecture/active-booking-floating-indicator.md` §7. Before this feature, `POST
+  /api/reviews`/`GET /api/reviews` were implemented and QA-signed-off with no frontend
+  consumer yet.
 - Depends on `bookings` (`OrderRepository`/`Order`/`OrderStatus`) to load and validate the
   order a review is being created against — the only place this package reaches outside its
   own table for a *write* path.
@@ -96,3 +105,7 @@ yet committed at the time this doc was written). See
 `docs/architecture/implementation-plan.md`'s Milestone 8 entry for the full QA summary and
 `docs/architecture/api-contract-professionals-reviews.md` for the complete design/contract
 this package implements. Unit-tested (`reviews.service.ReviewsServiceTest`).
+
+**Active Booking Floating Indicator feature (2026-08-17)**: no backend changes to this
+package. `POST /api/reviews` gained its first real frontend consumer — see "Interactions
+with other packages" above.

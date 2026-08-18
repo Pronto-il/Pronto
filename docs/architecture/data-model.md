@@ -311,12 +311,16 @@ order_status, final_price`.
 | `booked_end` | `TIMESTAMPTZ` | YES | `NULL` | **Nullable — deviates from an implicit "both present" reading of PRD §6.** Standard bookings (matched against an `availability_slots` window) should always have both; SOS bookings are "as soon as possible" with no pre-agreed duration, so `booked_end` may be unknown at booking time. `CHECK (booked_end IS NULL OR booked_end > booked_start)`. Flagged for sign-off, §3 item 9. |
 | `order_status` | `VARCHAR(20)` | NO | `'PENDING'` | `CHECK (order_status IN ('PENDING','CONFIRMED','ON_THE_WAY','COMPLETED','CANCELLED','REJECTED','EXPIRED'))` — 7 values. **Decided, §3 item 10 (user override, 2026-08-12)**: `REJECTED` is a genuine 7th status, not folded into `CANCELLED` + `cancelled_by='PROFESSIONAL'` as originally proposed. See §3 item 10 for the precise PENDING-decline-vs-CONFIRMED-backs-out distinction this creates, and §3 item 8 for `EXPIRED`'s precise trigger. |
 | `cancelled_by` | `VARCHAR(20)` | YES | `NULL` | **New column.** `CHECK (cancelled_by IS NULL OR cancelled_by IN ('CUSTOMER','PROFESSIONAL','SYSTEM'))`. Set when `order_status` becomes `'CANCELLED'` (**not** for `'REJECTED'` — that case is unambiguous from the status value alone and needs no further column). Distinguishes who backed out of an already-`CONFIRMED`-or-later order: the customer, the professional, or a system process (e.g. the expiry sweep, §3 item 8). Still needed after adding `REJECTED` — see §3 item 10 for why `'PROFESSIONAL'` remains a valid value here (a professional backing out post-acceptance is a different event from declining a still-`PENDING` request). |
+| `expected_arrival_at` | `TIMESTAMP` | YES | `NULL` | **New column, added by `V23__alter_orders_add_expected_arrival_at.sql`** (Active Booking Floating Indicator feature, 2026-08-17). `NULL` for every order that never reached `ON_THE_WAY` (`PENDING`/`CONFIRMED`, or an order that went `CONFIRMED → CANCELLED`/`REJECTED` without ever going `ON_THE_WAY`). Set exactly once, atomically alongside the `ON_THE_WAY` transition itself (`OrderRepository.onTheWayIfConfirmed`, extended to also set this column in the same guarded `UPDATE`) — `bookings.service.BookingsService.onTheWay` computes it as `now + etaMinutes`, reusing `matching.DistanceEtaStrategy#calculate` (the same call `enrichAndSort` already makes for listing-card ETA). Never modified by any later transition (`complete`/`cancel`) — an immutable snapshot of "what we told the customer to expect," not a live-recomputed figure. **This is a direct, narrow override of the "ETA is never persisted" ruling below** — see the note appended to that ruling and `docs/architecture/active-booking-floating-indicator.md` §0.1 for the full record. Surfaced on `OrderResponse`/`OrderDetailResponse`/`OrderSummaryResponse` and rendered as a live countdown on the tracking screen and the floating active-order indicator. |
 | `final_price` | `NUMERIC(10,2)` | YES | `NULL` | Tracked/displayed only — no payment gateway (confirmed out of scope). Nullable until set; typically initialized from `professionals.base_price` at order creation and may be adjusted later (e.g. after the professional inspects the job on-site), but that workflow detail is application logic, not enforced here. **As of the professional-profile/reviews/favorites/matching feature set (2026-08-15)**: computed at creation time as `base_price_snapshot + sos_surcharge` (see those two columns below) rather than a bare copy of `professionals.base_price` — still nullable, still tracked/displayed only, no payment-gateway change. |
 | `slot_id` | `BIGINT` | YES | `NULL` | Added by `V12__add_slot_id_to_orders.sql` (Milestone 3) — FK → `availability_slots(id)` `ON DELETE SET NULL`. Nullable because SOS orders never consume a slot. See `api-contract-bookings.md` §1.2. |
 | `service_city` | `VARCHAR(100)` | YES | `NULL` | **New column, added by `V18__alter_orders_add_service_address.sql`** (2026-08-15). A point-in-time snapshot of the customer's service address at booking time, supplied on `POST /api/bookings/orders`/`sos-orders`'s request body — **not** a reference to any stored customer-address record (no such concept exists anywhere in this schema) and **not** automatically copied from whatever address the customer used on the preceding professional-listing call (those are two independent inputs on two independent requests — see `api-contract-professionals-reviews.md` §8/§9 item 4). Nullable at the DB level only because pre-existing orders have no backfillable value; required (`@NotBlank`) at the API/Bean-Validation layer for every order created from this point on. |
 | `service_street` | `VARCHAR(150)` | YES | `NULL` | Same migration/snapshot/nullability reasoning as `service_city`. |
 | `service_house_number` | `VARCHAR(20)` | YES | `NULL` | Same. Stored as `VARCHAR`, not numeric — house numbers routinely carry letters/suffixes (e.g. `"12A"`). |
 | `service_apartment` | `VARCHAR(20)` | YES | `NULL` | Same migration, but **genuinely optional at the API layer too** (no `@NotBlank`) — not every address has an apartment/unit number. |
+| `service_floor` | `VARCHAR(20)` | YES | `NULL` | **New column, added by `V22__alter_orders_add_service_address_details.sql`** (MS3/MS4 product-corrections pass, 2026-08-17). Same point-in-time-snapshot reasoning as `service_city`, and **genuinely optional at the API layer too** (no `@NotBlank`), same as `service_apartment` — matches the field/length already established on `users.default_floor` (`V20`). |
+| `service_entrance` | `VARCHAR(20)` | YES | `NULL` | Same migration/snapshot/nullability/optionality reasoning as `service_floor`. Matches `users.default_entrance`. |
+| `service_address_notes` | `VARCHAR(500)` | YES | `NULL` | Same migration/snapshot/nullability/optionality reasoning as `service_floor`, longer length for free-text access notes (e.g. gate codes). Matches `users.default_address_notes`. |
 | `base_price_snapshot` | `NUMERIC(10,2)` | YES | `NULL` | **New column, added by `V19__alter_orders_add_sos_pricing.sql`** (2026-08-15). The professional's `base_price` copied verbatim at order-creation time — a snapshot, same "copy once, never re-synced" reasoning `final_price` already used, kept as a **separate** column from `final_price` so the surcharge component (below) can be displayed as its own line item. Nullable, backfilled once from `final_price` for every pre-existing row at migration time (`UPDATE orders SET base_price_snapshot = final_price WHERE base_price_snapshot IS NULL`) — not an ongoing sync. |
 | `sos_surcharge` | `NUMERIC(10,2)` | NO | `0` | **New column, same migration.** `CHECK (sos_surcharge >= 0)`. The one new column here that *is* `NOT NULL` — every order, past (backfilled to `0` implicitly via the column default applied retroactively) and future, has a well-defined surcharge amount. Always `0.00` for a Standard order (explicitly set in the insert, not relying on the column default alone in that code path); a flat, hardcoded `50.00` placeholder for an SOS order (`bookings.service.BookingsService.SOS_SURCHARGE_AMOUNT`) — **explicitly flagged in the implementing code's own Javadoc as a placeholder business figure, not sourced from any pricing model or source document**. See `api-contract-professionals-reviews.md` §7.5/§9 item 2. |
 | `created_at` | `TIMESTAMPTZ` | NO | `now()` | |
@@ -334,7 +338,15 @@ ON (customer_id, order_status)` (customer's active-order polling query);
 `idx_orders_slot ON (slot_id)` (Milestone 3). No new index was added for any of the six new
 2026-08-15 columns — none is a primary filter/sort path for any endpoint in this feature set
 (the service-address columns are write-once/read-by-id only; `sos_surcharge`/
-`base_price_snapshot` are display fields, never filtered or sorted on).
+`base_price_snapshot` are display fields, never filtered or sorted on). Same reasoning applies
+to the 3 further service-address columns (`service_floor`/`service_entrance`/
+`service_address_notes`) added by `V22` (MS3/MS4 product-corrections pass) — no new index for
+those either, same write-once/read-by-id access pattern. Same reasoning again for
+`expected_arrival_at` (`V23`, Active Booking Floating Indicator feature) — read-by-id
+(tracking screen) or read as part of the already-indexed `idx_orders_customer_status`
+list-poll (`GET /api/bookings/orders/me`), never itself a filter/sort column at the SQL
+level (the frontend's priority-selection/tie-break logic sorts the already-fetched list
+client-side, per `docs/architecture/active-booking-floating-indicator.md` §5).
 
 ---
 
@@ -700,6 +712,24 @@ task brief's instruction not to silently pick an interpretation.
   `docs/architecture/api-contract-professionals-reviews.md` §5 (the canonical write-up this
   note points back to) and §6 (the `matching` package's exact computation model); also noted
   in `overview.md` §2's resolved-decisions table.
+
+  **FURTHER OVERRIDDEN (Active Booking Floating Indicator feature, 2026-08-17) — the "no ETA
+  value is persisted anywhere... the tracking screen gained no new field" clause immediately
+  above no longer holds, narrowly.** Kept verbatim above per this project's same
+  preserve-the-historical-record convention. What changed: `orders` gained a new nullable
+  column, `expected_arrival_at TIMESTAMP` (`V23__alter_orders_add_expected_arrival_at.sql`,
+  full spec in §2.9 above), computed once — via the same `matching.DistanceEtaStrategy
+  #calculate` call the professional-listing enrichment already makes — and persisted by
+  `bookings.service.BookingsService.onTheWay` at the moment an order transitions to
+  `ON_THE_WAY`. `GET /api/bookings/orders/{orderId}` (the tracking screen's endpoint) does
+  now carry this field. What did not change: the `matching` package itself still computes
+  nothing to disk and owns no table — `EtaResult` is still produced fresh on every call; it
+  is the **caller** (`bookings`) that persists the *result* of one specific call, once, at
+  one specific state transition, not a new persistence responsibility inside `matching`.
+  GPS/live-location tracking remains completely untouched and still a permanent hard
+  exclusion. Full design record: `docs/architecture/active-booking-floating-indicator.md`
+  §0.1 (the canonical write-up); also noted in `overview.md` §2's resolved-decisions table
+  and `docs/architecture/api-contract-professionals-reviews.md` §5.
 - **Image count limit per issue** — not specified anywhere; no DB constraint added, flag
   if a limit is later decided (would be enforced app-side, not a schema change).
 - **`sos_availability` has no automatic timeout/expiry.** A professional who forgets to
@@ -860,6 +890,9 @@ erDiagram
         varchar service_street
         varchar service_house_number
         varchar service_apartment
+        varchar service_floor
+        varchar service_entrance
+        varchar service_address_notes
         numeric base_price_snapshot
         numeric sos_surcharge
     }

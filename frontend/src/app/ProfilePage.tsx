@@ -11,9 +11,10 @@ const ROLE_LABELS: Record<UserRole, string> = {
 
 /**
  * Read-only display of `GET /api/users/me` — auth-required (mounted under `RequireAuth`
- * in `router.tsx`, so `user` is always populated here). No address field is shown: the
- * real endpoint doesn't return one yet (same gap as registration, see
- * `shared/api/auth.ts`).
+ * in `router.tsx`, so `user` is always populated here). Shows the customer's saved default
+ * address (`user.defaultAddress`, `ms3-ms4-corrections-design.md` §1) when present — `null`
+ * for a `PROFESSIONAL` caller or a pre-V20 `CUSTOMER` with no recorded default, per that
+ * field's own "absent means no such object" convention.
  */
 export default function ProfilePage() {
   const { user, logout } = useAuth();
@@ -45,10 +46,6 @@ export default function ProfilePage() {
             <dt>סוג משתמש</dt>
             <dd>{ROLE_LABELS[user.role]}</dd>
           </div>
-          <div className={styles.row}>
-            <dt>סטטוס אימות אימייל</dt>
-            <dd>{user.emailVerified ? 'מאומת' : 'לא מאומת'}</dd>
-          </div>
           {user.professional && (
             <>
               <div className={styles.row}>
@@ -63,6 +60,46 @@ export default function ProfilePage() {
                 <dt>מחיר ביקור בסיסי</dt>
                 <dd>₪{user.professional.basePrice}</dd>
               </div>
+            </>
+          )}
+          {user.defaultAddress && (
+            <>
+              <div className={styles.row}>
+                <dt>עיר</dt>
+                <dd>{user.defaultAddress.city}</dd>
+              </div>
+              <div className={styles.row}>
+                <dt>רחוב</dt>
+                <dd>{user.defaultAddress.street}</dd>
+              </div>
+              <div className={styles.row}>
+                <dt>מספר בית</dt>
+                <dd>{user.defaultAddress.houseNumber}</dd>
+              </div>
+              {user.defaultAddress.apartment && (
+                <div className={styles.row}>
+                  <dt>דירה</dt>
+                  <dd>{user.defaultAddress.apartment}</dd>
+                </div>
+              )}
+              {user.defaultAddress.floor && (
+                <div className={styles.row}>
+                  <dt>קומה</dt>
+                  <dd>{user.defaultAddress.floor}</dd>
+                </div>
+              )}
+              {user.defaultAddress.entrance && (
+                <div className={styles.row}>
+                  <dt>כניסה</dt>
+                  <dd>{user.defaultAddress.entrance}</dd>
+                </div>
+              )}
+              {user.defaultAddress.addressNotes && (
+                <div className={styles.row}>
+                  <dt>הערות לגישה לבית</dt>
+                  <dd>{user.defaultAddress.addressNotes}</dd>
+                </div>
+              )}
             </>
           )}
         </dl>

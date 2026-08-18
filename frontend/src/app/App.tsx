@@ -1,11 +1,15 @@
 import { RouterProvider } from 'react-router-dom'
-import { AuthProvider } from '../shared/hooks'
+import { AuthProvider, BookingDraftProvider, ActiveOrderProvider } from '../shared/hooks'
 import { router } from './router'
 
 export default function App() {
   return (
     <AuthProvider>
-      <RouterProvider router={router} />
+      <BookingDraftProvider>
+        <ActiveOrderProvider>
+          <RouterProvider router={router} />
+        </ActiveOrderProvider>
+      </BookingDraftProvider>
     </AuthProvider>
   )
 }

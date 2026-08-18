@@ -1802,6 +1802,80 @@ passes on every changed file across all six milestones.
   closing consistency/QA-status pass plus two genuinely new docs:
   `frontend/src/shared/utils/README.md` and `docs/architecture/api-contract-availability.md`).
 
+## MS9 — Professional Dashboard & Home
+
+- **Status: COMPLETE, QA-verified live (one follow-up bug fix, found and closed in the same
+  pass, re-verified).** Working tree on `main`, uncommitted — not pushed/merged; that remains
+  the user's own explicit git action. A small UI-structure change to the professional
+  dashboard shell only — no backend change, no new components, no availability-domain logic
+  touched. Full design record: `docs/architecture/product-ms9-dashboard-home-design.md`.
+  **Not the same "MS9" as "Frontend Milestone 9 — Gap-fixes" above** — two separate,
+  later, product-driven passes happen to share the number "MS9" in their own source
+  material; this doc's title is deliberately distinct ("Professional Dashboard & Home") to
+  avoid confusion, per the design doc's own explicit disambiguation note.
+- **Scope actually built**:
+  1. **Routing** (`app/router.tsx`): `/pro` is now `<Navigate to="/pro/availability" replace
+     />` instead of directly rendering `IncomingRequestsPage` — the availability calendar
+     (`WeeklyAvailabilityPage`, path unchanged) is now the professional's home screen after
+     login. The former `/pro` content moved to its own path, `/pro/requests`, matching its
+     nav label the same way `/pro/jobs`/`/pro/profile` already match theirs.
+     `LoginForm.tsx`'s post-login redirect (`user.role === 'PROFESSIONAL' ? '/pro' : '/'`)
+     and `AppLayout.tsx`'s "לוח בקרה" link both already targeted `/pro` — satisfied for free,
+     no edit needed to either.
+  2. **Sidebar restructure** (`features/dashboard/ProDashboardLayout.tsx`/`.module.css`): at
+     `>=640px` the nav becomes a right-side sidebar — the RTL inline-start edge, the physical
+     right in this `dir="rtl"` app — fixed `220px` width, filled/tinted active state
+     (`--color-primary-light` background). At `<640px` it stays the original horizontal
+     top-tab-bar. Each of the four nav items gained a `lucide-react` icon
+     (`Inbox`/`ClipboardList`/`CalendarDays`/`User`), rendered only at `>=640px` — the mobile
+     tab bar stays text-only, deliberately, per `DESIGN_SYSTEM.md` §54's existing mobile
+     pattern.
+- **QA-driven follow-up bug fix, found and closed in the same pass**: the first pass's
+  `<640px` CSS caused the 4-tab strip to overflow the viewport at the narrowest real phone
+  widths (320-375px) — `document.documentElement.scrollWidth` exceeded `innerWidth`. Fixed,
+  scoped to `@media (max-width: 639.98px)` only: the `.tabs` strip becomes `overflow-x: auto`
+  with `flex-wrap: nowrap` (a contained horizontal-scroll safety net, not a redesign), each
+  `.tab` gets `flex-shrink: 0` plus tighter `padding-inline`/`font-size`, and the strip's
+  `gap` is reduced. Re-verified live afterward: all 4 tabs present and reachable via scroll
+  at 320/375/390/414/428px, active-state highlighting correct, `nav.overflowX === 'auto'`
+  confirmed at each of the three narrowest widths.
+- **Acceptance criteria — met**: `/pro` redirects to `/pro/availability`; the sidebar sits
+  physically right of content at desktop widths with correct active-state highlighting; all
+  four nav destinations (`/pro/requests`, `/pro/jobs`, `/pro/availability`, `/pro/profile`)
+  are reachable and correctly highlighted at both desktop and mobile breakpoints;
+  customer-side nav/routes are unaffected; zero console errors/warnings across the whole
+  re-check run.
+- **Known, pre-existing, out-of-scope bug found during this pass's QA — not caused by this
+  milestone, not fixed here**: at the same 320-390px widths, `document.documentElement.
+  scrollWidth` still exceeds the viewport (a fixed ~411px regardless of the 320/375/390px
+  viewport tested) even after the dashboard-nav fix above closes its own contribution to that
+  number. Root-caused to `AppLayout.tsx`'s global header nav (`.nav` in
+  `AppLayout.module.css`), confirmed via `git stash` (the same overflow reproduces with this
+  milestone's changes stashed out) — i.e. it predates MS9 and is unrelated to the
+  professional-dashboard shell this pass touches. Flagged, not fixed (out of this pass's
+  scope); a candidate for a future, dedicated pass. See `frontend/src/app/README.md`'s "Known
+  issues" section.
+- **Flagged, not resolved by this pass** (design doc §4/§5): landing on the calendar puts
+  "בקשות חדשות" one click further from first paint than `DESIGN_SYSTEM.md`
+  §23/`FRONTEND_AGENT.md` §37's "new requests must be immediately visible" guidance would
+  otherwise suggest — a deliberate, explicit product decision for this task, not an
+  oversight, recorded per the design doc's own instruction not to silently resolve the
+  tension. No pending-count badge was added to the sidebar's "בקשות חדשות" item — flagged as
+  a fast-follow candidate, not built this pass.
+- **Live verification performed**: Playwright, against a real running frontend + backend —
+  desktop (1280px): sidebar column layout, physical right-side placement, icon visibility,
+  and active-state background all confirmed; mobile: nav row layout confirmed at multiple
+  widths (320/375/390/414/428px), all 4 tabs present/reachable/correctly-highlighted, `/pro`
+  redirect confirmed, customer-side top nav confirmed unaffected (no professional-dashboard
+  link shown to a customer session, no console errors/warnings). No `tsc -b`/`vite
+  build`/`oxlint` regressions (shell/CSS-only change).
+- **Documentation updated as part of closing this pass**: `frontend/src/features/
+  dashboard/README.md` (MS9 section expanded with the icon-visibility and mobile-overflow
+  bugfix detail), `frontend/src/app/README.md` (Structure/Known-issues/Status sections),
+  plus this entry and `overview.md`'s new "MS9 — Professional Dashboard & Home" §6 entry.
+  `frontend/src/app/router.tsx`'s own header doc comment was already accurate, added by
+  `pronto-coding` in the same pass as the code change — no correction needed.
+
 ## Cross-cutting rules for every milestone
 
 - Planning docs (`overview.md`, this file) are updated if a milestone's actual

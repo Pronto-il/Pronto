@@ -431,6 +431,60 @@ Full design record: `docs/architecture/frontend-ms9-gap-fixes-design.md`. Branch
   (`PUT /api/availability/slots/{slotId}`) and `deleteAvailabilitySlot`
   (`DELETE /api/availability/slots/{slotId}`).
 
+## MS9 — dashboard/home restructure (2026-08-18)
+
+Full design record: `docs/architecture/product-ms9-dashboard-home-design.md`. A shell/
+navigation-only change — no backend change, no new components, no availability-domain
+logic touched.
+
+- **`app/router.tsx`**: `/pro` is now `<Navigate to="/pro/availability" replace />` instead
+  of directly rendering `IncomingRequestsPage` — the availability calendar is now the
+  professional's home screen after login (`LoginForm.tsx` and `AppLayout.tsx`'s "לוח בקרה"
+  link both already targeted `/pro`, so this is satisfied without touching either file). The
+  former `/pro` content moved to its own route, `/pro/requests`, matching its nav label the
+  same way `/pro/jobs`/`/pro/profile` already match theirs. `/pro/jobs`, `/pro/availability`,
+  `/pro/profile` are unchanged.
+- **`ProDashboardLayout.tsx`/`.module.css`**: the nav is now a right-side (RTL inline-start)
+  sidebar at `>=640px` — fixed `220px` width, filled/tinted active state
+  (`--color-primary-light` background, reusing the same `--color-primary` token the mobile
+  underline already used). At `<640px` it stays the original horizontal top-tab-bar
+  presentation (`DESIGN_SYSTEM.md` §54's existing mobile pattern) — text-only labels,
+  underline active state — with one addition and one QA-driven fix, both detailed in the next
+  two bullets. `<Outlet />` is now wrapped in a `.content` div (`flex: 1; min-width: 0` at
+  desktop) so it sits correctly beside the sidebar. The "בקשות חדשות" `NavLink`'s target
+  changed from `/pro` (`end`) to `/pro/requests` (no `end`, since it's no longer matching the
+  index route); the other three links are unchanged.
+- **Icons**: each nav item gained a small `lucide-react` icon (`Inbox`/`ClipboardList`/
+  `CalendarDays`/`User`) per the design doc's §2.3 recommendation. Icons render only at
+  `>=640px` (`.tabIcon { display: none }` by default, `display: inline-flex` inside the
+  `>=640px` media query) — the `<640px` tab bar stays text-only, deliberately, so adding icons
+  doesn't itself widen the 4-tab strip on narrow phones.
+- **QA-driven mobile-overflow bugfix**: the first pass of this milestone's `<640px` CSS was
+  otherwise left untouched (per the design doc's own "mobile needs no redesign" call, §2.2),
+  but QA found that on the narrowest real phone widths (320-375px) the 4 text-only tabs plus
+  their gaps could still push `document.documentElement.scrollWidth` past the viewport width.
+  Fixed, scoped to `@media (max-width: 639.98px)` only: the `.tabs` strip itself becomes
+  `overflow-x: auto` with `flex-wrap: nowrap` (a horizontally-scrollable safety net, not a
+  layout redesign), each `.tab` gets `flex-shrink: 0` plus tighter `padding-inline`/
+  `font-size`, and the strip's own `gap` is reduced. This keeps any overflow contained inside
+  the nav strip itself while every tab stays reachable via horizontal scroll. QA re-verified
+  live afterward, at 320/375/390/414/428px: all 4 tabs present in the DOM, all reachable via
+  scroll, `nav.overflowX === 'auto'` confirmed, active-state highlighting correct at every
+  width. **This fix closes only the overflow this milestone's own nav restructure introduced.**
+  A separate, pre-existing, out-of-scope bug remains at 320-390px: `document.documentElement.
+  scrollWidth` is still a fixed ~411px at those widths regardless of the nav fix above,
+  root-caused (via `git stash`) to `AppLayout.tsx`'s global header nav (`.nav` in
+  `AppLayout.module.css`) — confirmed to predate this milestone and unrelated to the
+  professional dashboard shell touched here. Not fixed by this pass; see `app/README.md` for
+  the equivalent note on that global-header item.
+- **Flagged, not resolved by this pass** (see design doc §4/§5): making the calendar the
+  landing screen puts "בקשות חדשות" one click further from first paint than
+  `DESIGN_SYSTEM.md` §23/`FRONTEND_AGENT.md` §37's "new requests must be immediately
+  visible" guidance would otherwise suggest — an explicit, deliberate product decision for
+  this task, not an oversight, but recorded here per that section's instruction. No
+  pending-count badge was added to the sidebar's "בקשות חדשות" item (open question, design
+  doc §5.1) — flagged as a fast-follow candidate, not built in this pass.
+
 ## Frontend Milestone 8 (2026-08-18): `/pro/profile` — professional business-profile self-service
 
 Full design record: `docs/architecture/frontend-ms8-design.md` §2.2/§4.3.

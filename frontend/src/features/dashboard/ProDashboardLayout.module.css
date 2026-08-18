@@ -1,7 +1,17 @@
 .wrapper {
   display: flex;
-  flex-direction: column;
+  flex-direction: column; /* mobile (<640px): nav stays a top tab bar */
   gap: var(--space-6);
+}
+
+@media (min-width: 640px) {
+  .wrapper {
+    /* desktop: nav (first DOM child) -> RTL inline-start edge (physical right),
+       .content (second child) -> physical left. Native flex-row behavior under
+       dir="rtl", no manual inset-inline-start math needed. */
+    flex-direction: row;
+    align-items: flex-start;
+  }
 }
 
 .tabs {
@@ -11,6 +21,9 @@
 }
 
 .tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   padding-block: var(--space-3);
   padding-inline: var(--space-4);
   font-size: 15px;
@@ -25,7 +38,69 @@
   color: var(--color-text-primary);
 }
 
+.tabIcon {
+  /* Mobile tab bar (<640px) is kept essentially as-is per the design doc: no icons,
+     text-only labels, so the 4 tabs never overflow the ~320-428px viewport widths. */
+  display: none;
+}
+
+@media (max-width: 639.98px) {
+  .tabs {
+    /* Text-only labels already fit comfortably at >=390px, but at the tightest
+       phone widths (320-375px) 4 tabs + gaps can still exceed the available
+       width, so: (1) tighten padding/font/gap a bit and (2) make the strip
+       itself horizontally scrollable as a safety net, scoped to mobile only,
+       so overflow is always contained inside the nav (never leaks into
+       document.documentElement.scrollWidth) and every tab stays reachable. */
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    gap: var(--space-1, 4px);
+  }
+
+  .tab {
+    flex-shrink: 0;
+    padding-inline: var(--space-2, 8px);
+    font-size: 13px;
+  }
+}
+
 .tabActive {
   color: var(--color-primary);
   border-bottom-color: var(--color-primary);
+}
+
+.content {
+  min-width: 0;
+}
+
+@media (min-width: 640px) {
+  .tabs {
+    flex-direction: column;
+    flex-shrink: 0;
+    width: 220px;
+    gap: var(--space-1, 4px);
+    border-bottom: none;
+    border-inline-end: 1px solid var(--color-border);
+    padding-inline-end: var(--space-4);
+  }
+
+  .tab {
+    border-bottom: none;
+    border-radius: var(--radius-sm);
+    margin-block-end: 0;
+  }
+
+  .tabIcon {
+    display: inline-flex;
+  }
+
+  .tabActive {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    border-bottom-color: transparent;
+  }
+
+  .content {
+    flex: 1;
+  }
 }

@@ -23,10 +23,20 @@ feature modules together into the single-page app described in
   are nested under a bare `RequireAuth` (either role — matching the backend's
   route-gate-free `GET /api/professionals/{id}`); `/issues/new`,
   `/issues/:issueId/booking`, `/orders`, and (**as of Frontend Milestone 8**) `/favorites`
-  are nested under `RequireAuth role="CUSTOMER"`; `/pro`, `/pro/availability`, and (**as of
-  Frontend Milestone 8**) `/pro/profile` are nested under `RequireAuth role="PROFESSIONAL"`
-  and, within that, under `features/dashboard`'s `ProDashboardLayout` (now a four-tab
-  shell).
+  are nested under `RequireAuth role="CUSTOMER"`; `/pro`, `/pro/requests`,
+  `/pro/availability`, and (**as of Frontend Milestone 8**) `/pro/profile` are nested under
+  `RequireAuth role="PROFESSIONAL"` and, within that, under `features/dashboard`'s
+  `ProDashboardLayout`. **As of the MS9 dashboard/home change (2026-08-18,
+  `docs/architecture/product-ms9-dashboard-home-design.md`)**: `/pro` is now a
+  `<Navigate replace>` redirect to `/pro/availability` (the professional's home screen
+  after login is now the availability calendar, not the incoming-requests feed), and the
+  former `/pro` content (`IncomingRequestsPage`) moved to its own path, `/pro/requests`.
+  `ProDashboardLayout` itself is a sidebar at `>=640px` (RTL inline-start edge, i.e. the
+  physical right) and stays a horizontal tab bar at `<640px`, with a QA-driven mobile-overflow
+  fix (the tab strip is `overflow-x: auto`-scrollable, scoped to `<640px`) — see
+  `features/dashboard/README.md`'s MS9 section for the full CSS detail and its own note on a
+  separate, pre-existing, unrelated overflow bug in this file's own header nav (see "Known
+  issues" below).
 - `AppLayout.tsx` — top nav shell (brand + login/register or profile/logout links
   depending on auth state). Frontend Milestone 3 added the first two real primary-nav
   destinations now that they exist as real screens: a customer's "ההזמנות שלי" (`/orders`)
@@ -109,6 +119,19 @@ feature modules together into the single-page app described in
   `docs/architecture/frontend-ms8-design.md` and `features/favorites/README.md`/
   `features/professionals/README.md`/`features/dashboard/README.md`.
 
+## Known issues
+- **`AppLayout.tsx`'s global header nav causes page-level horizontal overflow at narrow
+  mobile widths (320-390px), pre-existing, not yet fixed.** QA discovered this while
+  verifying the MS9 dashboard/home restructure (`features/dashboard/README.md`'s MS9
+  section): even after that pass's own mobile-nav overflow fix closed its contribution,
+  `document.documentElement.scrollWidth` still exceeds the viewport at 320/375/390px,
+  root-caused to `.nav` in `AppLayout.module.css` (the top-bar's `BookingDraftIndicator` +
+  `NotificationBell` + role-conditional link + profile link + logout button, all
+  `display: flex` with no wrapping/shrinking behavior defined for narrow widths). Confirmed
+  via `git stash` to predate MS9 — **not** caused by, and out of scope for, that milestone.
+  Not fixed as of this writing; flagged here as a known, open, out-of-scope item so it isn't
+  mistaken for a MS9 regression or silently lost.
+
 ## Status
 **Frontend Milestone 3 (2026-08-16, Standard booking flow) implemented.** `ProPlaceholderPage`
 was removed — the professional's `/pro` route now renders a real dashboard
@@ -172,3 +195,17 @@ README for their status, which is **not** uniformly "done" (the issue-photos ite
 code-complete but currently non-functional in-browser due to a pre-existing image-auth
 gap, unrelated to and unfixed by this pass). Full design record:
 `docs/architecture/frontend-ms9-gap-fixes-design.md` §2.
+
+**MS9 — Professional Dashboard & Home (2026-08-18)**: `router.tsx` gained one routing
+change — `/pro` is now `<Navigate to="/pro/availability" replace />` (the calendar is the
+professional's home screen after login), and the former `/pro` content
+(`IncomingRequestsPage`) moved to `/pro/requests`. This is a **different, later "MS9"** from
+the one above (Frontend Milestone 9 / gap-fixes) — the two share the number only by
+coincidence of separate source material; see `docs/architecture/product-ms9-dashboard-home-
+design.md`'s own disambiguation note. **Fully implemented and QA-verified live**, including
+a follow-up mobile-overflow bugfix found and closed during QA — see
+`features/dashboard/README.md`'s MS9 section for the sidebar/nav detail (`ProDashboardLayout`
+is the only other file changed; `app/`'s own change is limited to the one `router.tsx` route).
+Working tree on `main`, uncommitted — not pushed/merged. QA also surfaced a separate,
+pre-existing, out-of-scope overflow bug in this package's own `AppLayout.tsx` header nav —
+see "Known issues" above; not fixed by this pass.

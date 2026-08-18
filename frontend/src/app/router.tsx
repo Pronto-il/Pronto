@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
 import AppLayout from './AppLayout';
 import HomePage from './HomePage';
 import RequireAuth from './RequireAuth';
@@ -50,7 +50,14 @@ import { FavoritesPage } from '../features/favorites';
  * `AvailabilityPage` (same route, unchanged path) — see
  * `docs/architecture/professional-weekly-calendar-design.md` §7.1/§10. `AvailabilityPage.tsx`/
  * `SlotForm.tsx`/`SlotList.tsx` are left in the repo, unreachable from any route, per that
- * design's explicit "kept, not deleted yet" instruction (§7.1).
+ * design's explicit "kept, not deleted yet" instruction (§7.1). **MS9 dashboard/home
+ * (2026-08-18)**: the professional dashboard's `ProDashboardLayout` children were
+ * restructured per `docs/architecture/product-ms9-dashboard-home-design.md` §1.2 — `/pro`
+ * is now a `<Navigate replace>` redirect to `/pro/availability` (the calendar is the
+ * professional's home screen after login), and the former `/pro` content
+ * (`IncomingRequestsPage`) moved to its own path, `/pro/requests`, matching its "בקשות
+ * חדשות" nav label the same way `/pro/jobs`/`/pro/profile` already match theirs.
+ * `/pro/jobs`, `/pro/availability`, and `/pro/profile` are otherwise unchanged.
  */
 export const router = createBrowserRouter([
   {
@@ -88,7 +95,8 @@ export const router = createBrowserRouter([
           {
             element: <ProDashboardLayout />,
             children: [
-              { path: 'pro', element: <IncomingRequestsPage /> },
+              { path: 'pro', element: <Navigate to="/pro/availability" replace /> },
+              { path: 'pro/requests', element: <IncomingRequestsPage /> },
               { path: 'pro/jobs', element: <MyJobsPage /> },
               { path: 'pro/availability', element: <WeeklyAvailabilityPage /> },
               { path: 'pro/profile', element: <ProfileEditorPage /> },

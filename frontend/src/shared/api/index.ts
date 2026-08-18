@@ -40,7 +40,7 @@ export type {
 
 export {
   getProfessionalsForIssue,
-  getProfessionalSlots,
+  getAvailableWindows,
   createOrder,
   acceptOrder,
   rejectOrder,
@@ -59,8 +59,8 @@ export type {
   ServiceLocation,
   ProfessionalCard,
   ProfessionalListingResponse,
-  AvailabilitySlotItem,
-  ProfessionalSlotsResponse,
+  AvailableWindow,
+  AvailableWindowsResponse,
   CreateOrderRequest,
   OrderResponse,
   OrderDetailResponse,
@@ -76,6 +76,12 @@ export {
   getMyAvailabilitySlots,
   getSosAvailability,
   updateSosAvailability,
+  getWorkingHours,
+  updateWorkingHours,
+  getAvailabilityCalendar,
+  createAvailabilityBlock,
+  updateAvailabilityBlock,
+  deleteAvailabilityBlock,
 } from './availability';
 export type {
   CreateSlotRequest,
@@ -83,6 +89,14 @@ export type {
   SlotListItem,
   SlotListResponse,
   SosAvailabilityResponse,
+  WorkingHoursItem,
+  WorkingHoursItemRequest,
+  WorkingHoursListResponse,
+  SegmentType,
+  CalendarSegment,
+  CalendarResponse,
+  CreateBlockRequest,
+  BlockResponse,
 } from './availability';
 
 export { createReview, getReviews } from './reviews';

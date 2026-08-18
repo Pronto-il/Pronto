@@ -2,17 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PageHeader, EMPTY_ADDRESS, Button } from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
-import { getProfessionalsForIssue, getProfessionalSlots, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
+import { getProfessionalsForIssue, getAvailableWindows, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type {
-  AvailabilitySlotItem,
+  AvailableWindow,
   OrderResponse,
   ProfessionalCard as ProfessionalCardData,
   ProfessionalSort,
 } from '../../shared/api';
+import { deriveStartTimeCandidates } from '../../shared/utils/availability';
 import { ProfessionalList, STANDARD_SORT_OPTIONS } from '../professionals';
 import { useBookingDraft } from '../../shared/hooks';
 import { AddressSelectionStep, type AddressMode } from './AddressSelectionStep';
-import { SlotPicker } from './SlotPicker';
+import { StartTimePicker } from './StartTimePicker';
 import { BookingSummary } from './BookingSummary';
 import styles from './BookingFlowPage.module.css';
 
@@ -20,7 +21,7 @@ type Step =
   | { name: 'address' }
   | { name: 'professionals' }
   | { name: 'slot'; professional: ProfessionalCardData }
-  | { name: 'confirm'; professional: ProfessionalCardData; slot: AvailabilitySlotItem }
+  | { name: 'confirm'; professional: ProfessionalCardData; bookedStart: string }
   | { name: 'success'; order: OrderResponse; professionalName: string };
 
 const STEP_LABELS: Partial<Record<Step['name'], string>> = {
@@ -44,15 +45,21 @@ function toDraftSort(sort: ProfessionalSort): 'RECOMMENDED' | 'CHEAPEST' {
 
 /**
  * `/issues/:issueId/booking` — the Standard-booking step machine: service address →
- * professional list → slot picker → confirmation → success. Mirrors
+ * professional list → start-time picker → confirmation → success. Mirrors
  * `features/issues/NewIssuePage.tsx`'s pattern (one route, an internal step union, a
  * subtle step indicator per DESIGN_SYSTEM.md §38 — not a wizard UI) rather than one route
  * per step, so "back" can preserve state already entered.
  *
  * The service address is collected once, here, as the first step (§4 of this milestone's
  * brief) — reused unmodified for the professional-listing query params, thread through to
- * the slot-picker step (which needs no address), and becomes the order's
+ * the start-time-picker step (which needs no address), and becomes the order's
  * `serviceCity`/`serviceStreet`/`serviceHouseNumber`/`serviceApartment` on creation.
+ *
+ * **As of the professional weekly availability calendar feature M6** (design §9.2.3/§7.6):
+ * the 'slot' step (internal name kept for minimal diff — `STEP_LABELS`/`Step['name']` still
+ * say `'slot'`) now consumes `GET .../available-windows?issueId=` +
+ * `deriveStartTimeCandidates` instead of the retired `GET .../slots?issueId=`; the customer
+ * picks a derived start time, not a pre-made `availability_slots` row.
  *
  * Booking-draft persistence (`ms3-ms4-corrections-design.md` §4): hydrates from an
  * in-progress draft on mount when `draft.issueId` matches this route's `issueId` and
@@ -75,10 +82,18 @@ export default function BookingFlowPage() {
   const [isLoadingProfessionals, setIsLoadingProfessionals] = useState(false);
   const [professionalsError, setProfessionalsError] = useState<string | null>(null);
 
-  const [slots, setSlots] = useState<AvailabilitySlotItem[]>([]);
-  const [selectedSlot, setSelectedSlot] = useState<AvailabilitySlotItem | null>(null);
+  const [windows, setWindows] = useState<AvailableWindow[]>([]);
+  const [defaultDurationMinutes, setDefaultDurationMinutes] = useState(60);
+  const [selectedStart, setSelectedStart] = useState<string | null>(null);
   const [isLoadingSlots, setIsLoadingSlots] = useState(false);
   const [slotsError, setSlotsError] = useState<string | null>(null);
+  /** Set by `handleTimeUnavailable` when order-creation 409s with `BOOKING_TIME_UNAVAILABLE`
+   *  (raced by another customer booking the same window) — owned here, not by `BookingSummary`,
+   *  because that component unmounts as part of the same transition that sends the customer
+   *  back to the `slot` step, so a banner set on its own local state would never paint.
+   *  Kept distinct from `slotsError` (a `getAvailableWindows` fetch failure) since
+   *  `fetchWindows`'s `setSlotsError(null)` runs synchronously in the same tick as this is set. */
+  const [timeUnavailableError, setTimeUnavailableError] = useState<string | null>(null);
 
   const [step, setStep] = useState<Step>({ name: 'address' });
   const hasAttemptedResume = useRef(false);
@@ -105,11 +120,11 @@ export default function BookingFlowPage() {
   );
 
   // Resume-hydration (§4.4's table): only when the draft belongs to this exact issue/flow.
-  // Every field the customer already chose (address, professionalId, slotId, sort) is read
-  // straight from the draft, never re-asked; only the derived display objects (professional
-  // card, slots) are cheaply re-fetched. Falls back to an earlier step (never a hard error)
-  // if the professional/slot turns out to no longer be valid — the same fallback the live
-  // flow already uses via `fetchSlots`/re-fetching the listing.
+  // Every field the customer already chose (address, professionalId, bookedStart, sort) is
+  // read straight from the draft, never re-asked; only the derived display objects
+  // (professional card, available windows) are cheaply re-fetched. Falls back to an earlier
+  // step (never a hard error) if the professional/start time turns out to no longer be valid
+  // — the same fallback the live flow already uses via `fetchWindows`/re-fetching the listing.
   useEffect(() => {
     // Marked immediately (before the match check) so this only ever runs once, on mount —
     // otherwise this page's own subsequent `updateDraft` calls (which change `draft`'s
@@ -154,24 +169,25 @@ export default function BookingFlowPage() {
         const professional = listing.professionals.find((item) => item.professionalId === draft.professionalId);
         if (!professional) {
           // Professional no longer available — stays on 'professionals', the same fallback
-          // `handleSlotUnavailable`/live selection already relies on.
+          // `handleTimeUnavailable`/live selection already relies on.
           return;
         }
 
         setStep({ name: 'slot', professional });
         setIsLoadingSlots(true);
-        setSelectedSlot(null);
-        const slotsResult = await getProfessionalSlots(professional.professionalId, issueId);
-        setSlots(slotsResult.slots);
+        setSelectedStart(null);
+        const windowsResult = await getAvailableWindows(professional.professionalId, issueId);
+        setWindows(windowsResult.windows);
+        setDefaultDurationMinutes(windowsResult.defaultDurationMinutes);
         setIsLoadingSlots(false);
 
-        if (draft.stage === 'BOOKING_CONFIRM' && draft.slotId !== undefined) {
-          const slot = slotsResult.slots.find((item) => item.slotId === draft.slotId);
-          if (slot) {
-            setSelectedSlot(slot);
-            setStep({ name: 'confirm', professional, slot });
+        if (draft.stage === 'BOOKING_CONFIRM' && draft.bookedStart !== undefined) {
+          const candidates = deriveStartTimeCandidates(windowsResult.windows, windowsResult.defaultDurationMinutes);
+          if (candidates.includes(draft.bookedStart)) {
+            setSelectedStart(draft.bookedStart);
+            setStep({ name: 'confirm', professional, bookedStart: draft.bookedStart });
           }
-          // else: stays on 'slot', matching handleSlotUnavailable's fallback.
+          // else: stays on 'slot', matching handleTimeUnavailable's fallback.
         }
       } catch (error) {
         if (error instanceof ApiError && LISTING_ERROR_MESSAGES[error.code]) {
@@ -218,13 +234,14 @@ export default function BookingFlowPage() {
     updateDraft({ sort: toDraftSort(nextSort) });
   }
 
-  async function fetchSlots(professional: ProfessionalCardData) {
+  async function fetchWindows(professional: ProfessionalCardData) {
     setIsLoadingSlots(true);
     setSlotsError(null);
-    setSelectedSlot(null);
+    setSelectedStart(null);
     try {
-      const result = await getProfessionalSlots(professional.professionalId, issueId);
-      setSlots(result.slots);
+      const result = await getAvailableWindows(professional.professionalId, issueId);
+      setWindows(result.windows);
+      setDefaultDurationMinutes(result.defaultDurationMinutes);
     } catch {
       setSlotsError(GENERIC_ERROR_MESSAGE);
     } finally {
@@ -234,26 +251,33 @@ export default function BookingFlowPage() {
 
   function handleSelectProfessional(professional: ProfessionalCardData) {
     setStep({ name: 'slot', professional });
-    void fetchSlots(professional);
-    updateDraft({ stage: 'SLOT_SELECTION', professionalId: professional.professionalId, slotId: undefined });
+    setTimeUnavailableError(null);
+    void fetchWindows(professional);
+    updateDraft({ stage: 'SLOT_SELECTION', professionalId: professional.professionalId, bookedStart: undefined });
   }
 
   function handleSlotContinue() {
-    if (step.name !== 'slot' || !selectedSlot) {
+    if (step.name !== 'slot' || !selectedStart) {
       return;
     }
-    setStep({ name: 'confirm', professional: step.professional, slot: selectedSlot });
-    updateDraft({ stage: 'BOOKING_CONFIRM', slotId: selectedSlot.slotId });
+    setStep({ name: 'confirm', professional: step.professional, bookedStart: selectedStart });
+    setTimeUnavailableError(null);
+    updateDraft({ stage: 'BOOKING_CONFIRM', bookedStart: selectedStart });
   }
 
-  function handleSlotUnavailable() {
+  /** Order creation 409'd with `BOOKING_TIME_UNAVAILABLE` — another customer booked the same
+   *  window first. `message` (rendered on the `slot` step below, once `StartTimePicker` is
+   *  back on screen) is passed in by `BookingSummary` rather than looked up here, since it
+   *  already owns the `ORDER_ERROR_MESSAGES` copy for that error code. */
+  function handleTimeUnavailable(message: string) {
     if (step.name !== 'confirm') {
       return;
     }
     const { professional } = step;
     setStep({ name: 'slot', professional });
-    void fetchSlots(professional);
-    updateDraft({ stage: 'SLOT_SELECTION', slotId: undefined });
+    setTimeUnavailableError(message);
+    void fetchWindows(professional);
+    updateDraft({ stage: 'SLOT_SELECTION', bookedStart: undefined });
   }
 
   function handleConfirmed(order: OrderResponse) {
@@ -272,10 +296,12 @@ export default function BookingFlowPage() {
       updateDraft({ stage: 'ADDRESS_SELECTION' });
     } else if (step.name === 'slot') {
       setStep({ name: 'professionals' });
+      setTimeUnavailableError(null);
       updateDraft({ stage: 'PROFESSIONAL_SELECTION', professionalId: undefined });
     } else if (step.name === 'confirm') {
       setStep({ name: 'slot', professional: step.professional });
-      updateDraft({ stage: 'SLOT_SELECTION', slotId: undefined });
+      setTimeUnavailableError(null);
+      updateDraft({ stage: 'SLOT_SELECTION', bookedStart: undefined });
     }
   }
 
@@ -323,20 +349,29 @@ export default function BookingFlowPage() {
 
       {step.name === 'slot' && (
         <div className={styles.step}>
+          {timeUnavailableError && (
+            <div className={styles.banner} role="alert">
+              <p>{timeUnavailableError}</p>
+            </div>
+          )}
           {slotsError ? (
             <div className={styles.banner} role="alert">
               <p>{slotsError}</p>
             </div>
           ) : (
             <>
-              <SlotPicker
-                slots={slots}
-                selectedSlotId={selectedSlot?.slotId ?? null}
-                onSelect={setSelectedSlot}
+              <StartTimePicker
+                windows={windows}
+                defaultDurationMinutes={defaultDurationMinutes}
+                selectedStart={selectedStart}
+                onSelect={(value) => {
+                  setSelectedStart(value);
+                  setTimeUnavailableError(null);
+                }}
                 isLoading={isLoadingSlots}
               />
-              {slots.length > 0 && (
-                <Button onClick={handleSlotContinue} disabled={!selectedSlot} fullWidth>
+              {windows.length > 0 && (
+                <Button onClick={handleSlotContinue} disabled={!selectedStart} fullWidth>
                   המשך
                 </Button>
               )}
@@ -350,10 +385,11 @@ export default function BookingFlowPage() {
           issueId={issueId}
           categoryId={categoryId}
           professional={step.professional}
-          slot={step.slot}
+          bookedStart={step.bookedStart}
+          defaultDurationMinutes={defaultDurationMinutes}
           address={address}
           onConfirmed={handleConfirmed}
-          onSlotUnavailable={handleSlotUnavailable}
+          onTimeUnavailable={handleTimeUnavailable}
         />
       )}
 

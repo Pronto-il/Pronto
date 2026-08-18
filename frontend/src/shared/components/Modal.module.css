@@ -1,0 +1,120 @@
+/*
+ * Modal — desktop centered dialog / mobile bottom sheet, per DESIGN_SYSTEM.md §13/§57-59.
+ * See `Modal.tsx`'s own doc comment for why this is one component switched by a CSS
+ * breakpoint rather than a `variant` prop or two separate components.
+ */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(17, 24, 39, 0.48);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  max-height: min(720px, 90vh);
+  width: 100%;
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 12px 32px rgba(17, 24, 39, 0.24);
+  overflow: hidden;
+}
+
+/* Desktop widths, DESIGN_SYSTEM.md §58. */
+.size-small {
+  max-width: 420px;
+}
+
+.size-normal {
+  max-width: 560px;
+}
+
+.size-large {
+  max-width: 720px;
+}
+
+.dragHandle {
+  display: none;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4) 0;
+  flex-shrink: 0;
+}
+
+.title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.closeButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  margin-inline-start: auto;
+}
+
+.closeButton:hover {
+  background: var(--color-surface-secondary);
+  color: var(--color-text-primary);
+}
+
+.body {
+  padding: var(--space-4);
+  overflow-y: auto;
+}
+
+.footer {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.footer > * {
+  flex: 1;
+}
+
+/* ---- Mobile: bottom sheet, DESIGN_SYSTEM.md §57 (`border-radius: 20px 20px 0 0`) ---- */
+@media (max-width: 640px) {
+  .overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .panel {
+    max-width: 100%;
+    max-height: 85vh;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  }
+
+  .dragHandle {
+    display: block;
+    width: 40px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--color-border-strong);
+    margin: var(--space-2) auto 0;
+  }
+}

@@ -49,15 +49,23 @@ Reusable React hooks shared across features.
   Also exports the pure helper `resolveDraftRoute(draft)`, which maps a draft's `stage` to
   its resume route (`/issues/new` for the three issue-creation stages; `/issues/{issueId}
   /booking` or `.../sos-booking`, by `urgencyType`, for every later stage). `BookingDraft`
-  holds: `version` (schema version, `1`; an unreadable/mismatched-version draft found in
-  storage is discarded, not migrated), `ownerId` (the user this draft belongs to, see the
-  leakage guard below), `stage`, `urgencyType`, the issue-creation fields
-  (`description`/`photos`/`clarificationAnswers`/`categoryId`), `issueId` (once the issue
-  is persisted), the address-selection fields (`addressMode`/`address`, the full 7-field
-  `AddressValue`), and the professional/slot-selection fields (`professionalId`/`sort`,
-  narrowed to `'RECOMMENDED' | 'CHEAPEST'` — not the 3-value API `ProfessionalSort` type,
-  since a draft only round-trips a value the UI itself set/could set — and `slotId`,
-  STANDARD-only). **`BookingDraftPhoto` — corrected, backend MS9 (2026-08-18): dropped
+  holds: `version` (schema version, `2` as of the professional weekly availability calendar
+  feature M6 — an unreadable/mismatched-version draft found in storage is discarded, not
+  migrated), `ownerId` (the user this draft belongs to, see the leakage guard below), `stage`,
+  `urgencyType`, the issue-creation fields (`description`/`photos`/`clarificationAnswers`/
+  `categoryId`), `issueId` (once the issue is persisted), the address-selection fields
+  (`addressMode`/`address`, the full 7-field `AddressValue`), and the professional/start-time-
+  selection fields (`professionalId`/`sort`, narrowed to `'RECOMMENDED' | 'CHEAPEST'` — not
+  the 3-value API `ProfessionalSort` type, since a draft only round-trips a value the UI
+  itself set/could set — and `bookedStart`, STANDARD-only). **`bookedStart` — professional
+  weekly availability calendar feature M6 (2026-08-18): replaces the retired `slotId: number`
+  field**, since `CreateOrderRequest` (and the customer's start-time-picking step) now works
+  in terms of a chosen ISO instant, not a pre-made `availability_slots` row id — see
+  `features/booking/README.md`'s M6 section. `version` was bumped `1 → 2` for this shape
+  change; there is no `slotId`-to-`bookedStart` migration path (a discarded/expired slot id
+  carries no timestamp to translate), so a `version: 1` draft found in storage is simply
+  discarded on load, same as any other unreadable/mismatched-version draft.
+  **`BookingDraftPhoto` — corrected, backend MS9 (2026-08-18): dropped
   `imageUrl`, now `{ imageKey: string }` only.** Previously held both `imageKey` and a
   `imageUrl` described as "durable" — that was true only while `POST /api/storage/images`'s
   response returned a permanent, non-expiring proxy URL; it stopped being true once upload
@@ -190,3 +198,13 @@ presigned-URL TTL elapsed on resume), not just a naming cleanup. Consumed by
 `getPresignedImageUrls` batch endpoint on mount. QA live-verified booking-draft resume works
 correctly after this change. Full design record:
 `docs/architecture/backend-ms9-presigned-image-urls-design.md` §12.
+
+**Professional weekly availability calendar, M6 (2026-08-18, final implementation
+milestone)**: `bookingDraftContext.ts`'s `BookingDraft.slotId` was replaced by
+`bookedStart: string`, and the draft schema `version` was bumped `1 → 2` (see "Structure"
+above) — the direct consequence of `CreateOrderRequest` retiring `slotId` in favor of a
+client-chosen `bookedStart` instant. `BookingDraftProvider.tsx`'s version-check literal was
+updated to match (`parsed.version !== 2`); no other change to this file or
+`useBookingDraft.ts`. Resume-hydration logic itself lives in
+`features/booking/BookingFlowPage.tsx`, not here — see that package's README for the M6
+record and live-verification detail.

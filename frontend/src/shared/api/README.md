@@ -53,13 +53,15 @@ API described in `docs/architecture/overview.md` §3.2.
 - `issues.ts` — `classifyIssue`, `createIssue` (Milestone 2), plus a Frontend Milestone 3
   addition: `getIssue` (`GET /api/issues/{id}`, either CUSTOMER-owner or PROFESSIONAL-
   with-an-order), returning `IssueDetailResponse` including a `latestOrder` summary.
-- `bookings.ts` — **new, Frontend Milestone 3; extended, Frontend Milestone 4 (SOS) and the
-  MS3/MS4 product-corrections pass.** Standard + SOS booking-flow domain: professional
-  listing (`getProfessionalsForIssue`/`getSosProfessionalsForIssue`, `GET
+- `bookings.ts` — **new, Frontend Milestone 3; extended, Frontend Milestone 4 (SOS), the
+  MS3/MS4 product-corrections pass, and the professional weekly availability calendar
+  feature M6.** Standard + SOS booking-flow domain: professional listing
+  (`getProfessionalsForIssue`/`getSosProfessionalsForIssue`, `GET
   /api/bookings/professionals`/`.../sos-professionals`, `city`/`street`/`houseNumber`
   required query params + optional `sort: ProfessionalSort` — `'CHEAPEST' | 'RECOMMENDED' |
-  'FASTEST'`), slot listing (`getProfessionalSlots`), order lifecycle (`createOrder`/
-  `createSosOrder`, `acceptOrder`, `rejectOrder`, `cancelOrder`, `getOrder`, `getMyOrders`).
+  'FASTEST'`), available-start-time-window listing (`getAvailableWindows`, see below), order
+  lifecycle (`createOrder`/`createSosOrder`, `acceptOrder`, `rejectOrder`, `cancelOrder`,
+  `getOrder`, `getMyOrders`).
   **As of the MS3/MS4 product-corrections pass**: `CreateOrderRequest`/
   `CreateSosOrderRequest`/`OrderResponse`/`OrderDetailResponse` all gained 3 optional
   fields — `serviceFloor`/`serviceEntrance`/`serviceAddressNotes` — bringing the
@@ -75,7 +77,22 @@ API described in `docs/architecture/overview.md` §3.2.
   reflected in that doc's own JSON examples (a prominent note was added there instead of a
   full rewrite — see that doc's header). A future reader should not trust that doc's
   §2.2/§2.4/§2.8/§2.12/§2.13 text at face value — read the real backend DTOs, or this file's
-  own per-type comments, instead.
+  own per-type comments, instead. **As of the professional weekly availability calendar
+  feature M6 (2026-08-18)**: `getProfessionalSlots`/`AvailabilitySlotItem`/
+  `ProfessionalSlotsResponse` (the client for the retired `GET
+  .../professionals/{id}/slots?issueId=`, itself removed backend-side in M2) are **removed
+  entirely, not deprecated in place** — replaced by `getAvailableWindows`/`AvailableWindow`/
+  `AvailableWindowsResponse`, calling the new `GET
+  .../professionals/{id}/available-windows?issueId=` (`{ professionalId, issueId,
+  defaultDurationMinutes, timezone, windows: [{ startAt, endAt }] }`). `CreateOrderRequest`
+  lost its `slotId: number` field and gained `bookedStart: string` (required) — `bookedEnd` is
+  deliberately not a request field at all, always computed server-side. Shapes verified
+  directly against the real backend records (`bookings.dto.AvailableWindow`/
+  `AvailableWindowsResponse`/`CreateOrderRequest`). First and only consumer of
+  `getAvailableWindows`: `features/booking/BookingFlowPage.tsx` (via the renamed
+  `StartTimePicker.tsx`, formerly `SlotPicker.tsx`) — see that package's README for the full
+  M6 record and live-verification detail. `createOrder`/`getOrder`/`getMyOrders`/the SOS
+  functions are all unchanged.
 - `availability.ts` — **new, Frontend Milestone 3.** A professional's own Standard-booking
   calendar: `createAvailabilitySlot` (`POST /api/availability/slots`),
   `getMyAvailabilitySlots` (`GET /api/availability/slots/me`). Type names match the real
@@ -89,7 +106,28 @@ API described in `docs/architecture/overview.md` §3.2.
   `SLOT_IN_USE` (409) race-condition path — see `features/dashboard/README.md`'s Frontend
   Milestone 9 section for the two follow-up bug fixes QA's live testing surfaced and closed
   on that path (both in `SlotForm.tsx`/`SlotList.tsx`, not in this file — this file's two
-  functions themselves needed no changes after their initial addition).
+  functions themselves needed no changes after their initial addition). **As of the
+  professional weekly availability calendar feature, M3/M4 (2026-08-18)**: gained
+  `getWorkingHours`/`updateWorkingHours` (`GET`/`PUT /api/availability/working-hours`) and
+  `getAvailabilityCalendar(from, to)` (`GET /api/availability/calendar?from=&to=`), plus their
+  `WorkingHoursItem`/`WorkingHoursItemRequest`/`WorkingHoursListResponse`/`SegmentType`/
+  `CalendarSegment`/`CalendarResponse` types. Shapes verified directly against the real
+  backend DTOs (`availability.dto.WorkingHoursItem`/`WorkingHoursItemRequest`/
+  `WorkingHoursListResponse`/`WorkingHoursUpdateRequest`/`CalendarResponse`/`CalendarSegment`/
+  `SegmentType`) and live-verified against a running backend + fresh Postgres instance (all
+  28 migrations, `V25`-`V28` included) — see `features/dashboard/README.md`'s corresponding
+  section for the full verification record (including a reproduction of the design doc's §36
+  worked example). Consumers: `features/dashboard/WorkingHoursForm.tsx` and
+  `features/dashboard/WeeklyCalendarGrid.tsx`. **As of M5 (2026-08-18)**: gained the block
+  CRUD trio — `createAvailabilityBlock` (`POST /api/availability/blocks`),
+  `updateAvailabilityBlock(blockId, payload)` (`PATCH /api/availability/blocks/{id}`,
+  first `PATCH` call in this codebase — `httpClient.ts` gained a `patch()` method alongside
+  `get`/`post`/`put`/`delete` to support it), `deleteAvailabilityBlock(blockId)` (`DELETE
+  /api/availability/blocks/{id}`), plus `CreateBlockRequest`/`BlockResponse` types verified
+  directly against the real backend DTOs. Consumer: `features/dashboard/CalendarBlockModal.tsx`
+  (new, M5). Live-verified against a running backend, including both 409 overlap codes
+  (`BLOCK_OVERLAPS_EXISTING_BLOCK`/`BLOCK_OVERLAPS_BOOKING`) — see
+  `features/dashboard/README.md`'s M5 section for the full record.
 - `reviews.ts` — **new, Active Booking Floating Indicator feature (2026-08-17); extended,
   Frontend Milestone 8 (2026-08-18).** `CreateReviewRequest`/`ReviewResponse` types +
   `createReview(payload)` wrapping `POST /api/reviews`. **First frontend consumer of this
@@ -133,6 +171,14 @@ API described in `docs/architecture/overview.md` §3.2.
 (not previously present on that lean list-mine shape — needed by
 `shared/hooks/activeOrderContext.ts`'s completed-order tie-break logic). No new functions —
 `getMyOrders`/`getOrder` are unchanged, only their response shapes grew.
+
+**As of the professional weekly availability calendar feature, M5 (2026-08-18)**:
+`OrderDetailResponse` gained `customerPhone: string | null` (design §9.1), mirroring the real
+backend DTO — visible to the order's own customer and to the assigned professional from
+`PENDING` onward, same party-to-order authorization as everything else on this DTO, no new
+client-side gating. First and only consumer: `features/booking/OrderTrackingPage.tsx` (renders
+it for a `PROFESSIONAL` viewer only — see that package's README). `getOrder` itself is
+unchanged, only the response shape grew, same pattern as the ETA-field addition above.
 - `notifications.ts` — **new, Frontend Milestone 5.** In-app notification bell domain:
   `NotificationMessageType` (string union mirroring the backend's 8-value
   `notifications.entity.NotificationMessageType` enum), `NotificationResponse`,
@@ -180,4 +226,35 @@ changed, since every other consumer of `imageUrl` fields returned by existing en
 (`getIssue`, `getMyProfessionalProfile`, `getFavorites`, etc.) needed no frontend change —
 those endpoints' response shapes are unchanged, only how the backend computes the `imageUrl`
 string inside them changed (now a presigned URL, not a permanent backend-proxy URL). Full
-design record: `docs/architecture/frontend-ms9-gap-fixes-design.md`.
+design record: `docs/architecture/frontend-ms9-gap-fixes-design.md`. **Professional weekly
+availability calendar, M3/M4 (2026-08-18)**: `availability.ts` gained
+`getWorkingHours`/`updateWorkingHours`/`getAvailabilityCalendar` (see above) — consuming
+already-complete backend endpoints (M1/M2), no backend changes in this pass. Live-verified
+against a running backend (full API-contract-conformance pass via `curl`, including a
+reproduction of the design doc's §36 worked example) — see
+`features/dashboard/README.md`'s corresponding section for the full record. No browser was
+available in this environment; interactive rendering was validated via code review plus a
+clean `tsc -b && vite build`/`oxlint` pass, not a live browser session. **Professional weekly
+availability calendar, M5 (2026-08-18)**: `availability.ts` gained the block CRUD trio and
+`httpClient.ts` gained `patch()` (see above); `bookings.ts` gained `OrderDetailResponse.
+customerPhone` (see above) — consuming already-complete backend endpoints (M1/M2), no backend
+changes in this pass either. Live-verified against a running backend, including both new 409
+overlap codes and a live `PENDING`-stage `customerPhone` read — see
+`features/dashboard/README.md`'s M5 section for the full record. Same "no browser available"
+caveat as M3/M4 above. **Professional weekly availability calendar, M6 (2026-08-18, final
+implementation milestone) — frontend-only, no backend change** (M2 already shipped the
+backend side this milestone consumes): `bookings.ts` lost `getProfessionalSlots`/
+`AvailabilitySlotItem`/`ProfessionalSlotsResponse` (removed, not deprecated) and gained
+`getAvailableWindows`/`AvailableWindow`/`AvailableWindowsResponse`;
+`CreateOrderRequest.slotId` was replaced by `CreateOrderRequest.bookedStart` (see above).
+`shared/utils/availability.ts` is new — `deriveStartTimeCandidates`, a pure utility with no
+`shared/api` dependency of its own beyond importing `AvailableWindow`'s type, consumed by
+`features/booking/StartTimePicker.tsx` (renamed from `SlotPicker.tsx`). Live-verified against
+a running backend (working hours + one manual block + one existing booking → confirmed
+`available-windows` correctly excludes both and enforces the 60-minute minimum; a real order
+submitted against a derived candidate succeeded with the correct server-derived `bookedEnd`;
+a deliberately-conflicting submission returned `409 BOOKING_TIME_UNAVAILABLE`; the SOS path
+and the old retired route were regression-checked) — see `features/booking/README.md`'s M6
+section for the full record, including the `deriveStartTimeCandidates` cross-check
+methodology (no frontend unit-test runner exists in this codebase). Same "no browser
+available" caveat as every prior milestone above.

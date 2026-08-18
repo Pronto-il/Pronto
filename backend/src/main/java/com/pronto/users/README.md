@@ -18,7 +18,13 @@ profile, delete own account). Implements `docs/architecture/api-contract.md` §2
   pre-`V20` `CUSTOMER` with no recorded default address, mirroring `professional`'s own
   "absent means no such object" convention exactly. No new endpoint was added to *update*
   the default address — this is a read-only mirror of the `users.default_*` columns
-  `auth`'s registration flow already populates (`V20`).
+  `auth`'s registration flow already populates (`V20`). **As of the professional weekly
+  availability calendar design's M2 (2026-08-18)**: also includes a top-level `phone` field
+  (not nested), mirroring `defaultAddress`'s exact nullability/placement convention — `null`
+  for a `PROFESSIONAL` caller, `null` for a `CUSTOMER` with no recorded phone (a pre-`V28`
+  account), same read-only-after-registration treatment (no update endpoint). Set once at
+  registration via the new `customer.phone` field (`auth` package, `V28`'s `users.phone`
+  column). See `docs/architecture/professional-weekly-calendar-design.md` §9.1.
 - `DELETE /api/users/me` — soft-delete + PII anonymization (`deleted_at`, `full_name`,
   `email` per the exact rule in `api-contract.md` §2.5). Does **not** touch
   `professionals`/`issues`/`orders` rows — flagged there as a dependency later
@@ -31,7 +37,7 @@ profile, delete own account). Implements `docs/architecture/api-contract.md` §2
 | `entity.User` | JPA entity for `users`. |
 | `entity.UserRole` | `CUSTOMER` \| `PROFESSIONAL` enum, `@Enumerated(STRING)`. |
 | `repository.UserRepository` | `findByEmailIgnoreCase`, `existsByEmailIgnoreCase` (case-insensitive, matches `ux_users_email_lower`). |
-| `dto.UserMeResponse` / `dto.ProfessionalInfo` / `dto.DefaultAddressInfo` | `GET /api/users/me` response shape. `DefaultAddressInfo` is new as of the MS3/MS4 product-corrections pass. |
+| `dto.UserMeResponse` / `dto.ProfessionalInfo` / `dto.DefaultAddressInfo` | `GET /api/users/me` response shape. `DefaultAddressInfo` is new as of the MS3/MS4 product-corrections pass. `UserMeResponse` gained a top-level `phone` field as of the professional weekly availability calendar design's M2 — no new nested DTO needed (unlike `defaultAddress`, `phone` is a plain scalar, read directly off `User.getPhone()`). |
 | `service.UsersService` | `getMe`/`deleteMe` business logic. |
 | `controller.UsersController` | `/api/users/me` GET/DELETE. |
 
@@ -52,7 +58,10 @@ reading `@AuthenticationPrincipal AuthenticatedUser` (a `common` type).
 
 ## Data model
 
-Owns the `users` table (`docs/architecture/data-model.md` §2.2).
+Owns the `users` table (`docs/architecture/data-model.md` §2.2). **As of the professional
+weekly availability calendar design's M2 (2026-08-18)**: gained one new column, `phone
+VARCHAR(20)` (`V28__alter_users_add_phone.sql`), nullable at the DB level, same
+requiredness/nullability split as the `default_*` columns above.
 
 ## Assumptions / judgment calls made during implementation
 
@@ -79,3 +88,14 @@ Backend-only, response-shape addition — no migration (the `users.default_*` co
 existed, from `V20`), no controller change. Consumed by the frontend's
 `AddressSelectionStep` (`features/booking`) and displayed on `ProfilePage`. Full design
 record: `docs/architecture/ms3-ms4-corrections-design.md` §1.
+
+**Professional weekly availability calendar, M2 (2026-08-18)**: `GET /api/users/me` gained
+the top-level `phone` field described above (`UsersService.getMe`, `dto.UserMeResponse`).
+Backend-only, response-shape/migration addition — `V28` adds `users.phone`, `auth`'s
+registration flow now requires `customer.phone` and persists it via `User.setPhone(...)`, no
+new endpoint. Manually verified end-to-end against a real running backend + Postgres: a
+`CUSTOMER` registration with `phone` persisted it, `GET /api/users/me` returned it correctly;
+a `PROFESSIONAL` registration left `users.phone = NULL`. See
+`docs/architecture/professional-weekly-calendar-design.md` §9.1 and
+`backend/.../bookings/README.md`'s M2 section for the order-visibility half of this same
+feature.

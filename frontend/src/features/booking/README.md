@@ -28,6 +28,198 @@ service address, and booking-draft persistence. Active Booking Floating Indicato
 (2026-08-17, see below): ETA countdown on the tracking screen, post-completion review flow
 (`CompletionReviewPage`). Frontend Milestone 6 (2026-08-18, see below): professional-side
 "mark on the way" / "mark completed" job-status progression actions on `OrderTrackingPage`.
+Professional weekly availability calendar feature, M5 (2026-08-18, see below):
+`OrderTrackingPage.tsx` extended for the calendar's booked-block click-through — issue
+enrichment, the counterparty-name bug fix, `order.id`/`bookedEnd` rendering, the professional
+customer-phone display, and week-context-preserving back-navigation. **Professional weekly
+availability calendar feature, M6 (2026-08-18, final implementation milestone, see below)**:
+the customer-facing Standard booking flow's start-time-picking step reworked to consume
+derived `AVAILABLE` windows instead of the retired `availability_slots` rows.
+
+**Professional weekly availability calendar — M6 (2026-08-18) — booking-flow rework:**
+
+Full design record: `docs/architecture/professional-weekly-calendar-design.md` §9.2.3/§7.6/§10
+(M6). Frontend-only; no backend change (M2 already shipped the backend side this milestone
+consumes). Files:
+
+- **`SlotPicker.tsx`/`.module.css` renamed to `StartTimePicker.tsx`/`.module.css`.** The
+  date-chip-row + time-chip-grid UI is byte-for-byte unchanged — only the source of the chips
+  changed. `StartTimePickerProps` replaces `slots: AvailabilitySlotItem[]`/
+  `selectedSlotId: number | null` with `windows: AvailableWindow[]`/
+  `defaultDurationMinutes: number`/`selectedStart: string | null`; `onSelect` now yields a
+  chosen ISO `bookedStart` string instead of the whole slot object. Internally, the component
+  now runs `deriveStartTimeCandidates(windows, defaultDurationMinutes)`
+  (`shared/utils/availability.ts`, new) and feeds the flattened candidate-string list into the
+  same unmodified `dateKey`-based day-grouping logic the original `SlotPicker` already had —
+  confirms the design's own claim that this is "a small, well-contained change, not a
+  different interaction paradigm."
+- **`shared/utils/availability.ts`** (new) — `deriveStartTimeCandidates(windows,
+  defaultDurationMinutes, gridMinutes = 30): string[]`, a pure function enumerating every
+  `gridMinutes`-aligned instant from each window's own `startAt` up to and including
+  `endAt - defaultDurationMinutes`. No frontend unit-test runner exists in this codebase
+  (checked, none introduced just for this) — correctness was instead verified by reproducing
+  the function's exact output in a standalone Node script against real API response data from
+  a running backend (25 candidates across 3 windows, hand-verified against each window's own
+  bounds — see the live-verification note below) and by code review of the implementation
+  against the design's own spec text.
+- **`shared/api/bookings.ts`**: `getProfessionalSlots`/`AvailabilitySlotItem`/
+  `ProfessionalSlotsResponse` (the retired `GET .../slots?issueId=` client) replaced by
+  `getAvailableWindows`/`AvailableWindow`/`AvailableWindowsResponse`, calling `GET
+  .../professionals/{id}/available-windows?issueId=`. `CreateOrderRequest.slotId` dropped;
+  `CreateOrderRequest.bookedStart: string` added (required). See `shared/api/README.md` for
+  the full type-level detail.
+- **`BookingFlowPage.tsx`**: the `'slot'`/`'confirm'` steps' internal state renamed
+  (`slots`/`selectedSlot` → `windows`/`selectedStart`, plus new `defaultDurationMinutes`
+  state sourced from the API response, never hardcoded); `fetchSlots` → `fetchWindows`
+  (calls `getAvailableWindows`); `handleSlotUnavailable` → `handleTimeUnavailable` (same
+  fallback behavior: bounce back to the picker step, re-fetch). `Step['confirm']` now carries
+  `bookedStart: string` instead of `slot: AvailabilitySlotItem`. No other step (address entry,
+  professional list, success screen) changed.
+- **`BookingSummary.tsx`**: `slot: AvailabilitySlotItem` prop replaced by `bookedStart:
+  string` + `defaultDurationMinutes: number`; a local `bookedEnd = bookedStart +
+  defaultDurationMinutes` is computed **for display only** (the confirmation card's
+  "09:00–10:00"-style date/time row) — never sent to the server, never trusted as
+  authoritative (the server independently recomputes and validates the real `bookedEnd`).
+  `onSlotUnavailable` prop renamed `onTimeUnavailable`. `ORDER_ERROR_MESSAGES`'
+  `SLOT_UNAVAILABLE` entry (no longer ever returned by `createOrder`'s new validation path)
+  replaced by `BOOKING_TIME_UNAVAILABLE` → "הזמן הזה כבר לא פנוי. אפשר לבחור זמן אחר." — the
+  same known-error-code-to-Hebrew-message map pattern this file already used, extended with
+  the new code rather than inventing a new mechanism; `ISSUE_NOT_BOOKABLE`'s existing mapping
+  is unchanged.
+- **`shared/hooks/bookingDraftContext.ts`/`BookingDraftProvider.tsx`**: `BookingDraft.slotId`
+  replaced by `BookingDraft.bookedStart?: string`; draft schema `version` bumped `1 → 2` (an
+  in-progress `version: 1` draft found in `localStorage` is discarded on load, not migrated —
+  no `slotId`-to-`bookedStart` translation is possible, consistent with this file's own
+  documented "unreadable/mismatched-version draft is discarded" convention). Resume-hydration
+  in `BookingFlowPage.tsx` checks `deriveStartTimeCandidates(...).includes(draft.bookedStart)`
+  before resuming straight to the confirm step — the direct analogue of the old
+  `slots.find(item => item.slotId === draft.slotId)` check.
+
+**Live API-contract verification** (this environment has no browser-automation tool, same
+caveat every prior milestone in this project notes): built the backend jar, ran it against a
+throwaway Postgres container on an alternate port (`5555`, working around this session's known
+native-Windows-Postgres port-5432 shadowing issue — the same workaround prior milestones in
+this session used), and drove the real HTTP calls this feature's code makes:
+1. Registered a professional + customer, set the professional's working hours to `06:00–22:00`
+   every day, created a manual block (`10:00–11:00` local time, tomorrow) and one existing
+   `PENDING` order (`14:00–15:00` local time, tomorrow, via this same new `bookedStart`-based
+   `POST /api/bookings/orders` path).
+2. `GET .../available-windows?issueId=` for tomorrow correctly returned exactly three windows
+   — `06:00–10:00`, `11:00–14:00`, `15:00–22:00` local time — confirming the block and the
+   booking are both excluded and the 60-minute-minimum filter holds (every returned window is
+   `>= 60` minutes).
+3. Reproduced `deriveStartTimeCandidates`'s exact algorithm in a standalone Node script against
+   that real response: **25 candidates**, hand-verified against each window's own bounds
+   (7 + 5 + 13, matching `(windowMinutes − 60) / 30 + 1` per window) — confirms the utility
+   function's real behavior matches its spec.
+4. Submitted `POST /api/bookings/orders` with `bookedStart` = one derived candidate
+   (`08:30Z`/`11:30` local) → `201`, server-computed `bookedEnd` = exactly
+   `bookedStart + 60 min` (`09:30Z`) — confirms the client's display-only `bookedEnd`
+   computation in `BookingSummary.tsx` matches the server's authoritative one.
+5. Submitted a second `POST /api/bookings/orders` with a `bookedStart` deliberately inside the
+   already-booked `11:00–12:00Z` window → **`409 BOOKING_TIME_UNAVAILABLE`**, confirming the
+   exact error code `BookingSummary.tsx`'s new `ORDER_ERROR_MESSAGES` mapping keys off.
+6. Regression-checked the old retired route (`GET .../professionals/{id}/slots?issueId=`) —
+   confirmed it no longer functions (backend M2 already removed it); confirmed
+   `GET /api/bookings/orders/{id}` still returns `customerPhone` correctly for a `PENDING`
+   order (unrelated M5 field, sanity-checked as a no-regression spot check); confirmed the SOS
+   path (`PUT .../sos-availability`, `POST /api/issues` with `urgencyType: "SOS"`,
+   `POST /api/bookings/sos-orders`) is completely unaffected — `201`, `bookedEnd: null`, flat
+   surcharge applied, exactly as before this milestone.
+7. `tsc -b && vite build` and `oxlint` both clean (no new warnings/errors introduced; the two
+   pre-existing `ProfessionalList.tsx` fast-refresh warnings and one `qa-tmp-ms9/` script
+   warning are unrelated to this milestone's files).
+
+**Not independently verified in-browser** (no browser-automation tool available in this
+environment, consistent with every prior frontend milestone in this project) — left for
+`pronto-qa`: the actual rendered date-chip-row/time-chip-grid UI, the "09:00–10:00"-style
+confirmation-card text rendering, and the booking-draft resume-from-`localStorage` flow
+end-to-end in a real browser session (the underlying logic was verified by direct API-contract
+testing plus code review, not a live click-through).
+
+**Post-QA bug-fix pass (2026-08-18) — conflicting-booking error banner never rendered:**
+`pronto-qa` found, live, via a genuine server-side race (two customers booking the same
+window), that `BookingSummary.tsx`'s `handleConfirm` catch block called
+`setBannerError(...)` and `onTimeUnavailable()` on the same tick, but `onTimeUnavailable`
+(`BookingFlowPage.tsx`'s `handleTimeUnavailable`) immediately calls `setStep({ name: 'slot',
+... })`, unmounting `BookingSummary` before its just-set banner state ever painted — the
+customer was silently bounced back to the `slot` step with no visible explanation. Fixed by
+moving the error message up to `BookingFlowPage`, the level that survives the step
+transition: `onTimeUnavailable` now takes the message as a parameter
+(`(message: string) => void`, was `() => void`) instead of `BookingSummary` guessing at a
+banner it can't render; `BookingSummary` no longer calls `setBannerError` for
+`BOOKING_TIME_UNAVAILABLE` specifically (its other error codes, e.g. `ISSUE_NOT_BOOKABLE`,
+are unaffected — those stay on the `confirm` step, so the existing local `bannerError` state
+still works for them). `BookingFlowPage` stores the message in a new `timeUnavailableError`
+state (deliberately not reusing `slotsError` — that's a `getAvailableWindows` fetch-failure
+banner, and `fetchWindows`'s own `setSlotsError(null)` runs synchronously in the same tick as
+`handleTimeUnavailable`, which would otherwise clobber the message before paint) and renders
+it via the same `role="alert"` banner convention already used elsewhere in this file
+(`professionalsError`/`slotsError`) on the `slot` step, above `StartTimePicker`. Cleared on
+any voluntary path away from the stale conflict context: selecting a new professional,
+continuing past the slot step, going back, or picking a new start time. Live-verified via a
+fresh Playwright script driving a real two-customer race against a running backend
+(`frontend/qa-tmp-calendar/pw-bugfix1-verify.mjs`): customer A reaches the confirm step,
+customer B books the exact same professional+`bookedStart` first via a direct API call,
+customer A submits and gets bounced back to the `slot` step with the exact Hebrew banner
+text ("הזמן הזה כבר לא פנוי. אפשר לבחור זמן אחר.") visible as a real `role="alert"` element,
+then successfully completes the booking after picking a different time (7/7 assertions
+passed, screenshots in the same directory). `tsc -b`, `vite build`, and `oxlint` all clean.
+
+**Professional weekly availability calendar — M5 (2026-08-18) — `OrderTrackingPage.tsx` extension:**
+
+Full design record: `docs/architecture/professional-weekly-calendar-design.md` §7.5/§9.1/§10
+(M5). This screen is the click-through destination for a `BOOKED` segment on
+`features/dashboard/WeeklyCalendarGrid.tsx`'s calendar — see that package's own M5 README
+section for the click-routing side. Five purely additive changes, all to the existing
+`OrderTrackingPage.tsx`/`.module.css`; no new component, no new route:
+
+1. **Issue enrichment.** A one-shot `getIssue(order.issueId)` fetch (`shared/api/issues.ts`,
+   already existed, no backend change) runs once `order` resolves — keyed on `issueId` alone
+   (not the whole `order` object, which gets a new identity on every status-poll tick) so it
+   never re-fetches an issue that hasn't changed. Renders category (`getCategoryNameHe`,
+   reused from `shared/api/categories.ts`), description, an `SOS` tag (reusing
+   `IncomingRequestCard.tsx`'s exact `sosTag` styling/copy), and issue photos (the same
+   presigned-URL `<img src={image.imageUrl}>` pattern `IncomingRequestCard.tsx` already
+   established) — placed between the status card's ETA/divider section and the existing
+   date/address rows. A failed issue fetch is swallowed silently (best-effort enrichment —
+   the rest of the tracking screen, including all actions, still works from `order` alone).
+2. **`order.id`/`order.bookedEnd` now rendered** — both were already present on
+   `OrderDetailResponse`, simply not displayed before. `id` renders as "הזמנה #N" under the
+   counterparty name; `bookedEnd` appends to the existing date/time row as an end-time range
+   (`14:00–15:00`) when non-null (always non-null for a Standard order as of the M2
+   order-creation rework; still correctly `null`/omitted for an SOS order).
+3. **Counterparty-name bug fixed.** Previously always rendered `order.professionalName`
+   regardless of viewer role — wrong for a professional viewing their own job. Now:
+   `user.role === 'PROFESSIONAL'` → `order.customerName`; `user.role === 'CUSTOMER'` →
+   `order.professionalName`.
+4. **Customer phone for a professional viewer.** `OrderDetailResponse` gained a
+   `customerPhone: string | null` field (`shared/api/bookings.ts`) mirroring the real
+   backend DTO (design §9.1). Rendered in a new row ("טלפון הלקוח") only when
+   `user.role === 'PROFESSIONAL'` — no extra status gating needed beyond the role check,
+   since the backend already scopes this field to a party of the order from `PENDING`
+   onward (live-verified, see `features/dashboard/README.md`'s M5 verification section).
+   Never rendered for a `CUSTOMER` viewer — no reciprocal requirement exists in any source
+   document.
+5. **Week-context-preserving back-navigation (design §43).** A new `TrackingLocationState`
+   shape (`{ returnTo?: { weekStart: string } }`) is read via `useLocation().state`. When
+   `WeeklyCalendarGrid` navigated here from a `BOOKED` segment click, it always carries this
+   state; the back button then goes to `/pro/availability?week=${returnTo.weekStart}`
+   instead of this screen's normal role-based default (`/pro` for a professional, `/orders`
+   for a customer) — every other entry point into this screen (the incoming-requests feed,
+   `MyJobsPage`, `MyOrdersPage`, the floating active-order indicator) passes no such state,
+   so its own existing back-navigation behavior is completely unaffected.
+
+**Verification**: see `features/dashboard/README.md`'s M5 section for the shared live
+API-contract testing (both packages were verified together against the same running
+backend/order/issue, since this screen's new fields are populated by that same session's
+data). `tsc -b`/`vite build`/`oxlint` all clean on this file specifically. §43's round-trip
+and the full §16 booking-summary content checklist (order id, status, category, description,
+urgency tag, booked start/end, ETA when present, customer/professional name per role, full
+address snapshot, customer phone for a professional viewer, issue images, existing actions)
+were verified by code review plus the live API-contract data above — no browser-automation
+tool was available in this environment to click through the actual rendered page, consistent
+with every prior frontend milestone in this project.
 
 **Frontend Milestone 6 (2026-08-18) — professional job-status progression actions:**
 - Two new professional-only actions on the shared `OrderTrackingPage.tsx`: "mark on the
@@ -179,7 +371,11 @@ service address, and booking-draft persistence. Active Booking Floating Indicato
 - `SlotPicker` groups the flat `AvailabilitySlotItem[]` response by calendar day
   client-side (the API has no grouping of its own) into a date-chip row + time-chip grid,
   per DESIGN_SYSTEM.md §46-47. Every slot the API returns is already future/available, so
-  nothing is ever rendered as a disabled/unavailable chip.
+  nothing is ever rendered as a disabled/unavailable chip. **Superseded, professional weekly
+  availability calendar feature M6 (2026-08-18)**: this component is renamed
+  `StartTimePicker` and its chip source is now derived start-time candidates, not
+  `availability_slots` rows — see the M6 section near the top of this file for the current
+  shape; the grouping UI itself is unchanged.
 - `BookingSummary` owns the actual `POST /api/bookings/orders` call (mirrors `ReviewStep`'s
   self-contained pattern) and its own double-submission guard (button `loading` state).
   Maps `SLOT_UNAVAILABLE` (bounces the customer back to a re-fetched slot picker) and

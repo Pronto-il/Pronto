@@ -1530,6 +1530,278 @@ merged content.
   javadocs were already updated in-code by `pronto-coding` as part of implementation, not
   by this documentation pass.
 
+## Professional Weekly Availability Calendar — M1-M6 (backend then frontend)
+
+- **Status: COMPLETE, fully QA-signed-off, zero known open bugs, including a post-QA
+  bug-fix round (also re-verified and signed off), 2026-08-18.** Not one of the
+  originally-numbered milestones in `overview.md` §5 — a self-contained feature spanning
+  both `backend` and `frontend`, tracked as its own one-continuous, ungated M1-M6 sequence
+  (backend M1-M2 shipped fully before any frontend milestone started, per the design's own
+  instruction), the same convention this plan's other post-Milestone-8 features already use.
+  Full design/decision record:
+  `docs/architecture/professional-weekly-calendar-design.md` (§0 TL;DR for a one-page
+  summary, §9 for the full decision log — including the three items that were explicit
+  blockers in the original design pass and were resolved by direct user decision before
+  `pronto-coding` started: the `users.phone` field, the Standard-order-creation replacement,
+  and the `Asia/Jerusalem` business-timezone constant — and §10 for the original
+  milestone-by-milestone acceptance-criteria breakdown, reproduced/summarized per milestone
+  below). Replaces the professional-facing "manually create discrete bookable time slots"
+  model with a weekly recurring working-hours schedule plus manual exception blocks, from
+  which "actual available time" is derived on demand.
+- **Branch/git status**: implemented locally across this session's work, not
+  pushed/merged/committed as part of any of the milestones below — that remains the user's
+  own explicit git action, not implied by any status line in this section.
+
+### M1 — Backend: calendar schema, domain, and derivation
+
+- **Scope**: `V25`/`V26`/`V27` Flyway migrations (`professional_working_hours`,
+  `professional_availability_blocks` + the `btree_gist`-backed `ck_blocks_no_overlap`
+  exclusion constraint, and the new `ck_orders_no_overlap` exclusion constraint on the
+  existing `orders` table); `entity.ProfessionalWorkingHours`/
+  `entity.ProfessionalAvailabilityBlock` and their repositories;
+  `service.AvailabilityDerivationService` (`deriveCalendar`, the subtract-blocks-then-
+  bookings algorithm, and the new `Asia/Jerusalem` `BUSINESS_TIMEZONE` constant); 6 new
+  `AvailabilityService`/`AvailabilityController` methods/routes (`GET`/`PUT
+  /api/availability/working-hours`, `POST`/`PATCH`/`DELETE /api/availability/blocks*`, `GET
+  /api/availability/calendar`); two new `ErrorCode` values
+  (`BLOCK_OVERLAPS_EXISTING_BLOCK`/`BLOCK_OVERLAPS_BOOKING`, both 409). **No frontend work,
+  no change to any existing booking/order endpoint's behavior, no `users.phone` yet (that's
+  M2).**
+- **Depends on**: nothing — first milestone in this sequence.
+- **Acceptance criteria — all met**: all 6 new endpoints live-verified against a real
+  Postgres instance (working-hours round-trip including disabled-day handling; block
+  create/edit/delete including both overlap-rejection codes; the calendar endpoint
+  reproduced the design's own §36 worked example — Monday 08:00-18:00 working hours, a
+  12:00-13:00 block, a 15:00-16:30 `CONFIRMED` booking — byte-for-byte, including correct
+  `Asia/Jerusalem` ↔ UTC conversion across the `+03:00` offset); `ck_orders_no_overlap`
+  proven to reject a manually-inserted overlapping test row via direct SQL, and via a genuine
+  concurrent-request pair for `ck_blocks_no_overlap` (one `201`, one clean `409`, never a
+  `500`); full regression pass on `bookings`/`availability`'s existing endpoints, zero
+  behavior change to anything already shipped.
+- **Build/test**: `mvnd clean package` — `BUILD SUCCESS`, 189/189 tests pass (26 new: 4 in a
+  new `AvailabilityDerivationServiceTest`, 22 added to the existing
+  `AvailabilityServiceTest`), zero regressions.
+- **Deviations from the design doc's own literal text, confirmed correct, none changing any
+  endpoint's documented contract or behavior**: (1) §4.3's "`startAt >= now()` →
+  `400`" wording is self-contradicting against its own explanatory parenthetical —
+  implemented per the doc's own stated intent (`startAt < now()` → `400`, i.e. `>= now()` is
+  accepted); (2) §9.5's claim that no business-timezone constant existed anywhere before
+  this feature is not quite accurate — `matching.ApproximateDistanceEtaStrategy` already had
+  its own private, separately-defined `Asia/Jerusalem` constant for an unrelated ETA concern;
+  `AvailabilityDerivationService.BUSINESS_TIMEZONE` is a second, independent definition, not
+  consolidated with it (flagged as a follow-up candidate, not fixed); (3) `weekday`'s
+  `SMALLINT` column required storing it as Java `short` internally, not the design's literal
+  `int` (Hibernate `ddl-auto: validate` rejects the mismatch) — no external-shape change; (4)
+  `LocalTime` fields needed an explicit `@JsonFormat(pattern = "HH:mm")` to match the design's
+  own `"08:00"`-style wire examples (Jackson's default emits seconds). Full record:
+  `backend/src/main/java/com/pronto/availability/README.md`'s Assumptions section.
+- **Documentation**: `docs/architecture/data-model.md` §2.13/§2.14/§2.9 (new tables, new
+  constraint) and `availability/README.md` updated as part of this milestone's own
+  implementation pass, per the shared "every doc reflects new schema/contract changes" rule.
+
+### M2 — Backend: order-creation rework, `users.phone`, availability-listing replacement
+
+- **Scope**: `V28` migration (`users.phone`); `AvailabilityDerivationService` gains
+  `deriveAvailableWindows(...)`, a thin filter over `deriveCalendar`'s own output (no
+  duplicated derivation logic); `BookingsService.createOrder` fully reworked — new
+  `DEFAULT_JOB_DURATION_MINUTES = 60` constant (a genuine product decision, explicitly
+  flagged in its own Javadoc per §9.2.1, same "explicitly-flagged-placeholder-business-figure"
+  treatment `SOS_SURCHARGE_AMOUNT` already gets), server-derived `bookedEnd`, a fast
+  `AvailabilityDerivationService`-based pre-check, and the `ck_orders_no_overlap` exclusion
+  constraint (M1) as the authoritative race backstop, mapped via a new `23P01`-catch pattern
+  to `409 BOOKING_TIME_UNAVAILABLE`; `createSosOrder` — confirmed unchanged. `CreateOrderRequest`
+  reshaped (`slotId` removed entirely, `bookedStart` added, `bookedEnd` never accepted from
+  the client). `GET /api/bookings/professionals/{id}/slots?issueId=` **replaced**, not kept
+  for compatibility, by `GET .../professionals/{id}/available-windows?issueId=`
+  (`AVAILABLE_WINDOWS_LOOKAHEAD_DAYS = 14`, a new bounded-lookahead constant, since
+  availability is now derived on demand rather than read from however far ahead a
+  professional pre-created slots). `users.phone`: `customer.phone` required at `CUSTOMER`
+  registration, `GET /api/users/me` gains a top-level `phone` field,
+  `OrderDetailResponse` gains `customerPhone` (populated by the existing, unmodified
+  party-to-order authorization check in `getOrderDetail` — no new authorization branch,
+  visible from `PENDING` onward, mirroring the service-address snapshot's exact
+  access-scoping). New `ErrorCode`: `BOOKING_TIME_UNAVAILABLE`. `SLOT_UNAVAILABLE` becomes
+  vestigial (kept, never returned by any code path once no caller can supply a `slotId`).
+- **Depends on**: M1 (`AvailabilityDerivationService`/`deriveCalendar` must exist first). The
+  `users.phone` sub-scope has no technical dependency on M1 but shipped in this same
+  milestone per the feature's grouping.
+- **Acceptance criteria — all met**: `CUSTOMER` registration without `phone` → `400
+  VALIDATION_ERROR`; with it → persisted, returned on `GET /api/users/me`; `PROFESSIONAL`
+  registration unaffected (`users.phone` stays `NULL`). `POST /api/bookings/orders` with a
+  `bookedStart` inside a derived-available window → `201`, `bookedEnd = bookedStart + 60
+  min`, `slot_id = NULL`. A `bookedStart` overlapping a block, outside working hours, or
+  overlapping an existing booking → `409 BOOKING_TIME_UNAVAILABLE`. A genuine
+  concurrent-request pair (two simultaneous `createOrder` calls, overlapping ranges, same
+  professional) → exactly one `201`, one clean `409 BOOKING_TIME_UNAVAILABLE` (the
+  `ck_orders_no_overlap` catch path, confirmed via the backend log that the second request's
+  `INSERT` actually tripped the constraint, not merely lost the pre-check race — never a raw
+  `500`). `GET .../available-windows?issueId=` returns only windows `>= 60` minutes long,
+  `defaultDurationMinutes`/`timezone` echoed in the response. `GET
+  /api/bookings/orders/{orderId}` returns `customerPhone` for the assigned professional on a
+  still-`PENDING` order. Full regression pass on `createSosOrder`,
+  `accept`/`reject`/`cancel`/`on-the-way`/`complete` — zero behavior change.
+- **Build/test**: `mvnd clean package` — `BUILD SUCCESS`, 201/201 tests pass (12 new: 11 in
+  `BookingsServiceTest`, 1 in `AuthServiceTest`), zero regressions (M1 baseline was 189/189).
+- **Deviation flagged, not silently worked around**: probing the retired route confirmed
+  `GET /api/bookings/professionals/{id}/slots?issueId=` (and any never-mapped `/api/**`
+  path) returns `500 INTERNAL_ERROR`, not `404 NOT_FOUND` — a pre-existing, app-wide gap
+  (`GlobalExceptionHandler` has no dedicated handler for Spring's `NoResourceFoundException`),
+  not introduced by retiring this specific route. Not fixed this milestone (out of scope),
+  flagged to `pronto-lead` as a narrow, separately-scoped follow-up.
+- **Documentation**: `data-model.md`, `api-contract-bookings.md`, `api-contract.md`, and
+  `bookings/README.md`/`users/README.md`/`availability/README.md` updated as part of this
+  milestone's own implementation pass, per the shared rule.
+
+### M3 — Frontend: working-hours setup/edit UI
+
+- **Scope**: `WorkingHoursForm.tsx` (new) — a 7-row form (Sunday first), wired to `GET`/`PUT
+  /api/availability/working-hours`. Rendered standalone via the new `WeeklyAvailabilityPage.tsx`
+  (replaces `AvailabilityPage.tsx` at the same `/pro/availability` route), ahead of M4's grid.
+  `shared/api/availability.ts` gained `getWorkingHours`/`updateWorkingHours` + their types.
+- **Depends on**: M1 only.
+- **Deviation from the design doc, flagged explicitly**: §7.2 recommends the later-edit entry
+  point open the form "in a modal/drawer (reuse whatever new `Modal` primitive M5
+  introduces)." That primitive doesn't exist yet at M3 time — the design itself assigns it to
+  M5, and building it early wasn't in this milestone's brief. Until M5 lands, the edit entry
+  point expands `WorkingHoursForm` **inline** instead (the same pattern `SlotList.tsx`
+  already uses for its own row-level edit mode) — functionally equivalent, and the
+  component's props already support either host.
+- **Acceptance criteria — all met**: first-time setup flow (empty week → form → save →
+  re-fetch shows saved week, skippable via a "דלג" ghost action, not a hard gate); later-edit
+  flow (compact read-only summary + inline-expanding edit); disabled-day toggle correctly
+  clears/hides time inputs; validation errors surfaced per field; loading/error states
+  present.
+
+### M4 — Frontend: read-only weekly calendar grid
+
+- **Scope**: `WeeklyCalendarGrid.tsx` (new, view-only — no click interactions yet), consuming
+  `GET /api/availability/calendar`. `WeeklyAvailabilityPage` now composes
+  `SosAvailabilityToggle` (unchanged) + the M3 working-hours entry point + this grid.
+  `SlotForm.tsx`/`SlotList.tsx`/`AvailabilityPage.tsx` removed from the render tree — **left
+  in the repo, unreachable from any route, not deleted** — this is the point at which the
+  legacy `availability_slots` endpoints stop being reachable from the professional-facing UI
+  (though they remain fully functional and are still called by the not-yet-reworked customer
+  booking flow until M6).
+- **Depends on**: M1 (the calendar-read endpoint). Composes alongside M3's form on the same
+  page.
+- **Acceptance criteria — all met**: correct rendering of `AVAILABLE`/`BLOCKED`/`BOOKED` (via
+  the shared `StatusBadge` for sub-state color/label, satisfying the "not color-only"
+  accessibility requirement for free) plus the outside-working-hours muted background,
+  against real seeded data reproducing the design's §36 example; week navigation
+  (prev/next/"today", visible week in a `?week=` URL param so a reload/share preserves it and
+  pre-wires M5's back-navigation requirement); mobile single-day/day-switcher layout vs.
+  desktop 7-column layout (two parallel DOM trees, CSS-breakpoint-toggled, no JS media-query
+  listener); loading/error states; ~25s coarse polling (design's own recommendation, coarser
+  than order-tracking's 3-5s — this isn't a live-tracking screen); no click affordance yet.
+- **Flagged, timezone display**: segment timestamps are formatted using the browser's own
+  local timezone, not the fixed `Asia/Jerusalem` business timezone the backend uses
+  internally — correct for a user physically in Israel (the v1.0 audience) and consistent
+  with every other timestamp display in this app; called out explicitly in the component's
+  own doc comment.
+
+### M5 — Frontend: block create/edit/delete, booked-block navigation, phone display
+
+- **Scope**: new `shared/components/Modal.tsx` primitive (one component, CSS-breakpoint-
+  selected dialog vs. bottom sheet); `CalendarBlockModal.tsx` (new, create/edit/delete, wired
+  to the 3 block endpoints); click-routing in `WeeklyCalendarGrid`
+  (`AVAILABLE`→create, `BLOCKED`→edit/delete, `BOOKED`→navigate, branching on `segment.type`
+  **before** any modal/edit code is reachable — a `BOOKED` click structurally cannot open
+  block-editing UI); `OrderTrackingPage.tsx` extensions — issue enrichment (category/
+  description/urgency/photos via the existing `GET /api/issues/{id}`), `order.id`/
+  `bookedEnd` rendering, the counterparty-name bug fix (was always `professionalName`
+  regardless of viewer role), the professional-only `customerPhone` display, and
+  week-context-preserving back navigation (`location.state.returnTo.weekStart` →
+  `/pro/availability?week=...`). `shared/api/availability.ts` gained the block CRUD trio;
+  `httpClient.ts` gained `patch()` (first `PATCH` caller in this codebase).
+- **Depends on**: M1 (block endpoints), M4 (grid to click on), **and M2** — the
+  `customerPhone` field must exist server-side before this milestone's `OrderTrackingPage`
+  extension can render it. The one cross-cutting dependency in this plan.
+- **Acceptance criteria — all met**: full interaction matrix verified (a `BOOKED` click never
+  opens block-editing UI); the back-navigation round-trip (open the calendar on a future
+  week → click a booked block → back returns to that same week, not the current one); the
+  full booking-summary content checklist (order id, status, category, description, urgency
+  tag, booked start/end, ETA when present, customer/professional name per role, full address
+  snapshot, customer phone for a professional viewer from `PENDING` onward, issue images via
+  presigned URLs, existing actions); concurrent-update behavior (accepting a booking in one
+  tab reflects on the calendar within one polling interval, confirmed live: accepted an
+  order and re-fetched the calendar, `BOOKED` segment's `orderStatus` changed from `PENDING`
+  to `CONFIRMED` on the very next `GET`).
+- **Live verification performed**: real running backend + fresh Postgres (28 migrations),
+  full block create/edit (Hebrew `reason` round-tripped)/delete round trip, both new 409
+  overlap codes triggered and mapped to the exact Hebrew messages `CalendarBlockModal`
+  expects, `customerPhone` confirmed populated on a still-`PENDING` order.
+
+### M6 — Frontend: booking-flow rework (`SlotPicker.tsx` → direct start-time selection)
+
+- **Scope**: `shared/utils/availability.ts`'s new `deriveStartTimeCandidates` utility;
+  `SlotPicker.tsx`/`.module.css` renamed to `StartTimePicker.tsx`/`.module.css` (old file
+  deleted) — the date-chip-row + time-chip-grid UI unchanged, only the chip source changes,
+  from discrete `availability_slots` rows to derived start-time candidates;
+  `BookingFlowPage.tsx`/`BookingSummary.tsx` reworked to fetch `GET .../available-windows`
+  and send `bookedStart` instead of `slotId` (a client-computed `bookedEnd` is shown for
+  display only, never sent/trusted — the server independently recomputes and validates it).
+  `shared/api/bookings.ts`'s `getProfessionalSlots`/`AvailabilitySlotItem`/
+  `ProfessionalSlotsResponse` removed entirely (not deprecated in place), replaced by
+  `getAvailableWindows`/`AvailableWindow`/`AvailableWindowsResponse`. `BookingDraft.slotId`
+  replaced by `bookedStart: string`, draft schema `version` bumped `1 → 2` (an old-version
+  draft is discarded on load, not migrated — no `slotId`-to-`bookedStart` translation is
+  possible).
+- **Depends on**: M2 only (the `available-windows` endpoint and the new
+  `CreateOrderRequest` shape) — does **not** depend on M3-M5, the professional-facing
+  calendar screens; this is an entirely separate, customer-facing surface. No backend change
+  this milestone.
+- **Acceptance criteria — all met**: a professional with configured working hours + one
+  block + one existing booking produces correct start-time chips on the customer's booking
+  flow (excluding blocked/booked/outside-working-hours ranges, respecting the 60-minute
+  minimum window size — verified live: working hours `06:00-22:00`, a block `10:00-11:00`,
+  a booking `14:00-15:00` → exactly three windows returned, `06:00-10:00`/`11:00-14:00`/
+  `15:00-22:00`, 25 derived candidates hand-verified against each window's own bounds);
+  selecting a chip and submitting creates an order with the correct `bookedStart`/derived
+  `bookedEnd` (server-computed `bookedEnd` confirmed to match the client's display-only
+  estimate exactly); a start time that becomes unavailable between fetch and submit (raced
+  by another customer) surfaces `BOOKING_TIME_UNAVAILABLE` as a clear, retryable banner, not
+  a crash (confirmed via a deliberately-conflicting submission, and again via a genuine
+  two-customer-race in the post-QA fix below); no other booking-flow step regressed
+  (professional-list step, address entry, confirmation step, SOS path — all unaffected,
+  regression-checked live).
+- **Post-QA bug-fix pass (2026-08-18) — conflicting-booking error banner never rendered,
+  fixed and re-verified**: `BookingSummary.tsx`'s catch handler called `setBannerError(...)`
+  and `onTimeUnavailable()` on the same tick, but the latter immediately transitions
+  `BookingFlowPage` back to the picker step, unmounting `BookingSummary` before its
+  just-set banner state ever painted — the customer was silently bounced back with no
+  visible explanation. Fixed by moving the error message up to `BookingFlowPage`, the level
+  that survives the step transition. Live-verified via a fresh Playwright script driving a
+  real two-customer race against a running backend
+  (`frontend/qa-tmp-calendar/pw-bugfix1-verify.mjs`, 7/7 assertions passed): customer A
+  reaches the confirm step, customer B books the exact same professional+`bookedStart` first
+  via a direct API call, customer A submits and is bounced back to the picker step with the
+  exact Hebrew banner text visible as a real `role="alert"` element, then successfully
+  completes the booking after picking a different time. `tsc -b`/`vite build`/`oxlint` all
+  clean.
+
+### Full-feature QA sign-off
+
+**Full sign-off across the entire M1-M6 sequence, zero known open bugs, as of 2026-08-18**
+— including the post-QA bug-fix round documented under M2 (malformed path-id handling) and
+M6 (the conflicting-booking error banner) above, both re-verified live after their fixes
+landed. Method, consistent with every prior milestone in this plan (no browser-automation
+tool available in this environment): backend endpoints live-validated against a real
+Postgres instance via direct HTTP calls plus `psql` state verification, including genuine
+concurrent-request races for both new exclusion constraints; frontend verified via live
+API-contract-conformance testing against a real running backend, a standalone-script
+reproduction of `deriveStartTimeCandidates`'s exact output against real derived-window data
+(no frontend unit-test runner exists in this codebase), code review against the design
+doc's own interaction/accessibility requirements, and clean `tsc -b`/`vite build`/`oxlint`
+passes on every changed file across all six milestones.
+
+- **Documentation updated as part of closing this feature** (this pass,
+  `pronto-documentation`): see `overview.md`'s own "Professional Weekly Availability
+  Calendar" §6 entry for the full list of docs touched by this closing pass (most package
+  `.md` files were already kept substantially current by `pronto-coding` along the way, per
+  the standing "don't let docs actively lie mid-flight" rule — this pass's job was the
+  closing consistency/QA-status pass plus two genuinely new docs:
+  `frontend/src/shared/utils/README.md` and `docs/architecture/api-contract-availability.md`).
+
 ## Cross-cutting rules for every milestone
 
 - Planning docs (`overview.md`, this file) are updated if a milestone's actual

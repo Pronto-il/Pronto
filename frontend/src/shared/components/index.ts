@@ -33,3 +33,6 @@ export type { AddressValue } from './addressTypes';
 
 export { StatusBadge } from './StatusBadge';
 export type { StatusBadgeProps } from './StatusBadge';
+
+export { Modal } from './Modal';
+export type { ModalProps, ModalSize } from './Modal';

@@ -8,6 +8,258 @@ The professional-facing dashboard.
 - Incoming requests view (Standard and SOS booking requests awaiting accept/reject).
 - Job-status update actions (Confirmed -> On the Way -> Completed, plus Cancel).
 
+## Professional weekly availability calendar — M3/M4 (2026-08-18)
+
+Full design record: `docs/architecture/professional-weekly-calendar-design.md` §7/§10.
+Backend (M1/M2) was already complete and live-verified before this pass started. This pass
+is **frontend-only**, covers M3 (working-hours setup/edit) and M4 (read-only weekly grid),
+and does **not** include M5's click interactions (block create/edit/delete, booked-block
+navigation) — that's a separate, later dispatch.
+
+`/pro/availability` now renders **`WeeklyAvailabilityPage.tsx`** (new) instead of the old
+`AvailabilityPage.tsx` — same route, unchanged path (`frontend/src/app/router.tsx`). Composes,
+top to bottom:
+1. `SosAvailabilityToggle` — rendered verbatim, unchanged, same position as before. Not
+   touched by this pass at all.
+2. The working-hours setup/edit entry point (`WorkingHoursForm.tsx`, M3) — see below.
+3. `WeeklyCalendarGrid.tsx` (M4) — the read-only weekly grid, see below.
+
+`SlotForm.tsx`/`SlotList.tsx`/`AvailabilityPage.tsx` are **left in the repo, unreachable from
+any route** — per the design's explicit "kept, not deleted yet, until M6 makes the underlying
+`availability_slots` endpoints fully vestigial" instruction (§7.1/§10). They still compile
+(nothing else changed about them) but are dead code from this point on.
+
+### `WorkingHoursForm.tsx` (new) — M3
+
+A 7-row form (one row per weekday, Sunday first, matching
+`professional_working_hours.weekday`'s convention), each row: an enable/disable toggle
+(a one-off `role="switch"` button, same pattern `SosAvailabilityToggle` already established —
+no shared `Switch` primitive was added, still a single-purpose control) plus start/end
+`type="time"` inputs (hidden when the row is disabled). Calls `PUT
+/api/availability/working-hours` with the full week on save (a full replace, not a partial
+patch). Client-side validates the same rules the backend enforces (each enabled day needs
+both times, `endTime > startTime`) before submitting, with per-row field errors; a generic
+`role="alert"` banner covers network/unexpected-`VALIDATION_ERROR` failures, matching
+`SlotForm.tsx`'s existing convention.
+
+Controlled component — takes `workingHours: WorkingHoursItem[]` (from `GET
+/api/availability/working-hours`, 0-7 entries), `onSaved`, and an optional `onCancel` (edit
+mode only). `WeeklyAvailabilityPage` owns the single `GET` call and decides which of the two
+entry points to render:
+- **First-time setup** (fewer than 7 entries returned): the form renders full-page, with a
+  "דלג, אגדיר מאוחר יותר" (skip, configure later) ghost action — per the design's explicit
+  "skippable, not a hard gate" framing (§7.2): skipping reveals the (all-muted,
+  outside-working-hours) calendar without saving anything.
+- **Later edit** (exactly 7 entries already configured): a compact read-only summary (one
+  line per weekday: hours or "לא עובד/ת") plus an "עריכת שעות עבודה" link that expands the
+  same form inline.
+
+**Deviation from the design doc, flagged explicitly**: §7.2 says the edit entry point should
+open the form "in a modal/drawer (reuse whatever new `Modal` primitive M5 introduces)." That
+primitive doesn't exist yet — the design itself assigns it to M5, and this pass's brief
+explicitly says not to build it speculatively now. Until M5 lands, the edit entry point
+expands `WorkingHoursForm` **inline** on the page instead (the same "toggle an inline editor"
+pattern `SlotList.tsx` already uses for its own row-level edit mode) — functionally
+equivalent, and `WorkingHoursForm`'s own props already fully support either host, so M5 can
+swap in the real modal later without touching this component's data flow.
+
+### `WeeklyCalendarGrid.tsx` (new) — M4, view-only
+
+The Google-Calendar-like weekly view. Consumes `GET /api/availability/calendar?from=&to=` for
+the currently-visible week (Sunday-Saturday), passing bare `"yyyy-MM-dd"` date strings (not
+full ISO instants) so the backend — not the browser's own timezone — is the single source of
+truth for where a calendar day begins (`AvailabilityService#parseCalendarInstant` accepts
+either shape; a bare date is interpreted as midnight in the fixed `Asia/Jerusalem` business
+timezone server-side).
+
+- **Layout**: 7 day columns + a time axis, default visible range 06:00-23:00 (auto-extended if
+  any real segment falls outside it), 30-minute gridlines, vertical scroll within a
+  capped-height container beyond the visible range.
+- **Visual states**: `AVAILABLE` (light success tint + "זמין" label), `BLOCKED` (diagonal-hatch
+  fill + lock icon + "חסום" label + `reason` if present), `BOOKED` (renders the shared
+  `StatusBadge` component directly inside the segment — reuses its existing `OrderStatus`
+  color mapping rather than inventing new colors, satisfying the "not color-only" accessibility
+  requirement for free since `StatusBadge` already carries a Hebrew text label).
+  `orderStatus: 'COMPLETED'` bookings get an additional muted/reduced-opacity treatment
+  (`.segmentCompleted`), per the design's "completed gets its own visual state" note. Time
+  outside working hours has no segment data at all — the day column's own muted background
+  (`--color-surface-secondary`) shows through, with no click affordance (there is no click
+  behavior at all yet — that's M5).
+- **Week navigation**: prev/next/"today" buttons; the visible week lives in the `?week=` URL
+  search param (normalized to that week's Sunday) rather than component-local-only state, both
+  so a reload/share preserves the visible week and to pre-wire M5's §43 requirement that a
+  booked-block click-through's back navigation can return to `/pro/availability?week=...`.
+- **Mobile (`max-width: 640px`, this codebase's existing breakpoint)**: switches to a
+  single-day focused view with a horizontal day-switcher chip strip, **not** a shrunk
+  7-column grid — two parallel DOM trees (desktop/mobile) sharing the same computed
+  per-day segment data, toggled via CSS `display: none` at the breakpoint (no JS media-query
+  listener needed).
+- **Polling**: `usePolling` at a 25s interval (coarser than order-tracking's 3-5s, per the
+  design's own §31 recommendation — this isn't a live-tracking screen).
+- **Loading/error**: initial "טוען את היומן…" text, then a retryable `role="alert"` error
+  banner (DESIGN_SYSTEM.md §61's exact copy pattern: message + "אפשר לנסות שוב בעוד רגע." +
+  "נסה שוב" button) if the first fetch fails; a transient poll failure after data has already
+  loaded is swallowed silently (same graceful-degradation behavior `OrderTrackingPage`'s own
+  polling already has) rather than replacing already-rendered data with an error state.
+
+**No click interactions this milestone** — `AVAILABLE`/`BLOCKED`/`BOOKED` segments render
+informationally only, no `onClick`, no `CalendarBlockModal`, no booked-block navigation. That's
+M5's scope entirely.
+
+**Timezone assumption, flagged**: segment timestamps are bucketed into day columns and
+formatted using the browser's own local timezone (`new Date(isoString)` + this codebase's
+existing `formatDateTime.ts` helpers), not the fixed `Asia/Jerusalem` business timezone the
+backend uses internally for derivation. This matches every other timestamp display already in
+this app and is correct for a user physically in Israel (the v1.0 audience) — called out
+explicitly in the component's own doc comment rather than left as a silent assumption.
+
+### `shared/api/availability.ts` extension
+
+`getWorkingHours`/`updateWorkingHours`/`getAvailabilityCalendar` plus their
+`WorkingHoursItem`/`WorkingHoursItemRequest`/`WorkingHoursListResponse`/`SegmentType`/
+`CalendarSegment`/`CalendarResponse` types — see `shared/api/README.md`'s own entry for detail.
+Shapes verified directly against the real backend DTOs and live-verified against a running
+instance (see below), not copied from the design doc's illustrative JSON.
+
+## Professional weekly availability calendar — M5 (2026-08-18): block CRUD, booked-block navigation
+
+Full design record: `docs/architecture/professional-weekly-calendar-design.md` §7.3/§7.4/§10
+(M5). Resumes the M3/M4 pass above — `WeeklyCalendarGrid` is no longer view-only; every
+segment is now clickable.
+
+### `CalendarBlockModal.tsx` (new) + `.module.css`
+
+Create/edit/delete a manual availability block, built on the (already-existing, reused
+as-is — **not** rebuilt) `shared/components/Modal.tsx` primitive. Mode is decided by prop
+presence, not a separate flag: passing `block` (an existing `{ id, startAt, endAt, reason }`,
+sourced straight from a clicked `BLOCKED` segment — no extra `GET`) puts the modal in edit
+mode; passing `initialRange` (`{ startAt, endAt }`, from a clicked `AVAILABLE` segment) puts
+it in create mode. Two `datetime-local` inputs + an optional short `reason` text field, the
+same input/validation shape `SlotForm.tsx` already established (`toDateTimeLocalValue`
+helper reused verbatim as a local copy — no shared cross-file helper existed to import,
+consistent with this being the closest existing precedent rather than a new pattern).
+
+- **Create**: `POST /api/availability/blocks`. **Edit**: `PATCH
+  /api/availability/blocks/{id}` (full replace of `startAt`/`endAt`/`reason`, matching the
+  backend's own "resend the whole shape despite the PATCH verb" convention). **Delete**
+  (edit mode only, a destructive full-width button in the form body): `DELETE
+  /api/availability/blocks/{id}`, no confirmation step — same low-stakes,
+  easily-recreated reasoning `SlotList.tsx`'s own slot-delete already uses.
+- **Error handling**: `VALIDATION_ERROR` → generic field-error copy (same as `SlotForm`);
+  the two new 409 codes (`BLOCK_OVERLAPS_EXISTING_BLOCK`/`BLOCK_OVERLAPS_BOOKING`) → specific
+  Hebrew banner messages via a `BLOCK_ERROR_MESSAGES` map, the same
+  known-error-code-map convention `ORDER_ACTION_ERROR_MESSAGES` (`features/booking`) already
+  established; anything else → `GENERIC_ERROR_MESSAGE`. All three codes were live-verified
+  against the real backend (see below).
+- `onSaved` fires after a successful create/update/delete so the parent
+  (`WeeklyCalendarGrid`) can refetch the calendar — the same "callback tells the parent to
+  refresh" convention `SlotList.tsx`'s `onRefreshNeeded` already uses, not a shared cache/
+  invalidation mechanism.
+- `shared/api/availability.ts` gained `createAvailabilityBlock`/`updateAvailabilityBlock`/
+  `deleteAvailabilityBlock` (`POST`/`PATCH`/`DELETE /api/availability/blocks*`) plus their
+  `CreateBlockRequest`/`BlockResponse` types, verified directly against the real backend DTOs.
+  `shared/api/httpClient.ts` gained a `patch()` method (previously only `get`/`post`/`put`/
+  `delete` existed) — a small, narrow addition, needed because `PATCH
+  /api/availability/blocks/{id}` is the first `PATCH` endpoint any frontend code in this
+  codebase has called.
+
+### `WeeklyCalendarGrid.tsx` — click-routing (M5)
+
+Every segment (`SegmentBlock`) is now an interactive element (`role="button"`, keyboard
+`Enter`/`Space` activation, `cursor: pointer`, `:focus-visible` outline) instead of a purely
+informational `div`. `CalendarWeekView`'s `handleSegmentClick` branches on `segment.type`
+**before** any modal/edit code is reachable — the critical constraint that a `BOOKED` click
+must never open block-editing UI (design §15) is satisfied structurally, not as a late
+filter:
+- `AVAILABLE` → opens `CalendarBlockModal` in create mode, pre-filled from the clicked
+  segment's own `startAt`/`endAt` (the professional can narrow the two `datetime-local`
+  inputs before saving — a deliberate simplification over computing a click-position-derived
+  sub-range from mouse Y coordinates, flagged as a judgment call within the design's own
+  "your call" framing for this interaction).
+- `BLOCKED` → opens the same modal in edit mode, pre-filled straight from that segment's
+  `blockId`/`startAt`/`endAt`/`reason`.
+- `BOOKED` → `navigate(\`/orders/${orderId}\`, { state: { returnTo: { weekStart } } })` —
+  never touches `CalendarBlockModal` state at all in this branch, so a `BOOKED` click
+  structurally cannot reach any block-editing code path.
+- Outside working hours: no segment is ever rendered there (unchanged from M4), so there is
+  no click affordance — nothing new needed for this case.
+
+A successful block create/edit/delete calls the modal's `onSaved`, which closes the modal and
+calls the existing `usePolling`-returned `refetch()` — an explicit refresh on top of the
+already-existing ~25s polling interval (M4), not a replacement for it.
+
+### `OrderTrackingPage.tsx` extension (M5) — see `features/booking/README.md`
+
+Not this package's own component, but the click-through destination for a `BOOKED` segment
+and the back-navigation partner for §43's week-context preservation — documented in
+`features/booking/README.md`'s own M5 section rather than duplicated here.
+
+### Verification performed for M5
+
+No browser-automation tool was available in this environment (consistent with every prior
+frontend milestone). Verification was: (1) `tsc -b` and `vite build` both clean, zero errors
+in any new/changed file; (2) `oxlint` clean except three pre-existing warnings unrelated to
+this pass (`ProfessionalList.tsx` fast-refresh warnings, a `qa-tmp-ms9` script's unused
+variable); (3) a full manual code review against
+`docs/architecture/professional-weekly-calendar-design.md` §7.3-§7.5/§10/§15/§35-36/§43; (4)
+live API-contract-conformance testing against a real running backend + a fresh Postgres
+instance (28 migrations applied cleanly) via `curl`: registered a professional + customer,
+set a full working week, created a manual block (12:00-13:00 Israel time, Wednesday) and a
+Standard order (booked 15:00-16:00 Israel time, 60-minute default duration) on the same day,
+fetched `GET /api/availability/calendar` and confirmed the exact 5-segment layout the
+design's §36 worked example describes; **edited the block via `PATCH
+/api/availability/blocks/{id}`** (round-tripped a Hebrew `reason` string correctly) and
+**deleted it via `DELETE`** (`204`); **triggered both new 409s** (`BLOCK_OVERLAPS_EXISTING_BLOCK`
+by overlapping the still-existing block, `BLOCK_OVERLAPS_BOOKING` by overlapping the order's
+booked range) and confirmed the exact codes `CalendarBlockModal`'s `BLOCK_ERROR_MESSAGES` map
+expects; fetched `GET /api/bookings/orders/{orderId}` as the professional and confirmed `id`/
+`bookedEnd`/`customerPhone`/`customerName`/`professionalName` are all present and correctly
+shaped (`customerPhone` populated while the order was still `PENDING`, confirming design
+§9.1's "assignment, not confirmation" rule) — exactly matching `OrderTrackingPage.tsx`'s new
+rendering logic; fetched `GET /api/issues/{issueId}` and confirmed it matches
+`IssueDetailResponse` exactly; **accepted the order and re-fetched the calendar**, confirming
+the `BOOKED` segment's `orderStatus` changed from `PENDING` to `CONFIRMED` on the very next
+`GET` with no extra code — the structural basis for §31's polling-driven concurrent-update
+requirement (`WeeklyCalendarGrid`'s existing ~25s `usePolling` interval, unchanged by this
+pass, will observe this same effect in a live browser). A Windows-native Postgres process was
+again found shadowing port 5432 — worked around with a fresh throwaway `postgres:16`
+container on port 5434 for this verification session only (removed afterward, no
+`docker-compose.yml` change).
+
+**Full interaction matrix, verified as above**: `AVAILABLE` → create (`201`, confirmed);
+`BLOCKED` → edit (`200`, Hebrew `reason` round-tripped) / delete (`204`, confirmed); `BOOKED`
+→ navigation only, never block-editing UI (verified by code review — `handleSegmentClick`'s
+`BOOKED` branch returns immediately after `navigate(...)`, before `setBlockModal` is ever
+reachable in that branch). §43's back-navigation round-trip was verified by code review only
+(no browser tool): `WeeklyCalendarGrid` passes `state: { returnTo: { weekStart } }` using the
+exact `toDateKey(weekStart)` value already used to build the `?week=` URL param elsewhere on
+the same page, and `OrderTrackingPage` reads `location.state?.returnTo` and builds
+`/pro/availability?week=${weekStart}` from it — the same string round-trips through both
+sides with no reformatting in between.
+
+### Verification performed for M3/M4
+
+No browser-automation tool was available in this environment (consistent with every prior
+frontend milestone in this project). Verification was: (1) `tsc -b && vite build` and `oxlint`
+both clean, zero errors/warnings in any new/changed file; (2) a full manual code review against
+`docs/architecture/professional-weekly-calendar-design.md` §7/§10 and `DESIGN_SYSTEM.md`;
+(3) live API-contract-conformance testing against a real running backend + a fresh Postgres
+instance (all 28 migrations applied cleanly) via `curl`: registered a professional + customer,
+set a full working week, created a manual block (12:00-13:00, Monday) and a Standard order
+(booked 15:00-16:00 — 60 minutes, the actual `DEFAULT_JOB_DURATION_MINUTES` value M2 built,
+not the design doc's illustrative 90-minute example) on the same day, then fetched `GET
+/api/availability/calendar` and confirmed the exact 5-segment layout the design's §36 worked
+example describes (`AVAILABLE` / `BLOCKED` / `AVAILABLE` / `BOOKED` / `AVAILABLE`), with every
+field (`type`/`startAt`/`endAt`/`blockId`/`reason`/`orderId`/`orderStatus`) matching this
+file's `CalendarSegment` interface exactly. Also confirmed `PUT /api/availability/working-hours`
+round-trips exactly as `WorkingHoursForm.tsx` expects, and that a deliberately-invalid payload
+(an enabled day with no `startTime`/`endTime`) returns `400 VALIDATION_ERROR`, matching the
+form's own catch-block handling. A Windows-native Postgres process was found shadowing port
+5432 (the exact issue flagged in this task's brief) — the docker-compose `pronto-postgres`
+container was silently unreachable from the host despite reporting healthy; worked around by
+running an ad hoc `postgres:16` container on port 5434 for this verification session only
+(removed afterward, `docker-compose.yml` itself untouched).
+
 ## Status
 **Partially implemented, Frontend Milestone 3 (2026-08-16); post-QA bug-fix pass
 (2026-08-17); SOS-availability toggle added Frontend Milestone 4 (2026-08-17)**:

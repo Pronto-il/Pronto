@@ -32,8 +32,12 @@ export interface BookingDraftPhoto {
 
 export interface BookingDraft {
   /** Bumped on any schema-shape change; an unreadable/mismatched-version draft found in
-   *  localStorage on load is discarded, not migrated. */
-  version: 1;
+   *  localStorage on load is discarded, not migrated. Bumped to `2` by the professional
+   *  weekly availability calendar feature M6 (design §9.2.2/§9.2.3): `slotId` was replaced
+   *  by `bookedStart` — an in-progress `version: 1` draft from before this change is
+   *  discarded on load rather than misread (no `slotId`-to-`bookedStart` migration is
+   *  possible, since a discarded/expired slot ID carries no timestamp to translate). */
+  version: 2;
   /** The user this draft belongs to — used to auto-discard on logout / different-account
    *  login, since localStorage is not otherwise user-scoped. See §4.6. */
   ownerId: number;
@@ -61,8 +65,9 @@ export interface BookingDraft {
   /** Both flows offer the identical 2-way RECOMMENDED|CHEAPEST toggle (§3 reconciliation) —
    *  FASTEST is never a value a customer's draft can hold. */
   sort?: 'RECOMMENDED' | 'CHEAPEST';
-  /** STANDARD only. */
-  slotId?: number;
+  /** STANDARD only. The chosen ISO start instant (design §9.2.2/§9.2.3) — replaces the
+   *  retired `slotId` field as of `version: 2`. */
+  bookedStart?: string;
 
   updatedAt: string; // ISO timestamp
 }

@@ -22,7 +22,7 @@ import {
   ProDashboardLayout,
   IncomingRequestsPage,
   MyJobsPage,
-  AvailabilityPage,
+  WeeklyAvailabilityPage,
   ProfileEditorPage,
 } from '../features/dashboard';
 import { ProfessionalProfilePage } from '../features/professionals';
@@ -45,7 +45,12 @@ import { FavoritesPage } from '../features/favorites';
  * Milestone 8 adds `/professionals/:professionalId` (bare `RequireAuth`, either role, matching
  * the backend's route-gate-free `GET /api/professionals/{id}`), `/favorites`
  * (CUSTOMER-only), and `/pro/profile` (a 4th `ProDashboardLayout` tab) — see
- * `docs/architecture/frontend-ms8-design.md` §3.
+ * `docs/architecture/frontend-ms8-design.md` §3. **Professional weekly availability calendar,
+ * M4**: `/pro/availability` now renders `WeeklyAvailabilityPage` instead of the old
+ * `AvailabilityPage` (same route, unchanged path) — see
+ * `docs/architecture/professional-weekly-calendar-design.md` §7.1/§10. `AvailabilityPage.tsx`/
+ * `SlotForm.tsx`/`SlotList.tsx` are left in the repo, unreachable from any route, per that
+ * design's explicit "kept, not deleted yet" instruction (§7.1).
  */
 export const router = createBrowserRouter([
   {
@@ -85,7 +90,7 @@ export const router = createBrowserRouter([
             children: [
               { path: 'pro', element: <IncomingRequestsPage /> },
               { path: 'pro/jobs', element: <MyJobsPage /> },
-              { path: 'pro/availability', element: <AvailabilityPage /> },
+              { path: 'pro/availability', element: <WeeklyAvailabilityPage /> },
               { path: 'pro/profile', element: <ProfileEditorPage /> },
             ],
           },

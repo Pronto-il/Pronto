@@ -38,28 +38,33 @@ in place rather than restating it in full.
   list in-memory by `etaMinutes` ascending (necessarily in-memory — `etaMinutes` is never a
   database column). See `docs/architecture/api-contract-professionals-reviews.md` §7.1-§7.3
   for the full spec.
-- `GET /api/bookings/professionals/{professionalId}/slots?issueId=` — one professional's
-  open, future `availability_slots`, ordered by `start_time ASC`. Same
-  issue-ownership/urgency-type/bookable checks as the listing endpoint (including the
-  Milestone 4 `ISSUE_URGENCY_MISMATCH` fix), plus `400 CATEGORY_MISMATCH` if the
-  professional's category doesn't match the issue's.
+- `GET /api/bookings/professionals/{professionalId}/slots?issueId=` — **retired as of the
+  professional weekly availability calendar design's M2 (2026-08-18), replaced entirely (not
+  kept for compatibility) by `GET .../professionals/{professionalId}/available-windows
+  ?issueId=`** — see the dedicated M2 entry near the end of this section for the full
+  replacement writeup; kept here, struck through in spirit, only so this bullet's own history
+  (one professional's open, future `availability_slots`, ordered by `start_time ASC`) stays
+  legible as a record of what Milestones 3-8 actually built.
 - `POST /api/bookings/orders` — creates the order. Same urgency-type check as the two
-  endpoints above (Milestone 4 fix), then atomically claims the chosen slot
-  (`UPDATE availability_slots ... WHERE is_available = true AND start_time > now()`,
-  `409 SLOT_UNAVAILABLE` on 0 affected rows) and transitions the issue
-  `OPEN -> BOOKED` (`UPDATE issues ... WHERE status = 'OPEN'`, rolling back the slot claim
-  too on 0 affected rows), all in one `@Transactional` method, before inserting the `orders`
-  row (`order_status = PENDING`, `slot_id` always set for a Standard order). **As of
-  Milestone 8**: the request body also requires `serviceCity`/`serviceStreet`/
-  `serviceHouseNumber` (+ optional `serviceApartment`) — persisted verbatim onto the new
-  `orders.service_*` columns as a point-in-time snapshot, **not** cross-validated against
-  whatever `city`/`street`/`houseNumber` the customer used on the preceding listing call
-  (a flagged, accepted gap — see `docs/architecture/api-contract-professionals-reviews.md`
-  §9 item 4). `final_price` is now computed as `basePriceSnapshot + sosSurcharge`
-  (`basePriceSnapshot = professional.basePrice` at booking time, `sosSurcharge = 0.00`
-  always for a Standard order, explicitly set in the insert rather than relying on the DB
-  column's `DEFAULT 0` alone) and both components are persisted alongside `final_price` for
-  display (`OrderResponse`/`OrderDetailResponse`'s new fields).
+  endpoints above (Milestone 4 fix), then, **through Milestone 8**, atomically claimed the
+  chosen slot (`UPDATE availability_slots ... WHERE is_available = true AND start_time >
+  now()`, `409 SLOT_UNAVAILABLE` on 0 affected rows) and transitioned the issue `OPEN ->
+  BOOKED` (`UPDATE issues ... WHERE status = 'OPEN'`, rolling back the slot claim too on 0
+  affected rows), all in one `@Transactional` method, before inserting the `orders` row
+  (`order_status = PENDING`, `slot_id` always set for a Standard order). **As of the
+  professional weekly availability calendar design's M2 (2026-08-18), this slot-claim
+  mechanism is retired for Standard order creation** — see the dedicated M2 entry below for
+  the full reworked shape. **As of Milestone 8**: the request body also requires
+  `serviceCity`/`serviceStreet`/`serviceHouseNumber` (+ optional `serviceApartment`) —
+  persisted verbatim onto the new `orders.service_*` columns as a point-in-time snapshot,
+  **not** cross-validated against whatever `city`/`street`/`houseNumber` the customer used on
+  the preceding listing call (a flagged, accepted gap — see
+  `docs/architecture/api-contract-professionals-reviews.md` §9 item 4). `final_price` is
+  computed as `basePriceSnapshot + sosSurcharge` (`basePriceSnapshot = professional.basePrice`
+  at booking time, `sosSurcharge = 0.00` always for a Standard order, explicitly set in the
+  insert rather than relying on the DB column's `DEFAULT 0` alone) and both components are
+  persisted alongside `final_price` for display (`OrderResponse`/`OrderDetailResponse`'s new
+  fields) — unchanged by M2.
 - `GET /api/bookings/sos-professionals?issueId=` — **new, Milestone 4.** SOS-path sibling
   of the Standard listing above: filtered by the issue's category **and** currently
   `sos_availability.is_available = true` (join added to `ProfessionalListingRepository`),
@@ -204,10 +209,10 @@ not just re-asserted).
 | `entity.OrderStatus` / `entity.CancelledBy` | Enums mirroring `orders.order_status` (7 values, post-`V11`) / `orders.cancelled_by`. |
 | `repository.OrderRepository` | `JpaRepository`, plus `acceptIfPending`/`rejectIfPending`/`cancelIfStatus` (the atomic guarded transitions, §3.2) and the self-listing/`latestOrder`/professional-authorization finder methods. Unchanged in Milestone 4 — no `urgency_type`/`slot_id` branching in any `@Query`. **As of Milestone 5**, two new methods: `expireIfPending` (mirrors `rejectIfPending` exactly, target status `EXPIRED`) and `findPendingExpiryCandidateIds` (cross-entity comma-join JPQL against `Order`/`Issue`, same style as `ProfessionalListingRepository`'s existing joins — returns candidate order ids past their per-`urgencyType` cutoff for the sweep). **As of Milestone 6**, two new guarded-transition methods following the exact same shape: `onTheWayIfConfirmed` (`UPDATE ... WHERE order_status = 'CONFIRMED'`, target `ON_THE_WAY`) and `completeIfOnTheWay` (`UPDATE ... WHERE order_status = 'ON_THE_WAY'`, target `COMPLETED`) — both single-hop guards, no skip-ahead `WHERE` clause. **As of the Active Booking Floating Indicator feature**: `onTheWayIfConfirmed`'s signature changed (breaking, single caller updated in lockstep) — now `onTheWayIfConfirmed(Long orderId, Instant now, Instant expectedArrivalAt)`, extending the same guarded `UPDATE` to also set `o.expectedArrivalAt = :expectedArrivalAt` in the identical atomic statement. `expectedArrivalAt` is computed by the caller (`BookingsService`, a pure call to `DistanceEtaStrategy`, no I/O) and passed in already-resolved — never computed inside the repository. |
 | `repository.ProfessionalListingRepository` | A narrow, read-only query interface over `professionals`/`users` (§2.2) projected into `dto.ProfessionalCard` — deliberately lives here, not in `professionals`, to avoid a reverse `professionals -> bookings` dependency (see its Javadoc). As of Milestone 4, exposes two queries: `listByCategory` (§2.2, Standard) and `listSosAvailableByCategory` (§2.12, SOS — additionally joined to `com.pronto.availability.entity.SosAvailability` filtering on `isAvailable = true`). **As of Milestone 8**: both queries' `SELECT NEW ProfessionalCard(...)` projections gained `p.city`/`p.profileImageKey` and three correlated scalar subqueries — `AVG(r.rating)`/`COUNT(r)` over `com.pronto.reviews.entity.Review` (rating aggregate) and `COUNT(f)` over `com.pronto.favorites.entity.Favorite` scoped to `:customerId` (the `favorited` flag) — deliberately correlated subqueries, not a `LEFT JOIN + GROUP BY`, to avoid a wide `GROUP BY` column list across three joined tables. ETA/distance are deliberately **not** added to either query — computed in Java, post-fetch, never in SQL (see `service.BookingsService#enrichAndSort` below). |
-| `dto.*` | Wire shapes for all twelve endpoints (§2.2-2.9, §2.12-2.13, §2.16-2.17) — `OrderResponse` is shared by create/accept/reject, `createSosOrder`, **and, as of Milestone 6, `onTheWay`/`complete`** (identical shape, differing only in values — `OrderStatus` already had `ON_THE_WAY`/`COMPLETED` as enum constants, no new field needed); `OrderDetailResponse`/`OrderSummaryResponse` are the richer/leaner shapes for get-by-id vs. list-mine, mirroring the pattern M1 used for `/api/users/me`. `dto.CreateSosOrderRequest` (new, Milestone 4) is `CreateOrderRequest` minus `slotId` — SOS has no slot selection. **No new DTO added in Milestone 6. As of Milestone 8**: `ProfessionalCard` gained `profileImageUrl`/`averageRating`/`reviewCount`/`favorited`/`sameCity`/`distanceKm`/`baseTravelTimeMinutes`/`trafficAdjustmentMinutes`/`etaMinutes` — a two-stage-construction record (see its own Javadoc): the JPQL-projection constructor `ProfessionalListingRepository` calls carries raw column values and rating/favorite subquery results with placeholder ETA fields; `BookingsService#enrichAndSort` produces the final card via the canonical (all-fields) constructor. `CreateOrderRequest`/`CreateSosOrderRequest` gained required `serviceCity`/`serviceStreet`/`serviceHouseNumber` (+ optional `serviceApartment`). `OrderResponse`/`OrderDetailResponse` gained `basePriceSnapshot`/`sosSurcharge` and the four `service*` fields. New enum `dto.ProfessionalSort` (`CHEAPEST`/`RECOMMENDED`/`FASTEST`). `OrderSummaryResponse` (list-mine) was **not** changed — the new fields are detail/create-response-only. **As of the MS3/MS4 product-corrections pass**: `CreateOrderRequest`/`CreateSosOrderRequest`/`OrderResponse`/`OrderDetailResponse` all gained 3 further optional fields — `serviceFloor`/`serviceEntrance`/`serviceAddressNotes` (`V22`, see Data model/Assumptions below) — bringing the service-address snapshot to the full 7-field shape. **As of the Active Booking Floating Indicator feature**: `OrderResponse`/`OrderDetailResponse`/`OrderSummaryResponse` all gained `Instant expectedArrivalAt` (positioned directly after `bookedEnd`), mirrored 1:1 from `Order.getExpectedArrivalAt()`; `OrderSummaryResponse` additionally gained `Instant updatedAt` (not previously on that lean list-mine shape at all — needed by the frontend's floating-indicator tie-break logic to express "most recently completed" among several unacknowledged `COMPLETED` orders, see `docs/architecture/active-booking-floating-indicator.md` §2.3/§5). `listMine`'s stream-mapping call site was updated for the new `OrderSummaryResponse` shape. |
-| `service.BookingsService` | All business logic for §2.2-2.9, §2.12-2.13, and §2.16-2.17, including the atomic-transaction sequencing in `createOrder`/`createSosOrder` and the actor/authorization resolution for `cancel`/`getOrderDetail`/`listMine`. Milestone 4 added `listSosProfessionals`/`createSosOrder` plus a shared `urgencyMismatch(...)` helper/exception factory called from `listProfessionals`/`listSlots`/`createOrder` (Standard) and `listSosProfessionals`/`createSosOrder` (SOS) alike. **As of Milestone 5**: constructor gains a new required `notifications.service.NotificationService` dependency; `createOrder`/`createSosOrder`/`accept`/`reject`/`cancel` each gained a trailing `recordOrderNotification(...)` call; two new public methods, `findExpiredOrderCandidateIds()`/`expireIfPending(Long)`, plus the two hardcoded timeout constants (`STANDARD_PENDING_TIMEOUT`/`SOS_PENDING_TIMEOUT`) — see Responsibilities above for the full writeup. **As of Milestone 6**: two new public methods, `onTheWay(Long callerId, Long orderId)` and `complete(Long callerId, Long orderId)`, each resolving the caller's `professionals.id` (same `resolveProfessionalId` helper `accept`/`reject` already use), calling the matching `OrderRepository` guarded transition, and finishing with a `recordOrderNotification(...)` call to the customer — see Responsibilities above for the full writeup, including `complete`'s additional `issueRepository.completeIfBooked(...)` call. **As of Milestone 8**: constructor gains two new required dependencies, `matching.DistanceEtaStrategy` and `storage.client.StorageClient` (the latter **swapped for `storage.service.StorageService` in backend MS9** — see Interactions below); `listProfessionals`/`listSosProfessionals` now take a `matching.ServiceLocation`/sort-param pair and call the new private `enrichAndSort(...)` helper (resolves each card's profile-image URL — a presigned URL as of backend MS9, via `StorageService#getPresignedUrl(callerId, key)` — computes distance/ETA via `DistanceEtaStrategy#calculate` with one uniform `Instant.now()` per listing call, and re-sorts by `etaMinutes` when `sort == FASTEST`); `createOrder`/`createSosOrder` gained the service-address snapshot (persisted verbatim onto the new `Order` constructor params) and the `basePriceSnapshot`/`sosSurcharge` computation (`sosSurcharge` always `0.00` for Standard, always the new `SOS_SURCHARGE_AMOUNT` constant for SOS); new private helpers `parseSort(String)` (mirrors `parseStatus`'s "blank means default/no-filter" convention) and the `SOS_SURCHARGE_AMOUNT` constant. **As of the Active Booking Floating Indicator feature**: `onTheWay(Long callerId, Long orderId)` gained an ETA-computation step before its guarded transition — resolves the professional via `professionalRepository.findById(professionalId)` (a second lookup mirroring `resolveProfessionalName`'s existing "second lookup by id" pattern already present in this class), builds a `matching.ServiceLocation` from the order's own persisted `service*` snapshot, calls `distanceEtaStrategy.calculate(professional.getCity(), customerLocation, now)`, and derives `expectedArrivalAt = now.plus(Duration.ofMinutes(eta.etaMinutes()))`, passed into the now-3-arg `orderRepository.onTheWayIfConfirmed(...)`. No new constructor dependency — `distanceEtaStrategy`/`ServiceLocation`/`EtaResult`/`Duration` were all already present (`enrichAndSort` already uses the first three; `Duration` was already imported for the pending-timeout constants). |
-| `controller.BookingsController` | `/api/bookings/professionals`, `/api/bookings/professionals/{id}/slots`, `/api/bookings/orders` (+ `/accept`/`/reject`/`/cancel`/`/{orderId}`/`/me`), as of Milestone 4 `/api/bookings/sos-professionals` + `/api/bookings/sos-orders`, and, **as of Milestone 6, `/api/bookings/orders/{orderId}/on-the-way` + `/api/bookings/orders/{orderId}/complete`** (`POST`, same manual path-id-parsing convention as `accept`/`reject`). Path/query ids are parsed manually so a malformed value produces this app's standard error envelope (`404` for a path id, `400 VALIDATION_ERROR` for a query id) rather than Spring's default type-mismatch handling. **As of Milestone 8**: `listProfessionals`/`listSosProfessionals` gained `city`/`street`/`houseNumber`/`apartment`/`sort` query params and a new private `parseServiceLocation(...)` helper (collects all missing required fields into one `400 VALIDATION_ERROR` response, same "collect every failure" spirit as `@Valid` body validation). |
-| `config.BookingsWebConfig` | Two separate, precisely-scoped `RoleRequiredInterceptor` registrations (`CUSTOMER` on the customer-only routes, `PROFESSIONAL` on `accept`/`reject`) — no blanket pattern, since this package mixes roles per-route. As of Milestone 4, the `CUSTOMER` registration's literal path list also includes `/api/bookings/sos-professionals` and `/api/bookings/sos-orders` (added explicitly — this package's literal-list design doesn't pick up new routes via a wildcard the way `availability`'s config does). **As of Milestone 6**, the `PROFESSIONAL` registration's literal path list also includes `/api/bookings/orders/*/on-the-way` and `/api/bookings/orders/*/complete` — same "literal-list doesn't pick up new routes automatically" reasoning. Nothing registered for `cancel`/get-by-id/get-me (service-layer authorization only). |
+| `dto.*` | Wire shapes for all twelve endpoints (§2.2-2.9, §2.12-2.13, §2.16-2.17) — `OrderResponse` is shared by create/accept/reject, `createSosOrder`, **and, as of Milestone 6, `onTheWay`/`complete`** (identical shape, differing only in values — `OrderStatus` already had `ON_THE_WAY`/`COMPLETED` as enum constants, no new field needed); `OrderDetailResponse`/`OrderSummaryResponse` are the richer/leaner shapes for get-by-id vs. list-mine, mirroring the pattern M1 used for `/api/users/me`. `dto.CreateSosOrderRequest` (new, Milestone 4) is `CreateOrderRequest` minus `slotId` — SOS has no slot selection. **No new DTO added in Milestone 6. As of Milestone 8**: `ProfessionalCard` gained `profileImageUrl`/`averageRating`/`reviewCount`/`favorited`/`sameCity`/`distanceKm`/`baseTravelTimeMinutes`/`trafficAdjustmentMinutes`/`etaMinutes` — a two-stage-construction record (see its own Javadoc): the JPQL-projection constructor `ProfessionalListingRepository` calls carries raw column values and rating/favorite subquery results with placeholder ETA fields; `BookingsService#enrichAndSort` produces the final card via the canonical (all-fields) constructor. `CreateOrderRequest`/`CreateSosOrderRequest` gained required `serviceCity`/`serviceStreet`/`serviceHouseNumber` (+ optional `serviceApartment`). `OrderResponse`/`OrderDetailResponse` gained `basePriceSnapshot`/`sosSurcharge` and the four `service*` fields. New enum `dto.ProfessionalSort` (`CHEAPEST`/`RECOMMENDED`/`FASTEST`). `OrderSummaryResponse` (list-mine) was **not** changed — the new fields are detail/create-response-only. **As of the MS3/MS4 product-corrections pass**: `CreateOrderRequest`/`CreateSosOrderRequest`/`OrderResponse`/`OrderDetailResponse` all gained 3 further optional fields — `serviceFloor`/`serviceEntrance`/`serviceAddressNotes` (`V22`, see Data model/Assumptions below) — bringing the service-address snapshot to the full 7-field shape. **As of the Active Booking Floating Indicator feature**: `OrderResponse`/`OrderDetailResponse`/`OrderSummaryResponse` all gained `Instant expectedArrivalAt` (positioned directly after `bookedEnd`), mirrored 1:1 from `Order.getExpectedArrivalAt()`; `OrderSummaryResponse` additionally gained `Instant updatedAt` (not previously on that lean list-mine shape at all — needed by the frontend's floating-indicator tie-break logic to express "most recently completed" among several unacknowledged `COMPLETED` orders, see `docs/architecture/active-booking-floating-indicator.md` §2.3/§5). `listMine`'s stream-mapping call site was updated for the new `OrderSummaryResponse` shape. **As of the professional weekly availability calendar M2 (2026-08-18)**: `CreateOrderRequest` lost `slotId`, gained `bookedStart` (`@NotNull Instant`); `bookedEnd` is deliberately not a field on it at all (server-derived, never client-supplied). `OrderDetailResponse` gained `customerPhone` (positioned directly after `customerName`) — **not** added to `OrderSummaryResponse`/`OrderResponse`, per the design's explicit scope limit. `dto.SlotListingResponse`/`dto.SlotSummary` were **deleted outright** (the endpoint they backed no longer exists) and replaced by two new records, `dto.AvailableWindowsResponse` (`professionalId`/`issueId`/`defaultDurationMinutes`/`timezone`/`windows`) and `dto.AvailableWindow` (`startAt`/`endAt`). |
+| `service.BookingsService` | All business logic for §2.2-2.9, §2.12-2.13, and §2.16-2.17, including the atomic-transaction sequencing in `createOrder`/`createSosOrder` and the actor/authorization resolution for `cancel`/`getOrderDetail`/`listMine`. Milestone 4 added `listSosProfessionals`/`createSosOrder` plus a shared `urgencyMismatch(...)` helper/exception factory called from `listProfessionals`/`listSlots`/`createOrder` (Standard) and `listSosProfessionals`/`createSosOrder` (SOS) alike. **As of Milestone 5**: constructor gains a new required `notifications.service.NotificationService` dependency; `createOrder`/`createSosOrder`/`accept`/`reject`/`cancel` each gained a trailing `recordOrderNotification(...)` call; two new public methods, `findExpiredOrderCandidateIds()`/`expireIfPending(Long)`, plus the two hardcoded timeout constants (`STANDARD_PENDING_TIMEOUT`/`SOS_PENDING_TIMEOUT`) — see Responsibilities above for the full writeup. **As of Milestone 6**: two new public methods, `onTheWay(Long callerId, Long orderId)` and `complete(Long callerId, Long orderId)`, each resolving the caller's `professionals.id` (same `resolveProfessionalId` helper `accept`/`reject` already use), calling the matching `OrderRepository` guarded transition, and finishing with a `recordOrderNotification(...)` call to the customer — see Responsibilities above for the full writeup, including `complete`'s additional `issueRepository.completeIfBooked(...)` call. **As of Milestone 8**: constructor gains two new required dependencies, `matching.DistanceEtaStrategy` and `storage.client.StorageClient` (the latter **swapped for `storage.service.StorageService` in backend MS9** — see Interactions below); `listProfessionals`/`listSosProfessionals` now take a `matching.ServiceLocation`/sort-param pair and call the new private `enrichAndSort(...)` helper (resolves each card's profile-image URL — a presigned URL as of backend MS9, via `StorageService#getPresignedUrl(callerId, key)` — computes distance/ETA via `DistanceEtaStrategy#calculate` with one uniform `Instant.now()` per listing call, and re-sorts by `etaMinutes` when `sort == FASTEST`); `createOrder`/`createSosOrder` gained the service-address snapshot (persisted verbatim onto the new `Order` constructor params) and the `basePriceSnapshot`/`sosSurcharge` computation (`sosSurcharge` always `0.00` for Standard, always the new `SOS_SURCHARGE_AMOUNT` constant for SOS); new private helpers `parseSort(String)` (mirrors `parseStatus`'s "blank means default/no-filter" convention) and the `SOS_SURCHARGE_AMOUNT` constant. **As of the Active Booking Floating Indicator feature**: `onTheWay(Long callerId, Long orderId)` gained an ETA-computation step before its guarded transition — resolves the professional via `professionalRepository.findById(professionalId)` (a second lookup mirroring `resolveProfessionalName`'s existing "second lookup by id" pattern already present in this class), builds a `matching.ServiceLocation` from the order's own persisted `service*` snapshot, calls `distanceEtaStrategy.calculate(professional.getCity(), customerLocation, now)`, and derives `expectedArrivalAt = now.plus(Duration.ofMinutes(eta.etaMinutes()))`, passed into the now-3-arg `orderRepository.onTheWayIfConfirmed(...)`. No new constructor dependency — `distanceEtaStrategy`/`ServiceLocation`/`EtaResult`/`Duration` were all already present (`enrichAndSort` already uses the first three; `Duration` was already imported for the pending-timeout constants). **As of the professional weekly availability calendar M2 (2026-08-18)**: constructor gains a new required dependency, `availability.service.AvailabilityDerivationService` (see Interactions below). `listSlots` is renamed `listAvailableWindows`, returning the new `AvailableWindowsResponse`; `createOrder` is fully reworked per the Responsibilities section's dedicated M2 entry above (new `DEFAULT_JOB_DURATION_MINUTES`/`AVAILABLE_WINDOWS_LOOKAHEAD_DAYS`/`EXCLUSION_VIOLATION_SQLSTATE` constants, three new private helpers — `checkBookingWindowAvailable`, `mapOrderConstraintViolation`, `extractSqlState` — and a renamed error-factory helper, `bookingTimeUnavailable()`, replacing the now-unused `slotUnavailable(Long)`, which was deleted). `createSosOrder` — confirmed zero changes. |
+| `controller.BookingsController` | `/api/bookings/professionals`, `/api/bookings/professionals/{id}/slots`, `/api/bookings/orders` (+ `/accept`/`/reject`/`/cancel`/`/{orderId}`/`/me`), as of Milestone 4 `/api/bookings/sos-professionals` + `/api/bookings/sos-orders`, and, **as of Milestone 6, `/api/bookings/orders/{orderId}/on-the-way` + `/api/bookings/orders/{orderId}/complete`** (`POST`, same manual path-id-parsing convention as `accept`/`reject`). Path/query ids are parsed manually so a malformed value produces this app's standard error envelope (`404` for a path id, `400 VALIDATION_ERROR` for a query id) rather than Spring's default type-mismatch handling. **As of Milestone 8**: `listProfessionals`/`listSosProfessionals` gained `city`/`street`/`houseNumber`/`apartment`/`sort` query params and a new private `parseServiceLocation(...)` helper (collects all missing required fields into one `400 VALIDATION_ERROR` response, same "collect every failure" spirit as `@Valid` body validation). **As of the professional weekly availability calendar M2 (2026-08-18)**: `/api/bookings/professionals/{id}/slots` is renamed `/api/bookings/professionals/{id}/available-windows`; the retired `listSlots` controller method is deleted outright, not kept. |
+| `config.BookingsWebConfig` | Two separate, precisely-scoped `RoleRequiredInterceptor` registrations (`CUSTOMER` on the customer-only routes, `PROFESSIONAL` on `accept`/`reject`) — no blanket pattern, since this package mixes roles per-route. As of Milestone 4, the `CUSTOMER` registration's literal path list also includes `/api/bookings/sos-professionals` and `/api/bookings/sos-orders` (added explicitly — this package's literal-list design doesn't pick up new routes via a wildcard the way `availability`'s config does). **As of Milestone 6**, the `PROFESSIONAL` registration's literal path list also includes `/api/bookings/orders/*/on-the-way` and `/api/bookings/orders/*/complete` — same "literal-list doesn't pick up new routes automatically" reasoning. **As of the professional weekly availability calendar M2 (2026-08-18)**, the `CUSTOMER` registration's literal pattern `/api/bookings/professionals/*/slots` is swapped for `/api/bookings/professionals/*/available-windows` — same role gate, renamed pattern only. Nothing registered for `cancel`/get-by-id/get-me (service-layer authorization only). |
 
 ## Interactions with other packages
 
@@ -219,12 +224,34 @@ not just re-asserted).
   checks, `Professional` entity for `categoryId`/`basePrice`) and `users`
   (`UserRepository`/`User` for names and the soft-delete check).
 - Depends on `availability` (`AvailabilitySlotRepository`'s `claimSlot`/`releaseSlot` — the
-  atomic slot-claim/release mechanism this package's create/reject/cancel flows call into;
-  `AvailabilitySlot` entity for slot start/end times at order-creation time). **As of
-  Milestone 4, also depends on `SosAvailabilityRepository`** — `createSosOrder`'s plain
-  read-check of a professional's `sos_availability` row (§2.13 step 9), and
+  atomic slot-claim/release mechanism this package's `reject`/`cancel`/`expireIfPending` flows
+  still call into (a safe no-op for every order created after M2, since `slot_id` is now
+  always `NULL` on insert — see below); `AvailabilitySlot` entity, retained on the constructor
+  though no longer read by `createOrder` itself). **As of Milestone 4, also depends on
+  `SosAvailabilityRepository`** — `createSosOrder`'s plain read-check of a professional's
+  `sos_availability` row (§2.13 step 9), and
   `ProfessionalListingRepository.listSosAvailableByCategory`'s join to the
   `SosAvailability` entity — a new dependency edge this package did not have in Milestone 3.
+  **New, professional weekly availability calendar M2 (2026-08-18)**: `BookingsService` gains
+  a constructor dependency on `availability.service.AvailabilityDerivationService` — the same
+  M1-built derivation engine the calendar read endpoint uses, reused here (not
+  re-implemented) for two purposes: (1) `createOrder`'s pre-check
+  (`deriveCalendar(professionalId, bookedStart, bookedEnd)`, confirming the requested range is
+  fully contained in a single `AVAILABLE` segment before attempting the insert); (2) the new
+  `listAvailableWindows` endpoint's `deriveAvailableWindows(professionalId, from, to,
+  minDuration)` call. Justified in the design (§9.2.2) over `bookings` re-implementing its own
+  "is this professional free right now" query: that would duplicate the exact subtract-blocks/
+  subtract-bookings algorithm §5 of the design already built and risk drifting from the
+  calendar's own notion of availability over time — the same duplication-avoidance reasoning
+  that already justified the calendar endpoint's own existence (design §4.6). One shared
+  derivation engine, now three callers (the calendar read endpoint, order-creation validation,
+  and the available-windows listing), not three independent implementations of the same
+  business rule. This is a one-directional dependency (`bookings.service ->
+  availability.service`) — `AvailabilityDerivationService` has no dependency back on
+  `BookingsService`, so no circular bean graph is introduced (it does, however, already depend
+  on `bookings.repository.OrderRepository` directly, a pre-existing M1 dependency edge in the
+  opposite direction at the repository layer only — see `availability/README.md` for that
+  edge's own justification, unaffected by this addition).
 - Depends on `common` for the error envelope (`ApiException`/`ErrorCode`, including
   Milestone 3's five codes — `ISSUE_NOT_BOOKABLE`, `CATEGORY_MISMATCH`, `SLOT_UNAVAILABLE`,
   `ORDER_NOT_PENDING`, `ORDER_NOT_CANCELLABLE` — Milestone 4's two new codes,
@@ -370,7 +397,8 @@ deviation:
   equivalent in kind to other already-accepted races in this doc (e.g. concurrent
   `accept`/`reject`).
 - **`urgencyMismatch` is a single shared helper**, not five separately-worded checks — used
-  identically by `listProfessionals`/`listSlots`/`createOrder` (Standard,
+  identically by `listProfessionals`/`listAvailableWindows` (renamed from `listSlots` as of
+  the professional weekly availability calendar M2)/`createOrder` (Standard,
   `urgencyType != STANDARD`) and `listSosProfessionals`/`createSosOrder` (SOS,
   `urgencyType != SOS`), consistent with the contract doc's framing of this as one symmetric
   fix (§3.10) rather than two unrelated additions.
@@ -654,3 +682,126 @@ site swapped its `storage.client.StorageClient` dependency for `storage.service
 time-limited presigned URLs, plus two related bug fixes) lives in `storage`/`issues` — see
 those packages' READMEs and `docs/architecture/backend-ms9-presigned-image-urls-design.md`
 for the full record. Backend: 163/163 tests pass.
+
+## Professional weekly availability calendar — M2 (2026-08-18)
+
+Full design: `docs/architecture/professional-weekly-calendar-design.md` §9.1/§9.2/§10 (M2
+entry). M1 (schema/domain/derivation, entirely inside `availability`) landed first and is
+unmodified by this pass — see `availability/README.md`.
+
+**`POST /api/bookings/orders` — order-creation rework (§9.2.2).** `slotId` is removed from
+`CreateOrderRequest` entirely (not kept, even as an optional/ignored field); `bookedStart`
+(`@NotNull Instant`) replaces it. `bookedEnd` is never accepted from the client — always
+`bookedStart + BookingsService.DEFAULT_JOB_DURATION_MINUTES` (a new `static final int = 60`
+constant, carrying the same explicitly-flagged-placeholder-business-figure Javadoc treatment
+this class already gives `SOS_SURCHARGE_AMOUNT`, since 60 minutes is a genuine product
+decision made in the design doc itself, §9.2.1, with no source-document backing). New
+validation path: (1) derive `bookedEnd`; (2) a fast pre-check via the new
+`AvailabilityDerivationService` dependency — `deriveCalendar(professionalId, bookedStart,
+bookedEnd)` must return a single `AVAILABLE` segment that fully contains the requested range,
+else `409 BOOKING_TIME_UNAVAILABLE`; (3) the existing `issueRepository.bookIfOpen` transition,
+unchanged; (4) insert the `orders` row with `slot_id = NULL` always; (5) the insert itself is
+protected by `ck_orders_no_overlap` (M1's exclusion constraint) as the sole authoritative
+concurrency backstop — `orderRepository.saveAndFlush` (not the plain `save` every other
+creation path uses) forces the `INSERT` to execute inside this method's own `try/catch`, so a
+`23P01` (exclusion-violation) `DataIntegrityViolationException` is caught and mapped to the
+same `409 BOOKING_TIME_UNAVAILABLE` rather than surfacing as a raw `500` — mirrors
+`AvailabilityService#mapBlockConstraintViolation`'s exact pattern (M1), duplicated here rather
+than factored into a shared utility (no such utility exists yet in this codebase; inventing
+one wasn't asked for by this milestone). `createSosOrder` — **confirmed untouched**, out of
+scope per the design.
+
+**`GET /api/bookings/professionals/{professionalId}/available-windows?issueId=` — new route,
+replaces the retired `GET .../slots?issueId=` entirely** (old controller method and
+`BookingsWebConfig` literal-path entry both removed, not kept for compatibility). Auth/role/
+validation steps 1-5 are byte-for-byte identical to the old endpoint (caller role via
+`BookingsWebConfig`, issue ownership, urgency-type match, bookable-status check, professional
+existence, category match); only the final query changes — a call to
+`AvailabilityDerivationService#deriveAvailableWindows(professionalId, from, to,
+Duration.ofMinutes(DEFAULT_JOB_DURATION_MINUTES))`, with `from = now()` and `to = now() + 14
+days` (a new private constant, `AVAILABLE_WINDOWS_LOOKAHEAD_DAYS` — an application-level,
+trivially-adjustable judgment call per design §9.2.2, not specified by any source document).
+Response: `{ professionalId, issueId, defaultDurationMinutes, timezone, windows: [{ startAt,
+endAt }] }` (new DTOs, `dto.AvailableWindowsResponse`/`dto.AvailableWindow`, replacing the
+retired `dto.SlotListingResponse`/`dto.SlotSummary`, both deleted outright). An empty
+`windows` array is a valid `200`, not an error — unchanged semantics from the old empty
+`slots` array case.
+
+**`users.phone` (§9.1) — not part of this package's own scope, but this package is the sole
+consumer of the new visibility rule.** `bookings.dto.OrderDetailResponse` gains
+`customerPhone`, populated by `getOrderDetail`'s **existing, unmodified** party-to-order
+authorization check — no new authorization branch, no `order_status` gating. The method
+already loaded the customer's `User` row for `customerName`; `customerPhone` is simply also
+read off that same row (`user.getPhone()`) once the existing check has passed. Visible to the
+order's own customer and to the assigned professional starting at `PENDING` (the moment
+`order.professionalId` names them), the same access-scoping the service-address snapshot
+already uses. **Not** added to `OrderSummaryResponse` (list-mine) or `OrderResponse`
+(create/accept/reject echo) — no stated use case on either, per the design's explicit scope
+limit.
+
+**New `ErrorCode`**: `BOOKING_TIME_UNAVAILABLE` (`409`), returned by both the pre-check and
+the race-backstop catch above. `SLOT_UNAVAILABLE` stays in the enum — vestigial as of this
+milestone, never returned by any code path once no caller can supply a `slotId` to
+`createOrder` at all, kept per this doc family's "cheap insurance, zero ongoing cost"
+convention (M1 already established this for `availability_slots`' own endpoints).
+
+**No migration owned by this package** — `V28__alter_users_add_phone.sql` lives in `users`'
+domain (adds `users.phone`), not `orders`. This package's own tables/columns are unchanged by
+M2; only the request/response DTO shapes and the `createOrder`/listing service logic changed.
+
+### Verification performed
+
+Manually exercised against a real running backend + Postgres (`docker compose`, all 28
+migrations applied cleanly): `CUSTOMER` registration without `phone` → `400
+VALIDATION_ERROR`; with `phone` → persisted, returned on `GET /api/users/me`;
+`PROFESSIONAL` registration unaffected, `users.phone` stays `NULL` for that role. Working
+hours configured for a professional; `GET .../available-windows?issueId=` returned a
+14-day-bounded set of `AVAILABLE` windows with `defaultDurationMinutes: 60`/`timezone:
+"Asia/Jerusalem"`. `POST /api/bookings/orders` with a `bookedStart` inside an available
+window → `201`, `bookedEnd = bookedStart + 60min`, `slot_id = NULL` on the persisted row
+(confirmed via direct `psql`). Three independent `409 BOOKING_TIME_UNAVAILABLE` triggers
+confirmed: overlapping an already-`PENDING` booking, outside configured working hours, and
+overlapping a manual block. `GET /api/bookings/orders/{orderId}` confirmed `customerPhone`
+visible to the assigned professional on a still-`PENDING` order. Concurrent-race simulation
+(two near-simultaneous `createOrder` calls for the same professional with overlapping
+`bookedStart`/`bookedEnd`) produced exactly one `201` and one clean `409
+BOOKING_TIME_UNAVAILABLE` (confirmed via the backend log that the second request's `INSERT`
+did trip the `ck_orders_no_overlap` exclusion constraint at the SQL level, not merely lost the
+pre-check race) — no raw `500`. Unit-test additions: 11 new `BookingsServiceTest` cases
+covering the reworked `createOrder` (happy path, full-containment pre-check failure,
+partial-overlap pre-check failure, past-`bookedStart` rejection, the `23P01`-mapping race
+backstop, and confirming a non-`23P01` constraint violation rethrows unmapped),
+`listAvailableWindows` (mapping, empty result, category mismatch), and `getOrderDetail`'s
+`customerPhone` field (assigned professional on a `PENDING` order, and the customer viewing
+their own order), plus 1 new `AuthServiceTest` case confirming a `PROFESSIONAL` registration
+never sets `users.phone` (the existing customer-registration success test was also extended
+with a `phone`-persisted assertion, not counted as a new case). Full suite: 201/201 passing
+(M1 baseline was 189/189; +12 from this milestone's additions).
+
+### Deviation flagged, not silently worked around
+
+While probing the retired route for a clean confirmation it no longer resolves,
+`GET /api/bookings/professionals/{id}/slots?issueId=` (and, for comparison, an arbitrary
+nonexistent path under `/api/**`) both return `500 INTERNAL_ERROR`, not `404 NOT_FOUND` — this
+app's `common.exception.GlobalExceptionHandler` has no dedicated handler for Spring's
+`NoResourceFoundException` (thrown when no controller mapping matches and MVC's static-resource
+fallback also finds nothing), so it falls through to the generic unhandled-exception `500`
+catch-all. **Confirmed this is pre-existing, app-wide behavior, not introduced by retiring this
+specific route** — any never-mapped `/api/**` path exhibits the identical `500` today. Not
+fixed as part of this milestone (out of scope — a global `GlobalExceptionHandler` gap
+unrelated to the availability-calendar feature), flagged here for `pronto-lead` as a
+worthwhile, narrow, separately-scoped follow-up (`NoResourceFoundException` → `404 NOT_FOUND`).
+
+### QA sign-off (2026-08-18) — full feature, M1-M6, zero known open bugs
+
+`pronto-qa` independently validated this package's M2 slice (the reworked `createOrder`
+validation path, the new `available-windows` endpoint, `customerPhone` on
+`OrderDetailResponse`, both `409 BOOKING_TIME_UNAVAILABLE` trigger paths, and the
+concurrent-race backstop) plus the post-QA bug-fix pass documented in
+`features/booking/README.md` (the conflicting-booking error banner never rendering — found,
+fixed, and re-verified live via a genuine two-customer race). **Full sign-off, zero known
+open bugs**, consistent with the "zero known open bugs" bar every prior milestone in this
+project has been held to. See `docs/architecture/implementation-plan.md`'s "Professional
+Weekly Availability Calendar" entry for the consolidated M1-M6 QA record across both
+`backend` and `frontend`, and `availability/README.md`'s own QA sign-off note for the M1
+slice.

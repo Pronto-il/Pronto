@@ -131,9 +131,15 @@ class AuthServiceTest {
         }
     }
 
+    private static final String VALID_PHONE = "0501234567";
+
     private static RegisterRequest customerRequest(DefaultAddressRequest address) {
+        return customerRequest(address, VALID_PHONE);
+    }
+
+    private static RegisterRequest customerRequest(DefaultAddressRequest address, String phone) {
         return new RegisterRequest(UserRole.CUSTOMER, "Israel Israeli", "customer@example.com",
-                "StrongPassword123!", address == null ? null : new CustomerRegistrationData(address), null);
+                "StrongPassword123!", address == null ? null : new CustomerRegistrationData(address, phone), null);
     }
 
     private static DefaultAddressRequest fullAddress() {
@@ -176,6 +182,7 @@ class AuthServiceTest {
         assertThat(saved.getDefaultFloor()).isEqualTo("2");
         assertThat(saved.getDefaultEntrance()).isEqualTo("A");
         assertThat(saved.getDefaultAddressNotes()).isEqualTo("Back entrance");
+        assertThat(saved.getPhone()).isEqualTo(VALID_PHONE);
     }
 
     @Test
@@ -212,6 +219,18 @@ class AuthServiceTest {
     }
 
     // --- Professional registration -------------------------------------------------
+
+    @Test
+    void register_professional_valid_neverSetsPhone() {
+        // §9.1 of the professional weekly availability calendar design: phone is collected
+        // for CUSTOMER registration only -- a PROFESSIONAL row's users.phone stays NULL.
+        stubValidCategory();
+        authService.register(professionalRequest(validProfessionalData()), pdfDocument(), null);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(userCaptor.capture());
+        assertThat(userCaptor.getValue().getPhone()).isNull();
+    }
 
     @Test
     void register_professional_valid_succeedsAndLinksProfessionalToUser() {

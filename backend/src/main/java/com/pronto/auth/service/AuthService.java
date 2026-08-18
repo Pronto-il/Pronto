@@ -114,7 +114,7 @@ public class AuthService {
         User user = new User(request.fullName(), request.email(), passwordHash, request.role());
 
         if (request.role() == UserRole.CUSTOMER) {
-            applyDefaultAddress(user, request.customer());
+            applyCustomerRegistrationData(user, request.customer());
         }
         user = userRepository.save(user);
 
@@ -163,7 +163,12 @@ public class AuthService {
         return new RegisterResponse(user.getId(), user.getRole(), user.getEmail(), user.isEmailVerified());
     }
 
-    private void applyDefaultAddress(User user, CustomerRegistrationData customer) {
+    /**
+     * §9.1 of the professional weekly availability calendar design: also persists
+     * {@code phone} alongside the pre-existing default-address fields — same
+     * required-at-registration/read-only-after treatment, same source object.
+     */
+    private void applyCustomerRegistrationData(User user, CustomerRegistrationData customer) {
         DefaultAddressRequest address = customer.defaultAddress();
         user.setDefaultCity(address.city());
         user.setDefaultStreet(address.street());
@@ -172,6 +177,7 @@ public class AuthService {
         user.setDefaultFloor(address.floor());
         user.setDefaultEntrance(address.entrance());
         user.setDefaultAddressNotes(address.addressNotes());
+        user.setPhone(customer.phone());
     }
 
     @Transactional

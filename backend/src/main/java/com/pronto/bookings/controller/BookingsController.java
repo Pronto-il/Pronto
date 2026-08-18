@@ -1,12 +1,12 @@
 package com.pronto.bookings.controller;
 
+import com.pronto.bookings.dto.AvailableWindowsResponse;
 import com.pronto.bookings.dto.CreateOrderRequest;
 import com.pronto.bookings.dto.CreateSosOrderRequest;
 import com.pronto.bookings.dto.OrderDetailResponse;
 import com.pronto.bookings.dto.OrderResponse;
 import com.pronto.bookings.dto.OrdersListResponse;
 import com.pronto.bookings.dto.ProfessionalListingResponse;
-import com.pronto.bookings.dto.SlotListingResponse;
 import com.pronto.bookings.service.BookingsService;
 import com.pronto.common.dto.FieldError;
 import com.pronto.common.exception.ApiException;
@@ -29,7 +29,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * {@code /api/bookings/*} — Standard (Milestone 3) and SOS (Milestone 4) booking flows.
+ * {@code /api/bookings/*} — Standard (Milestone 3) and SOS (Milestone 4) booking flows. As of
+ * the professional weekly availability calendar design (M2, §9.2.2), the Standard listing
+ * endpoint is {@code GET .../professionals/{id}/available-windows?issueId=} (replaces the
+ * retired {@code GET .../slots?issueId=} entirely).
  * Route-level role gating ({@code CUSTOMER}-only / {@code PROFESSIONAL}-only) is enforced by
  * {@code bookings.config.BookingsWebConfig}'s {@code RoleRequiredInterceptor}
  * registrations, not in these method bodies — see that class's javadoc (§0.1). The
@@ -68,14 +71,14 @@ public class BookingsController {
         return ResponseEntity.ok(bookingsService.listProfessionals(principal.id(), issueId, location, sort));
     }
 
-    @GetMapping("/professionals/{professionalId}/slots")
-    public ResponseEntity<SlotListingResponse> listSlots(
+    @GetMapping("/professionals/{professionalId}/available-windows")
+    public ResponseEntity<AvailableWindowsResponse> listAvailableWindows(
             @AuthenticationPrincipal AuthenticatedUser principal,
             @PathVariable("professionalId") String professionalIdRaw,
             @RequestParam(name = "issueId", required = false) String issueIdRaw) {
         Long professionalId = parsePathId(professionalIdRaw);
         Long issueId = parseQueryId(issueIdRaw, "issueId");
-        return ResponseEntity.ok(bookingsService.listSlots(principal.id(), professionalId, issueId));
+        return ResponseEntity.ok(bookingsService.listAvailableWindows(principal.id(), professionalId, issueId));
     }
 
     @PostMapping("/orders")

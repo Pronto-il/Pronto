@@ -24,13 +24,22 @@ plain `<img>` tag can't attach, so the third item's frontend code (already corre
 actually renders images end-to-end; backend MS9 also fixed two further, previously-open
 bugs found along the way (stale persisted issue-image URLs; a professional with a
 confirmed order never being authorized to view that issue's photos at all) and a related
-booking-draft photo-staleness gap. See §6 below (both the Frontend Milestone 9 and backend
+booking-draft photo-staleness gap. **The Professional Weekly Availability Calendar feature
+(backend M1-M2, frontend M3-M6) is also fully implemented and QA-signed-off, zero known open
+bugs, including a post-QA bug-fix round (also re-verified and signed off), as of 2026-08-18**
+— replaces the professional-facing discrete-slot-creation model with a weekly recurring
+working-hours schedule plus manual exception blocks, from which "actual available time" is
+derived on demand; also reworks Standard order creation to a direct customer-chosen start
+time with a server-derived, fixed 60-minute default job duration, and adds a
+`customerPhone` field visible to the assigned professional. See §6 below (its own dedicated
+entry) and `docs/architecture/professional-weekly-calendar-design.md` for the full design/
+decision record. See §6 below (both the Frontend Milestone 9 and backend
 MS9 entries) and `implementation-plan.md`'s Milestone 1 / Milestone 3 / Milestone 4 /
 Milestone 5 / Milestone 6 / Frontend Milestone 8 / Frontend Milestone 9 / Backend Milestone
-9 entries for full status detail; the rest of `frontend/` remains design-only or
-backend-only, pending later frontend milestones. This is the living source of truth for
-architecture/decisions — keep it in sync with the actual implementation as it lands (owned
-going forward by the `pronto-documentation` agent).
+9 / Professional Weekly Availability Calendar entries for full status detail; the rest of
+`frontend/` remains design-only or backend-only, pending later frontend milestones. This is
+the living source of truth for architecture/decisions — keep it in sync with the actual
+implementation as it lands (owned going forward by the `pronto-documentation` agent).
 
 ## 1. Consolidated understanding
 
@@ -78,6 +87,8 @@ status-transition semantics (including exactly which actor/stage produces `Cance
 | Chat between users | Out of scope for v1.0 | PRD §10.4 |
 | Additional languages | Out of scope for v1.0 | PRD §10.6 |
 | Booking statuses | 7 values: Pending, Confirmed, On the Way, Completed, Cancelled, Rejected, Expired (`Rejected` added as a 7th status) | User decision (2026-08-12), overriding the originally-settled 6-status list (PRD §3.6.1 has no "Rejected"). See `data-model.md` §2.9/§3 item 10 for the precise Rejected-vs-Cancelled-vs-Expired transition rules. |
+| Business timezone (for recurring weekly scheduling) | **`Asia/Jerusalem`** — a single fixed, named constant (`AvailabilityDerivationService.BUSINESS_TIMEZONE`), not a per-professional/per-region setting. | User decision (2026-08-18), Professional Weekly Availability Calendar feature. Before this feature, no part of the codebase needed to reason about *wall-clock recurring* time — every prior `TIMESTAMPTZ` column is a point-in-time value, not a weekly rule — so no such constant existed anywhere; `data-model.md` §0 only noted "infra likely runs UTC." Now the single source of truth for interpreting `professional_working_hours`'s `TIME` columns, the calendar-derivation algorithm, and the order-creation duration/validation logic. See `docs/architecture/professional-weekly-calendar-design.md` §9.5 and `docs/architecture/api-contract-availability.md` §0. |
+| Default Standard-booking job duration | **60 minutes, fixed** — the customer picks only a start time; the system derives `bookedEnd = bookedStart + 60 min` server-side (`bookings.service.BookingsService.DEFAULT_JOB_DURATION_MINUTES`). Not category-specific, not professional-configurable. | **Genuine product decision made without direct source-document backing** — flagged prominently, not buried in a code comment, because it constrains what "book an appointment" means product-wide (too short under-represents real job length and creates scheduling pressure adjacent to double-booking; too long needlessly shrinks how many start times a professional can offer per day). User decision (2026-08-18), Professional Weekly Availability Calendar feature, M2. Full rationale (why 60, why not category-specific, why not customer-chosen): `docs/architecture/professional-weekly-calendar-design.md` §9.2.1. Same "explicitly-flagged-placeholder-business-figure" treatment this codebase already gives `SOS_SURCHARGE_AMOUNT` (`data-model.md` §2.9) — trivially changeable later via a single named constant, no migration implied. |
 | Professional-search distance/ETA | **Now in v1.0 scope** — dynamically computed (never persisted) same-city/different-city + peak-hour approximation, shown on Standard/SOS professional-listing cards and usable as a `sort=FASTEST` mode. | Explicit user instruction (2026-08-15), **overriding** the prior "ETA/tracking display is out of v1.0 scope, permanent (PRD §3.4.8/§3.5.5, 'future version')" ruling recorded in `data-model.md` §4. Scoped to professional search/listing only — the tracking screen gained no new field, and GPS/live-location tracking (the separate row above) remains a completely separate, still-valid, untouched exclusion. Full record: `docs/architecture/api-contract-professionals-reviews.md` §5; `data-model.md` §4 (kept, with the override noted alongside the original text, not silently rewritten). **Further overridden (2026-08-17, Active Booking Floating Indicator feature)**: the "never persisted" / "tracking screen gained no new field" clause above no longer holds for the `ON_THE_WAY` transition specifically. `orders.expected_arrival_at` (new nullable column, `V23`) is now computed once — via this same `DistanceEtaStrategy.calculate(...)` call `enrichAndSort` already makes for listing cards — and persisted by `BookingsService.onTheWay` at the moment a professional marks an order `ON_THE_WAY`, then surfaced on `OrderResponse`/`OrderDetailResponse`/`OrderSummaryResponse` and rendered as a live countdown on the tracking screen and the new floating active-order indicator. The `matching` package itself is unchanged by this — it still computes nothing to disk, owns no table, and remains pure/stateless; it is the caller (`bookings`) that now persists the *result* of one specific `calculate()` call, once, at one specific transition. GPS/live-location tracking remains untouched and still fully out of scope. Full record: `docs/architecture/active-booking-floating-indicator.md` §0.1. |
 | Team roster | Poster lists 2 members (Yuval Harel, Or Cohen); other docs list 4 | Informational only — no architectural impact. |
 
@@ -182,12 +193,12 @@ changes it, per the shared project rule.
 | Package | Responsibility |
 |---|---|
 | `auth` | Registration, login, email verification codes, password hashing, account lockout, token issuance. |
-| `users` | Shared `User` entity/profile logic used by both customer and professional roles. |
+| `users` | Shared `User` entity/profile logic used by both customer and professional roles. **As of the professional weekly availability calendar feature, M2 (2026-08-18)**: gained a `phone` column (`V28`), required at `CUSTOMER` registration, read-only, mirroring `defaultAddress`'s exact precedent — see `users/README.md`. |
 | `professionals` | Professional profile, service area/city, standing price offer, reliability score. (No approval workflow — v1.0 auto-approves.) **As of 2026-08-15**, also owns the self-service profile layer (`GET`/`PUT /api/professionals/me`, profile-image upload, public `GET /api/professionals/{id}` detail view) — its first-ever service/controller layer, previously entity+repository only. See `professionals/README.md`. |
-| `availability` | Two distinct concepts, not one table used two ways: `availability_slots` (Standard advance-booking calendar) and `sos_availability` (live SOS "available for urgent work right now" on/off toggle). Decided 2026-08-12 — see `data-model.md` §2.5–§2.6 and §3 item 5. |
+| `availability` | Two distinct concepts, not one table used two ways: `availability_slots` (Standard advance-booking calendar, now vestigial — see below) and `sos_availability` (live SOS "available for urgent work right now" on/off toggle, untouched). Decided 2026-08-12 — see `data-model.md` §2.5–§2.6 and §3 item 5. **As of the professional weekly availability calendar feature, M1 (2026-08-18)**: also owns the new weekly-working-hours/manual-block/derived-calendar model this whole feature is built around — two new tables (`professional_working_hours`, `professional_availability_blocks`), 6 new endpoints, and `AvailabilityDerivationService` (the shared read-side derivation engine, also consumed by `bookings`). The pre-existing `availability_slots` surface is kept, unmodified, but is no longer reachable from the professional-facing UI as of frontend M4 and is fully vestigial (no code path creates new rows) as of frontend M6 — left in place, not deleted. See `availability/README.md` and `docs/architecture/api-contract-availability.md`. |
 | `issues` | Issue creation, category selection, image metadata; orchestrates the `ai` package for classification. |
 | `ai` | OpenAI client wrapper + classification service, kept separate from `issues` so it's independently testable/mockable. |
-| `bookings` | `Orders` — Standard + SOS booking flows, accept/reject, status transitions. **As of 2026-08-15**, also owns the service-address snapshot/SOS-surcharge pricing on order creation, and consumes `matching` to enrich professional listings with distance/ETA and a `sort=FASTEST` mode. |
+| `bookings` | `Orders` — Standard + SOS booking flows, accept/reject, status transitions. **As of 2026-08-15**, also owns the service-address snapshot/SOS-surcharge pricing on order creation, and consumes `matching` to enrich professional listings with distance/ETA and a `sort=FASTEST` mode. **As of the professional weekly availability calendar feature, M2 (2026-08-18)**: `POST /api/bookings/orders` reworked to accept a direct `bookedStart` (`slotId` dropped entirely) with a server-derived `bookedEnd` (fixed 60-minute default duration, see §2 above); `GET .../professionals/{id}/slots` replaced by `GET .../professionals/{id}/available-windows`; `OrderDetailResponse` gained `customerPhone` (visible to the assigned professional from `PENDING` onward); new dependency on `availability.service.AvailabilityDerivationService`. See `bookings/README.md`'s dedicated M2 section. |
 | `notifications` | Notification records + status polling endpoints, plus email dispatch. |
 | `storage` | Image upload (backend-proxied)/retrieval, behind a `StorageClient` abstraction swappable between a local-disk fake (dev/QA default) and real S3 (`pronto.storage.mode`). **As of 2026-08-15**, also serves professional profile images (`professionals/`-prefixed keys), publicly readable by any authenticated caller of either role — see `storage/README.md`'s "Role enforcement" section. **As of backend MS9 (2026-08-18)**: retrieval reworked from backend-proxied/JWT-gated to presigned/HMAC-signed, time-limited URLs — a deliberate reversal of the prior backend-proxying decision, fixing a `net::ERR_BLOCKED_BY_ORB` bug where a plain `<img src>` couldn't attach the JWT the old route required. See §6 below and `storage/README.md`. |
 | `reviews` | **New, 2026-08-15.** Customer reviews of a professional (1-5 star rating + optional comment), one per completed order. Full CRUD (`POST`/`GET`/`PUT`/`DELETE /api/reviews`). See `reviews/README.md`. |
@@ -201,14 +212,15 @@ changes it, per the shared project rule.
 |---|---|
 | `features/auth` | Registration, verification, login screens. **Implemented, Frontend Milestone 1 (2026-08-15)** — see §6 below and `implementation-plan.md`'s Milestone 1 entry. |
 | `features/issues` | Home/New Issue screen, AI Review + service-path-selection screen. **Implemented, Frontend Milestone 2** (see `implementation-plan.md`); `NewIssuePage`/`IssueSuccessStep` gained a Frontend Milestone 3 follow-up linking into the new booking flow, and a Frontend Milestone 4 follow-up linking the SOS branch into the new SOS booking flow. |
-| `features/booking` | Standard professional list, SOS professional list, booking confirmation, tracking screen. **Standard and SOS flows both implemented** — Standard: Frontend Milestone 3 (2026-08-16), `BookingFlowPage`/`MyOrdersPage`/`OrderTrackingPage`; SOS: Frontend Milestone 4 (2026-08-17), `SosBookingFlowPage`/`SosBookingSummary`. **Extended in the MS3/MS4 product-corrections pass (2026-08-17)**: `AddressSelectionStep` (default-vs-custom address chooser), full 7-field service address, booking-draft resume. **Extended, Frontend Milestone 6 (2026-08-18)**: professional-side "mark on the way"/"mark completed" job-status progression actions on `OrderTrackingPage`. See §6 below and `implementation-plan.md`'s entries. |
+| `features/booking` | Standard professional list, SOS professional list, booking confirmation, tracking screen. **Standard and SOS flows both implemented** — Standard: Frontend Milestone 3 (2026-08-16), `BookingFlowPage`/`MyOrdersPage`/`OrderTrackingPage`; SOS: Frontend Milestone 4 (2026-08-17), `SosBookingFlowPage`/`SosBookingSummary`. **Extended in the MS3/MS4 product-corrections pass (2026-08-17)**: `AddressSelectionStep` (default-vs-custom address chooser), full 7-field service address, booking-draft resume. **Extended, Frontend Milestone 6 (2026-08-18)**: professional-side "mark on the way"/"mark completed" job-status progression actions on `OrderTrackingPage`. **Extended, professional weekly availability calendar feature, M5-M6 (2026-08-18)**: `OrderTrackingPage.tsx` gained issue enrichment, `order.id`/`bookedEnd` rendering, a counterparty-name bug fix, a professional-only customer-phone display, and week-context-preserving back navigation (M5); `SlotPicker.tsx` renamed `StartTimePicker.tsx` and reworked to consume derived `AVAILABLE` windows instead of the retired `availability_slots` rows, `BookingFlowPage.tsx`/`BookingSummary.tsx` send a direct `bookedStart` instead of a `slotId` (M6). See §6 below and `implementation-plan.md`'s entries. |
 | `features/professionals` | Professional card/list components shared by Standard and SOS (per PRD §7.4, SOS reuses the professional-selection component with urgent filtering rather than a fully separate screen), plus (as of Frontend Milestone 8) the standalone professional-profile detail screen and review list. **Implemented, Frontend Milestone 3 (2026-08-16)**; SOS reuse landed Frontend Milestone 4 (2026-08-17) — both flows now consume `ProfessionalCard`/`ProfessionalList` via `ProfessionalList`. **Sort-toggle reconciled in the MS3/MS4 product-corrections pass (2026-08-17)**: both flows now expose an identical 2-way `Recommended | Cheapest` chip toggle. **Grew in Frontend Milestone 8 (2026-08-18)**: `ProfessionalProfilePage.tsx`/`ReviewList.tsx` (new, `/professionals/:professionalId`), `ProfessionalCard.tsx`'s new optional `viewProfileContext` prop (primary select button unchanged). |
 | `features/favorites` | Customer's saved-favorites list — add/remove/browse. **New, Frontend Milestone 8 (2026-08-18)**: `FavoritesPage.tsx` (`/favorites`, CUSTOMER-only), `FavoriteProfessionalCard.tsx` (a deliberately lean, dedicated card, not a reuse of `ProfessionalCard` — the favorites DTO has no distance/ETA fields). |
-| `features/dashboard` | Professional dashboard — availability management, incoming requests, job status actions, business-profile self-service. **Partially implemented**, Frontend Milestone 3 (2026-08-16): incoming-request accept/reject, a read-only job list, availability-slot create/list; SOS-availability toggle (`SosAvailabilityToggle`) added Frontend Milestone 4 (2026-08-17). **Job-status progression (on-the-way/complete) is now built, Frontend Milestone 6 (2026-08-18)** — but lives on `features/booking/OrderTrackingPage.tsx`, not in this package; `MyJobsPage` here remains intentionally read-only/link-only. **Grew in Frontend Milestone 8 (2026-08-18)**: a 4th `ProDashboardLayout` tab, `/pro/profile` (`ProfileEditorPage.tsx` + `ProfessionalProfileImageField.tsx`), reading/writing `professionals/me` — distinct from the shared, read-only `app/ProfilePage.tsx` (`users/me`). **Grew in Frontend Milestone 9 (2026-08-18), mixed status at the time**: `SlotList` gained inline edit/delete for not-yet-booked slots (fully QA-verified live, after two follow-up bug fixes); `IncomingRequestCard` gained a read-only issue-photo thumbnail row that was code-correct but non-functional in-browser due to a pre-existing, cross-cutting image-auth gap — **fixed separately by backend MS9 (2026-08-18)**, see `features/dashboard/README.md` and `storage/README.md`. |
+| `features/dashboard` | Professional dashboard — availability management, incoming requests, job status actions, business-profile self-service. **Partially implemented**, Frontend Milestone 3 (2026-08-16): incoming-request accept/reject, a read-only job list, availability-slot create/list; SOS-availability toggle (`SosAvailabilityToggle`) added Frontend Milestone 4 (2026-08-17). **Job-status progression (on-the-way/complete) is now built, Frontend Milestone 6 (2026-08-18)** — but lives on `features/booking/OrderTrackingPage.tsx`, not in this package; `MyJobsPage` here remains intentionally read-only/link-only. **Grew in Frontend Milestone 8 (2026-08-18)**: a 4th `ProDashboardLayout` tab, `/pro/profile` (`ProfileEditorPage.tsx` + `ProfessionalProfileImageField.tsx`), reading/writing `professionals/me` — distinct from the shared, read-only `app/ProfilePage.tsx` (`users/me`). **Grew in Frontend Milestone 9 (2026-08-18), mixed status at the time**: `SlotList` gained inline edit/delete for not-yet-booked slots (fully QA-verified live, after two follow-up bug fixes); `IncomingRequestCard` gained a read-only issue-photo thumbnail row that was code-correct but non-functional in-browser due to a pre-existing, cross-cutting image-auth gap — **fixed separately by backend MS9 (2026-08-18)**, see `features/dashboard/README.md` and `storage/README.md`. **Superseded at `/pro/availability`, professional weekly availability calendar feature, M3-M5 (2026-08-18)**: `WeeklyAvailabilityPage.tsx` (new) replaces `AvailabilityPage.tsx` at the same route, composing `SosAvailabilityToggle` (unchanged) + `WorkingHoursForm.tsx` (new, M3) + `WeeklyCalendarGrid.tsx` (new, M4, view-only, then interactive as of M5) + `CalendarBlockModal.tsx` (new, M5, built on the also-new shared `Modal.tsx` primitive). `AvailabilityPage.tsx`/`SlotForm.tsx`/`SlotList.tsx` are **left in the repo, unreachable from any route** (not deleted — cheap insurance, per the design's own explicit instruction) once M4 lands; the `availability_slots` endpoints they called become fully vestigial once M6 (customer-facing booking-flow rework) ships. See `features/dashboard/README.md`'s M3-M5 sections. |
 | `features/notifications` | In-app notification bell: nav badge + anchored dropdown feed, consuming the backend `notifications` package via short-polling. **Implemented, Frontend Milestone 5 (2026-08-18)** — `NotificationBell.tsx`/`notificationLabels.ts`; the status-polling primitive itself (`usePolling`/`useOrderStatus`) shipped earlier, in Frontend Milestone 3, and remains consumed directly by `features/booking`/`features/dashboard` for order tracking, separate from this module's own `useNotifications` hook. No dedicated page/route — the backend feed has no pagination. |
-| `shared/api` | Backend API client. **Grew in Frontend Milestone 3 (2026-08-16)**: `bookings.ts`, `availability.ts`, and a `getIssue` addition to `issues.ts`; grew again in Frontend Milestone 4 (2026-08-17): SOS-listing/order functions in `bookings.ts` and SOS-availability functions in `availability.ts`. **Grew in Frontend Milestone 5 (2026-08-18)**: `notifications.ts` (new), consuming the already-complete backend `notifications` package, no backend changes. **Grew in Frontend Milestone 8 (2026-08-18)**: `favorites.ts`/`professionals.ts` (new), `reviews.ts` gained `getReviews`. **Grew in Frontend Milestone 9 (2026-08-18)**: `availability.ts` gained `updateAvailabilitySlot`/`deleteAvailabilitySlot`, `users.ts` gained `deleteMe` — both fully QA-verified live. |
-| `shared/components` | Reusable UI components. **Grew in Frontend Milestone 3 (2026-08-16)**: `StatusBadge`. |
-| `shared/hooks` | Reusable React hooks (e.g. status-polling hook, auth context). **Grew in Frontend Milestone 3 (2026-08-16)**: `usePolling`/`useOrderStatus`. **Grew in the MS3/MS4 product-corrections pass (2026-08-17)**: booking-draft persistence (`bookingDraftContext.ts`/`BookingDraftProvider.tsx`/`useBookingDraft.ts`). **Grew in Frontend Milestone 5 (2026-08-18)**: `useNotifications.ts` (a plain polling hook wrapping `usePolling`, not a React Context — single consumer, unlike `useActiveOrder`/`useBookingDraft`). **Grew in Frontend Milestone 8 (2026-08-18)**: `AuthProvider` gained `refreshUser()`, called after a professional edits their `fullName` via `/pro/profile` (writes to the underlying `users` row) so the top-nav's cached name doesn't go stale. |
+| `shared/api` | Backend API client. **Grew in Frontend Milestone 3 (2026-08-16)**: `bookings.ts`, `availability.ts`, and a `getIssue` addition to `issues.ts`; grew again in Frontend Milestone 4 (2026-08-17): SOS-listing/order functions in `bookings.ts` and SOS-availability functions in `availability.ts`. **Grew in Frontend Milestone 5 (2026-08-18)**: `notifications.ts` (new), consuming the already-complete backend `notifications` package, no backend changes. **Grew in Frontend Milestone 8 (2026-08-18)**: `favorites.ts`/`professionals.ts` (new), `reviews.ts` gained `getReviews`. **Grew in Frontend Milestone 9 (2026-08-18)**: `availability.ts` gained `updateAvailabilitySlot`/`deleteAvailabilitySlot`, `users.ts` gained `deleteMe` — both fully QA-verified live. **Grew in the professional weekly availability calendar feature, M3-M6 (2026-08-18)**: `availability.ts` gained `getWorkingHours`/`updateWorkingHours`/`getAvailabilityCalendar` (M3/M4) and the block CRUD trio (M5); `httpClient.ts` gained a `patch()` method (M5, first `PATCH` caller in this codebase); `bookings.ts` gained `OrderDetailResponse.customerPhone` (M5) and, **as of M6**, lost `getProfessionalSlots`/`AvailabilitySlotItem`/`ProfessionalSlotsResponse` (removed, not deprecated) in favor of `getAvailableWindows`/`AvailableWindow`/`AvailableWindowsResponse`, with `CreateOrderRequest.slotId` replaced by `CreateOrderRequest.bookedStart`. |
+| `shared/components` | Reusable UI components. **Grew in Frontend Milestone 3 (2026-08-16)**: `StatusBadge`. **Grew in the professional weekly availability calendar feature, M5 (2026-08-18)**: `Modal.tsx` (new) — a generic dialog/bottom-sheet primitive (desktop centered dialog vs. mobile bottom sheet, CSS-breakpoint-selected, no `variant` prop needed), first consumed by `features/dashboard/CalendarBlockModal.tsx`. |
+| `shared/hooks` | Reusable React hooks (e.g. status-polling hook, auth context). **Grew in Frontend Milestone 3 (2026-08-16)**: `usePolling`/`useOrderStatus`. **Grew in the MS3/MS4 product-corrections pass (2026-08-17)**: booking-draft persistence (`bookingDraftContext.ts`/`BookingDraftProvider.tsx`/`useBookingDraft.ts`). **Grew in Frontend Milestone 5 (2026-08-18)**: `useNotifications.ts` (a plain polling hook wrapping `usePolling`, not a React Context — single consumer, unlike `useActiveOrder`/`useBookingDraft`). **Grew in Frontend Milestone 8 (2026-08-18)**: `AuthProvider` gained `refreshUser()`, called after a professional edits their `fullName` via `/pro/profile` (writes to the underlying `users` row) so the top-nav's cached name doesn't go stale. **Grew in the professional weekly availability calendar feature, M6 (2026-08-18)**: `bookingDraftContext.ts`'s `BookingDraft.slotId` replaced by `bookedStart: string`, draft schema `version` bumped `1 → 2` (an old-version draft is discarded on load, not migrated). |
+| `shared/utils` | Small, pure, framework-agnostic formatting/derivation helpers shared across features (no React/JSX, no I/O) — `formatDateTime.ts` (Hebrew date/time labels, since Frontend Milestone 3, 2026-08-16). **New row in this table, professional weekly availability calendar feature, M6 (2026-08-18)** (the folder itself predates this feature but had no tracked row here or a `README.md` until this feature's closing documentation pass): gained `availability.ts` — `deriveStartTimeCandidates`, the pure derivation behind the customer booking flow's start-time chips. See `shared/utils/README.md`. |
 | `app` | Routing, layout, root configuration. **Updated, Frontend Milestone 3 (2026-08-16)**: `/pro` now renders a real professional dashboard instead of a placeholder; booking/tracking/orders routes added. **Updated, Frontend Milestone 5 (2026-08-18)**: `AppLayout.tsx` renders `<NotificationBell />` in the nav for both roles (CUSTOMER and PROFESSIONAL, unlike the CUSTOMER-only `ActiveOrderIndicator`); no router change (the bell is a dropdown, not a route). **Updated, Frontend Milestone 8 (2026-08-18)**: `router.tsx` gained `professionals/:professionalId`, `favorites`, and `pro/profile` routes. Same-day UX correction: `/favorites` is reached via `ProfilePage.tsx`'s "מועדפים" link, not an `AppLayout.tsx` nav link (favorites is a secondary customer feature, not primary nav). **Updated, Frontend Milestone 9 (2026-08-18)**: `ProfilePage.tsx` gained a two-step account-deletion confirmation, fully QA-verified live, no bugs found; no router change. |
 
 ### Docs
@@ -822,6 +834,129 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
     `api-contract-issues.md` §4 (a stale claim `hardening-plan.md` §5.3 had already flagged
     for this pass), plus this entry and `implementation-plan.md`'s "Backend Milestone 9"
     entry.
+- **2026-08-18 — Professional Weekly Availability Calendar feature landed (M1-M6, backend
+  then frontend), fully QA-signed-off, zero known open bugs, including a post-QA bug-fix
+  round (also re-verified and signed off).** Not one of the originally-numbered backend
+  milestones in §5 — a self-contained feature spanning both `backend` and `frontend`,
+  tracked as its own M1-M6 sequence (backend M1-M2, frontend M3-M6), the same "one
+  continuous, ungated milestone sequence" convention this doc's other post-Milestone-8
+  features (Active Booking Floating Indicator, Frontend Milestones 5/6/8/9, backend MS9)
+  already use. Full design/decision record:
+  `docs/architecture/professional-weekly-calendar-design.md` (§0 TL;DR, §9 for the full
+  decision log, §10 for the milestone breakdown). Replaces the professional-facing
+  "manually create discrete bookable time slots" model (PRD's original `availability_slots`
+  design) with a **weekly recurring working-hours schedule** plus **manual exception
+  blocks**, from which "actual available time" is derived on demand — the product-spec-driven
+  redesign this whole feature implements.
+  - **New schema** (`V25`-`V28`): `professional_working_hours` (one row per professional per
+    weekday, `TIME` columns interpreted in the new fixed business timezone, §2 above) and
+    `professional_availability_blocks` (manual, temporary exceptions — personal appointment,
+    lunch, vacation, etc.), both new tables owned by `availability`; a new
+    `ck_blocks_no_overlap` exclusion constraint on the latter (requires the new `btree_gist`
+    Postgres extension); a new `ck_orders_no_overlap` partial exclusion constraint directly
+    on the existing `orders` table (owned by `bookings`) — the DB-level, now **sole
+    authoritative** double-booking guard for Standard order creation, replacing the retired
+    `availability_slots`-claim mechanism for every order created from this point on; and
+    `users.phone` (new, nullable column, required at `CUSTOMER` registration, read-only —
+    bundled into this same design pass as new, approved scope, mirroring `defaultAddress`'s
+    exact precedent). See `data-model.md` §2.9/§2.13/§2.14/§2.2 and
+    `docs/architecture/api-contract-availability.md` §9.
+  - **New backend surface** (`availability` package, M1): 6 new endpoints — `GET`/`PUT
+    /api/availability/working-hours`, `POST`/`PATCH`/`DELETE /api/availability/blocks*`, and
+    the one new consolidated read endpoint, `GET /api/availability/calendar?from=&to=`,
+    returning a derived `AVAILABLE`/`BLOCKED`/`BOOKED` segment timeline computed by the new
+    `AvailabilityDerivationService` (also the single named home for the new
+    `Asia/Jerusalem` business-timezone constant, §2 above). Two new error codes,
+    `BLOCK_OVERLAPS_EXISTING_BLOCK`/`BLOCK_OVERLAPS_BOOKING` (both 409). The pre-existing
+    `availability_slots`/`sos_availability` surface (4 slot endpoints + 2 SOS-toggle
+    endpoints) is kept, completely unmodified — see below for its new vestigial status. Full
+    contract: `docs/architecture/api-contract-availability.md`.
+  - **Order-creation rework** (`bookings` package, M2): `POST /api/bookings/orders` now
+    accepts a direct `bookedStart`; `bookedEnd` is derived server-side from a **fixed 60-minute
+    default job duration** — a genuine product decision recorded in §2's resolved-decisions
+    table above, not just a code comment. `slotId` is dropped from the request entirely (not
+    kept for backward compatibility — no production data, single frontend, redeployed
+    atomically). `GET .../professionals/{id}/slots?issueId=` is replaced by `GET
+    .../professionals/{id}/available-windows?issueId=`, returning derived `AVAILABLE` windows
+    already sized to the default duration. `OrderDetailResponse` gained `customerPhone`,
+    visible to the assigned professional from `PENDING` onward (mirrors the service-address
+    snapshot's existing access-scoping, no new authorization shape). New error code,
+    `BOOKING_TIME_UNAVAILABLE` (409); `SLOT_UNAVAILABLE` becomes vestigial (kept, never
+    returned). Full contract: `docs/architecture/api-contract-bookings.md`'s "Professional
+    weekly availability calendar, M2" header note and §2.3/§2.4/§2.8.
+  - **`availability_slots`/its 4 endpoints kept, unmodified, now vestigial**: no data
+    migration performed or needed (a working-hours/block row cannot be meaningfully derived
+    from a historical discrete-slot row — every professional simply starts with no configured
+    working hours, the expected first-time-setup state). Stopped being reachable from the
+    professional-facing UI once frontend M4 landed; fully vestigial (no code path creates new
+    rows) once frontend M6 landed. Left in place regardless — cheap insurance, zero ongoing
+    cost, same treatment this doc family already gives other superseded-but-harmless
+    artifacts. `sos_availability` is completely untouched throughout, per the task's explicit
+    exclusion.
+  - **New frontend surface** (`frontend`, M3-M6): `WeeklyAvailabilityPage.tsx` (new) replaces
+    `AvailabilityPage.tsx` at the same `/pro/availability` route, composing the unchanged
+    `SosAvailabilityToggle` + `WorkingHoursForm.tsx` (new, M3) + `WeeklyCalendarGrid.tsx` (new,
+    M4 view-only, interactive as of M5) + `CalendarBlockModal.tsx` (new, M5, built on the also-
+    new shared `Modal.tsx` primitive — dialog on desktop, bottom sheet on mobile).
+    `AvailabilityPage.tsx`/`SlotForm.tsx`/`SlotList.tsx` are **left in the repo, orphaned and
+    unreachable from any route, not deleted** — cheap insurance, matching the backend's own
+    "kept, vestigial" treatment of the endpoints they called. `OrderTrackingPage.tsx` (M5)
+    gained issue enrichment (category/description/urgency/photos via the existing `GET
+    /api/issues/{id}`), `order.id`/`bookedEnd` rendering, a counterparty-name bug fix (was
+    always showing `professionalName` even to the professional viewer), a professional-only
+    customer-phone display, and week-context-preserving back navigation from a calendar
+    booked-block click-through. `SlotPicker.tsx` renamed `StartTimePicker.tsx` (M6, old file
+    deleted) and reworked to derive selectable start-time chips
+    (`shared/utils/availability.ts`'s new `deriveStartTimeCandidates`) from `available-windows`
+    instead of discrete `availability_slots` rows; `BookingFlowPage.tsx`/`BookingSummary.tsx`
+    send a direct `bookedStart` instead of a `slotId`. `BookingDraft`'s schema bumped
+    `slotId`→`bookedStart` (version 1→2, an old-version draft is discarded on load, not
+    migrated).
+  - **Post-QA bug-fix round, re-verified and signed off**: (a) malformed `{slotId}`/
+    `{blockId}` path values previously returned a raw `500 INTERNAL_ERROR` instead of `404
+    NOT_FOUND` — fixed via the same `parsePathId` convention `issues`/`notifications`/
+    `bookings` controllers already use, live-verified, zero regressions (see
+    `availability/README.md`'s Status section); (b) a conflicting-booking error banner never
+    rendered on the customer's booking flow — `BookingSummary.tsx`'s catch handler set a local
+    banner state the very same tick `BookingFlowPage.tsx` unmounted it by transitioning back to
+    the picker step, so the customer was silently bounced with no visible explanation; fixed by
+    moving the error message up to the level that survives the step transition, live-verified
+    via a genuine two-customer-race Playwright script against a running backend (see
+    `frontend/src/features/booking/README.md`'s post-QA section).
+  - **QA**: full sign-off across the entire M1-M6 sequence, zero known open bugs, including
+    the post-QA round above (also re-verified and signed off). Method, consistent with every
+    prior frontend milestone in this project (no browser-automation tool available in this
+    environment): backend endpoints live-validated against a real Postgres instance via direct
+    HTTP calls plus `psql` state verification (including a genuine concurrent-request race for
+    both the block-overlap exclusion constraint and the order-overlap exclusion constraint, and
+    a byte-for-byte reproduction of the design doc's own §36 worked example); frontend verified
+    via live API-contract-conformance testing against a real running backend (including a
+    reproduction of `deriveStartTimeCandidates`'s exact output against real derived-window data
+    in a standalone Node script, since no frontend unit-test runner exists in this codebase),
+    code review against the design doc's own interaction/accessibility requirements, and clean
+    `tsc -b`/`vite build`/`oxlint` passes on every changed file.
+  - **Documentation updated as part of closing this feature** (this pass,
+    `pronto-documentation`): `backend/src/main/java/com/pronto/availability/README.md`,
+    `.../bookings/README.md`, `.../users/README.md` (all already substantially kept current by
+    `pronto-coding` along the way per the standing "don't let docs actively lie mid-flight"
+    rule — this pass's job was the closing consistency/QA-status pass, not a first draft);
+    `frontend/src/features/dashboard/README.md`, `.../booking/README.md`,
+    `frontend/src/shared/api/README.md`, `.../components/README.md`, `.../hooks/README.md`
+    (all likewise already substantially current); **new**
+    `frontend/src/shared/utils/README.md` (this folder existed since Frontend Milestone 3 but
+    had never had its own doc — a gap this pass closed, not introduced); **new**
+    `docs/architecture/api-contract-availability.md` (the 6 pure-`availability` calendar
+    endpoints previously had a full contract only inside the design doc — this pass gave them
+    the same durable, package-scoped contract-doc home every other endpoint family already
+    has, following the `api-contract-bookings.md`/`api-contract-professionals-reviews.md`
+    convention); `docs/architecture/data-model.md`, `api-contract-bookings.md`,
+    `api-contract.md` (all already substantially current from the implementation passes,
+    spot-checked and confirmed accurate this pass, not rewritten); this entry, the
+    resolved-decisions table in §2 above (`Asia/Jerusalem` business timezone, the 60-minute
+    default job duration — both now recorded there explicitly, not left buried in a code
+    comment or only in the design doc), the package tables in §4 above, and
+    `docs/architecture/implementation-plan.md`'s new "Professional Weekly Availability
+    Calendar" milestone entries (M1-M6).
 
 ## 7. Backend architecture reference (as-built)
 

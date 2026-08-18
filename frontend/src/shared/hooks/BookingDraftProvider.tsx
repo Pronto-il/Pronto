@@ -11,7 +11,7 @@ function readStoredDraft(): BookingDraft | null {
       return null;
     }
     const parsed = JSON.parse(raw) as BookingDraft;
-    if (parsed.version !== 1) {
+    if (parsed.version !== 2) {
       return null;
     }
     return parsed;
@@ -52,7 +52,7 @@ export function BookingDraftProvider({ children }: { children: ReactNode }) {
       const base: BookingDraft =
         prev ??
         ({
-          version: 1,
+          version: 2,
           ownerId: user.id,
           stage: 'ISSUE_DESCRIBE',
           urgencyType: 'STANDARD',

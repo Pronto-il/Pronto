@@ -1,10 +1,13 @@
 package com.pronto.bookings.service;
 
-import com.pronto.availability.entity.AvailabilitySlot;
+import com.pronto.availability.dto.CalendarSegment;
 import com.pronto.availability.repository.AvailabilitySlotRepository;
 import com.pronto.availability.repository.SosAvailabilityRepository;
+import com.pronto.availability.service.AvailabilityDerivationService;
+import com.pronto.bookings.dto.AvailableWindowsResponse;
 import com.pronto.bookings.dto.CreateOrderRequest;
 import com.pronto.bookings.dto.CreateSosOrderRequest;
+import com.pronto.bookings.dto.OrderDetailResponse;
 import com.pronto.bookings.dto.OrderResponse;
 import com.pronto.bookings.dto.ProfessionalCard;
 import com.pronto.bookings.dto.ProfessionalListingResponse;
@@ -32,9 +35,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -62,7 +67,6 @@ class BookingsServiceTest {
     private static final Long ISSUE_ID = 2L;
     private static final Long PROFESSIONAL_ID = 3L;
     private static final Long CATEGORY_ID = 4L;
-    private static final Long SLOT_ID = 5L;
 
     private IssueRepository issueRepository;
     private ProfessionalRepository professionalRepository;
@@ -74,6 +78,7 @@ class BookingsServiceTest {
     private NotificationService notificationService;
     private DistanceEtaStrategy distanceEtaStrategy;
     private StorageService storageService;
+    private AvailabilityDerivationService availabilityDerivationService;
     private BookingsService bookingsService;
 
     @BeforeEach
@@ -88,9 +93,20 @@ class BookingsServiceTest {
         notificationService = Mockito.mock(NotificationService.class);
         distanceEtaStrategy = Mockito.mock(DistanceEtaStrategy.class);
         storageService = Mockito.mock(StorageService.class);
+        availabilityDerivationService = Mockito.mock(AvailabilityDerivationService.class);
         bookingsService = new BookingsService(issueRepository, professionalRepository, professionalListingRepository,
                 availabilitySlotRepository, sosAvailabilityRepository, orderRepository, userRepository,
-                notificationService, distanceEtaStrategy, storageService);
+                notificationService, distanceEtaStrategy, storageService, availabilityDerivationService);
+    }
+
+    /**
+     * Stubs {@link AvailabilityDerivationService#deriveCalendar} to report the caller's
+     * requested {@code [from, to)} range as one single {@code AVAILABLE} segment covering it
+     * exactly — the "happy path" pre-check stub {@code createOrder}'s tests reuse by default.
+     */
+    private void stubFullyAvailable() {
+        when(availabilityDerivationService.deriveCalendar(eq(PROFESSIONAL_ID), any(), any()))
+                .thenAnswer(inv -> List.of(CalendarSegment.available(inv.getArgument(1), inv.getArgument(2))));
     }
 
     private static void setField(Object entity, String fieldName, Object value) {
@@ -123,13 +139,6 @@ class BookingsServiceTest {
         return user;
     }
 
-    private AvailabilitySlot slot() {
-        Instant start = Instant.now().plus(1, ChronoUnit.DAYS);
-        AvailabilitySlot slot = new AvailabilitySlot(PROFESSIONAL_ID, start, start.plus(2, ChronoUnit.HOURS));
-        setField(slot, "id", SLOT_ID);
-        return slot;
-    }
-
     private static final Long ORDER_ID = 6L;
     private static final Long PROFESSIONAL_USER_ID = 99L;
 
@@ -151,12 +160,12 @@ class BookingsServiceTest {
         Professional professional = activeProfessional();
         when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
         when(userRepository.findById(99L)).thenReturn(Optional.of(activeUser(99L)));
-        when(availabilitySlotRepository.claimSlot(eq(SLOT_ID), eq(PROFESSIONAL_ID), any())).thenReturn(1);
-        when(availabilitySlotRepository.findById(SLOT_ID)).thenReturn(Optional.of(slot()));
+        stubFullyAvailable();
         when(issueRepository.bookIfOpen(eq(ISSUE_ID), any())).thenReturn(1);
-        when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(orderRepository.saveAndFlush(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, SLOT_ID,
+        Instant bookedStart = Instant.now().plus(1, ChronoUnit.DAYS);
+        CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, bookedStart,
                 "Tel Aviv", "Herzl", "10", null, null, null, null);
         OrderResponse response = bookingsService.createOrder(CUSTOMER_ID, request);
 
@@ -167,6 +176,243 @@ class BookingsServiceTest {
         assertThat(response.serviceStreet()).isEqualTo("Herzl");
         assertThat(response.serviceHouseNumber()).isEqualTo("10");
         assertThat(response.serviceApartment()).isNull();
+    }
+
+    // ---- direct-bookedStart creation path (professional weekly availability calendar M2) ----
+
+    @Test
+    void createOrder_standard_derivesBookedEndAndPersistsNullSlotId() {
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        Professional professional = activeProfessional();
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
+        when(userRepository.findById(99L)).thenReturn(Optional.of(activeUser(99L)));
+        stubFullyAvailable();
+        when(issueRepository.bookIfOpen(eq(ISSUE_ID), any())).thenReturn(1);
+        ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
+        when(orderRepository.saveAndFlush(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        Instant bookedStart = Instant.now().plus(1, ChronoUnit.DAYS);
+        CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, bookedStart,
+                "Tel Aviv", "Herzl", "10", null, null, null, null);
+        OrderResponse response = bookingsService.createOrder(CUSTOMER_ID, request);
+
+        assertThat(response.bookedStart()).isEqualTo(bookedStart);
+        assertThat(response.bookedEnd()).isEqualTo(bookedStart.plus(Duration.ofMinutes(60)));
+        assertThat(captor.getValue().getSlotId()).isNull();
+        verify(availabilitySlotRepository, never()).claimSlot(any(), any(), any());
+    }
+
+    @Test
+    void createOrder_windowNotFullyAvailable_throwsBookingTimeUnavailableAndNeverInserts() {
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        Professional professional = activeProfessional();
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
+        when(userRepository.findById(99L)).thenReturn(Optional.of(activeUser(99L)));
+        // No AVAILABLE segment at all covering the requested range -- e.g. outside working
+        // hours, overlapping a block, or overlapping an existing booking.
+        when(availabilityDerivationService.deriveCalendar(eq(PROFESSIONAL_ID), any(), any()))
+                .thenReturn(List.of());
+
+        Instant bookedStart = Instant.now().plus(1, ChronoUnit.DAYS);
+        CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, bookedStart,
+                "Tel Aviv", "Herzl", "10", null, null, null, null);
+
+        assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.BOOKING_TIME_UNAVAILABLE));
+
+        verify(issueRepository, never()).bookIfOpen(any(), any());
+        verify(orderRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void createOrder_partiallyOverlappingAvailableSegment_stillThrowsBookingTimeUnavailable() {
+        // The requested [bookedStart, bookedEnd) is only partly covered by a single AVAILABLE
+        // segment (e.g. a block/booking cuts through the middle of the requested window) --
+        // full containment is required, not merely "some" overlap.
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        Professional professional = activeProfessional();
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
+        when(userRepository.findById(99L)).thenReturn(Optional.of(activeUser(99L)));
+
+        Instant bookedStart = Instant.now().plus(1, ChronoUnit.DAYS);
+        Instant bookedEnd = bookedStart.plus(Duration.ofMinutes(60));
+        // Only the first half of the requested window is AVAILABLE.
+        when(availabilityDerivationService.deriveCalendar(eq(PROFESSIONAL_ID), any(), any()))
+                .thenReturn(List.of(CalendarSegment.available(bookedStart, bookedStart.plus(Duration.ofMinutes(30)))));
+
+        CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, bookedStart,
+                "Tel Aviv", "Herzl", "10", null, null, null, null);
+
+        assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.BOOKING_TIME_UNAVAILABLE));
+    }
+
+    @Test
+    void createOrder_bookedStartNotStrictlyFuture_throwsValidationError() {
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        Professional professional = activeProfessional();
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
+        when(userRepository.findById(99L)).thenReturn(Optional.of(activeUser(99L)));
+
+        Instant pastStart = Instant.now().minus(1, ChronoUnit.HOURS);
+        CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, pastStart,
+                "Tel Aviv", "Herzl", "10", null, null, null, null);
+
+        assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+
+        verify(availabilityDerivationService, never()).deriveCalendar(any(), any(), any());
+    }
+
+    @Test
+    void createOrder_exclusionConstraintViolationOnInsert_mapsToBookingTimeUnavailable() {
+        // The race backstop: two near-simultaneous createOrder calls both pass the pre-check,
+        // but the second one's INSERT is rejected by ck_orders_no_overlap (23P01) -- this must
+        // surface as a clean 409, not a raw 500.
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        Professional professional = activeProfessional();
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
+        when(userRepository.findById(99L)).thenReturn(Optional.of(activeUser(99L)));
+        stubFullyAvailable();
+        when(issueRepository.bookIfOpen(eq(ISSUE_ID), any())).thenReturn(1);
+        DataIntegrityViolationException exclusionViolation =
+                new DataIntegrityViolationException("duplicate range", new SQLException("conflict", "23P01"));
+        when(orderRepository.saveAndFlush(any(Order.class))).thenThrow(exclusionViolation);
+
+        Instant bookedStart = Instant.now().plus(1, ChronoUnit.DAYS);
+        CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, bookedStart,
+                "Tel Aviv", "Herzl", "10", null, null, null, null);
+
+        assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.BOOKING_TIME_UNAVAILABLE));
+    }
+
+    @Test
+    void createOrder_nonExclusionConstraintViolationOnInsert_rethrowsUnchanged() {
+        // Any other constraint violation (unexpected) must not be silently swallowed into a
+        // BOOKING_TIME_UNAVAILABLE -- only the specific 23P01 SQLState is mapped.
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        Professional professional = activeProfessional();
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
+        when(userRepository.findById(99L)).thenReturn(Optional.of(activeUser(99L)));
+        stubFullyAvailable();
+        when(issueRepository.bookIfOpen(eq(ISSUE_ID), any())).thenReturn(1);
+        DataIntegrityViolationException otherViolation =
+                new DataIntegrityViolationException("not-null violation", new SQLException("nope", "23502"));
+        when(orderRepository.saveAndFlush(any(Order.class))).thenThrow(otherViolation);
+
+        Instant bookedStart = Instant.now().plus(1, ChronoUnit.DAYS);
+        CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, bookedStart,
+                "Tel Aviv", "Herzl", "10", null, null, null, null);
+
+        assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
+                .isSameAs(otherViolation);
+    }
+
+    // ---- available-windows listing (replaces the retired GET .../slots?issueId=) ----
+
+    @Test
+    void listAvailableWindows_mapsDerivedSegmentsAndEchoesDefaultDuration() {
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        Professional professional = activeProfessional();
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
+
+        Instant windowStart = Instant.now().plus(1, ChronoUnit.DAYS);
+        Instant windowEnd = windowStart.plus(Duration.ofHours(4));
+        when(availabilityDerivationService.deriveAvailableWindows(eq(PROFESSIONAL_ID), any(), any(),
+                eq(Duration.ofMinutes(60))))
+                .thenReturn(List.of(CalendarSegment.available(windowStart, windowEnd)));
+
+        AvailableWindowsResponse response = bookingsService.listAvailableWindows(CUSTOMER_ID, PROFESSIONAL_ID, ISSUE_ID);
+
+        assertThat(response.professionalId()).isEqualTo(PROFESSIONAL_ID);
+        assertThat(response.issueId()).isEqualTo(ISSUE_ID);
+        assertThat(response.defaultDurationMinutes()).isEqualTo(60);
+        assertThat(response.timezone()).isEqualTo("Asia/Jerusalem");
+        assertThat(response.windows()).hasSize(1);
+        assertThat(response.windows().get(0).startAt()).isEqualTo(windowStart);
+        assertThat(response.windows().get(0).endAt()).isEqualTo(windowEnd);
+    }
+
+    @Test
+    void listAvailableWindows_emptyDerivedResult_returnsEmptyWindowsNotAnError() {
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        Professional professional = activeProfessional();
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
+        when(availabilityDerivationService.deriveAvailableWindows(eq(PROFESSIONAL_ID), any(), any(), any()))
+                .thenReturn(List.of());
+
+        AvailableWindowsResponse response = bookingsService.listAvailableWindows(CUSTOMER_ID, PROFESSIONAL_ID, ISSUE_ID);
+
+        assertThat(response.windows()).isEmpty();
+    }
+
+    @Test
+    void listAvailableWindows_categoryMismatch_throwsCategoryMismatch() {
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        Professional mismatchedProfessional = new Professional(99L, 999L, "Tel Aviv", new BigDecimal("100.00"));
+        setField(mismatchedProfessional, "id", PROFESSIONAL_ID);
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(mismatchedProfessional));
+
+        assertThatThrownBy(() -> bookingsService.listAvailableWindows(CUSTOMER_ID, PROFESSIONAL_ID, ISSUE_ID))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.CATEGORY_MISMATCH));
+    }
+
+    // ---- customerPhone on order-detail (professional weekly availability calendar §9.1) ----
+
+    @Test
+    void getOrderDetail_pendingOrder_assignedProfessional_seesCustomerPhone() {
+        Order order = new Order(ISSUE_ID, CUSTOMER_ID, PROFESSIONAL_ID, Instant.now(), null,
+                new BigDecimal("100.00"), null, "Tel Aviv", "Herzl", "10", null, null, null, null,
+                new BigDecimal("100.00"), BigDecimal.ZERO);
+        setField(order, "id", ORDER_ID);
+        setField(order, "orderStatus", OrderStatus.PENDING);
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        Professional professional = activeProfessional();
+        when(professionalRepository.findByUserId(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(professional));
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
+        User customer = new User("Customer Name", "customer@example.com", "hash", UserRole.CUSTOMER);
+        setField(customer, "id", CUSTOMER_ID);
+        customer.setPhone("0501234567");
+        when(userRepository.findById(CUSTOMER_ID)).thenReturn(Optional.of(customer));
+        when(userRepository.findById(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(activeUser(PROFESSIONAL_USER_ID)));
+
+        OrderDetailResponse response = bookingsService.getOrderDetail(PROFESSIONAL_USER_ID, "PROFESSIONAL", ORDER_ID);
+
+        assertThat(response.orderStatus()).isEqualTo(OrderStatus.PENDING);
+        assertThat(response.customerPhone()).isEqualTo("0501234567");
+    }
+
+    @Test
+    void getOrderDetail_customerViewingOwnOrder_alsoSeesOwnPhone() {
+        Order order = new Order(ISSUE_ID, CUSTOMER_ID, PROFESSIONAL_ID, Instant.now(), null,
+                new BigDecimal("100.00"), null, "Tel Aviv", "Herzl", "10", null, null, null, null,
+                new BigDecimal("100.00"), BigDecimal.ZERO);
+        setField(order, "id", ORDER_ID);
+        setField(order, "orderStatus", OrderStatus.PENDING);
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        User customer = new User("Customer Name", "customer@example.com", "hash", UserRole.CUSTOMER);
+        setField(customer, "id", CUSTOMER_ID);
+        customer.setPhone("0501234567");
+        when(userRepository.findById(CUSTOMER_ID)).thenReturn(Optional.of(customer));
+
+        OrderDetailResponse response = bookingsService.getOrderDetail(CUSTOMER_ID, "CUSTOMER", ORDER_ID);
+
+        assertThat(response.customerPhone()).isEqualTo("0501234567");
     }
 
     @Test
@@ -202,16 +448,17 @@ class BookingsServiceTest {
         Professional professional = activeProfessional();
         when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
         when(userRepository.findById(99L)).thenReturn(Optional.of(activeUser(99L)));
-        when(availabilitySlotRepository.claimSlot(eq(SLOT_ID), eq(PROFESSIONAL_ID), any())).thenReturn(1);
-        when(availabilitySlotRepository.findById(SLOT_ID)).thenReturn(Optional.of(slot()));
+        stubFullyAvailable();
         when(issueRepository.bookIfOpen(eq(ISSUE_ID), any())).thenReturn(1);
         ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
-        when(orderRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+        when(orderRepository.saveAndFlush(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
-        CreateOrderRequest first = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, SLOT_ID,
+        Instant firstStart = Instant.now().plus(1, ChronoUnit.DAYS);
+        CreateOrderRequest first = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, firstStart,
                 "Tel Aviv", "Herzl", "10", "2", null, null, null);
         bookingsService.createOrder(CUSTOMER_ID, first);
-        CreateOrderRequest second = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, SLOT_ID,
+        Instant secondStart = Instant.now().plus(2, ChronoUnit.DAYS);
+        CreateOrderRequest second = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, secondStart,
                 "Jerusalem", "Jaffa Rd", "99", null, null, null, null);
         bookingsService.createOrder(CUSTOMER_ID, second);
 

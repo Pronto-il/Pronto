@@ -82,6 +82,15 @@ public class User {
     @Column(name = "default_address_notes", length = 500)
     private String defaultAddressNotes;
 
+    /**
+     * Customer phone number, collected at registration (professional weekly availability
+     * calendar design §2.5/§9.1). Always {@code null} for a {@code PROFESSIONAL} account,
+     * same convention as {@code default_city} et al. Set via setter, not the constructor,
+     * mirroring how the default-address fields above are populated after construction.
+     */
+    @Column(name = "phone", length = 20)
+    private String phone;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -227,6 +236,14 @@ public class User {
 
     public void setDefaultAddressNotes(String defaultAddressNotes) {
         this.defaultAddressNotes = defaultAddressNotes;
+    }
+
+    public String getPhone() {
+        return phone;
+    }
+
+    public void setPhone(String phone) {
+        this.phone = phone;
     }
 
     public Instant getCreatedAt() {

@@ -39,6 +39,16 @@ primitives, etc.) — not feature-specific components, which live under their ow
   shares its color with `CANCELLED`). Every screen that shows an order's status — the
   tracking screen, the customer's my-orders list, the professional's incoming-requests
   feed and jobs list — goes through this one component rather than a per-page badge.
+- `Modal` — generic modal primitive (`isOpen`/`onClose`/`title`/`children`/`footer`/`size`),
+  added for the professional weekly availability calendar feature (M5, 2026-08-18; design
+  `docs/architecture/professional-weekly-calendar-design.md` §7.4/§13/§57-59). One component
+  renders both a desktop centered dialog (`420`/`560`/`720px` via `size`) and a mobile bottom
+  sheet (`border-radius: 20px 20px 0 0`) — CSS `@media (max-width: 640px)` decides which is
+  visually active, no `variant` prop needed from callers (this codebase's existing
+  desktop-grid/mobile-day-view breakpoint pattern, already used by `WeeklyCalendarGrid`).
+  Portal-rendered into `document.body` (`createPortal`), closes on overlay click and
+  `Escape`, locks body scroll while open. First (and, as of M5, only) consumer:
+  `features/dashboard/CalendarBlockModal.tsx`.
 
 Each CSS-module file (`ComponentName.module.css`) sits next to its component.
 
@@ -46,7 +56,9 @@ Each CSS-module file (`ComponentName.module.css`) sits next to its component.
 Implemented in **Milestone 1 — Auth & user management**
 (`docs/architecture/implementation-plan.md`), first consumed by `features/auth`'s
 registration/login/verify screens. Extended as later milestones need new shared UI —
-`StatusBadge` was added in **Frontend Milestone 3 — Standard booking flow (2026-08-16)**.
+`StatusBadge` was added in **Frontend Milestone 3 — Standard booking flow (2026-08-16)**;
+`Modal` was added in **the professional weekly availability calendar feature, M5
+(2026-08-18)** — see its entry above.
 
 **MS3/MS4 product-corrections pass (2026-08-17)**: `PhotoUploader`'s `UploadedPhoto` shape
 gained an `imageUrl` field (`result.imageUrl` from `POST /api/storage/images`'s response,

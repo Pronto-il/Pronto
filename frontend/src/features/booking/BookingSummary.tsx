@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button, Card } from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
 import { createOrder, ApiError, GENERIC_ERROR_MESSAGE, getCategoryNameHe } from '../../shared/api';
-import type { AvailabilitySlotItem, OrderResponse, ProfessionalCard as ProfessionalCardData } from '../../shared/api';
+import type { OrderResponse, ProfessionalCard as ProfessionalCardData } from '../../shared/api';
 import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
 import styles from './BookingSummary.module.css';
 
@@ -10,15 +10,23 @@ export interface BookingSummaryProps {
   issueId: number;
   categoryId: number;
   professional: ProfessionalCardData;
-  slot: AvailabilitySlotItem;
+  /** The chosen ISO start instant — `bookedEnd` is derived here for display only (never sent
+   *  to/trusted from the server, design §9.2.3). */
+  bookedStart: string;
+  /** Echoed from `GET .../available-windows`'s response — never hardcoded client-side. */
+  defaultDurationMinutes: number;
   address: AddressValue;
   onConfirmed: (order: OrderResponse) => void;
-  /** The chosen slot was claimed by someone else in the meantime — send the customer back to pick another. */
-  onSlotUnavailable: () => void;
+  /** The chosen start time became unavailable (raced by another customer) — send the customer
+   *  back to pick another. Takes the error message to display, because this component
+   *  unmounts as part of that transition (the parent swaps back to the `slot` step), so any
+   *  banner state set here would never get a chance to paint — the parent must own and render
+   *  it instead (see `BookingFlowPage.tsx`'s `slot`-step banner). */
+  onTimeUnavailable: (message: string) => void;
 }
 
 const ORDER_ERROR_MESSAGES: Record<string, string> = {
-  SLOT_UNAVAILABLE: 'התור הזה כבר נתפס. אפשר לבחור זמן אחר.',
+  BOOKING_TIME_UNAVAILABLE: 'הזמן הזה כבר לא פנוי. אפשר לבחור זמן אחר.',
   ISSUE_NOT_BOOKABLE: 'הבקשה הזו כבר בטיפול. אפשר לעקוב אחריה בדף ההזמנות שלך.',
 };
 
@@ -37,10 +45,11 @@ export function BookingSummary({
   issueId,
   categoryId,
   professional,
-  slot,
+  bookedStart,
+  defaultDurationMinutes,
   address,
   onConfirmed,
-  onSlotUnavailable,
+  onTimeUnavailable,
 }: BookingSummaryProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [bannerError, setBannerError] = useState<string | null>(null);
@@ -52,7 +61,7 @@ export function BookingSummary({
       const order = await createOrder({
         issueId,
         professionalId: professional.professionalId,
-        slotId: slot.slotId,
+        bookedStart,
         serviceCity: address.city,
         serviceStreet: address.street,
         serviceHouseNumber: address.houseNumber,
@@ -63,9 +72,11 @@ export function BookingSummary({
       });
       onConfirmed(order);
     } catch (error) {
-      if (error instanceof ApiError && error.code === 'SLOT_UNAVAILABLE') {
-        setBannerError(ORDER_ERROR_MESSAGES.SLOT_UNAVAILABLE);
-        onSlotUnavailable();
+      if (error instanceof ApiError && error.code === 'BOOKING_TIME_UNAVAILABLE') {
+        // Not `setBannerError` here — this component is about to unmount as `onTimeUnavailable`
+        // sends the customer back to the `slot` step, so a banner set on local state would
+        // never paint. The parent renders the message instead.
+        onTimeUnavailable(ORDER_ERROR_MESSAGES.BOOKING_TIME_UNAVAILABLE);
       } else if (error instanceof ApiError && ORDER_ERROR_MESSAGES[error.code]) {
         setBannerError(ORDER_ERROR_MESSAGES[error.code]);
       } else {
@@ -75,6 +86,10 @@ export function BookingSummary({
       setIsSubmitting(false);
     }
   }
+
+  // Display-only — never sent to/trusted from the server; the server independently
+  // recomputes and validates the real `bookedEnd` (design §9.2.2/§9.2.3).
+  const bookedEnd = new Date(new Date(bookedStart).getTime() + defaultDurationMinutes * 60_000).toISOString();
 
   const addressLine = [address.city, address.street, address.houseNumber].filter(Boolean).join(', ') + (address.apartment ? `, דירה ${address.apartment}` : '');
 
@@ -96,7 +111,7 @@ export function BookingSummary({
         <div className={styles.row}>
           <span className={styles.rowLabel}>תאריך ושעה</span>
           <span className={styles.rowValue}>
-            {formatDateLabel(slot.startTime)}, {formatTimeLabel(slot.startTime)}
+            {formatDateLabel(bookedStart)}, {formatTimeLabel(bookedStart)}–{formatTimeLabel(bookedEnd)}
           </span>
         </div>
 

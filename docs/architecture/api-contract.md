@@ -123,10 +123,18 @@ request instead.
       "floor": "2",
       "entrance": "A",
       "addressNotes": "כניסה מהחצר"
-    }
+    },
+    "phone": "0501234567"
   }
 }
 ```
+
+**`customer.phone`** — added by the professional weekly availability calendar design's M2
+(2026-08-18, `docs/architecture/professional-weekly-calendar-design.md` §9.1). Required for a
+`CUSTOMER` registration, same validation tier as `customer.defaultAddress`'s required fields
+(sibling field on the same `customer` object, not nested inside `defaultAddress` — a phone
+number is not an address component). **Not** collected for `PROFESSIONAL` registration —
+`users.phone` stays `NULL` for that role, no field added to the professional payload.
 
 **`data` — professional:**
 ```json
@@ -158,6 +166,7 @@ to or persisted by the backend.
 | `customer` / `customer.defaultAddress` | required *iff* `role = CUSTOMER`; absent → `VALIDATION_ERROR` on `customer.defaultAddress`. |
 | `customer.defaultAddress.city` / `.street` / `.houseNumber` | required, non-blank, size-capped (100/150/20 chars, matching `users.default_*` column lengths). |
 | `customer.defaultAddress.apartment` / `.floor` / `.entrance` / `.addressNotes` | optional. |
+| `customer.phone` | **New, M2.** Required, non-blank, ≤20 chars (matching `users.phone VARCHAR(20)`, `V28`). Read-only after registration — no edit endpoint exists in this API to update it, same as `defaultAddress`. |
 | `professional.categoryId` | required *iff* `role = PROFESSIONAL`; must reference an existing `categories.id` (1–8, per the seeded `V10` list). Absent/invalid → `VALIDATION_ERROR`. |
 | `professional.serviceArea` | required *iff* `role = PROFESSIONAL`; 1–150 chars. |
 | `professional.basePrice` | required *iff* `role = PROFESSIONAL`; `> 0`, ≤2 decimal places. Same judgment call as before (PRD §1/§7.3/§7.4 price-on-card requirement), unchanged. |
@@ -353,7 +362,8 @@ load, rather than only ever trusting decoded JWT claims client-side).
     "floor": "2",
     "entrance": "א",
     "addressNotes": "קוד כניסה 1234"
-  }
+  },
+  "phone": "0501234567"
 }
 ```
 
@@ -370,7 +380,8 @@ load, rather than only ever trusting decoded JWT claims client-side).
     "serviceArea": "תל אביב",
     "basePrice": 150.00
   },
-  "defaultAddress": null
+  "defaultAddress": null,
+  "phone": null
 }
 ```
 
@@ -385,6 +396,16 @@ address; it is only ever set once, at registration (§2.1 step 3, `V20`'s
 `default_city`/`default_street`/`default_house_number`/`default_apartment`/`default_floor`/
 `default_entrance`/`default_address_notes` columns). See
 `docs/architecture/ms3-ms4-corrections-design.md` §1.
+
+**`phone`** — added by the professional weekly availability calendar design's M2
+(2026-08-18). A top-level string field (not nested), mirroring `defaultAddress`'s exact
+nullability/placement convention: `null` for a `PROFESSIONAL` caller, and `null` for a
+`CUSTOMER` with no recorded phone (a pre-`V28` account). Read-only — no endpoint exists in
+this API to update it, set once at registration (§2.1's `customer.phone` field, `V28`'s
+`users.phone` column). This is the customer viewing **their own** phone on their own account
+screen — an entirely separate, ungated concern from the order-based professional-visibility
+rule `docs/architecture/api-contract-bookings.md` §2.8 adds (`OrderDetailResponse
+.customerPhone`). See `docs/architecture/professional-weekly-calendar-design.md` §9.1.
 
 **Status codes**: `200` success · `401 UNAUTHORIZED` (missing/invalid/expired token, or the
 token's user no longer exists / is soft-deleted).

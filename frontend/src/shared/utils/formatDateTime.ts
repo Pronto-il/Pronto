@@ -1,9 +1,10 @@
 /**
- * Small Hebrew date/time formatting helpers shared by every screen that renders an
- * `AvailabilitySlotItem`/`OrderResponse` timestamp (`features/booking`'s `SlotPicker`,
- * `BookingSummary`, `OrderTrackingPage`, `MyOrdersPage`; `features/dashboard`'s
- * `IncomingRequestCard`; `features/professionals`'s `ReviewList`) — extracted here rather
- * than reimplemented per screen (FRONTEND_AGENT.md §40).
+ * Small Hebrew date/time formatting helpers shared by every screen that renders an ISO
+ * timestamp (`features/booking`'s `StartTimePicker` — renamed from `SlotPicker` as of the
+ * professional weekly availability calendar feature M6, `BookingSummary`,
+ * `OrderTrackingPage`, `MyOrdersPage`; `features/dashboard`'s `IncomingRequestCard`;
+ * `features/professionals`'s `ReviewList`) — extracted here rather than reimplemented per
+ * screen (FRONTEND_AGENT.md §40).
  */
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('he-IL', { weekday: 'long', day: 'numeric', month: 'long' });

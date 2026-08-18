@@ -79,24 +79,42 @@ export function getProfessionalsForIssue(
   return httpClient.get<ProfessionalListingResponse>(`/api/bookings/professionals?${params.toString()}`);
 }
 
-export interface AvailabilitySlotItem {
-  slotId: number;
-  startTime: string;
-  endTime: string;
-}
-
-export interface ProfessionalSlotsResponse {
-  professionalId: number;
-  slots: AvailabilitySlotItem[];
+/**
+ * One entry in `GET /api/bookings/professionals/{professionalId}/available-windows
+ * ?issueId=`'s `windows` array — a derived `AVAILABLE` window, already guaranteed
+ * `>= defaultDurationMinutes` long (design §9.2.2). Verified directly against the real
+ * backend record, `bookings.dto.AvailableWindow`.
+ */
+export interface AvailableWindow {
+  startAt: string;
+  endAt: string;
 }
 
 /**
- * `GET /api/bookings/professionals/{professionalId}/slots?issueId=` — unchanged from the
- * original api-contract-bookings.md §2.3, not affected by Milestone 8.
+ * Professional weekly availability calendar feature, M6 (design §9.2.2). Replaces the
+ * retired `GET .../slots?issueId=`/`ProfessionalSlotsResponse`/`getProfessionalSlots` entirely
+ * — not kept for backward compatibility, since the backend route itself no longer exists.
+ * `defaultDurationMinutes`/`timezone` are echoed from the server rather than hardcoded
+ * client-side (same single-source-of-truth reasoning `CalendarResponse.timezone` already
+ * uses). Verified directly against the real backend record, `bookings.dto.AvailableWindowsResponse`.
  */
-export function getProfessionalSlots(professionalId: number, issueId: number): Promise<ProfessionalSlotsResponse> {
-  return httpClient.get<ProfessionalSlotsResponse>(
-    `/api/bookings/professionals/${professionalId}/slots?issueId=${issueId}`,
+export interface AvailableWindowsResponse {
+  professionalId: number;
+  issueId: number;
+  defaultDurationMinutes: number;
+  timezone: string;
+  windows: AvailableWindow[];
+}
+
+/**
+ * `GET /api/bookings/professionals/{professionalId}/available-windows?issueId=` — replaces
+ * the retired `GET .../slots?issueId=` (design §9.2.2). An empty `windows` array is a valid,
+ * expected response (no derived availability fits a full job) — not an error, same UX as the
+ * old empty-`slots` case.
+ */
+export function getAvailableWindows(professionalId: number, issueId: number): Promise<AvailableWindowsResponse> {
+  return httpClient.get<AvailableWindowsResponse>(
+    `/api/bookings/professionals/${professionalId}/available-windows?issueId=${issueId}`,
   );
 }
 
@@ -105,12 +123,17 @@ export function getProfessionalSlots(professionalId: number, issueId: number): P
  * real Milestone 8 addition to the request body (`orders.service_*` columns) — not present
  * in api-contract-bookings.md §2.4's original prose. `serviceFloor`/`serviceEntrance`/
  * `serviceAddressNotes` are a further optional addition (V22 — orders schema gap fix, see
- * `ms3-ms4-corrections-design.md` §2).
+ * `ms3-ms4-corrections-design.md` §2). **As of the professional weekly availability calendar
+ * feature, M6 (design §9.2.2)**: `slotId` is dropped entirely (not kept, even as an
+ * optional/ignored field) and replaced by `bookedStart` — a client-chosen ISO instant,
+ * required, validated strictly-in-the-future server-side. `bookedEnd` is deliberately never a
+ * field here — always computed server-side as `bookedStart + DEFAULT_JOB_DURATION_MINUTES`
+ * (currently 60), never accepted from the client.
  */
 export interface CreateOrderRequest {
   issueId: number;
   professionalId: number;
-  slotId: number;
+  bookedStart: string;
   serviceCity: string;
   serviceStreet: string;
   serviceHouseNumber: string;
@@ -179,9 +202,18 @@ export function completeOrder(orderId: number): Promise<OrderResponse> {
   return httpClient.post<OrderResponse>(`/api/bookings/orders/${orderId}/complete`);
 }
 
-/** Same fields as `OrderResponse` plus display-friendly names. */
+/**
+ * Same fields as `OrderResponse` plus display-friendly names. `customerPhone` — new,
+ * professional weekly availability calendar design §9.1 — is populated by the same
+ * party-to-order authorization check as everything else on this DTO (no extra client-side
+ * gating needed): visible to the order's own customer (their own phone) and to the assigned
+ * professional starting the moment the order is created (`PENDING` onward). Rendered only for
+ * a `PROFESSIONAL` viewer (`OrderTrackingPage.tsx`) — no reciprocal "customer sees the
+ * professional's phone" requirement exists in any source document.
+ */
 export interface OrderDetailResponse extends OrderResponse {
   customerName: string;
+  customerPhone: string | null;
   professionalName: string;
 }
 

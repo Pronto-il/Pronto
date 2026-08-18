@@ -1,0 +1,317 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+}
+
+.navButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.navButton:hover {
+  border-color: var(--color-border-strong);
+}
+
+.navLabel {
+  min-width: 180px;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.legendSwatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-sm);
+}
+
+.statusText {
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  padding: var(--space-6) 0;
+  text-align: center;
+}
+
+.banner {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  font-size: 14px;
+  line-height: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+.banner p {
+  margin: 0;
+}
+
+.calendar {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+/* ---- Desktop 7-column grid ---- */
+
+.desktopGrid {
+  display: block;
+}
+
+.headerRow {
+  display: grid;
+  grid-template-columns: 56px repeat(7, 1fr);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.axisHeaderCell {
+  border-inline-start: 1px solid var(--color-border);
+}
+
+.dayHeaderCell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-2) var(--space-1);
+  border-inline-start: 1px solid var(--color-border);
+}
+
+.dayHeaderToday {
+  background: var(--color-primary-light);
+}
+
+.dayHeaderWeekday {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.dayHeaderDate {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.bodyScroll {
+  max-height: 640px;
+  overflow-y: auto;
+}
+
+.body {
+  display: grid;
+  grid-template-columns: 56px repeat(7, 1fr);
+  position: relative;
+}
+
+.axisColumn {
+  position: relative;
+  border-inline-start: 1px solid var(--color-border);
+}
+
+.axisTick {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
+  transform: translateY(-50%);
+  text-align: center;
+}
+
+.axisLabel {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  padding-inline: 2px;
+}
+
+.dayColumn {
+  position: relative;
+  border-inline-start: 1px solid var(--color-border);
+  background: var(--color-surface-secondary);
+}
+
+.gridLine {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
+  border-top: 1px solid var(--color-border);
+  opacity: 0.6;
+}
+
+/* ---- Segments — distinct fill + text label/icon per type, not color-only
+   (DESIGN_SYSTEM.md / design §7.3 accessibility requirement). ---- */
+
+.segment {
+  position: absolute;
+  inset-inline-start: 2px;
+  inset-inline-end: 2px;
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 11px;
+  line-height: 14px;
+  cursor: pointer;
+  border: none;
+  outline-offset: 2px;
+}
+
+.segment:hover {
+  filter: brightness(0.96);
+}
+
+.segment:focus-visible {
+  outline: 2px solid var(--color-primary);
+}
+
+.segmentLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+}
+
+.segmentTime {
+  color: inherit;
+  opacity: 0.85;
+}
+
+.segmentReason {
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* AVAILABLE — light success tint. */
+.segmentAvailable {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  border: 1px solid var(--color-success-bg);
+}
+
+/* BLOCKED — diagonal-hatch pattern + lock icon, its own distinct treatment. */
+.segmentBlocked {
+  background-color: var(--color-surface-secondary);
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--color-border-strong) 0,
+    var(--color-border-strong) 2px,
+    transparent 2px,
+    transparent 8px
+  );
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-strong);
+}
+
+/* BOOKED — sub-labeled by the reused `StatusBadge` (its own color mapping); this wrapper
+   only sets a neutral surrounding tint so the badge itself carries the color meaning. */
+.segmentBooked {
+  background: var(--color-info-bg);
+  border: 1px solid var(--color-info-bg);
+}
+
+/* COMPLETED bookings get a distinct, muted treatment (design §20). */
+.segmentCompleted {
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border);
+  opacity: 0.75;
+}
+
+/* ---- Mobile: single-day view + day switcher ---- */
+
+.mobileView {
+  display: none;
+}
+
+.daySwitcher {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dayChip {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 44px;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.dayChipActive {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #ffffff;
+}
+
+.dayChipWeekday {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dayChipDate {
+  font-size: 11px;
+}
+
+.mobileBody {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  position: relative;
+}
+
+@media (max-width: 640px) {
+  .desktopGrid {
+    display: none;
+  }
+
+  .mobileView {
+    display: block;
+  }
+}

@@ -47,6 +47,22 @@ already used everywhere else in this doc. One new error code is introduced,
 below and §2.18/§2.19 for the exact semantics. No new Flyway migration is required (§1.6).
 No other section of this doc's Milestone 3/4/6 design is changed by this pass.
 
+**Professional weekly availability calendar, M2 (2026-08-18), implemented.** §2.3 and §2.4
+are **rewritten in place** (not left stale behind a "known gap" note, unlike the Milestone 8
+fields below) — `GET .../professionals/{id}/slots?issueId=` is retired entirely and replaced
+by `GET .../professionals/{id}/available-windows?issueId=` (§2.3), and `POST
+/api/bookings/orders` (§2.4) drops `slotId` for a direct `bookedStart` (server-derives
+`bookedEnd`, pre-checks via the new `AvailabilityDerivationService`, and is now authoritatively
+protected by the `ck_orders_no_overlap` exclusion constraint rather than an atomic slot claim).
+§2.8 gains `customerPhone`. One new error code, `BOOKING_TIME_UNAVAILABLE` (409) — see the new
+"Error code taxonomy — professional weekly availability calendar M2 addition" table below;
+`SLOT_UNAVAILABLE` becomes vestigial (kept, never returned). One new migration,
+`V28__alter_users_add_phone.sql` (owned by `users`, not this package — adds `users.phone`).
+`createSosOrder`/`accept`/`reject`/`cancel`/`onTheWay`/`complete`/`GET .../me` — **confirmed
+unchanged**. Full design: `docs/architecture/professional-weekly-calendar-design.md` §9.1/
+§9.2/§10 (M2 entry). Implementation record: `backend/.../bookings/README.md`'s dedicated M2
+section.
+
 **Known gap, still open**: §2.2/§2.4/§2.8/§2.12/§2.13's request/response JSON bodies below
 **predate backend Milestone 8** (professional profiles/reviews/favorites/matching) and were
 never corrected in place — first flagged in `overview.md`'s Frontend Milestone 3 entry
@@ -437,7 +453,7 @@ New codes:
 |---|---|---|
 | `ISSUE_NOT_BOOKABLE` | 409 | `POST /api/bookings/orders` (or the professional-listing/slot endpoints) called against an issue whose `status != 'OPEN'` — either it already has an active order (`BOOKED`), or it's terminal (`COMPLETED`/`CANCELLED`/`EXPIRED`). Also returned if a concurrent request wins the race to book the issue first (§3.2). |
 | `CATEGORY_MISMATCH` | 400 | The referenced `professionalId`'s `category_id` doesn't match the issue's `category_id` (defense against URL/body tampering — the listing/slot endpoints only ever *offer* correctly-matched professionals). |
-| `SLOT_UNAVAILABLE` | 409 | The referenced `slotId` doesn't exist for that professional, isn't currently `is_available = true`, has `start_time <= now()`, or lost a concurrency race to another request claiming it first (§3.2). |
+| `SLOT_UNAVAILABLE` | 409 | The referenced `slotId` doesn't exist for that professional, isn't currently `is_available = true`, has `start_time <= now()`, or lost a concurrency race to another request claiming it first (§3.2). **Vestigial as of the professional weekly availability calendar design's M2 (2026-08-18)** — `POST /api/bookings/orders` (§2.4) no longer accepts a `slotId` at all, so no code path can return this anymore; the professional's own `PUT`/`DELETE /api/availability/slots/{slotId}` endpoints (§2.18/§2.19) never returned it in the first place (they return `SLOT_IN_USE`, Milestone 7 table below) — kept in the taxonomy regardless, not deleted, per this doc family's "cheap insurance" convention. |
 | `ORDER_NOT_PENDING` | 409 | `accept`/`reject` called on an order whose `order_status != 'PENDING'` (already decided, or lost a race to a concurrent accept/reject). |
 | `ORDER_NOT_CANCELLABLE` | 409 | `cancel` called on an order in a terminal state (`COMPLETED`/`CANCELLED`/`REJECTED`/`EXPIRED`), or by an actor/state combination that isn't permitted (a professional calling `cancel` on a still-`PENDING` order — they must use `reject` instead, §2.7). |
 
@@ -466,7 +482,13 @@ one).
 
 | `error.code` | HTTP status | Meaning |
 |---|---|---|
-| `SLOT_IN_USE` | 409 | `PUT`/`DELETE /api/availability/slots/{slotId}` (§2.18/§2.19) called on a slot whose `is_available != true` **after** ownership has already been confirmed (§2.18/§2.19 step 3-4 already ruled out "doesn't exist"/"not yours") — i.e. the slot is currently held by an active order (`PENDING`/`CONFIRMED`/`ON_THE_WAY`) or was consumed by a `COMPLETED` order (§3.4's `is_available` reasoning, extended below), or lost a race to a concurrent claim/edit/delete between the ownership check and the atomic guard. **Deliberately a new code, not a reuse of `SLOT_UNAVAILABLE`** — see §2.18's "why a new code" note for the full reasoning; the two codes now cover disjoint call sites (`SLOT_UNAVAILABLE` is the customer-side booking-claim failure at §2.4 step 9; `SLOT_IN_USE` is the professional-side edit/delete-protection failure here) and are never returned by the same endpoint. |
+| `SLOT_IN_USE` | 409 | `PUT`/`DELETE /api/availability/slots/{slotId}` (§2.18/§2.19) called on a slot whose `is_available != true` **after** ownership has already been confirmed (§2.18/§2.19 step 3-4 already ruled out "doesn't exist"/"not yours") — i.e. the slot is currently held by an active order (`PENDING`/`CONFIRMED`/`ON_THE_WAY`) or was consumed by a `COMPLETED` order (§3.4's `is_available` reasoning, extended below), or lost a race to a concurrent claim/edit/delete between the ownership check and the atomic guard. **Deliberately a new code, not a reuse of `SLOT_UNAVAILABLE`** — see §2.18's "why a new code" note for the full reasoning; the two codes now cover disjoint call sites (`SLOT_UNAVAILABLE` was the customer-side booking-claim failure at the pre-M2 §2.4 step 9, now vestigial per the table above; `SLOT_IN_USE` is the professional-side edit/delete-protection failure here, unaffected by M2) and were never returned by the same endpoint. |
+
+### Error code taxonomy — professional weekly availability calendar M2 addition (2026-08-18)
+
+| `error.code` | HTTP status | Meaning |
+|---|---|---|
+| `BOOKING_TIME_UNAVAILABLE` | 409 | `POST /api/bookings/orders` (§2.4, reworked) — the requested `[bookedStart, bookedEnd)` is not fully contained in a single derived `AVAILABLE` segment at pre-check time (outside working hours, overlapping a manual block, or overlapping an existing `PENDING`/`CONFIRMED`/`ON_THE_WAY` booking), **or** the `INSERT` itself was rejected by the `ck_orders_no_overlap` exclusion constraint (a lost concurrency race). Replaces `SLOT_UNAVAILABLE` for this endpoint — see the Milestone 3 table above. Full design: `docs/architecture/professional-weekly-calendar-design.md` §9.2.2. |
 
 ---
 
@@ -605,43 +627,59 @@ null-tolerant field).
 
 ---
 
-### 2.3 `GET /api/bookings/professionals/{professionalId}/slots?issueId={id}`
+### 2.3 `GET /api/bookings/professionals/{professionalId}/available-windows?issueId={id}` (superseded, M2)
+
+> **Superseded, 2026-08-18, by the professional weekly availability calendar design's M2**
+> (`docs/architecture/professional-weekly-calendar-design.md` §9.2.2). The route below is
+> `GET .../available-windows?issueId=` — **not** the original `GET .../slots?issueId=` this
+> section originally specified; that route is retired entirely, not kept for compatibility.
+> This section is rewritten in place (not left stale) since a reader landing here needs the
+> real, currently-implemented contract, not Milestone 3's original design.
 
 Auth required: **yes**. Role: **CUSTOMER**.
 
-A specific professional's open, future `availability_slots`, for the customer to pick one
-to book against.
+A specific professional's derived `AVAILABLE` windows (from the weekly working-hours/block/
+booking calendar, `professional_weekly_calendar` design §5), each already sized to fit the
+default job duration, for the customer to pick a start time to book against. Discrete
+`availability_slots` rows are no longer read by this endpoint at all.
 
 **Behavior:**
 1. Resolve caller; `403 FORBIDDEN` if `role != CUSTOMER`.
 2. `issueId` query param required/valid → `400 VALIDATION_ERROR` otherwise.
 3. Load issue → `404 NOT_FOUND`; ownership → `403 FORBIDDEN`; urgency type
-   (`urgencyType == 'STANDARD'`) → `409 ISSUE_URGENCY_MISMATCH` (new this pass, §6 item 5);
-   bookable (`status == 'OPEN'`) → `409 ISSUE_NOT_BOOKABLE`. (Same four checks as §2.2 —
-   kept as defense-in-depth even though the frontend would normally only reach this screen
-   after §2.2, consistent with this contract family's established paranoid-validation
-   style, e.g. M2's re-validation of `imageKeys` in both `/classify` and `POST
-   /api/issues`.)
+   (`urgencyType == 'STANDARD'`) → `409 ISSUE_URGENCY_MISMATCH`; bookable (`status ==
+   'OPEN'`) → `409 ISSUE_NOT_BOOKABLE`. **Unchanged from the original design** — identical to
+   the pre-M2 checks, byte-for-byte.
 4. Load professional by `{professionalId}` path variable → `404 NOT_FOUND` if it doesn't
-   exist at all (path-referenced id, §0's new convention).
-5. `professional.categoryId != issue.categoryId` → `400 CATEGORY_MISMATCH`.
-6. Query `availability_slots` where `professional_id = :professionalId AND is_available =
-   true AND start_time > now()`, ordered by `start_time ASC`.
+   exist at all (path-referenced id, §0's convention). **Unchanged.**
+5. `professional.categoryId != issue.categoryId` → `400 CATEGORY_MISMATCH`. **Unchanged.**
+6. **New in M2, replaces the old raw `availability_slots` query**: call
+   `AvailabilityDerivationService#deriveAvailableWindows(professionalId, from, to,
+   Duration.ofMinutes(DEFAULT_JOB_DURATION_MINUTES))` — a thin filter over the same
+   subtract-blocks/subtract-bookings derivation the calendar read endpoint uses (design §5),
+   keeping only `AVAILABLE` segments whose duration is `>= DEFAULT_JOB_DURATION_MINUTES` (60).
+   `from = now()`, `to = now() + 14 days` — a fixed internal lookahead, not exposed as a query
+   param (a judgment call, design §9.2.2, since deriving availability on demand makes an
+   unbounded future window computationally unreasonable).
 7. Return the list.
 
 **Response `200`:**
 ```json
 {
   "professionalId": 43,
-  "slots": [
-    { "slotId": 77, "startTime": "2026-08-14T09:00:00Z", "endTime": "2026-08-14T11:00:00Z" },
-    { "slotId": 78, "startTime": "2026-08-15T13:00:00Z", "endTime": "2026-08-15T14:30:00Z" }
+  "issueId": 101,
+  "defaultDurationMinutes": 60,
+  "timezone": "Asia/Jerusalem",
+  "windows": [
+    { "startAt": "2026-08-20T08:00:00+03:00", "endAt": "2026-08-20T12:00:00+03:00" },
+    { "startAt": "2026-08-20T13:00:00+03:00", "endAt": "2026-08-20T15:00:00+03:00" }
   ]
 }
 ```
 
-An empty `slots` array is a valid, expected response (the professional currently has no
-open windows) — not an error.
+An empty `windows` array is a valid, expected response (the professional currently has no
+open windows long enough for the default job duration) — not an error. `defaultDurationMinutes`/
+`timezone` are echoed by the server so the frontend never hardcodes either value.
 
 **Status codes**: `200` success · `400 VALIDATION_ERROR` · `400 CATEGORY_MISMATCH` ·
 `401 UNAUTHORIZED` · `403 FORBIDDEN` · `404 NOT_FOUND` · `409 ISSUE_URGENCY_MISMATCH` ·
@@ -649,16 +687,30 @@ open windows) — not an error.
 
 ---
 
-### 2.4 `POST /api/bookings/orders`
+### 2.4 `POST /api/bookings/orders` (reworked, M2)
+
+> **Reworked, 2026-08-18, by the professional weekly availability calendar design's M2**
+> (§9.2.2). Rewritten in place for the same "don't leave a reader with a stale contract"
+> reason as §2.3 above.
 
 Auth required: **yes**. Role: **CUSTOMER**.
 
-Creates the order — the Standard-booking "pick this professional, at this slot" action.
+Creates the order — the Standard-booking "pick this professional, at this start time" action.
 
 **Request:**
 ```json
-{ "issueId": 101, "professionalId": 43, "slotId": 77 }
+{
+  "issueId": 101,
+  "professionalId": 43,
+  "bookedStart": "2026-08-20T09:00:00+03:00",
+  "serviceCity": "תל אביב",
+  "serviceStreet": "אלנבי",
+  "serviceHouseNumber": "12"
+}
 ```
+(`serviceApartment`/`serviceFloor`/`serviceEntrance`/`serviceAddressNotes` unchanged,
+optional, omitted above for brevity — see the service-address snapshot fields this DTO
+already carried before M2.)
 
 **Field validation:**
 
@@ -666,38 +718,54 @@ Creates the order — the Standard-booking "pick this professional, at this slot
 |---|---|
 | `issueId` | required, positive integer. Must resolve to an issue owned by the caller (§ Behavior step 3) — invalid/nonexistent → `404 NOT_FOUND` (path-style semantics apply here too, even though it's a body field, because the *primary* resource this call acts on is the issue being booked; **exception to the general body-field-id-is-VALIDATION_ERROR rule stated in §0**, called out explicitly since it's the one deliberate inconsistency in this doc). |
 | `professionalId` | required, positive integer. Must reference an existing `professionals` row whose `users.deleted_at IS NULL` → `400 VALIDATION_ERROR` otherwise (ordinary body-reference convention, matches M1/M2's `categoryId`). |
-| `slotId` | required, positive integer. Existence/availability checked atomically at claim time (§3.2) → `409 SLOT_UNAVAILABLE`, not `400`, since "exists but is no longer available" is a state conflict, not a malformed request. |
+| `bookedStart` | **New in M2, replaces `slotId`.** Required `Instant`. Must be strictly in the future (`bookedStart > now()` at request time) → `400 VALIDATION_ERROR` otherwise — same "strictly future" convention the retired slot-claim path used, re-anchored to a client-chosen instant instead of a pre-existing row. `bookedEnd` is **never** accepted from the client — always computed server-side as `bookedStart + DEFAULT_JOB_DURATION_MINUTES` (60, a placeholder business figure flagged prominently in `BookingsService`'s own Javadoc, design §9.2.1). |
+
+**`slotId` is removed from this request entirely** — not kept, even as an optional/ignored
+field, for backward compatibility (design §9.2.2: no production data, single frontend
+redeployed atomically with the backend, no external API consumer to preserve compatibility
+for).
 
 **Behavior** (evaluated in this order):
 1. Resolve caller; `403 FORBIDDEN` if `role != CUSTOMER`.
 2. Validate field presence/shape → `400 VALIDATION_ERROR`.
 3. Load issue by `issueId` → `404 NOT_FOUND` if missing.
 4. `issue.customerId != caller.id` → `403 FORBIDDEN`.
-5. **`issue.urgencyType != 'STANDARD'` → `409 ISSUE_URGENCY_MISMATCH`.** New this pass —
-   see §6 item 5: this endpoint never validated `urgencyType` at all before now, a
-   pre-existing Milestone 3 gap fixed here rather than left open.
-6. `issue.status != 'OPEN'` → `409 ISSUE_NOT_BOOKABLE`.
+5. `issue.urgencyType != 'STANDARD'` → `409 ISSUE_URGENCY_MISMATCH`. **Unchanged.**
+6. `issue.status != 'OPEN'` → `409 ISSUE_NOT_BOOKABLE`. **Unchanged.**
 7. Load professional by `professionalId` (with `users.deleted_at IS NULL`) → `400
-   VALIDATION_ERROR` if missing/deleted.
-8. `professional.categoryId != issue.categoryId` → `400 CATEGORY_MISMATCH`.
-9. **Atomically claim the slot** (single transaction from here through step 11):
-   `UPDATE availability_slots SET is_available = false, updated_at = now() WHERE id =
-   :slotId AND professional_id = :professionalId AND is_available = true AND start_time >
-   now()`. If the affected-row count is `0` → `409 SLOT_UNAVAILABLE`, roll back, return
-   immediately (covers: slot doesn't exist, belongs to a different professional, already
-   claimed, already in the past, or lost a concurrency race to a simultaneous request —
-   §3.2).
-10. **Atomically transition the issue**: `UPDATE issues SET status = 'BOOKED', updated_at =
+   VALIDATION_ERROR` if missing/deleted. **Unchanged.**
+8. `professional.categoryId != issue.categoryId` → `400 CATEGORY_MISMATCH`. **Unchanged.**
+9. `bookedStart` not strictly in the future → `400 VALIDATION_ERROR`. **New in M2.**
+10. **Compute `bookedEnd = bookedStart + DEFAULT_JOB_DURATION_MINUTES`. New in M2** —
+    replaces the old "read the slot's own `startTime`/`endTime`" step.
+11. **Fast pre-check, new in M2, replaces the old atomic slot claim (step 9 pre-M2)**: call
+    `AvailabilityDerivationService#deriveCalendar(professionalId, bookedStart, bookedEnd)` and
+    confirm the result contains a single `AVAILABLE` segment that fully contains
+    `[bookedStart, bookedEnd)`. If not → `409 BOOKING_TIME_UNAVAILABLE` (**new error code,
+    replaces `SLOT_UNAVAILABLE` for this endpoint** — `SLOT_UNAVAILABLE` itself stays in the
+    taxonomy, vestigial, never returned by any code path once no caller can supply a `slotId`),
+    roll back, return immediately.
+12. **Atomically transition the issue**: `UPDATE issues SET status = 'BOOKED', updated_at =
     now() WHERE id = :issueId AND status = 'OPEN'`. If affected rows `= 0` → the issue was
-    booked by a concurrent request between step 6 and here → roll back the whole
-    transaction (including the slot claim from step 9) → `409 ISSUE_NOT_BOOKABLE`.
-11. Insert the `orders` row: `issue_id`, `customer_id = caller.id`, `professional_id`,
-    `booked_start = slot.startTime`, `booked_end = slot.endTime`, `order_status =
-    'PENDING'`, `cancelled_by = NULL`, `final_price = professional.basePrice`
-    (initialized from the professional's standing price offer, per `data-model.md` §2.9 —
-    not editable by any endpoint in this milestone), `slot_id = :slotId` (per `V12`, §1.2 —
-    always set for a Standard order).
-12. Commit. Return `201`.
+    booked by a concurrent request between step 6 and here → roll back the whole transaction
+    → `409 ISSUE_NOT_BOOKABLE`. **Unchanged in shape**, just renumbered.
+13. Insert the `orders` row: `issue_id`, `customer_id = caller.id`, `professional_id`,
+    `booked_start = bookedStart`, `booked_end = bookedEnd`, `order_status = 'PENDING'`,
+    `cancelled_by = NULL`, `final_price = professional.basePrice` (unchanged pricing rule),
+    **`slot_id = NULL` always, for every order created via this path from now on** (M2 —
+    replaces the old "always set" rule; the same already-proven-safe no-op pattern SOS orders
+    have used since Milestone 4).
+14. **The `INSERT` itself is protected by the `ck_orders_no_overlap` exclusion constraint**
+    (professional weekly availability calendar design §6, added by that feature's M1) — the
+    sole authoritative backstop for the true concurrency race (two simultaneous `createOrder`
+    calls for the same professional with overlapping ranges, both passing step 11's pre-check
+    before either commits). Catch Postgres's `23P01` (exclusion-violation) SQLState on insert
+    → map to the same `409 BOOKING_TIME_UNAVAILABLE` as step 11 (a client cannot distinguish
+    "you lost a very fast race" from "that time was already gone by the time you asked," and
+    doesn't need to — both mean "pick a different time"). **New in M2** — the old slot-based
+    path had no equivalent race window at this step (the atomic slot claim, formerly step 9,
+    already closed it).
+15. Commit. Return `201`.
 
 **Response `201`:**
 ```json
@@ -707,18 +775,21 @@ Creates the order — the Standard-booking "pick this professional, at this slot
   "customerId": 42,
   "professionalId": 43,
   "orderStatus": "PENDING",
-  "bookedStart": "2026-08-14T09:00:00Z",
-  "bookedEnd": "2026-08-14T11:00:00Z",
+  "bookedStart": "2026-08-20T06:00:00Z",
+  "bookedEnd": "2026-08-20T07:00:00Z",
   "finalPrice": 150.00,
   "cancelledBy": null,
-  "createdAt": "2026-08-13T12:40:00Z",
-  "updatedAt": "2026-08-13T12:40:00Z"
+  "createdAt": "2026-08-18T12:40:00Z",
+  "updatedAt": "2026-08-18T12:40:00Z"
 }
 ```
+(Shape unchanged from before M2 — `bookedEnd` was already a field on this response, simply
+always non-null now for a Standard order.)
 
 **Status codes**: `201` success · `400 VALIDATION_ERROR` · `400 CATEGORY_MISMATCH` ·
 `401 UNAUTHORIZED` · `403 FORBIDDEN` · `404 NOT_FOUND` · `409 ISSUE_URGENCY_MISMATCH` ·
-`409 ISSUE_NOT_BOOKABLE` · `409 SLOT_UNAVAILABLE`.
+`409 ISSUE_NOT_BOOKABLE` · `409 BOOKING_TIME_UNAVAILABLE` (replaces `409 SLOT_UNAVAILABLE`
+for this endpoint as of M2 — see step 11/14 above).
 
 **A customer may re-pick the same professional after a rejection.** Nothing in this
 endpoint (or anywhere else) prevents creating a second `orders` row against the same issue
@@ -851,6 +922,14 @@ no GPS/map, per the hard exclusion.
 4. Return the order, enriched with display-friendly names (avoids the client needing
    follow-up calls just to show "David Cohen" instead of `professionalId: 43`).
 
+**As of the professional weekly availability calendar design's M2 (2026-08-18)**, the
+response also carries `customerPhone` — populated by this **same, unmodified** step 3
+authorization check (no new authorization branch, no `order_status` gating), read off the
+same `User` row already loaded for `customerName`. Visible to the order's own customer and to
+the assigned professional starting the moment the order is created (`PENDING` onward) — the
+same access-scoping the service-address snapshot fields already use. See
+`docs/architecture/professional-weekly-calendar-design.md` §9.1 for the full reasoning.
+
 **Response `200`:**
 ```json
 {
@@ -858,6 +937,7 @@ no GPS/map, per the hard exclusion.
   "issueId": 101,
   "customerId": 42,
   "customerName": "ישראל ישראלי",
+  "customerPhone": "0501234567",
   "professionalId": 43,
   "professionalName": "דוד כהן",
   "orderStatus": "CONFIRMED",
@@ -1828,7 +1908,20 @@ need to change too; flagging the dependency so it isn't silently broken later.
 
 ### 3.4 Slot lifecycle: claim on create, release on reject/cancel, kept on accept/complete
 
-- **Claimed** (`is_available: true → false`) at order-creation time (§2.4 step 8), **not**
+> **Historical as of the professional weekly availability calendar design's M2 (2026-08-18)**:
+> §2.4 (`POST /api/bookings/orders`) no longer claims an `availability_slots` row at all —
+> every Standard order created from M2 onward persists `slot_id = NULL` and is instead
+> protected by the `ck_orders_no_overlap` exclusion constraint (see the rewritten §2.4 above).
+> This whole section remains accurate for **pre-M2 orders** (their `slot_id` still points at a
+> real, now-permanently-claimed row) and for the **release** mechanism below, which is
+> unchanged and still exercised by `reject`/`cancel`/the expiry sweep as a safe no-op for
+> every order created after M2 (the same already-proven-safe pattern SOS orders established in
+> Milestone 4) — not deleted or rewritten, since the release mechanism itself didn't change,
+> only what supplies `slot_id` going forward.
+
+- **Claimed** (`is_available: true → false`) at order-creation time — **through Milestone 8,
+  before M2 retired this step; see the note directly above.** §2.4 step 8 originally read as
+  follows, kept verbatim as the historical record. **Not**
   deferred until the professional accepts. Reasoning: two different customers must not be
   able to both hold a `PENDING` request against the same slot simultaneously — claiming
   early (at request time, not acceptance time) is what a normal "book a specific time

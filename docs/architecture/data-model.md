@@ -53,6 +53,8 @@ professionals (extends a user with role = PROFESSIONAL)
   ← orders.professional_id
   ← reviews.professional_id (new, 2026-08-15)
   ← favorites.professional_id (new, 2026-08-15)
+  ← professional_working_hours.professional_id (new, 2026-08-18; ≤7 rows, one per weekday)
+  ← professional_availability_blocks.professional_id (new, 2026-08-18)
 
 issues
   ← issue_images.issue_id
@@ -124,6 +126,7 @@ lockout, account deletion — PRD §3.2, §5.2.3, §5.2.4).
 | `default_floor` | `VARCHAR(20)` | YES | `NULL` | Same migration/feature. Optional. |
 | `default_entrance` | `VARCHAR(20)` | YES | `NULL` | Same migration/feature. Optional. |
 | `default_address_notes` | `VARCHAR(500)` | YES | `NULL` | Same migration/feature. Optional free text. |
+| `phone` | `VARCHAR(20)` | YES | `NULL` | **New column, added by `V28__alter_users_add_phone.sql`** (professional weekly availability calendar design §2.5/§9.1, 2026-08-18). A Customer's phone number, collected at registration; always `NULL` for a `PROFESSIONAL` row. Nullable at the DB level (no backfillable source of truth for pre-existing rows, same convention as `default_city` et al.), enforced required at the API layer for new `CUSTOMER` registrations — see `api-contract.md` §2.1. Visible to the assigned professional starting at order `PENDING` via `OrderDetailResponse.customerPhone` — see `api-contract-bookings.md` §2.8 and the design doc's §9.1 for the full visibility-rule reasoning (mirrors the service-address snapshot's own access-scoping, no new authorization shape). |
 | `created_at` | `TIMESTAMPTZ` | NO | `now()` | |
 | `updated_at` | `TIMESTAMPTZ` | NO | `now()` | App-managed on write. |
 
@@ -313,7 +316,7 @@ order_status, final_price`.
 | `cancelled_by` | `VARCHAR(20)` | YES | `NULL` | **New column.** `CHECK (cancelled_by IS NULL OR cancelled_by IN ('CUSTOMER','PROFESSIONAL','SYSTEM'))`. Set when `order_status` becomes `'CANCELLED'` (**not** for `'REJECTED'` — that case is unambiguous from the status value alone and needs no further column). Distinguishes who backed out of an already-`CONFIRMED`-or-later order: the customer, the professional, or a system process (e.g. the expiry sweep, §3 item 8). Still needed after adding `REJECTED` — see §3 item 10 for why `'PROFESSIONAL'` remains a valid value here (a professional backing out post-acceptance is a different event from declining a still-`PENDING` request). |
 | `expected_arrival_at` | `TIMESTAMP` | YES | `NULL` | **New column, added by `V23__alter_orders_add_expected_arrival_at.sql`** (Active Booking Floating Indicator feature, 2026-08-17). `NULL` for every order that never reached `ON_THE_WAY` (`PENDING`/`CONFIRMED`, or an order that went `CONFIRMED → CANCELLED`/`REJECTED` without ever going `ON_THE_WAY`). Set exactly once, atomically alongside the `ON_THE_WAY` transition itself (`OrderRepository.onTheWayIfConfirmed`, extended to also set this column in the same guarded `UPDATE`) — `bookings.service.BookingsService.onTheWay` computes it as `now + etaMinutes`, reusing `matching.DistanceEtaStrategy#calculate` (the same call `enrichAndSort` already makes for listing-card ETA). Never modified by any later transition (`complete`/`cancel`) — an immutable snapshot of "what we told the customer to expect," not a live-recomputed figure. **This is a direct, narrow override of the "ETA is never persisted" ruling below** — see the note appended to that ruling and `docs/architecture/active-booking-floating-indicator.md` §0.1 for the full record. Surfaced on `OrderResponse`/`OrderDetailResponse`/`OrderSummaryResponse` and rendered as a live countdown on the tracking screen and the floating active-order indicator. |
 | `final_price` | `NUMERIC(10,2)` | YES | `NULL` | Tracked/displayed only — no payment gateway (confirmed out of scope). Nullable until set; typically initialized from `professionals.base_price` at order creation and may be adjusted later (e.g. after the professional inspects the job on-site), but that workflow detail is application logic, not enforced here. **As of the professional-profile/reviews/favorites/matching feature set (2026-08-15)**: computed at creation time as `base_price_snapshot + sos_surcharge` (see those two columns below) rather than a bare copy of `professionals.base_price` — still nullable, still tracked/displayed only, no payment-gateway change. |
-| `slot_id` | `BIGINT` | YES | `NULL` | Added by `V12__add_slot_id_to_orders.sql` (Milestone 3) — FK → `availability_slots(id)` `ON DELETE SET NULL`. Nullable because SOS orders never consume a slot. See `api-contract-bookings.md` §1.2. |
+| `slot_id` | `BIGINT` | YES | `NULL` | Added by `V12__add_slot_id_to_orders.sql` (Milestone 3) — FK → `availability_slots(id)` `ON DELETE SET NULL`. Nullable because SOS orders never consume a slot. See `api-contract-bookings.md` §1.2. **Usage change, not a schema change, as of the professional weekly availability calendar design's M2 (2026-08-18)**: every **newly created** Standard order also persists `slot_id = NULL` from this point on — `POST /api/bookings/orders` no longer claims an `availability_slots` row at all (see `api-contract-bookings.md` §2.4, reworked). The column/FK themselves are untouched — pre-M2 orders keep their real `slot_id` values, and the release mechanism (`AvailabilitySlotRepository.releaseSlot`) is unchanged, already a safe no-op for `NULL` (the same pattern SOS orders established in Milestone 4). |
 | `service_city` | `VARCHAR(100)` | YES | `NULL` | **New column, added by `V18__alter_orders_add_service_address.sql`** (2026-08-15). A point-in-time snapshot of the customer's service address at booking time, supplied on `POST /api/bookings/orders`/`sos-orders`'s request body — **not** a reference to any stored customer-address record (no such concept exists anywhere in this schema) and **not** automatically copied from whatever address the customer used on the preceding professional-listing call (those are two independent inputs on two independent requests — see `api-contract-professionals-reviews.md` §8/§9 item 4). Nullable at the DB level only because pre-existing orders have no backfillable value; required (`@NotBlank`) at the API/Bean-Validation layer for every order created from this point on. |
 | `service_street` | `VARCHAR(150)` | YES | `NULL` | Same migration/snapshot/nullability reasoning as `service_city`. |
 | `service_house_number` | `VARCHAR(20)` | YES | `NULL` | Same. Stored as `VARCHAR`, not numeric — house numbers routinely carry letters/suffixes (e.g. `"12A"`). |
@@ -330,6 +333,19 @@ order_status, final_price`.
 FK(`customer_id`) → `users(id)` `ON DELETE RESTRICT`; FK(`professional_id`) →
 `professionals(id)` `ON DELETE RESTRICT`; FK(`slot_id`) → `availability_slots(id)` `ON
 DELETE SET NULL`; the two original `CHECK`s above; `CHECK (sos_surcharge >= 0)` (new).
+**New, added by `V27__add_orders_no_overlap_constraint.sql`** (professional weekly
+availability calendar feature, M1): `ck_orders_no_overlap`, a partial `EXCLUDE USING gist`
+constraint (requires the `btree_gist` extension) preventing two rows for the same
+`professional_id` from having overlapping `tstzrange(booked_start, booked_end)` values,
+scoped to `WHERE order_status IN ('PENDING','CONFIRMED','ON_THE_WAY') AND booked_end IS NOT
+NULL` — this structurally excludes every SOS order (always `booked_end IS NULL`) and every
+terminal-status order. **This is now the sole authoritative double-booking protection for
+Standard order creation** — the direct-`bookedStart` order-creation path landed as of M2
+(2026-08-18, confirmed built, not merely anticipated as this note originally read at M1 time);
+see `api-contract-bookings.md` §2.4. It also closed a pre-existing gap for the legacy
+`slotId`-based path retroactively (a professional's own `availability_slots` rows were never
+guaranteed non-overlapping with each other), though that path itself is now retired for new
+orders. See `docs/architecture/professional-weekly-calendar-design.md` §6/§9.2.2.
 **Indexes**: `idx_orders_issue ON (issue_id)`; `idx_orders_customer ON (customer_id)`;
 `idx_orders_professional ON (professional_id)`; `idx_orders_status ON (order_status)`
 (explicitly required by task brief); `idx_orders_professional_status ON (professional_id,
@@ -444,6 +460,71 @@ oversights:**
   meaning apart from either party, the same reasoning already applied to `issue_images`/
   `availability_slots`/`sos_availability`'s existing `CASCADE` carve-outs in §0's FK-policy
   convention table.
+
+---
+
+### 2.13 `professional_working_hours` — *new table, 2026-08-18*
+
+New table, added by `V25__create_professional_working_hours.sql`, part of the professional
+weekly availability calendar feature (M1). Not in PRD §6 — a genuinely new feature. See
+`docs/architecture/professional-weekly-calendar-design.md` §2.1.
+
+One row per professional per weekday (`0 = Sunday … 6 = Saturday`, matching the product
+spec's own Sunday-first example). One default range per weekday — the product does not
+support multiple ranges per day.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `BIGINT` (identity) | NO | — | PK |
+| `professional_id` | `BIGINT` | NO | — | FK → `professionals(id)` `ON DELETE CASCADE` — pure per-professional config, no independent meaning, same convention `sos_availability` (§2.6) already uses. |
+| `weekday` | `SMALLINT` | NO | — | `CHECK (weekday BETWEEN 0 AND 6)`. `0 = Sunday … 6 = Saturday`. |
+| `enabled` | `BOOLEAN` | NO | `true` | `false` = "not working" that weekday. |
+| `start_time` | `TIME` | YES | `NULL` | Wall-clock local time in the app's fixed business timezone (`Asia/Jerusalem`) — **not** `TIMESTAMPTZ`, since this is a recurring weekly rule, not a point in time. `NULL` only valid when `enabled = false`. |
+| `end_time` | `TIME` | YES | `NULL` | Same. |
+| `created_at` | `TIMESTAMPTZ` | NO | `now()` | |
+| `updated_at` | `TIMESTAMPTZ` | NO | `now()` | Bumped on every `PUT`. |
+
+**Constraints**: PK(`id`); `UNIQUE(professional_id, weekday)`
+(`uq_professional_working_hours_professional_weekday`); FK(`professional_id`) →
+`professionals(id)` `ON DELETE CASCADE`; `CHECK (weekday BETWEEN 0 AND 6)`; `CHECK (enabled =
+false OR (start_time IS NOT NULL AND end_time IS NOT NULL AND end_time > start_time))`.
+**Indexes**: `idx_professional_working_hours_professional ON (professional_id)` — the only
+access pattern ("give me this professional's whole week").
+
+**No data migration** — every professional starts with zero configured working hours (empty
+`GET /api/availability/working-hours` response) until they complete first-time setup; this is
+the expected onboarding state, not a migration gap.
+
+### 2.14 `professional_availability_blocks` — *new table, 2026-08-18*
+
+New table, added by `V26__create_professional_availability_blocks.sql`, same feature as
+§2.13. A manual, temporary exception (personal appointment, lunch, vacation, etc.) —
+editable/deletable, never auto-generated, never represents a booking. See
+`docs/architecture/professional-weekly-calendar-design.md` §2.2.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `BIGINT` (identity) | NO | — | PK |
+| `professional_id` | `BIGINT` | NO | — | FK → `professionals(id)` `ON DELETE CASCADE`. |
+| `start_at` | `TIMESTAMPTZ` | NO | — | A real point in time (unlike `professional_working_hours`, a block is a one-off dated exception, not a recurring rule). |
+| `end_at` | `TIMESTAMPTZ` | NO | — | `CHECK (end_at > start_at)`. |
+| `reason` | `VARCHAR(255)` | YES | `NULL` | Optional short free-text reason. |
+| `created_at` | `TIMESTAMPTZ` | NO | `now()` | |
+| `updated_at` | `TIMESTAMPTZ` | NO | `now()` | Bumped on edit. |
+
+**Constraints**: PK(`id`); FK(`professional_id`) → `professionals(id)` `ON DELETE CASCADE`;
+`CHECK (end_at > start_at)`; **exclusion constraint** `ck_blocks_no_overlap` (`EXCLUDE USING
+gist (professional_id WITH =, tstzrange(start_at, end_at) WITH &&)`, requires the
+`btree_gist` extension, enabled by this same migration) — a professional cannot have two of
+their own blocks overlap, enforced authoritatively at the DB level, not just
+application-side.
+**Indexes**: `idx_professional_availability_blocks_professional_start ON (professional_id,
+start_at)` — calendar-range queries (the GiST index behind the exclusion constraint above
+also serves this, but a plain btree is cheaper for the common "date range" read path).
+
+**No data migration** — a `professional_availability_blocks` row cannot be meaningfully
+derived from historical `availability_slots` rows (a slot is a single bookable window, not a
+manual blocked-time exception).
 
 ---
 
@@ -779,7 +860,12 @@ later pass) to reflect `V15`-`V19` (the professional-profile/reviews/favorites/m
 feature set — §2.11/§2.12's new `reviews`/`favorites` tables, and the new columns on
 `professionals`/`orders` documented in §2.4/§2.9 above). The Milestone 7 `availability` slot
 edit/delete addition (`api-contract-bookings.md` §2.18/§2.19) required no schema change, so
-this diagram was and remains unaffected by it. All relationships below are real DB-level
+this diagram was and remains unaffected by it. **Updated again 2026-08-18** for the
+professional weekly availability calendar feature's M1 backend slice: the two new tables in
+§2.13/§2.14 (`professional_working_hours`/`professional_availability_blocks`, `V25`/`V26`)
+and the new `ck_orders_no_overlap` exclusion constraint on `orders` (`V27`, §2.9) — the
+latter adds no new column/relationship, so it isn't drawn as a separate edge below. All
+relationships below are real DB-level
 foreign keys (from the Flyway migrations, §2 above) — none are JPA object-graph associations
 (§0's convention: every FK is a plain `@Column`, never `@ManyToOne`/`@OneToMany`/etc.,
 navigated by application code via repository lookups, not Hibernate-managed navigation).
@@ -802,6 +888,8 @@ erDiagram
     PROFESSIONALS ||--o{ ORDERS : "professional_id (RESTRICT)"
     PROFESSIONALS ||--o{ REVIEWS : "professional_id (RESTRICT)"
     PROFESSIONALS ||--o{ FAVORITES : "professional_id (PK part, CASCADE)"
+    PROFESSIONALS ||--o{ PROFESSIONAL_WORKING_HOURS : "professional_id (CASCADE) -- <=7 rows, one per weekday"
+    PROFESSIONALS ||--o{ PROFESSIONAL_AVAILABILITY_BLOCKS : "professional_id (CASCADE)"
 
     ISSUES ||--o{ ISSUE_IMAGES : "issue_id (CASCADE)"
     ISSUES ||--o{ ORDERS : "issue_id (RESTRICT)"
@@ -918,5 +1006,20 @@ erDiagram
         bigint customer_id PK_FK
         bigint professional_id PK_FK
         timestamptz created_at
+    }
+    PROFESSIONAL_WORKING_HOURS {
+        bigint id PK
+        bigint professional_id FK
+        smallint weekday
+        boolean enabled
+        time start_time
+        time end_time
+    }
+    PROFESSIONAL_AVAILABILITY_BLOCKS {
+        bigint id PK
+        bigint professional_id FK
+        timestamptz start_at
+        timestamptz end_at
+        varchar reason
     }
 ```

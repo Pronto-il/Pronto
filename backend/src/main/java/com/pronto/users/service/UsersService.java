@@ -48,8 +48,15 @@ public class UsersService {
                     user.getDefaultEntrance(), user.getDefaultAddressNotes());
         }
 
+        // §9.1 of the professional weekly availability calendar design: same
+        // CUSTOMER-only/self-view convention as defaultAddress above -- always null for a
+        // PROFESSIONAL (the column itself is always null for that role, but the explicit
+        // role check mirrors defaultAddress's own defensive convention rather than relying
+        // on the column value alone).
+        String phone = user.getRole() == UserRole.CUSTOMER ? user.getPhone() : null;
+
         return new UserMeResponse(user.getId(), user.getFullName(), user.getEmail(),
-                user.getRole(), user.isEmailVerified(), professionalInfo, defaultAddress);
+                user.getRole(), user.isEmailVerified(), professionalInfo, defaultAddress, phone);
     }
 
     /**

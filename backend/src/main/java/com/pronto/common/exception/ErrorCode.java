@@ -66,7 +66,18 @@ public enum ErrorCode {
 
     // Backend registration flow separation (customer default address, professional
     // verification document upload as part of POST /api/auth/register).
-    UNSUPPORTED_DOCUMENT_TYPE(HttpStatus.BAD_REQUEST);
+    UNSUPPORTED_DOCUMENT_TYPE(HttpStatus.BAD_REQUEST),
+
+    // Professional weekly availability calendar, M1 additions (block CRUD). See
+    // docs/architecture/professional-weekly-calendar-design.md §4.7.
+    BLOCK_OVERLAPS_EXISTING_BLOCK(HttpStatus.CONFLICT),
+    BLOCK_OVERLAPS_BOOKING(HttpStatus.CONFLICT),
+
+    // Professional weekly availability calendar, M2 addition (order-creation rework). See
+    // docs/architecture/professional-weekly-calendar-design.md §9.2.2. SLOT_UNAVAILABLE
+    // (above) becomes vestigial as of M2 -- kept in the enum, never returned by any code
+    // path once no caller can supply a slotId anymore.
+    BOOKING_TIME_UNAVAILABLE(HttpStatus.CONFLICT);
 
     private final HttpStatus httpStatus;
 

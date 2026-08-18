@@ -1,9 +1,13 @@
 package com.pronto.bookings.service;
 
-import com.pronto.availability.entity.AvailabilitySlot;
+import com.pronto.availability.dto.CalendarSegment;
+import com.pronto.availability.dto.SegmentType;
 import com.pronto.availability.entity.SosAvailability;
 import com.pronto.availability.repository.AvailabilitySlotRepository;
 import com.pronto.availability.repository.SosAvailabilityRepository;
+import com.pronto.availability.service.AvailabilityDerivationService;
+import com.pronto.bookings.dto.AvailableWindow;
+import com.pronto.bookings.dto.AvailableWindowsResponse;
 import com.pronto.bookings.dto.CreateOrderRequest;
 import com.pronto.bookings.dto.CreateSosOrderRequest;
 import com.pronto.bookings.dto.OrderDetailResponse;
@@ -13,8 +17,6 @@ import com.pronto.bookings.dto.OrdersListResponse;
 import com.pronto.bookings.dto.ProfessionalCard;
 import com.pronto.bookings.dto.ProfessionalListingResponse;
 import com.pronto.bookings.dto.ProfessionalSort;
-import com.pronto.bookings.dto.SlotListingResponse;
-import com.pronto.bookings.dto.SlotSummary;
 import com.pronto.bookings.entity.CancelledBy;
 import com.pronto.bookings.entity.Order;
 import com.pronto.bookings.entity.OrderStatus;
@@ -38,10 +40,12 @@ import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.entity.UserRole;
 import com.pronto.users.repository.UserRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
@@ -73,6 +77,44 @@ public class BookingsService {
      */
     private static final BigDecimal SOS_SURCHARGE_AMOUNT = new BigDecimal("50.00");
 
+    /**
+     * §9.2.1 of the professional weekly availability calendar design — the fixed default job
+     * duration used to derive a Standard order's {@code bookedEnd} server-side from the
+     * customer-chosen {@code bookedStart}.
+     *
+     * <p><b>Explicitly flagged as a placeholder business figure, not a sourced product
+     * requirement</b> — same treatment as {@link #SOS_SURCHARGE_AMOUNT} above, for an
+     * analogous made-up-for-MVP figure. 60 minutes is a genuine product decision made in the
+     * calendar design document itself (design §9.2.1), with no PRD/poster/OnePage backing —
+     * every architecture doc was grepped for "hour"/"minute"/"duration" during that design
+     * pass and turned up no pre-existing job-duration convention anywhere in this codebase.
+     * Chosen because: (1) it is a plausible "typical single visit" length across the fixed
+     * 8-category service list — long enough not to be almost-always-too-short for a real
+     * diagnosis-plus-repair visit, short enough not to needlessly over-block a professional's
+     * calendar; (2) it is a clean multiple of this feature's own 30-minute grid convention
+     * (design §5/§7.3), so generated start-time candidates land on the same grid the
+     * professional's own calendar already uses; (3) it is a single, named,
+     * trivially-changeable constant, not a schema value — changing it later needs no
+     * migration. A category-specific or professional-configurable duration was considered and
+     * explicitly not chosen — more accurate, but unsupported by any part of this task's scope.
+     * See design §9.2.1 for the full rationale record.
+     */
+    static final int DEFAULT_JOB_DURATION_MINUTES = 60;
+
+    /**
+     * §9.2.2 of the design: {@code GET .../available-windows?issueId=} exposes no
+     * {@code from}/{@code to} query params (simpler for the customer booking flow) — the
+     * server applies this fixed internal lookahead instead. A generous but bounded near-term
+     * booking horizon, cheap to derive, trivially adjustable later (an application constant,
+     * not a schema value) — lower-stakes than {@link #DEFAULT_JOB_DURATION_MINUTES}, since it
+     * only affects "how far ahead can a customer see open times," not the correctness of any
+     * booking itself.
+     */
+    private static final long AVAILABLE_WINDOWS_LOOKAHEAD_DAYS = 14;
+
+    /** Postgres SQLState for an exclusion-constraint violation (design §6/§9.2.2 step 5). */
+    private static final String EXCLUSION_VIOLATION_SQLSTATE = "23P01";
+
     private final IssueRepository issueRepository;
     private final ProfessionalRepository professionalRepository;
     private final ProfessionalListingRepository professionalListingRepository;
@@ -83,6 +125,7 @@ public class BookingsService {
     private final NotificationService notificationService;
     private final DistanceEtaStrategy distanceEtaStrategy;
     private final StorageService storageService;
+    private final AvailabilityDerivationService availabilityDerivationService;
 
     public BookingsService(IssueRepository issueRepository,
                             ProfessionalRepository professionalRepository,
@@ -93,7 +136,8 @@ public class BookingsService {
                             UserRepository userRepository,
                             NotificationService notificationService,
                             DistanceEtaStrategy distanceEtaStrategy,
-                            StorageService storageService) {
+                            StorageService storageService,
+                            AvailabilityDerivationService availabilityDerivationService) {
         this.issueRepository = issueRepository;
         this.professionalRepository = professionalRepository;
         this.professionalListingRepository = professionalListingRepository;
@@ -104,6 +148,7 @@ public class BookingsService {
         this.notificationService = notificationService;
         this.distanceEtaStrategy = distanceEtaStrategy;
         this.storageService = storageService;
+        this.availabilityDerivationService = availabilityDerivationService;
     }
 
     /** §2.2, extended with the service-location/sort matching design. */
@@ -126,9 +171,17 @@ public class BookingsService {
         return new ProfessionalListingResponse(issue.getId(), issue.getCategoryId(), professionals);
     }
 
-    /** §2.3. */
+    /**
+     * §9.2.2 of the professional weekly availability calendar design — replaces the retired
+     * {@code listSlots}/{@code GET .../slots?issueId=} entirely. Auth/role/validation steps
+     * 1-5 are identical to the old §2.3 (caller role — enforced at the route level by
+     * {@code BookingsWebConfig}, not here — issue ownership, urgency-type match, bookable-
+     * status check, professional existence, category match); only the final query (old step
+     * 6) changes: a derived-availability lookup instead of a raw {@code availability_slots}
+     * read.
+     */
     @Transactional(readOnly = true)
-    public SlotListingResponse listSlots(Long callerId, Long professionalId, Long issueId) {
+    public AvailableWindowsResponse listAvailableWindows(Long callerId, Long professionalId, Long issueId) {
         Issue issue = loadIssue(issueId);
         if (!issue.getCustomerId().equals(callerId)) {
             throw forbidden();
@@ -146,16 +199,37 @@ public class BookingsService {
             throw categoryMismatch();
         }
 
-        Instant now = Instant.now();
-        List<SlotSummary> slots = availabilitySlotRepository
-                .findByProfessionalIdAndIsAvailableTrueAndStartTimeAfterOrderByStartTimeAsc(professionalId, now)
+        Instant from = Instant.now();
+        Instant to = from.plus(Duration.ofDays(AVAILABLE_WINDOWS_LOOKAHEAD_DAYS));
+        List<AvailableWindow> windows = availabilityDerivationService
+                .deriveAvailableWindows(professionalId, from, to, Duration.ofMinutes(DEFAULT_JOB_DURATION_MINUTES))
                 .stream()
-                .map(s -> new SlotSummary(s.getId(), s.getStartTime(), s.getEndTime()))
+                .map(segment -> new AvailableWindow(segment.startAt(), segment.endAt()))
                 .toList();
-        return new SlotListingResponse(professionalId, slots);
+        return new AvailableWindowsResponse(professionalId, issueId, DEFAULT_JOB_DURATION_MINUTES,
+                AvailabilityDerivationService.BUSINESS_TIMEZONE.getId(), windows);
     }
 
-    /** §2.4, extended with the service-address snapshot. */
+    /**
+     * §2.4, extended with the service-address snapshot, and, as of the professional weekly
+     * availability calendar design (§9.2.2), fully reworked to a direct-{@code bookedStart}
+     * creation path (no more {@code slotId}/{@code availability_slots} claim):
+     * <ol>
+     *   <li>Compute {@code bookedEnd = bookedStart + DEFAULT_JOB_DURATION_MINUTES}.</li>
+     *   <li>Fast pre-check via {@link AvailabilityDerivationService#deriveCalendar} — confirm
+     *       {@code [bookedStart, bookedEnd)} is fully contained in a single derived
+     *       {@code AVAILABLE} segment; {@code 409 BOOKING_TIME_UNAVAILABLE} otherwise. This is
+     *       the direct functional replacement for the old atomic slot-claim guard's "affected
+     *       rows = 0" branch.</li>
+     *   <li>Atomically transition the issue {@code OPEN -> BOOKED} — unchanged.</li>
+     *   <li>Insert the {@code orders} row: {@code slot_id = NULL} always (every order created
+     *       via this path from now on).</li>
+     *   <li>The insert itself is protected by the {@code ck_orders_no_overlap} exclusion
+     *       constraint (design §6) — the sole authoritative backstop for the true concurrency
+     *       race; step 2's pre-check is a friendly first line of defense only. Catch Postgres
+     *       {@code 23P01} on insert → map to the same {@code 409 BOOKING_TIME_UNAVAILABLE}.</li>
+     * </ol>
+     */
     @Transactional
     public OrderResponse createOrder(Long callerId, CreateOrderRequest request) {
         Issue issue = issueRepository.findById(request.issueId())
@@ -181,36 +255,95 @@ public class BookingsService {
         }
 
         Instant now = Instant.now();
-
-        // Step 9: atomically claim the slot.
-        int claimed = availabilitySlotRepository.claimSlot(request.slotId(), professional.getId(), now);
-        if (claimed == 0) {
-            throw slotUnavailable(request.slotId());
+        if (!request.bookedStart().isAfter(now)) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
+                    List.of(new FieldError("bookedStart", "must be strictly in the future")));
         }
-        AvailabilitySlot slot = availabilitySlotRepository.findById(request.slotId())
-                .orElseThrow(() -> slotUnavailable(request.slotId()));
 
-        // Step 10: atomically transition the issue; 0 rows rolls back the whole transaction,
-        // including the slot claim above (single @Transactional method).
+        // Step 1: server derives bookedEnd -- never accepted from the client (design §9.2.2).
+        Instant bookedStart = request.bookedStart();
+        Instant bookedEnd = bookedStart.plus(Duration.ofMinutes(DEFAULT_JOB_DURATION_MINUTES));
+
+        // Step 2: fast pre-check -- confirm [bookedStart, bookedEnd) is fully contained in a
+        // single derived AVAILABLE segment.
+        checkBookingWindowAvailable(professional.getId(), bookedStart, bookedEnd);
+
+        // Step 3: atomically transition the issue; 0 rows rolls back the whole transaction
+        // (single @Transactional method).
         int booked = issueRepository.bookIfOpen(issue.getId(), now);
         if (booked == 0) {
             throw notBookable(issue.getId());
         }
 
-        // Step 11: insert the order. Standard orders always carry sosSurcharge = 0.00,
-        // explicitly (not relying on the DB column default alone in this insert path).
+        // Step 4: insert the order. slot_id is always NULL for a Standard order created via
+        // this path -- the same already-proven-safe pattern SOS orders have used since
+        // Milestone 4. Standard orders always carry sosSurcharge = 0.00, explicitly (not
+        // relying on the DB column default alone in this insert path).
         BigDecimal basePriceSnapshot = professional.getBasePrice();
         BigDecimal sosSurcharge = BigDecimal.ZERO;
         BigDecimal finalPrice = basePriceSnapshot == null ? null : basePriceSnapshot.add(sosSurcharge);
-        Order order = new Order(issue.getId(), callerId, professional.getId(), slot.getStartTime(),
-                slot.getEndTime(), finalPrice, slot.getId(), request.serviceCity(), request.serviceStreet(),
-                request.serviceHouseNumber(), request.serviceApartment(), request.serviceFloor(),
-                request.serviceEntrance(), request.serviceAddressNotes(), basePriceSnapshot, sosSurcharge);
-        order = orderRepository.save(order);
+        Order order = new Order(issue.getId(), callerId, professional.getId(), bookedStart, bookedEnd, finalPrice,
+                null, request.serviceCity(), request.serviceStreet(), request.serviceHouseNumber(),
+                request.serviceApartment(), request.serviceFloor(), request.serviceEntrance(),
+                request.serviceAddressNotes(), basePriceSnapshot, sosSurcharge);
+
+        // Step 5: the insert is protected by ck_orders_no_overlap -- the sole authoritative
+        // backstop for the true concurrency race (two simultaneous createOrder calls for the
+        // same professional with overlapping ranges, both passing step 2's pre-check before
+        // either commits). saveAndFlush forces the INSERT to execute now, inside this
+        // try/catch, rather than at end-of-transaction flush time.
+        try {
+            order = orderRepository.saveAndFlush(order);
+        } catch (DataIntegrityViolationException e) {
+            throw mapOrderConstraintViolation(e);
+        }
 
         notificationService.recordOrderNotification(order.getId(), professional.getUserId(),
                 NotificationMessageType.ORDER_CREATED);
         return toOrderResponse(order);
+    }
+
+    /**
+     * §9.2.2 step 2: does a single derived {@code AVAILABLE} segment fully contain
+     * {@code [bookedStart, bookedEnd)}? Mirrors {@code AvailabilityService}'s own two-layer
+     * overlap-protection pattern (fast pre-check here, exclusion constraint as the
+     * authoritative backstop in {@link #mapOrderConstraintViolation}).
+     */
+    private void checkBookingWindowAvailable(Long professionalId, Instant bookedStart, Instant bookedEnd) {
+        List<CalendarSegment> segments =
+                availabilityDerivationService.deriveCalendar(professionalId, bookedStart, bookedEnd);
+        boolean contained = segments.stream()
+                .anyMatch(segment -> segment.type() == SegmentType.AVAILABLE
+                        && !segment.startAt().isAfter(bookedStart) && !segment.endAt().isBefore(bookedEnd));
+        if (!contained) {
+            throw bookingTimeUnavailable();
+        }
+    }
+
+    /**
+     * §9.2.2 step 5 / design §6: catches Postgres's {@code 23P01} (exclusion-violation)
+     * SQLState on the order insert and maps it to the same domain error the pre-check throws,
+     * rather than letting a raw {@code DataIntegrityViolationException} surface as an
+     * unhandled {@code 500} — same pattern {@code AvailabilityService#mapBlockConstraintViolation}
+     * already established for block creation. Any other constraint violation is rethrown
+     * unchanged (unexpected, handled by {@code GlobalExceptionHandler}'s catch-all).
+     */
+    private ApiException mapOrderConstraintViolation(DataIntegrityViolationException e) {
+        if (EXCLUSION_VIOLATION_SQLSTATE.equals(extractSqlState(e))) {
+            return bookingTimeUnavailable();
+        }
+        throw e;
+    }
+
+    private static String extractSqlState(Throwable ex) {
+        Throwable cause = ex;
+        while (cause != null) {
+            if (cause instanceof SQLException sqlException) {
+                return sqlException.getSQLState();
+            }
+            cause = cause.getCause();
+        }
+        return null;
     }
 
     /** §2.12, extended with the service-location/sort matching design. */
@@ -431,11 +564,16 @@ public class BookingsService {
             throw forbidden();
         }
 
-        String customerName = userRepository.findById(order.getCustomerId()).map(User::getFullName).orElse(null);
+        // §9.1 of the calendar design: customerPhone is read off this same already-loaded
+        // User row, no new query/authorization branch -- the existing party-to-order check
+        // above already gates the whole response, same as customerName always has.
+        User customerUser = userRepository.findById(order.getCustomerId()).orElse(null);
+        String customerName = customerUser == null ? null : customerUser.getFullName();
+        String customerPhone = customerUser == null ? null : customerUser.getPhone();
         String professionalName = resolveProfessionalName(order.getProfessionalId());
 
         return new OrderDetailResponse(order.getId(), order.getIssueId(), order.getCustomerId(), customerName,
-                order.getProfessionalId(), professionalName, order.getOrderStatus(), order.getBookedStart(),
+                customerPhone, order.getProfessionalId(), professionalName, order.getOrderStatus(), order.getBookedStart(),
                 order.getBookedEnd(), order.getExpectedArrivalAt(), order.getFinalPrice(),
                 order.getBasePriceSnapshot(), order.getSosSurcharge(),
                 order.getServiceCity(), order.getServiceStreet(), order.getServiceHouseNumber(),
@@ -676,8 +814,16 @@ public class BookingsService {
                 "The professional's category does not match the issue's category.");
     }
 
-    private ApiException slotUnavailable(Long slotId) {
-        return new ApiException(ErrorCode.SLOT_UNAVAILABLE, "Slot " + slotId + " is not available.");
+    /**
+     * §9.2.2: the direct-{@code bookedStart} creation path's sole "time not available" error
+     * — thrown by both {@link #checkBookingWindowAvailable} (the pre-check) and {@link
+     * #mapOrderConstraintViolation} (the race backstop). {@code SLOT_UNAVAILABLE} (still a
+     * valid {@link ErrorCode} enum value) is vestigial as of this milestone — nothing returns
+     * it anymore, since no caller can supply a {@code slotId} to {@code createOrder} at all.
+     */
+    private ApiException bookingTimeUnavailable() {
+        return new ApiException(ErrorCode.BOOKING_TIME_UNAVAILABLE,
+                "The requested booking time is no longer available.");
     }
 
     private ApiException orderNotPending(Long orderId) {

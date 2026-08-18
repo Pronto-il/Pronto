@@ -87,7 +87,9 @@ Full design record: `docs/architecture/frontend-ms8-design.md` §2.3/§4.1.
   **Co-located here, not its own `features/reviews/` module**, since
   `ProfessionalProfilePage.tsx` is its only consumer — mirrors how other small,
   single-consumer pieces are already placed in this codebase (e.g. `BookingSummary.tsx`/
-  `SlotPicker.tsx` living inside `features/booking` rather than their own modules). Reuses
+  `StartTimePicker.tsx` — renamed from `SlotPicker.tsx` by the professional weekly
+  availability calendar feature M6 — living inside `features/booking` rather than their own
+  modules). Reuses
   `ProfessionalProfilePage.module.css` rather than a dedicated stylesheet, for the same
   reason. Trivially movable if a second consumer ever appears.
 - **`ProfessionalCard.tsx` changes — a real, load-bearing distinction, read carefully.**

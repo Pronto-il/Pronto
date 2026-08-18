@@ -18,6 +18,11 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * incorrectly swallow the either-role sub-paths ({@code /orders/{id}}, {@code /orders/me})
  * that must NOT be gated here.
  *
+ * <p>As of the professional weekly availability calendar design (M2, §9.2.2), the literal
+ * pattern {@code /api/bookings/professionals/*&#47;slots} is replaced by
+ * {@code /api/bookings/professionals/*&#47;available-windows} — same {@code CUSTOMER}-only
+ * gate, renamed route only (the old route is removed entirely, not kept for compatibility).
+ *
  * <p>Milestone 4 adds two more {@code CUSTOMER}-only literal patterns
  * ({@code /api/bookings/sos-professionals}, {@code /api/bookings/sos-orders}, §2.12/§2.13) to
  * the same registration — this package's literal-list design doesn't pick up new routes
@@ -41,7 +46,7 @@ public class BookingsWebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.CUSTOMER.name()))
-                .addPathPatterns("/api/bookings/professionals", "/api/bookings/professionals/*/slots",
+                .addPathPatterns("/api/bookings/professionals", "/api/bookings/professionals/*/available-windows",
                         "/api/bookings/orders", "/api/bookings/sos-professionals", "/api/bookings/sos-orders");
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.PROFESSIONAL.name()))
                 .addPathPatterns("/api/bookings/orders/*/accept", "/api/bookings/orders/*/reject",

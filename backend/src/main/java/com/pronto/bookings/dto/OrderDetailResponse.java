@@ -16,12 +16,20 @@ import java.time.Instant;
  * {@code serviceHouseNumber}/{@code serviceApartment}/{@code serviceFloor}/
  * {@code serviceEntrance}/{@code serviceAddressNotes} are the service-address snapshot (§1
  * classification item 5).
+ *
+ * <p>{@code customerPhone} — new, professional weekly availability calendar design §9.1 —
+ * is populated by this same endpoint's existing, unmodified party-to-order authorization
+ * check (no new authorization branch, no {@code order_status} gating): visible to the
+ * order's own customer and to the assigned professional starting the moment the order is
+ * created ({@code PENDING} onward), the same access-scoping the service-address snapshot
+ * above already uses.
  */
 public record OrderDetailResponse(
         Long id,
         Long issueId,
         Long customerId,
         String customerName,
+        String customerPhone,
         Long professionalId,
         String professionalName,
         OrderStatus orderStatus,

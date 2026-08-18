@@ -17,6 +17,8 @@ tracking its status.
   now shown while `ON_THE_WAY` (a real, persisted backend field — supersedes the prior "no
   ETA field here" note, see below), and a "leave a review" link is shown once `COMPLETED`.
 - Post-completion review submission (`CompletionReviewPage`, new — see below).
+- **As of Frontend Milestone 6**: professional-side job-status progression actions
+  ("mark on the way", "mark completed") on the same tracking screen — see below.
 
 ## Status
 **Standard and SOS flows implemented.** Standard flow: Frontend Milestone 3 (2026-08-16);
@@ -24,7 +26,72 @@ post-QA bug-fix pass (2026-08-17). SOS flow: Frontend Milestone 4 (2026-08-17). 
 product-corrections pass (2026-08-17, see below): address-source selection, the full 7-field
 service address, and booking-draft persistence. Active Booking Floating Indicator feature
 (2026-08-17, see below): ETA countdown on the tracking screen, post-completion review flow
-(`CompletionReviewPage`).
+(`CompletionReviewPage`). Frontend Milestone 6 (2026-08-18, see below): professional-side
+"mark on the way" / "mark completed" job-status progression actions on `OrderTrackingPage`.
+
+**Frontend Milestone 6 (2026-08-18) — professional job-status progression actions:**
+- Two new professional-only actions on the shared `OrderTrackingPage.tsx`: "mark on the
+  way" (`יציאה לדרך`) while `orderStatus === 'CONFIRMED'`, and "mark completed"
+  (`סיום העבודה`) while `orderStatus === 'ON_THE_WAY'` — `canMarkOnTheWay`/`canComplete`
+  derived booleans, gated on `user?.role === 'PROFESSIONAL'` plus the matching status,
+  mirroring the existing `canCancel` pattern. Both fire immediately on click (no
+  confirmation dialog, same UX as the existing cancel button and
+  `IncomingRequestCard`'s accept/reject), render `fullWidth`/`primary`-variant, and are
+  rendered in the same conditional slot as the customer-only cancel button — `canCancel`
+  (CUSTOMER-gated, unchanged), `canMarkOnTheWay`, and `canComplete` are mutually exclusive
+  by construction (an order is never simultaneously in two of `CONFIRMED`/`ON_THE_WAY`,
+  and cancel is customer-only while these two are professional-only), so at most one of
+  the three buttons ever renders.
+- `shared/api/bookings.ts` gained `markOnTheWay(orderId)` (`POST
+  /api/bookings/orders/{orderId}/on-the-way`) and `completeOrder(orderId)` (`POST
+  .../complete`), both `Promise<OrderResponse>`, both PROFESSIONAL-only per backend
+  enforcement — named `<verb>Order`-style like `acceptOrder`/`rejectOrder`/`cancelOrder`,
+  not the bare endpoint-segment names, for naming consistency with the file's existing
+  functions. Re-exported from `shared/api/index.ts` alongside the other order-action
+  functions. No backend changes — both endpoints already existed (verified directly
+  against `BookingsController.java`/`BookingsService.java` source) and already matched
+  `docs/architecture/api-contract-bookings.md` §2.16/§2.17.
+- `CANCEL_ERROR_MESSAGES` was renamed to `ORDER_ACTION_ERROR_MESSAGES` and extended with
+  two new entries for the backend's 409 codes on these transitions:
+  `ORDER_NOT_CONFIRMED` ("mark on the way" attempted on a non-`CONFIRMED` order) and
+  `ORDER_NOT_ON_THE_WAY` ("mark completed" attempted on a non-`ON_THE_WAY` order) — a pure
+  rename + extension, no behavior change to the existing cancel error handling. New
+  `isUpdatingStatus`/`statusActionError` state, kept separate from
+  `isCancelling`/`cancelError` (customer-only, unchanged), with `handleMarkOnTheWay`/
+  `handleComplete` handlers mirroring `handleCancel`'s exact shape (set loading, await,
+  `refetch()` on success, map known error codes via `ORDER_ACTION_ERROR_MESSAGES` with a
+  generic fallback, clear loading in `finally`). One shared loading/error state pair
+  suffices for both new handlers since `canMarkOnTheWay`/`canComplete` are mutually
+  exclusive — only one is ever reachable for a given order+role at a time.
+- `MyJobsPage.tsx` (`features/dashboard`) got a doc-comment-only fix: removed the stale
+  "read-only by design, no on-the-way/complete actions" claim, since that's no longer true
+  — the actions exist now, they just live on `OrderTrackingPage`, not on `MyJobsPage`'s own
+  list. No behavioral change to that component. `useOrderStatus.ts`'s polling needed no
+  change — `TERMINAL_STATUSES` already excludes `CONFIRMED`/`ON_THE_WAY`, so polling
+  already continues correctly through both new transitions.
+- Full design rationale (button copy choices, confirmation-dialog decision, layout/slot
+  reasoning, error-message wording): `docs/architecture/professional-status-progression-actions.md`.
+- **QA**: passed. Two levels of verification, kept distinct rather than blurred together:
+  - **Live API-level verification**: the real backend was run against a real Postgres DB
+    and QA drove the exact HTTP calls the two new buttons make, through a full two-user
+    (customer + professional) order lifecycle: register → verify → login → create
+    issue/slot/order → accept → on-the-way → complete. Confirmed real, non-mock
+    `expectedArrivalAt` persistence, correct 409s on repeat/out-of-order calls
+    (`ORDER_NOT_CONFIRMED`, `ORDER_NOT_ON_THE_WAY`), 403 when a customer attempts either
+    endpoint, and that `ORDER_ON_THE_WAY`/`ORDER_COMPLETED` notifications appear correctly
+    for the customer via `GET /api/notifications`.
+  - **Code-review-level verification** (not a literal browser click-through — no browser
+    automation tool was available in the QA environment, consistent with every prior
+    frontend milestone's QA method): confirmed by reading the component/hook code that
+    `OrderTrackingPage`'s buttons call the right functions with no extra transformation,
+    that `useOrderStatus`'s polling correctly continues through the non-terminal
+    `CONFIRMED`/`ON_THE_WAY` states, that `useEtaCountdown`/`ActiveOrderIndicator`
+    correctly consume the real `expectedArrivalAt` value that was live-verified above, and
+    that the notification label map already had correct Hebrew text for both message
+    types.
+  - Build (`tsc -b && vite build`) and lint (`oxlint`) both passed clean. No regressions
+    found in `MyJobsPage.tsx` (comment-only diff) or the existing customer-only cancel
+    button.
 
 **MS3/MS4 product-corrections pass (2026-08-17):**
 - **`AddressSelectionStep`** (new, `AddressSelectionStep.tsx`/`.module.css`) replaces the bare
@@ -173,8 +240,10 @@ QA-passed (12/12 checklist items, zero bugs found). Full design record:
 `docs/architecture/active-booking-floating-indicator.md`, particularly §7-§9 (new/changed
 files and the deliberate `OrderTrackingPage` review-link addition beyond the literal ask).
 
-Not built here: job-status action buttons beyond cancel (on-the-way/complete are
-professional-only and belong to a future professional job-status screen, not
-`features/dashboard`'s scope either), slot edit/delete UI, favorites toggle interaction,
-review **editing/deletion** UI (`PUT`/`DELETE /api/reviews/{reviewId}` exist backend-side but
-have no frontend caller yet — only creation, via `CompletionReviewPage`, is built).
+Not built here: slot edit/delete UI, favorites toggle interaction, review
+**editing/deletion** UI (`PUT`/`DELETE /api/reviews/{reviewId}` exist backend-side but
+have no frontend caller yet — only creation, via `CompletionReviewPage`, is built), and
+professional-side cancellation (Frontend Milestone 6 did not extend `canCancel` to the
+PROFESSIONAL role — out of that milestone's scope, an explicit decision, not an oversight;
+see the Frontend Milestone 6 section above). Job-status action buttons beyond cancel
+(on-the-way/complete) **are now built**, as of Frontend Milestone 6 — see above.

@@ -861,6 +861,80 @@ closed).
   - Professional-viewing-issue-images (contract doc §6 item 3 / §7) remains open and unbuilt,
     unchanged from every prior milestone.
 
+### Frontend Milestone 6 — Professional job-status progression actions
+
+- **Status: COMPLETE, QA-passed, 2026-08-18.** Built on top of backend Milestone 6
+  (Professional dashboard / job-status progression endpoints, above), which shipped complete
+  and untouched this round — no backend changes this round. On branch `frontend/MS6`, local
+  only — uncommitted, not pushed/merged; that remains the user's own explicit git action, not
+  implied by this status line. Not one of the originally-numbered backend milestones in
+  `overview.md` §5; tracked separately as "Frontend Milestone 6" (MS6) since it delivers the
+  UI for this same Milestone 6 job-status-progression scope, following the naming convention
+  Frontend Milestone 1/3/4/5 established. Full design record:
+  `docs/architecture/professional-status-progression-actions.md`.
+- **What was built**: two new professional-side job-status-progression actions on the
+  existing shared order-tracking screen, `frontend/src/features/booking/OrderTrackingPage.tsx`
+  — no new screen/route. `shared/api/bookings.ts` (+ `index.ts` barrel) gained
+  `markOnTheWay(orderId)` (`POST /api/bookings/orders/{orderId}/on-the-way`) and
+  `completeOrder(orderId)` (`POST .../complete`), both `Promise<OrderResponse>`,
+  PROFESSIONAL-only per backend enforcement, named `<verb>Order`-style to match the file's
+  existing `acceptOrder`/`rejectOrder`/`cancelOrder` convention. `OrderTrackingPage.tsx`
+  gained `canMarkOnTheWay` (PROFESSIONAL + order `CONFIRMED`) and `canComplete`
+  (PROFESSIONAL + order `ON_THE_WAY`) derived booleans, mirroring the existing `canCancel`
+  pattern; two new full-width, primary-variant, immediate-fire (no confirmation dialog)
+  buttons with Hebrew copy `יציאה לדרך` ("mark on the way") and `סיום העבודה` ("mark
+  complete"), rendered in the same conditional slot as the existing customer-only cancel
+  button — `canCancel`/`canMarkOnTheWay`/`canComplete` are mutually exclusive by
+  construction, so at most one of the three buttons ever renders. `CANCEL_ERROR_MESSAGES`
+  was renamed to `ORDER_ACTION_ERROR_MESSAGES` and extended with `ORDER_NOT_CONFIRMED`/
+  `ORDER_NOT_ON_THE_WAY` Hebrew messages for the backend's 409 codes on these two
+  transitions. New `isUpdatingStatus`/`statusActionError` state, and
+  `handleMarkOnTheWay`/`handleComplete` handlers mirroring the existing `handleCancel`
+  shape exactly. `frontend/src/features/dashboard/MyJobsPage.tsx` got a doc-comment-only
+  fix — removed the stale "read-only by design, no on-the-way/complete actions" claim
+  (no longer true; those actions exist now, they just live on `OrderTrackingPage`, not
+  this list) — no behavioral change to the component. **No backend changes** — both
+  endpoints already existed and were verified directly against
+  `BookingsController.java`/`BookingsService.java` source, matching
+  `docs/architecture/api-contract-bookings.md` §2.16/§2.17.
+- **Reused vs. added**: reused `OrderResponse` (already carried `ON_THE_WAY`/`COMPLETED`
+  as reachable `OrderStatus` values as of Frontend Milestone 3), the existing `Button`
+  component's `primary`/`fullWidth` props, and `useOrderStatus`'s existing polling/refetch
+  mechanism (`TERMINAL_STATUSES` already excludes `CONFIRMED`/`ON_THE_WAY`, so no change was
+  needed there for polling to continue correctly through both new transitions). Added: the
+  two `shared/api/bookings.ts` functions, the two buttons/handlers/derived booleans on
+  `OrderTrackingPage.tsx`, the renamed/extended error-message map, and the two new state
+  hooks — no new component, no new route, no new shared primitive.
+- **QA summary**: passed. Verification was done at two levels, kept explicitly distinct
+  rather than blurred into a single "fully verified end-to-end in the browser" claim:
+  - **Live API-level verification**: the real backend was run against a real Postgres DB,
+    and QA drove the exact HTTP calls the two new buttons make, through a full two-user
+    (customer + professional) order lifecycle: register → verify → login → create
+    issue/slot/order → accept → on-the-way → complete. Confirmed real, non-mock
+    `expectedArrivalAt` persistence, correct 409s on repeat/out-of-order calls
+    (`ORDER_NOT_CONFIRMED`, `ORDER_NOT_ON_THE_WAY`), 403 when a customer attempts either
+    endpoint, and that `ORDER_ON_THE_WAY`/`ORDER_COMPLETED` notifications appear correctly
+    for the customer via `GET /api/notifications`.
+  - **Code-review-level verification** (not a literal browser click-through — no browser
+    automation tool was available in the QA environment, consistent with every prior
+    frontend milestone's own QA method): confirmed by reading the actual component/hook
+    code that `OrderTrackingPage`'s buttons call the right functions with no extra
+    transformation, that `useOrderStatus`'s polling correctly continues through the
+    non-terminal `CONFIRMED`/`ON_THE_WAY` states, that `useEtaCountdown`/
+    `ActiveOrderIndicator` correctly consume the real `expectedArrivalAt` value that was
+    live-verified above, and that the notification label map already had correct Hebrew
+    text for both message types.
+  - Build (`tsc -b && vite build`) and lint (`oxlint`) both passed clean. No regressions
+    found in `MyJobsPage.tsx` (comment-only diff) or the existing customer-only cancel
+    button. **Final verdict: PASS, no bugs found.**
+- **Known gaps/deferred, not blockers**:
+  - Professional-side cancellation is not built this pass — `canCancel` remains gated to
+    `user?.role === 'CUSTOMER'`, unchanged. An explicit, stated-in-the-design-note decision,
+    not an oversight; if wanted later it needs its own design pass (different copy, possibly
+    different allowed source statuses, possibly a confirmation step).
+  - Slot edit/delete UI remains Frontend Milestone 7 scope, not this pass.
+  - Favorites/reviews UI, unchanged from prior frontend milestones.
+
 ## Milestone 7 — Hardening & QA pass
 
 - **Scope**: performance validation against PRD §5.1 targets (2s load, 1s status update,

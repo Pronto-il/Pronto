@@ -45,6 +45,8 @@ export {
   acceptOrder,
   rejectOrder,
   cancelOrder,
+  markOnTheWay,
+  completeOrder,
   getOrder,
   getMyOrders,
   getSosProfessionalsForIssue,

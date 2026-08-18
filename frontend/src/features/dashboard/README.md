@@ -12,8 +12,13 @@ The professional-facing dashboard.
 **Partially implemented, Frontend Milestone 3 (2026-08-16); post-QA bug-fix pass
 (2026-08-17); SOS-availability toggle added Frontend Milestone 4 (2026-08-17)**:
 incoming-request accept/reject, a read-only job history, availability-slot create/list, and
-the SOS-availability toggle. Job-status progression (On the Way / Completed) is **not**
-built this pass — out of this milestone's scope (see the brief's explicit exclusion list).
+the SOS-availability toggle. Job-status progression (On the Way / Completed) was **not**
+built as part of this pass — out of this milestone's scope (see the brief's explicit
+exclusion list). **Superseded, Frontend Milestone 6 (2026-08-18)**: the on-the-way/complete
+actions are now built, but they live on `features/booking/OrderTrackingPage.tsx`, not in
+this package — see that bullet below and `features/booking/README.md`'s Frontend Milestone
+6 section for full detail. `MyJobsPage` in this package remains intentionally read-only/
+link-only.
 
 **Frontend Milestone 4 (2026-08-17):**
 - `SosAvailabilityToggle` (new component, rendered at the top of `AvailabilityPage`, above
@@ -51,7 +56,13 @@ built this pass — out of this milestone's scope (see the brief's explicit excl
   time/price/`StatusBadge` and linking to `/orders/:id`. Fixes a real gap: once an order
   left the pending feed (accepted or rejected) there was no in-app way to see it again
   short of typing `/orders/{id}` directly. No accept/reject/on-the-way/complete actions
-  here — intentionally read-only, job-status progression stays out of scope.
+  rendered directly on this list — it stays link-only, matching `MyOrdersPage.tsx`'s
+  pattern. **Note (Frontend Milestone 6, 2026-08-18)**: on-the-way/complete actions now
+  exist for professionals, but they live on `features/booking/OrderTrackingPage.tsx`
+  (reached via this list's `/orders/:id` links), not on `MyJobsPage` itself — this page's
+  own doc comment was updated in the same pass to stop claiming those actions are
+  unbuilt/out of scope, since that's no longer accurate; the page's own behavior did not
+  change.
 - `AvailabilityPage` (`/pro/availability`) combines `SlotForm` (two `datetime-local`
   inputs → `POST /api/availability/slots`) and a read-only `SlotList` (`GET
   /api/availability/slots/me`, showing each slot's `isAvailable` state). No edit/delete
@@ -65,5 +76,7 @@ of a bare processing id, and the card takes separate `isAccepting`/`isRejecting`
 while Reject was the one running; both buttons still disable together during any in-flight
 action).
 
-Not built here: job-status action buttons (on-the-way/complete), the fuller professional
-dashboard sidebar (ביקורות/הגדרות — no backing screens yet).
+Not built here: the fuller professional dashboard sidebar (ביקורות/הגדרות — no backing
+screens yet). Job-status action buttons (on-the-way/complete) **are now built** (Frontend
+Milestone 6, 2026-08-18) but belong to `features/booking/OrderTrackingPage.tsx`, not this
+package — see that package's README.

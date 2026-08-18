@@ -7,12 +7,14 @@ milestone-by-milestone status — this line was stale for several milestones and
 here as part of Milestone 8's documentation pass). On the frontend, **Frontend Milestone 1
 (auth screens) is implemented, as of 2026-08-15; Frontend Milestone 3 (Standard booking
 flow) is implemented, as of 2026-08-16; Frontend Milestone 4 (SOS booking flow UI) is
-implemented and QA-signed-off, as of 2026-08-17; and Frontend Milestone 5 (in-app
-notification bell) is implemented and QA-signed-off, as of 2026-08-18** — see §6 below and
-`implementation-plan.md`'s Milestone 1 / Milestone 3 / Milestone 4 / Milestone 5 entries for
-full status detail; the rest of `frontend/` (job-status progression UI, favorites/reviews
-UI) remains design-only or backend-only, pending later frontend milestones. This is the
-living source of truth for architecture/decisions — keep it in sync with the actual
+implemented and QA-signed-off, as of 2026-08-17; Frontend Milestone 5 (in-app
+notification bell) is implemented and QA-signed-off, as of 2026-08-18; and Frontend
+Milestone 6 (professional job-status progression actions — "mark on the way" / "mark
+completed") is implemented and QA-passed, as of 2026-08-18** — see §6 below and
+`implementation-plan.md`'s Milestone 1 / Milestone 3 / Milestone 4 / Milestone 5 / Milestone
+6 entries for full status detail; the rest of `frontend/` (favorites/reviews UI, slot
+edit/delete UI) remains design-only or backend-only, pending later frontend milestones. This
+is the living source of truth for architecture/decisions — keep it in sync with the actual
 implementation as it lands (owned going forward by the `pronto-documentation` agent).
 
 ## 1. Consolidated understanding
@@ -175,9 +177,9 @@ changes it, per the shared project rule.
 |---|---|
 | `features/auth` | Registration, verification, login screens. **Implemented, Frontend Milestone 1 (2026-08-15)** — see §6 below and `implementation-plan.md`'s Milestone 1 entry. |
 | `features/issues` | Home/New Issue screen, AI Review + service-path-selection screen. **Implemented, Frontend Milestone 2** (see `implementation-plan.md`); `NewIssuePage`/`IssueSuccessStep` gained a Frontend Milestone 3 follow-up linking into the new booking flow, and a Frontend Milestone 4 follow-up linking the SOS branch into the new SOS booking flow. |
-| `features/booking` | Standard professional list, SOS professional list, booking confirmation, tracking screen. **Standard and SOS flows both implemented** — Standard: Frontend Milestone 3 (2026-08-16), `BookingFlowPage`/`MyOrdersPage`/`OrderTrackingPage`; SOS: Frontend Milestone 4 (2026-08-17), `SosBookingFlowPage`/`SosBookingSummary`. **Extended in the MS3/MS4 product-corrections pass (2026-08-17)**: `AddressSelectionStep` (default-vs-custom address chooser), full 7-field service address, booking-draft resume. See §6 below and `implementation-plan.md`'s entries. |
+| `features/booking` | Standard professional list, SOS professional list, booking confirmation, tracking screen. **Standard and SOS flows both implemented** — Standard: Frontend Milestone 3 (2026-08-16), `BookingFlowPage`/`MyOrdersPage`/`OrderTrackingPage`; SOS: Frontend Milestone 4 (2026-08-17), `SosBookingFlowPage`/`SosBookingSummary`. **Extended in the MS3/MS4 product-corrections pass (2026-08-17)**: `AddressSelectionStep` (default-vs-custom address chooser), full 7-field service address, booking-draft resume. **Extended, Frontend Milestone 6 (2026-08-18)**: professional-side "mark on the way"/"mark completed" job-status progression actions on `OrderTrackingPage`. See §6 below and `implementation-plan.md`'s entries. |
 | `features/professionals` | Professional card/list components shared by Standard and SOS (per PRD §7.4, SOS reuses the professional-selection component with urgent filtering rather than a fully separate screen). **Implemented, Frontend Milestone 3 (2026-08-16)**; SOS reuse landed Frontend Milestone 4 (2026-08-17) — both flows now consume `ProfessionalCard`/`ProfessionalList` via `ProfessionalList`. **Sort-toggle reconciled in the MS3/MS4 product-corrections pass (2026-08-17)**: both flows now expose an identical 2-way `Recommended | Cheapest` chip toggle. |
-| `features/dashboard` | Professional dashboard — availability management, incoming requests, job status actions. **Partially implemented**, Frontend Milestone 3 (2026-08-16): incoming-request accept/reject, a read-only job list, availability-slot create/list; SOS-availability toggle (`SosAvailabilityToggle`) added Frontend Milestone 4 (2026-08-17). Job-status progression (on-the-way/complete) not yet built. |
+| `features/dashboard` | Professional dashboard — availability management, incoming requests, job status actions. **Partially implemented**, Frontend Milestone 3 (2026-08-16): incoming-request accept/reject, a read-only job list, availability-slot create/list; SOS-availability toggle (`SosAvailabilityToggle`) added Frontend Milestone 4 (2026-08-17). **Job-status progression (on-the-way/complete) is now built, Frontend Milestone 6 (2026-08-18)** — but lives on `features/booking/OrderTrackingPage.tsx`, not in this package; `MyJobsPage` here remains intentionally read-only/link-only. |
 | `features/notifications` | In-app notification bell: nav badge + anchored dropdown feed, consuming the backend `notifications` package via short-polling. **Implemented, Frontend Milestone 5 (2026-08-18)** — `NotificationBell.tsx`/`notificationLabels.ts`; the status-polling primitive itself (`usePolling`/`useOrderStatus`) shipped earlier, in Frontend Milestone 3, and remains consumed directly by `features/booking`/`features/dashboard` for order tracking, separate from this module's own `useNotifications` hook. No dedicated page/route — the backend feed has no pagination. |
 | `shared/api` | Backend API client. **Grew in Frontend Milestone 3 (2026-08-16)**: `bookings.ts`, `availability.ts`, and a `getIssue` addition to `issues.ts`; grew again in Frontend Milestone 4 (2026-08-17): SOS-listing/order functions in `bookings.ts` and SOS-availability functions in `availability.ts`. **Grew in Frontend Milestone 5 (2026-08-18)**: `notifications.ts` (new), consuming the already-complete backend `notifications` package, no backend changes. |
 | `shared/components` | Reusable UI components. **Grew in Frontend Milestone 3 (2026-08-16)**: `StatusBadge`. |
@@ -508,6 +510,52 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
     `ProfessionalSort.java`'s Javadoc both still described the unauthorized "SOS defaults to
     `FASTEST`" behavior from the out-of-scope draft above — corrected to match the actual,
     reconciled code (both listing endpoints default to `CHEAPEST`).
+- **2026-08-17 — Active Booking Floating Indicator feature landed, QA-passed (12/12
+  checklist items, zero bugs found).** Branch `frontend/MS3-MS4-corrections`, local only —
+  uncommitted, not pushed/merged. Full design record:
+  `docs/architecture/active-booking-floating-indicator.md`. Two parts:
+  1. **Persisted ETA, backend override.** `orders.expected_arrival_at` (new nullable
+     column, `V23`) is computed once — via the same `DistanceEtaStrategy.calculate(...)`
+     call `enrichAndSort` already makes for listing cards — and persisted by
+     `BookingsService.onTheWay` at the moment a professional marks an order `ON_THE_WAY`,
+     then surfaced on `OrderResponse`/`OrderDetailResponse`/`OrderSummaryResponse`. This
+     **overrides** the 2026-08-15 "ETA never persisted / tracking screen gains no new
+     field" ruling recorded in §2's professional-search-distance/ETA row above (see that
+     row's own trailing override note) — the `matching` package itself is unchanged and
+     still computes/persists nothing; it's the caller (`bookings`) that now persists the
+     result of one specific call, once, at one specific transition. GPS/live-location
+     tracking remains untouched and fully out of scope.
+  2. **Frontend: a floating active-order indicator + post-completion review flow.**
+     `ActiveOrderProvider`/`useActiveOrder` (new, `shared/hooks`) poll `GET
+     /api/bookings/orders/me` and select at most one order to surface via a pure priority
+     function (`ON_THE_WAY` > `PENDING`/`CONFIRMED` > unacknowledged `COMPLETED`;
+     `CANCELLED`/`REJECTED`/`EXPIRED` never candidates) — supporting the fact that a
+     customer can have more than one simultaneously-active order (the single-active-order
+     invariant is per-issue, not per-customer). `ActiveOrderIndicator` (new, `app/`) renders
+     as a `position: fixed` floating circular element (a sibling of `<main>`, not inside
+     `<nav>` — structurally distinct from, and can coexist on-screen with,
+     `BookingDraftIndicator`), gated `CUSTOMER`-only, click-through to the relevant
+     order/review route. `useEtaCountdown` (new, `shared/hooks`, shared by both the
+     indicator and `OrderTrackingPage`) recomputes a live countdown from the real
+     `expectedArrivalAt` timestamp every second. Acknowledgement of a `COMPLETED` order
+     (so it stops occupying the indicator slot) is tracked in a `pronto_ack_completed_orders`
+     localStorage key, scoped/cleared per-account the same way `BookingDraftProvider`'s
+     existing cross-account guard works, set on `CompletionReviewPage` mount and again after
+     a successful review submission. `CompletionReviewPage` (new,
+     `/orders/:orderId/review`, `CUSTOMER`-only) is the first frontend consumer of the
+     already-complete backend `reviews` package (`POST /api/reviews`, via new
+     `shared/api/reviews.ts`) — a one-shot fetch-and-guard-on-`COMPLETED` screen with a
+     5-star rating input and optional comment. `OrderTrackingPage.tsx` also gained, beyond
+     the literal ask (flagged in the design doc §9 as the author's own recommendation, not
+     scope creep): a live ETA countdown while `ON_THE_WAY`, and a "leave a review" link
+     while `COMPLETED` — closing a reachability gap the single-slot indicator alone would
+     leave for a second, lower-priority completed order.
+  - **QA**: full pass, 12/12 checklist items, zero bugs found.
+  - **Known gaps/deferred**: review **editing/deletion** UI is not built — `PUT`/`DELETE
+    /api/reviews/{reviewId}` exist backend-side with no frontend caller yet, only creation.
+    Tie-break rules within a priority tier (soonest-ETA / most-recently-created /
+    most-recently-completed) are this design's own recommendation, not a settled
+    requirement from any source document.
 - **2026-08-18 — Frontend Milestone 5 (in-app notification bell) landed, QA-signed-off.**
   Branch `frontend/MS5`, local only — uncommitted, not pushed/merged; that remains the user's
   own explicit git action. Built entirely on top of the already-complete, untouched backend
@@ -542,6 +590,44 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
     `recordOrderNotification(...)` — the frontend label mapping already covers them, no
     further frontend change needed when that lands. No dedicated notification page/pagination
     (matches the backend's own no-pagination design).
+- **2026-08-18 — Frontend Milestone 6 (professional job-status progression actions) landed,
+  QA-passed.** Branch `frontend/MS6`, local only — uncommitted, not pushed/merged; that
+  remains the user's own explicit git action. Built entirely on top of the already-complete,
+  untouched backend Milestone 6 job-status endpoints (`POST
+  /api/bookings/orders/{orderId}/on-the-way`, `POST .../complete`, both PROFESSIONAL-only,
+  see `implementation-plan.md`'s Milestone 6 entry) — no backend changes this round. Two new
+  professional-only actions added to the existing shared `OrderTrackingPage.tsx` (no new
+  screen/route): "mark on the way" (`יציאה לדרך`, `CONFIRMED → ON_THE_WAY`) and "mark
+  completed" (`סיום העבודה`, `ON_THE_WAY → COMPLETED`), both immediate-fire (no confirmation
+  dialog, matching the existing cancel button's UX), rendered in the same conditional slot as
+  the existing customer-only cancel button — mutually exclusive by construction, so at most
+  one of {cancel, mark-on-the-way, mark-complete} ever renders. `shared/api/bookings.ts`
+  gained `markOnTheWay`/`completeOrder`, both `Promise<OrderResponse>`. `CANCEL_ERROR_MESSAGES`
+  was renamed to `ORDER_ACTION_ERROR_MESSAGES` and extended with `ORDER_NOT_CONFIRMED`/
+  `ORDER_NOT_ON_THE_WAY` Hebrew messages. `features/dashboard/MyJobsPage.tsx` got a
+  doc-comment-only fix, removing its now-stale "no on-the-way/complete actions" claim — no
+  behavioral change. Full design rationale:
+  `docs/architecture/professional-status-progression-actions.md`; full detail is in
+  `implementation-plan.md`'s "Frontend Milestone 6" entry (nested under Milestone 6) and
+  `frontend/src/features/booking/README.md` — not restated here.
+  - **QA**: passed, verified at two distinct levels (recorded separately, not blurred
+    together). **Live API-level**: the real backend was run against a real Postgres DB and
+    QA drove the exact HTTP calls the two buttons make through a full two-user (customer +
+    professional) order lifecycle end to end, confirming real `expectedArrivalAt`
+    persistence, correct 409s (`ORDER_NOT_CONFIRMED`/`ORDER_NOT_ON_THE_WAY`) on repeat/
+    out-of-order calls, 403 on a customer attempting either endpoint, and correct
+    `ORDER_ON_THE_WAY`/`ORDER_COMPLETED` notification delivery via `GET /api/notifications`.
+    **Code-review-level** (no browser-automation tool available in this environment,
+    consistent with every prior frontend milestone): confirmed by reading the component/hook
+    code that the buttons wire correctly, that `useOrderStatus`'s polling continues correctly
+    through the non-terminal `CONFIRMED`/`ON_THE_WAY` states, and that
+    `useEtaCountdown`/`ActiveOrderIndicator` and the notification label map already handle
+    both new transitions correctly. Build (`tsc -b && vite build`) and lint (`oxlint`) both
+    passed clean; no regressions found.
+  - **Known gaps/deferred, not blockers**: professional-side cancellation is not built this
+    pass — `canCancel` stays gated to `CUSTOMER`, an explicit decision, not an oversight.
+    Slot edit/delete UI remains Frontend Milestone 7 scope. Favorites/reviews UI unchanged
+    from prior frontend milestones.
 
 ## 7. Backend architecture reference (as-built)
 

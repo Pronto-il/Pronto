@@ -15,8 +15,10 @@ import styles from './MyJobsPage.module.css';
  * excluding `PENDING` — the pending feed is the action screen, this is the read-only
  * reference list, and duplication between the two is harmless.
  *
- * Read-only by design: no accept/reject/on-the-way/complete actions here — job-status
- * progression beyond accept/reject stays out of this milestone's scope.
+ * Read-only by design: this list only links into `/orders/{id}` for detail/status and any
+ * available actions — on-the-way/complete actions now exist (Frontend MS6) but live on
+ * `OrderTrackingPage`, not here. This list itself stays link-only, matching the customer-side
+ * `MyOrdersPage.tsx` pattern.
  */
 export default function MyJobsPage() {
   const [orders, setOrders] = useState<OrderSummary[] | null>(null);

@@ -169,6 +169,16 @@ export function cancelOrder(orderId: number): Promise<OrderResponse> {
   return httpClient.post<OrderResponse>(`/api/bookings/orders/${orderId}/cancel`);
 }
 
+/** `POST /api/bookings/orders/{orderId}/on-the-way` — PROFESSIONAL only. */
+export function markOnTheWay(orderId: number): Promise<OrderResponse> {
+  return httpClient.post<OrderResponse>(`/api/bookings/orders/${orderId}/on-the-way`);
+}
+
+/** `POST /api/bookings/orders/{orderId}/complete` — PROFESSIONAL only. */
+export function completeOrder(orderId: number): Promise<OrderResponse> {
+  return httpClient.post<OrderResponse>(`/api/bookings/orders/${orderId}/complete`);
+}
+
 /** Same fields as `OrderResponse` plus display-friendly names. */
 export interface OrderDetailResponse extends OrderResponse {
   customerName: string;

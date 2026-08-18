@@ -25,3 +25,6 @@ export type { ActiveOrderIndicatorState, ActiveOrderSelection, ActiveOrderContex
 
 export { useEtaCountdown } from './useEtaCountdown';
 export type { UseEtaCountdownResult } from './useEtaCountdown';
+
+export { useNotifications } from './useNotifications';
+export type { UseNotificationsResult } from './useNotifications';

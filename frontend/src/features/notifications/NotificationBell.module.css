@@ -1,0 +1,153 @@
+.wrapper {
+  position: relative;
+}
+
+.bellButton {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.bellButton:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-secondary);
+}
+
+/* Numeric unread badge — reuses the same primary-teal token as ActiveOrderIndicator's
+   PENDING/CONFIRMED state, per DESIGN_SYSTEM.md (no one-off color). */
+.badge {
+  position: absolute;
+  top: -2px;
+  inset-inline-end: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding-inline: 3px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+/*
+ * Dropdown panel. The app is `dir="rtl"` (index.html), so `inset-inline-end: 0` pins the
+ * panel's *left* edge to the bell button's left edge and lets the (wider) panel grow toward
+ * the inline-start direction (rightward, back into the nav) — the RTL mirror of the familiar
+ * LTR "bell top-right, dropdown right-aligned, growing left" pattern.
+ */
+.panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  inset-inline-end: 0;
+  z-index: 50;
+
+  width: 340px;
+  max-height: 400px;
+  overflow-y: auto;
+
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+}
+
+.panelHeader {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.panelTitle {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.markAllButton {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.markAllButton:hover:not(:disabled) {
+  color: var(--color-primary-hover);
+  text-decoration: underline;
+}
+
+.markAllButton:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.emptyState {
+  padding: var(--space-8) var(--space-4);
+  color: var(--color-text-muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--space-3) var(--space-4);
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row:hover {
+  background: var(--color-surface-secondary);
+}
+
+.unread {
+  background: var(--color-primary-light);
+}
+
+.unread:hover {
+  background: var(--color-primary-light);
+}
+
+.rowLabel {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.rowTime {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}

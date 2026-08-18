@@ -6,14 +6,14 @@ and QA-signed-off, as of 2026-08-15** (see `docs/architecture/implementation-pla
 milestone-by-milestone status — this line was stale for several milestones and is corrected
 here as part of Milestone 8's documentation pass). On the frontend, **Frontend Milestone 1
 (auth screens) is implemented, as of 2026-08-15; Frontend Milestone 3 (Standard booking
-flow) is implemented, as of 2026-08-16; and Frontend Milestone 4 (SOS booking flow UI) is
-implemented and QA-signed-off, as of 2026-08-17** — see §6 below and
-`implementation-plan.md`'s Milestone 1 / Milestone 3 / Milestone 4 entries for full status
-detail; the rest of `frontend/` (notifications, job-status progression UI, favorites/
-reviews UI) remains design-only or backend-only, pending later frontend milestones. This
-is the living source of truth for architecture/decisions — keep it in sync with the
-actual implementation as it lands (owned going forward by the `pronto-documentation`
-agent).
+flow) is implemented, as of 2026-08-16; Frontend Milestone 4 (SOS booking flow UI) is
+implemented and QA-signed-off, as of 2026-08-17; and Frontend Milestone 5 (in-app
+notification bell) is implemented and QA-signed-off, as of 2026-08-18** — see §6 below and
+`implementation-plan.md`'s Milestone 1 / Milestone 3 / Milestone 4 / Milestone 5 entries for
+full status detail; the rest of `frontend/` (job-status progression UI, favorites/reviews
+UI) remains design-only or backend-only, pending later frontend milestones. This is the
+living source of truth for architecture/decisions — keep it in sync with the actual
+implementation as it lands (owned going forward by the `pronto-documentation` agent).
 
 ## 1. Consolidated understanding
 
@@ -178,11 +178,11 @@ changes it, per the shared project rule.
 | `features/booking` | Standard professional list, SOS professional list, booking confirmation, tracking screen. **Standard and SOS flows both implemented** — Standard: Frontend Milestone 3 (2026-08-16), `BookingFlowPage`/`MyOrdersPage`/`OrderTrackingPage`; SOS: Frontend Milestone 4 (2026-08-17), `SosBookingFlowPage`/`SosBookingSummary`. **Extended in the MS3/MS4 product-corrections pass (2026-08-17)**: `AddressSelectionStep` (default-vs-custom address chooser), full 7-field service address, booking-draft resume. See §6 below and `implementation-plan.md`'s entries. |
 | `features/professionals` | Professional card/list components shared by Standard and SOS (per PRD §7.4, SOS reuses the professional-selection component with urgent filtering rather than a fully separate screen). **Implemented, Frontend Milestone 3 (2026-08-16)**; SOS reuse landed Frontend Milestone 4 (2026-08-17) — both flows now consume `ProfessionalCard`/`ProfessionalList` via `ProfessionalList`. **Sort-toggle reconciled in the MS3/MS4 product-corrections pass (2026-08-17)**: both flows now expose an identical 2-way `Recommended | Cheapest` chip toggle. |
 | `features/dashboard` | Professional dashboard — availability management, incoming requests, job status actions. **Partially implemented**, Frontend Milestone 3 (2026-08-16): incoming-request accept/reject, a read-only job list, availability-slot create/list; SOS-availability toggle (`SosAvailabilityToggle`) added Frontend Milestone 4 (2026-08-17). Job-status progression (on-the-way/complete) not yet built. |
-| `features/notifications` | Notification display / status-polling hook consumers. Not yet built — the status-polling primitive itself (`usePolling`/`useOrderStatus`) shipped early, in Frontend Milestone 3, and is consumed directly by `features/booking`/`features/dashboard`; a dedicated notification-bell/feed screen is still design-only. |
-| `shared/api` | Backend API client. **Grew in Frontend Milestone 3 (2026-08-16)**: `bookings.ts`, `availability.ts`, and a `getIssue` addition to `issues.ts`; grew again in Frontend Milestone 4 (2026-08-17): SOS-listing/order functions in `bookings.ts` and SOS-availability functions in `availability.ts`. |
+| `features/notifications` | In-app notification bell: nav badge + anchored dropdown feed, consuming the backend `notifications` package via short-polling. **Implemented, Frontend Milestone 5 (2026-08-18)** — `NotificationBell.tsx`/`notificationLabels.ts`; the status-polling primitive itself (`usePolling`/`useOrderStatus`) shipped earlier, in Frontend Milestone 3, and remains consumed directly by `features/booking`/`features/dashboard` for order tracking, separate from this module's own `useNotifications` hook. No dedicated page/route — the backend feed has no pagination. |
+| `shared/api` | Backend API client. **Grew in Frontend Milestone 3 (2026-08-16)**: `bookings.ts`, `availability.ts`, and a `getIssue` addition to `issues.ts`; grew again in Frontend Milestone 4 (2026-08-17): SOS-listing/order functions in `bookings.ts` and SOS-availability functions in `availability.ts`. **Grew in Frontend Milestone 5 (2026-08-18)**: `notifications.ts` (new), consuming the already-complete backend `notifications` package, no backend changes. |
 | `shared/components` | Reusable UI components. **Grew in Frontend Milestone 3 (2026-08-16)**: `StatusBadge`. |
-| `shared/hooks` | Reusable React hooks (e.g. status-polling hook, auth context). **Grew in Frontend Milestone 3 (2026-08-16)**: `usePolling`/`useOrderStatus`. **Grew in the MS3/MS4 product-corrections pass (2026-08-17)**: booking-draft persistence (`bookingDraftContext.ts`/`BookingDraftProvider.tsx`/`useBookingDraft.ts`). |
-| `app` | Routing, layout, root configuration. **Updated, Frontend Milestone 3 (2026-08-16)**: `/pro` now renders a real professional dashboard instead of a placeholder; booking/tracking/orders routes added. |
+| `shared/hooks` | Reusable React hooks (e.g. status-polling hook, auth context). **Grew in Frontend Milestone 3 (2026-08-16)**: `usePolling`/`useOrderStatus`. **Grew in the MS3/MS4 product-corrections pass (2026-08-17)**: booking-draft persistence (`bookingDraftContext.ts`/`BookingDraftProvider.tsx`/`useBookingDraft.ts`). **Grew in Frontend Milestone 5 (2026-08-18)**: `useNotifications.ts` (a plain polling hook wrapping `usePolling`, not a React Context — single consumer, unlike `useActiveOrder`/`useBookingDraft`). |
+| `app` | Routing, layout, root configuration. **Updated, Frontend Milestone 3 (2026-08-16)**: `/pro` now renders a real professional dashboard instead of a placeholder; booking/tracking/orders routes added. **Updated, Frontend Milestone 5 (2026-08-18)**: `AppLayout.tsx` renders `<NotificationBell />` in the nav for both roles (CUSTOMER and PROFESSIONAL, unlike the CUSTOMER-only `ActiveOrderIndicator`); no router change (the bell is a dropdown, not a route). |
 
 ### Docs
 
@@ -508,6 +508,40 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
     `ProfessionalSort.java`'s Javadoc both still described the unauthorized "SOS defaults to
     `FASTEST`" behavior from the out-of-scope draft above — corrected to match the actual,
     reconciled code (both listing endpoints default to `CHEAPEST`).
+- **2026-08-18 — Frontend Milestone 5 (in-app notification bell) landed, QA-signed-off.**
+  Branch `frontend/MS5`, local only — uncommitted, not pushed/merged; that remains the user's
+  own explicit git action. Built entirely on top of the already-complete, untouched backend
+  `notifications` package (backend Milestone 5, above) — no backend changes this round. New:
+  `shared/api/notifications.ts` (typed client for `GET /api/notifications`, `POST
+  /api/notifications/{id}/read`, `POST /api/notifications/read-all`, shapes verified against
+  the real backend DTOs); `shared/hooks/useNotifications.ts` (a polling wrapper around
+  `usePolling`, default 4s interval — a plain hook, not a React Context, since it has exactly
+  one consumer, unlike `useActiveOrder`/`useBookingDraft`); `features/notifications/`
+  (`NotificationBell.tsx` — nav badge capped at `"9+"` plus an anchored dropdown panel, no
+  dedicated page since the backend feed has no pagination — `notificationLabels.ts`, Hebrew
+  labels for all 8 backend `messageType` values with an explicit fallback for unmapped ones).
+  `app/AppLayout.tsx` renders `<NotificationBell />` in the nav for **both** roles (unlike the
+  CUSTOMER-only `ActiveOrderIndicator`), since `GET /api/notifications` is an either-role,
+  self-scoped feed; no `ProDashboardLayout` change was needed since it nests inside
+  `AppLayout`'s route tree. Full detail, including the reachable-vs-not-yet-reachable
+  `messageType` breakdown and design-decision rationale, is in `implementation-plan.md`'s
+  "Frontend Milestone 5" entry (nested under Milestone 5) — not restated here.
+  - **QA**: full pass, **PASS**, no bugs found, signed off 2026-08-18. Method: mixed, per this
+    environment's established constraint (no browser-automation tool). RTL dropdown
+    positioning and both-role nav rendering were verified via code review; the
+    notification-trigger→recipient mappings, mark-read/mark-all-read persistence, empty state,
+    badge-cap logic, and the `ORDER_EXPIRED` sweep path were live-verified against a real
+    running backend + Postgres instance.
+  - **Environment note, non-blocking**: QA's session surfaced a pre-existing local-environment
+    issue on this machine — a native Windows PostgreSQL service shadows the project's own
+    `docker-compose.yml` Postgres container on port 5432, so whichever starts first wins the
+    port. Not a code defect; recorded here (and in `implementation-plan.md`'s Frontend
+    Milestone 5 entry) so a future session doesn't lose time rediscovering it.
+  - **Known gaps/deferred, not blockers**: `ORDER_ON_THE_WAY`/`ORDER_COMPLETED` notification
+    rows won't appear until Milestone 6 wires those `BookingsService` transitions to
+    `recordOrderNotification(...)` — the frontend label mapping already covers them, no
+    further frontend change needed when that lands. No dedicated notification page/pagination
+    (matches the backend's own no-pagination design).
 
 ## 7. Backend architecture reference (as-built)
 

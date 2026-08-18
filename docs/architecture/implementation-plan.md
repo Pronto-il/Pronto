@@ -638,6 +638,98 @@ closed).
     copy/Hebrew localization remains genuinely open, needs product/UX input (§7 of the
     contract doc).
 
+### Frontend Milestone 5 — In-app notification bell
+
+- **Status: COMPLETE, QA-signed-off (PASS, no bugs found), 2026-08-18.** Built on top of
+  backend Milestone 5 (Notifications & real-time status, above), which shipped complete and
+  untouched this round — no backend changes were made or needed. On branch `frontend/MS5`,
+  local only — uncommitted, not pushed/merged; that remains the user's own explicit git
+  action, not implied by this status line. Not one of the originally-numbered backend
+  milestones in `overview.md` §5; tracked separately as "Frontend Milestone 5" (MS5) since it
+  delivers the UI for this same Milestone 5 notifications scope, following the naming
+  convention Frontend Milestone 1/3/4 established.
+- **What was built**: `shared/api/notifications.ts` (new) — `NotificationMessageType` (an
+  8-value string union mirroring the backend's `notifications.entity.NotificationMessageType`
+  enum verbatim), `NotificationResponse`/`NotificationsListResponse`/`MarkAllReadResponse`
+  types, and `getNotifications(unreadOnly?)`/`markNotificationRead(id)`/
+  `markAllNotificationsRead()` wrapping `GET /api/notifications`, `POST
+  /api/notifications/{id}/read`, `POST /api/notifications/read-all` — shapes verified directly
+  against the real backend DTOs (`notifications.dto.{NotificationResponse,
+  NotificationsListResponse,ReadAllResponse}`), not copied from prose. `shared/hooks/
+  useNotifications.ts` (new) — a polling wrapper around `usePolling` (default 4s interval, no
+  custom interval passed), deliberately a **plain hook, not a React Context**: unlike
+  `useActiveOrder`/`useBookingDraft`, it has exactly one consumer
+  (`features/notifications/NotificationBell.tsx`), so there's no cross-page state to
+  coordinate. Exposes `{ notifications, unreadCount, isLoading, markAsRead, markAllAsRead }`,
+  with `markAsRead`/`markAllAsRead` updating local state optimistically and firing their `POST`
+  in the background (not awaited, no forced `refetch()` afterward — a failed request just
+  self-corrects on the next poll tick, no error toast, a deliberately low-stakes design).
+  `unreadCount` is derived client-side from `notifications`'s `readAt` values rather than
+  passed through from the poll response's own `unreadCount` field — equivalent in practice
+  (the feed is always unfiltered), but means the badge updates instantly on an optimistic
+  mark-read with no second piece of state to keep in sync by hand. New feature folder
+  `features/notifications/` — `NotificationBell.tsx` (the bell button + numeric badge, capped
+  at `"9+"` above 9 unread, plus the anchored dropdown panel — presentation only, all
+  data-fetching/polling/optimistic state lives in the hook), `NotificationBell.module.css`,
+  `notificationLabels.ts` (Hebrew label lookup for all 8 backend `messageType` values, with an
+  explicit `??` fallback for any value not in the map rather than a bare index that could
+  silently render `undefined`), and `index.ts`. `app/AppLayout.tsx` now renders
+  `<NotificationBell />` in the nav, right after `<BookingDraftIndicator />` and before the
+  role-conditional `/orders`/`/pro` link — for **both** roles (CUSTOMER and PROFESSIONAL),
+  unlike `ActiveOrderIndicator`, which is CUSTOMER-only, since `GET /api/notifications` is an
+  either-role, self-scoped feed with no route-level role gate. No `ProDashboardLayout` change
+  was needed or made: it only renders its own `/pro/*` sub-tabs and an `<Outlet />`, and is
+  itself nested inside `AppLayout`'s top-level route tree, so `AppLayout`'s nav — and the bell
+  inside it — is already present above every `/pro/*` screen. Barrel-export updates:
+  `shared/api/index.ts`, `shared/hooks/index.ts`, `features/notifications/index.ts`.
+- **Notable design decisions**:
+  - **No dedicated notification page/route.** The backend feed has no pagination (§3.1 of the
+    contract doc), so a lightweight anchored popover — not a full screen — is sufficient. The
+    panel opens/closes on bell click, closes on a `mousedown` outside the panel (listener
+    scoped to while open), and closes on row click (which also marks that row read and
+    navigates to `/orders/{relatedOrderId}`, an either-role route since Frontend Milestone 3).
+  - **All 8 backend `messageType` enum values are mapped to a Hebrew label, even though only
+    5 are reachable today**: `ORDER_CREATED`/`ORDER_CONFIRMED`/`ORDER_REJECTED`/
+    `ORDER_CANCELLED`/`ORDER_EXPIRED` are live; `ORDER_ON_THE_WAY`/`ORDER_COMPLETED` are
+    Milestone 6 scope (no `BookingsService` caller wires them yet, consistent with backend
+    Milestone 5's own "Known gaps" note above) and `EMAIL_VERIFICATION` is never written to an
+    `IN_APP` row (an event that occurs before the user has a usable session). Mapping the full
+    enum now, rather than only the reachable subset, means a future Milestone 6 doesn't need a
+    frontend label-mapping change to render `ORDER_ON_THE_WAY`/`ORDER_COMPLETED` rows
+    correctly — and the explicit fallback (`getMessageTypeLabel`) guarantees a row with an
+    unmapped value still renders instead of crashing.
+  - **Optimistic, fire-and-forget mark-read/mark-all-read**, matching the same "low-stakes
+    action, self-corrects on next poll" philosophy already established by
+    `ActiveOrderProvider`'s `acknowledgeOrder` and `useBookingDraft`'s draft mutations
+    elsewhere in this codebase — no new pattern introduced.
+- **QA summary**: mixed-method, per this environment's established constraint (no
+  browser-automation tool available, consistent with every prior frontend milestone's own QA
+  note). RTL dropdown positioning (the panel's `inset-inline-end: 0` anchoring under the
+  app's `dir="rtl"` layout) and both-role nav rendering (bell present in the nav for both a
+  CUSTOMER and a PROFESSIONAL session, unlike the CUSTOMER-only `ActiveOrderIndicator`) were
+  verified via code review. The notification-trigger→recipient mappings, mark-read/
+  mark-all-read persistence, the empty state, the badge-cap ("9+") data logic, and the
+  `ORDER_EXPIRED` sweep path were all live-verified against a real running backend + Postgres
+  instance. **Final verdict: PASS, no bugs found.**
+  - **Environment note, non-blocking, unrelated to this milestone's code**: QA's session hit a
+    pre-existing local-environment issue worth recording so a future session doesn't lose time
+    rediscovering it — a native Windows PostgreSQL service running on this machine shadows the
+    project's own `docker-compose.yml` Postgres container on port 5432 (both bind the same
+    port; whichever started first wins the port, and it's easy to end up validating against
+    the wrong database without realizing it). Not a code defect, not specific to notifications
+    or this milestone — purely a local dev-environment quirk on this particular machine.
+- **Known gaps/deferred, not blockers**:
+  - `ORDER_ON_THE_WAY`/`ORDER_COMPLETED` rows won't appear until Milestone 6 wires those
+    `BookingsService` transitions to `recordOrderNotification(...)` — the frontend label
+    mapping is already in place and needs no further change when that lands.
+  - No dedicated notification page or pagination — deliberate, matches the backend's
+    no-pagination design; would need to be revisited together if the backend ever adds
+    pagination to `GET /api/notifications`.
+  - Email-channel notifications (already backend-complete since backend Milestone 5) have no
+    frontend surface by design — they're delivered to the user's actual email inbox, not
+    rendered anywhere in-app; the bell/panel is in-app (`IN_APP` channel) only, per §3.1 of the
+    contract doc.
+
 ## Milestone 6 — Professional dashboard
 
 - **Status: COMPLETE (backend), QA-signed-off on branch `MS6`, 2026-08-13.** Not yet merged

@@ -70,6 +70,15 @@ feature modules together into the single-page app described in
   acknowledgement, while the customer is mid-draft on a brand-new issue) — expected, not a
   conflict. Full design record:
   `docs/architecture/active-booking-floating-indicator.md` §6.3.
+- `AppLayout.tsx` — **as of Frontend Milestone 5 (2026-08-18)**: also renders
+  `<NotificationBell />` (`features/notifications`) inside `<nav>`, right after
+  `BookingDraftIndicator` and before the role-conditional `/orders`/`/pro` link. Rendered
+  for **both** roles (unlike `ActiveOrderIndicator`, CUSTOMER-only) — `GET
+  /api/notifications` is an either-role, self-scoped feed, so the bell has no role gate.
+  No `ProDashboardLayout` change was needed: it only renders its own `/pro/*` sub-tabs and
+  an `<Outlet />`, and is itself rendered inside `AppLayout`'s top-level `<Outlet />` (see
+  `router.tsx`'s nesting), so `AppLayout`'s nav — and the bell inside it — is already
+  present above every `/pro/*` screen.
 
 ## Status
 **Frontend Milestone 3 (2026-08-16, Standard booking flow) implemented.** `ProPlaceholderPage`
@@ -77,7 +86,7 @@ was removed — the professional's `/pro` route now renders a real dashboard
 (`features/dashboard`'s `ProDashboardLayout` + `IncomingRequestsPage`/`AvailabilityPage`).
 Router now also includes `/issues/:issueId/booking`, `/orders`, and `/orders/:orderId`
 (`features/booking`). Further feature routes are added here incrementally as each
-milestone lands (SOS routes in Milestone 4, notifications in Milestone 6, etc.).
+milestone lands (SOS routes in Milestone 4, notifications in Milestone 5, etc.).
 
 Prior status: **Milestone 1 (Auth & user management) implemented** — the auth routes
 (`/register`, `/register/customer`, `/register/professional`, `/verify`, `/login`) from
@@ -96,3 +105,8 @@ route, `orders/:orderId/review` → `CompletionReviewPage` (`features/booking`),
 the existing `RequireAuth role="CUSTOMER"` group alongside `issues/new`/`.../booking`/
 `.../sos-booking`/`orders`. QA-passed (12/12 checklist items, zero bugs). Full design
 record: `docs/architecture/active-booking-floating-indicator.md` §7-§8.
+
+**Frontend Milestone 5 — Notifications (2026-08-18)**: `AppLayout.tsx` gained
+`<NotificationBell />` in `<nav>` (see "Structure" above). No `App.tsx`/`router.tsx` changes
+— the bell has no provider (it's a plain hook, `shared/hooks/useNotifications.ts`, not a
+context) and no dedicated route (an anchored dropdown, not a page).

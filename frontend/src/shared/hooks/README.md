@@ -14,6 +14,8 @@ Reusable React hooks shared across features.
 - Active-booking floating-indicator context/hooks (cross-order priority selection, ETA
   countdown, review-acknowledgement persistence) — shipped in the Active Booking Floating
   Indicator feature (2026-08-17), see below.
+- Notification-bell polling hook (`useNotifications`) — shipped in Frontend Milestone 5
+  (2026-08-18), see below.
 
 ## Structure
 - `authContext.ts` — the `AuthContext` (React context) + `AuthContextValue` type. Kept
@@ -114,6 +116,19 @@ Reusable React hooks shared across features.
   persisted (`orders.expected_arrival_at`, see `backend/.../bookings/README.md`), not any
   client-held countdown state. Shared by `app/ActiveOrderIndicator.tsx` and
   `features/booking/OrderTrackingPage.tsx` (the only two consumers).
+- `useNotifications.ts` — **new, Frontend Milestone 5.** Polling wrapper around
+  `usePolling` (`GET /api/notifications` via `shared/api/notifications.ts`'s
+  `getNotifications`, default 4s interval, no `unreadOnly` filter). Deliberately a plain
+  hook, not a React context: unlike `useBookingDraft`/`useActiveOrder` it has exactly one
+  consumer (`features/notifications/NotificationBell.tsx`), no cross-page state to
+  coordinate. Exposes `{ notifications, unreadCount, isLoading, markAsRead(id),
+  markAllAsRead() }`. `unreadCount` is derived client-side from `notifications`'s `readAt`
+  values (equivalent to the poll response's own `unreadCount` field, since the feed is
+  always unfiltered) rather than tracked as separate state, so an optimistic
+  `markAsRead`/`markAllAsRead` update is instantly reflected in the badge with nothing else
+  to keep in sync. Both mutations update local state immediately and fire their `POST` in
+  the background without awaiting it or forcing a `refetch()` afterwards — a failed request
+  just self-corrects on the next poll tick (no error toast, low-stakes action).
 
 ## Status
 `AuthProvider`/`useAuth` implemented in **Milestone 1 — Auth & user management**
@@ -145,3 +160,8 @@ conflict. QA-passed (12/12 checklist items, zero bugs). Full design record:
 `docs/architecture/active-booking-floating-indicator.md`, particularly §3 (list-poll-only
 sync mechanism), §5 (priority-selection algorithm), and §6 (acknowledgement-tracking
 mechanism).
+
+**Frontend Milestone 5 — Notifications (2026-08-18)**: `useNotifications.ts` is new (see
+"Structure" above), consuming the already-complete backend `notifications` package
+(read-only, no backend changes). Consumed by `features/notifications/NotificationBell.tsx`
+(see `features/notifications/README.md`).

@@ -3,6 +3,7 @@ import { LogOut, User, ClipboardList, LayoutDashboard } from 'lucide-react';
 import { useAuth } from '../shared/hooks';
 import { BookingDraftIndicator } from './BookingDraftIndicator';
 import { ActiveOrderIndicator } from './ActiveOrderIndicator';
+import { NotificationBell } from '../features/notifications';
 import logoUrl from '../assets/pronto-logo.jpg';
 import styles from './AppLayout.module.css';
 
@@ -14,7 +15,10 @@ import styles from './AppLayout.module.css';
  * link (`/pro`) — per that same section, once a destination is real (not a placeholder)
  * it belongs in nav (FRONTEND_AGENT.md §29 only warns against nav links to pages that
  * don't exist yet). Favorites/full bottom nav (§50-51) still don't have a backing screen
- * and are not added.
+ * and are not added. Frontend Milestone 5 adds `NotificationBell` right after
+ * `BookingDraftIndicator` and before the role-conditional link — rendered for *both* roles
+ * (unlike `ActiveOrderIndicator` below, which is CUSTOMER-only), since `GET
+ * /api/notifications` is an either-role, self-scoped feed.
  */
 export default function AppLayout() {
   const { user, logout } = useAuth();
@@ -30,6 +34,7 @@ export default function AppLayout() {
             {user ? (
               <>
                 <BookingDraftIndicator />
+                <NotificationBell />
                 {user.role === 'CUSTOMER' && (
                   <Link to="/orders" className={styles.navLink}>
                     <ClipboardList size={18} aria-hidden="true" />

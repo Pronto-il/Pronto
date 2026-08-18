@@ -79,6 +79,16 @@ API described in `docs/architecture/overview.md` §3.2.
 (not previously present on that lean list-mine shape — needed by
 `shared/hooks/activeOrderContext.ts`'s completed-order tie-break logic). No new functions —
 `getMyOrders`/`getOrder` are unchanged, only their response shapes grew.
+- `notifications.ts` — **new, Frontend Milestone 5.** In-app notification bell domain:
+  `NotificationMessageType` (string union mirroring the backend's 8-value
+  `notifications.entity.NotificationMessageType` enum), `NotificationResponse`,
+  `NotificationsListResponse`, `MarkAllReadResponse` types, plus `getNotifications
+  (unreadOnly?)` (`GET /api/notifications`), `markNotificationRead(id)` (`POST
+  /api/notifications/{id}/read`), `markAllNotificationsRead()` (`POST
+  /api/notifications/read-all`). Shapes verified directly against the real backend DTOs
+  (`notifications.dto.{NotificationResponse,NotificationsListResponse,ReadAllResponse}`),
+  same convention as `bookings.ts`/`reviews.ts`. First and only frontend consumer:
+  `shared/hooks/useNotifications.ts`.
 
 ## Status
 Implemented in **Milestone 1 — Auth & user management**
@@ -90,5 +100,9 @@ gained `defaultAddress`; `bookings.ts` gained the 3 new service-address fields a
 `RECOMMENDED` sort value (see above). **Active Booking Floating Indicator feature
 (2026-08-17)**: `reviews.ts` is new (first frontend consumer of `POST /api/reviews`);
 `bookings.ts` gained `expectedArrivalAt`/`OrderSummary.updatedAt` (see above). QA-passed
-(12/12 checklist items, zero bugs). Full design record:
-`docs/architecture/active-booking-floating-indicator.md`.
+(12/12 checklist items, zero bugs); full design record:
+`docs/architecture/active-booking-floating-indicator.md`. **Frontend Milestone 5 —
+Notifications (2026-08-18)**: `notifications.ts` is new, consuming the already-complete
+backend `notifications` package (read-only, no backend changes). QA-signed-off, PASS, no bugs
+found; full detail in `docs/architecture/implementation-plan.md`'s "Frontend Milestone 5"
+entry.

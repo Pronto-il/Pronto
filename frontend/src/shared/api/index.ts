@@ -83,3 +83,11 @@ export type {
 
 export { createReview } from './reviews';
 export type { CreateReviewRequest, ReviewResponse } from './reviews';
+
+export { getNotifications, markNotificationRead, markAllNotificationsRead } from './notifications';
+export type {
+  NotificationMessageType,
+  NotificationResponse,
+  NotificationsListResponse,
+  MarkAllReadResponse,
+} from './notifications';

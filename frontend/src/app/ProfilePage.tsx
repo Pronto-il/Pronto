@@ -1,4 +1,5 @@
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { Heart } from 'lucide-react';
 import { PageHeader, Card, Button } from '../shared/components';
 import { useAuth } from '../shared/hooks';
 import { getCategoryNameHe, type UserRole } from '../shared/api';
@@ -15,6 +16,10 @@ const ROLE_LABELS: Record<UserRole, string> = {
  * address (`user.defaultAddress`, `ms3-ms4-corrections-design.md` §1) when present — `null`
  * for a `PROFESSIONAL` caller or a pre-V20 `CUSTOMER` with no recorded default, per that
  * field's own "absent means no such object" convention.
+ *
+ * Also the entry point to `/favorites` for a `CUSTOMER` — approved UX decision (Frontend
+ * Milestone 8 correction): favorites is a secondary feature reached via "הפרופיל שלי" →
+ * "מועדפים", not a primary top-nav destination.
  */
 export default function ProfilePage() {
   const { user, logout } = useAuth();
@@ -104,6 +109,12 @@ export default function ProfilePage() {
           )}
         </dl>
       </Card>
+      {user.role === 'CUSTOMER' && (
+        <Link to="/favorites" className={styles.favoritesLink}>
+          <Heart size={18} aria-hidden="true" />
+          <span>מועדפים</span>
+        </Link>
+      )}
       <Button variant="secondary" onClick={handleLogout}>
         יציאה מהחשבון
       </Button>

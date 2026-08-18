@@ -83,8 +83,23 @@ export type {
   SosAvailabilityResponse,
 } from './availability';
 
-export { createReview } from './reviews';
-export type { CreateReviewRequest, ReviewResponse } from './reviews';
+export { createReview, getReviews } from './reviews';
+export type { CreateReviewRequest, ReviewResponse, ReviewListResponse } from './reviews';
+
+export { addFavorite, removeFavorite, getFavorites } from './favorites';
+export type { FavoriteProfessionalSummary, FavoritesListResponse } from './favorites';
+
+export {
+  getMyProfessionalProfile,
+  updateMyProfessionalProfile,
+  uploadProfessionalProfileImage,
+  getProfessionalProfile,
+} from './professionals';
+export type {
+  ProfessionalProfileResponse,
+  UpdateProfessionalProfileRequest,
+  ProfileImageUploadResponse,
+} from './professionals';
 
 export { getNotifications, markNotificationRead, markAllNotificationsRead } from './notifications';
 export type {

@@ -265,6 +265,7 @@ export default function SosBookingFlowPage() {
               onSortChange={handleSortChange}
               onSelect={handleSelectProfessional}
               isLoading={isLoadingProfessionals}
+              viewProfileContext={{ issueId, urgencyType: 'SOS' }}
             />
           )}
         </div>

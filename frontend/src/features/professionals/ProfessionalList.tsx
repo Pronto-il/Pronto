@@ -1,4 +1,4 @@
-import { ProfessionalCard } from './ProfessionalCard';
+import { ProfessionalCard, type ViewProfileContext } from './ProfessionalCard';
 import type { ProfessionalCard as ProfessionalCardData, ProfessionalSort } from '../../shared/api';
 import styles from './ProfessionalList.module.css';
 
@@ -14,6 +14,8 @@ export interface ProfessionalListProps {
   onSortChange: (sort: ProfessionalSort) => void;
   onSelect: (professional: ProfessionalCardData) => void;
   isLoading?: boolean;
+  /** Passed through to every `ProfessionalCard` — see `ProfessionalCardProps` (§2.3). */
+  viewProfileContext?: ViewProfileContext;
 }
 
 /** Standard-booking flow's sort chips (§34): highest-rated first, or cheapest first. */
@@ -40,6 +42,7 @@ export function ProfessionalList({
   onSortChange,
   onSelect,
   isLoading,
+  viewProfileContext,
 }: ProfessionalListProps) {
   if (isLoading) {
     return (
@@ -81,6 +84,7 @@ export function ProfessionalList({
               professional={professional}
               sort={sort}
               onSelect={onSelect}
+              viewProfileContext={viewProfileContext}
             />
           ))}
         </div>

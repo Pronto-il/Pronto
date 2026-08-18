@@ -39,3 +39,15 @@ export interface ReviewResponse {
 export function createReview(payload: CreateReviewRequest): Promise<ReviewResponse> {
   return httpClient.post<ReviewResponse>('/api/reviews', payload);
 }
+
+export interface ReviewListResponse {
+  professionalId: number;
+  averageRating: number | null;
+  reviewCount: number;
+  reviews: ReviewResponse[];
+}
+
+/** GET /api/reviews?professionalId= — either role, no route gate, no pagination. */
+export function getReviews(professionalId: number): Promise<ReviewListResponse> {
+  return httpClient.get<ReviewListResponse>(`/api/reviews?professionalId=${professionalId}`);
+}

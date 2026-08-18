@@ -14,11 +14,15 @@ import styles from './AppLayout.module.css';
  * real screens — a customer's "ההזמנות שלי" (`/orders`) and a professional's own dashboard
  * link (`/pro`) — per that same section, once a destination is real (not a placeholder)
  * it belongs in nav (FRONTEND_AGENT.md §29 only warns against nav links to pages that
- * don't exist yet). Favorites/full bottom nav (§50-51) still don't have a backing screen
- * and are not added. Frontend Milestone 5 adds `NotificationBell` right after
+ * don't exist yet). Frontend Milestone 5 adds `NotificationBell` right after
  * `BookingDraftIndicator` and before the role-conditional link — rendered for *both* roles
  * (unlike `ActiveOrderIndicator` below, which is CUSTOMER-only), since `GET
- * /api/notifications` is an either-role, self-scoped feed.
+ /api/notifications` is an either-role, self-scoped feed. Frontend Milestone 8 adds
+ * `/favorites` and a professional-profile editor — `/favorites` is deliberately not a
+ * primary-nav destination (approved UX decision, `frontend-ms8-design.md` §2.1 revision):
+ * it lives under "הפרופיל שלי" -> "מועדפים" (`ProfilePage.tsx`) as a secondary customer
+ * feature, not a top-nav link. The full mobile bottom nav (§50-51) still has no
+ * implementation at all and remains out of scope.
  */
 export default function AppLayout() {
   const { user, logout } = useAuth();

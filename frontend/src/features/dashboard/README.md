@@ -77,6 +77,62 @@ while Reject was the one running; both buttons still disable together during any
 action).
 
 Not built here: the fuller professional dashboard sidebar (ביקורות/הגדרות — no backing
-screens yet). Job-status action buttons (on-the-way/complete) **are now built** (Frontend
-Milestone 6, 2026-08-18) but belong to `features/booking/OrderTrackingPage.tsx`, not this
-package — see that package's README.
+screens yet, apart from `פרופיל`, added Frontend Milestone 8, see below). Job-status action
+buttons (on-the-way/complete) **are now built** (Frontend Milestone 6, 2026-08-18) but
+belong to `features/booking/OrderTrackingPage.tsx`, not this package — see that package's
+README.
+
+## Frontend Milestone 8 (2026-08-18): `/pro/profile` — professional business-profile self-service
+
+Full design record: `docs/architecture/frontend-ms8-design.md` §2.2/§4.3.
+
+`ProDashboardLayout` gained a 4th tab, `פרופיל` (`/pro/profile`), extending the same
+established tab pattern the existing three tabs already use — `DESIGN_SYSTEM.md` §53's own
+professional-dashboard-sidebar mockup already lists `▢ פרופיל` alongside the others.
+
+- **`ProfileEditorPage.tsx`** (new) + `.module.css` — a form for the professional's
+  business-listing profile: `fullName`/`serviceArea`/`city`/`bio`/`basePrice` (the exact
+  `UpdateProfessionalProfileRequest` allowlist), plus a read-only `categoryId` display (via
+  the existing `getCategoryNameHe` helper — **not** editable; the update DTO carries no
+  field to change it, matching the backend's own deliberate exclusion). Loads via
+  `getMyProfessionalProfile()` on mount, saves via `updateMyProfessionalProfile()`.
+  `approvalStatus` is not rendered at all — auto-approved in v1.0 (confirmed project-wide
+  rule), so it carries no actionable information today.
+  - **This is a genuinely different page/concern from `app/ProfilePage.tsx`, not a
+    duplicate — document this distinction clearly.** `app/ProfilePage.tsx` is a shared,
+    cross-role, **read-only** display of `GET /api/users/me` (identity/account-level: name,
+    email, role, default address) reachable from both roles' top-nav "הפרופיל שלי" link,
+    left completely untouched by this milestone. `ProfileEditorPage.tsx` is
+    PROFESSIONAL-only, reads and **writes** `professionals/me` (a business-listing profile:
+    bio, city, price, photo) — a different backend package, a different DTO, a different
+    concern, reached only through the professional's own dashboard, never through the
+    shared top-nav profile link. The two pages intentionally do not share a data source or
+    an edit affordance.
+  - **`fullName` write has a cross-page staleness consequence — handled explicitly.**
+    `PUT /api/professionals/me`'s `fullName` field writes to the underlying `users` row
+    (not a `professionals`-only field, per that DTO's own Javadoc), so a successful save
+    here also calls the new `useAuth().refreshUser()` (see below) — otherwise the top-nav's
+    cached `user.fullName` (and `app/ProfilePage.tsx`'s own display) would silently go
+    stale until the next full page load or re-login. This was flagged as design doc §6 Risk
+    1 and closed by this addition, not left as a known gap.
+- **`ProfessionalProfileImageField.tsx`** (new) + `.module.css` — a thin wrapper composing
+  the existing `shared/components/ImageUploadField.tsx` for the pick/preview/remove UI, but
+  — mirroring `PhotoUploader.tsx`'s existing "upload immediately on selection" pattern
+  rather than `ImageUploadField`'s own default "hold a `File` for a later multipart submit"
+  — calls `uploadProfessionalProfileImage(file)` as soon as a file is picked. The backend
+  models the profile image as its own endpoint (`POST
+  /api/professionals/me/profile-image`), independent of `PUT /me`'s field save, so there is
+  no "submit the whole form together" moment to wait for. Reports the new
+  `profileImageUrl` back to `ProfileEditorPage` immediately on success so the displayed
+  photo updates without a full profile refetch; surfaces an inline error via
+  `ImageUploadField`'s existing `error` prop on failure, the same pattern `PhotoUploader`
+  uses for per-item errors.
+- **`ProDashboardLayout.tsx`** — gained the 4th `NavLink` (`/pro/profile`, label `פרופיל`),
+  same styling/pattern as the existing three.
+- **`index.ts`** — now also exports `ProfileEditorPage`.
+- **`shared/hooks/AuthProvider.tsx`**: gained a new `refreshUser(): Promise<void>` method
+  (exposed via `authContext.ts`'s `AuthContextValue`), which simply re-runs the same
+  `getMe()` call `login()` already does and updates `user` in place. Best-effort only — a
+  failed refresh silently leaves the previous (stale but valid) `user` in place rather than
+  surfacing an error to an unrelated caller. `ProfileEditorPage` is this method's first and
+  (as of this milestone) only caller.

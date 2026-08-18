@@ -315,6 +315,7 @@ export default function BookingFlowPage() {
               onSortChange={handleSortChange}
               onSelect={handleSelectProfessional}
               isLoading={isLoadingProfessionals}
+              viewProfileContext={{ issueId, urgencyType: 'STANDARD' }}
             />
           )}
         </div>

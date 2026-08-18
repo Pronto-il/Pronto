@@ -178,13 +178,14 @@ changes it, per the shared project rule.
 | `features/auth` | Registration, verification, login screens. **Implemented, Frontend Milestone 1 (2026-08-15)** — see §6 below and `implementation-plan.md`'s Milestone 1 entry. |
 | `features/issues` | Home/New Issue screen, AI Review + service-path-selection screen. **Implemented, Frontend Milestone 2** (see `implementation-plan.md`); `NewIssuePage`/`IssueSuccessStep` gained a Frontend Milestone 3 follow-up linking into the new booking flow, and a Frontend Milestone 4 follow-up linking the SOS branch into the new SOS booking flow. |
 | `features/booking` | Standard professional list, SOS professional list, booking confirmation, tracking screen. **Standard and SOS flows both implemented** — Standard: Frontend Milestone 3 (2026-08-16), `BookingFlowPage`/`MyOrdersPage`/`OrderTrackingPage`; SOS: Frontend Milestone 4 (2026-08-17), `SosBookingFlowPage`/`SosBookingSummary`. **Extended in the MS3/MS4 product-corrections pass (2026-08-17)**: `AddressSelectionStep` (default-vs-custom address chooser), full 7-field service address, booking-draft resume. **Extended, Frontend Milestone 6 (2026-08-18)**: professional-side "mark on the way"/"mark completed" job-status progression actions on `OrderTrackingPage`. See §6 below and `implementation-plan.md`'s entries. |
-| `features/professionals` | Professional card/list components shared by Standard and SOS (per PRD §7.4, SOS reuses the professional-selection component with urgent filtering rather than a fully separate screen). **Implemented, Frontend Milestone 3 (2026-08-16)**; SOS reuse landed Frontend Milestone 4 (2026-08-17) — both flows now consume `ProfessionalCard`/`ProfessionalList` via `ProfessionalList`. **Sort-toggle reconciled in the MS3/MS4 product-corrections pass (2026-08-17)**: both flows now expose an identical 2-way `Recommended | Cheapest` chip toggle. |
-| `features/dashboard` | Professional dashboard — availability management, incoming requests, job status actions. **Partially implemented**, Frontend Milestone 3 (2026-08-16): incoming-request accept/reject, a read-only job list, availability-slot create/list; SOS-availability toggle (`SosAvailabilityToggle`) added Frontend Milestone 4 (2026-08-17). **Job-status progression (on-the-way/complete) is now built, Frontend Milestone 6 (2026-08-18)** — but lives on `features/booking/OrderTrackingPage.tsx`, not in this package; `MyJobsPage` here remains intentionally read-only/link-only. |
+| `features/professionals` | Professional card/list components shared by Standard and SOS (per PRD §7.4, SOS reuses the professional-selection component with urgent filtering rather than a fully separate screen), plus (as of Frontend Milestone 8) the standalone professional-profile detail screen and review list. **Implemented, Frontend Milestone 3 (2026-08-16)**; SOS reuse landed Frontend Milestone 4 (2026-08-17) — both flows now consume `ProfessionalCard`/`ProfessionalList` via `ProfessionalList`. **Sort-toggle reconciled in the MS3/MS4 product-corrections pass (2026-08-17)**: both flows now expose an identical 2-way `Recommended | Cheapest` chip toggle. **Grew in Frontend Milestone 8 (2026-08-18)**: `ProfessionalProfilePage.tsx`/`ReviewList.tsx` (new, `/professionals/:professionalId`), `ProfessionalCard.tsx`'s new optional `viewProfileContext` prop (primary select button unchanged). |
+| `features/favorites` | Customer's saved-favorites list — add/remove/browse. **New, Frontend Milestone 8 (2026-08-18)**: `FavoritesPage.tsx` (`/favorites`, CUSTOMER-only), `FavoriteProfessionalCard.tsx` (a deliberately lean, dedicated card, not a reuse of `ProfessionalCard` — the favorites DTO has no distance/ETA fields). |
+| `features/dashboard` | Professional dashboard — availability management, incoming requests, job status actions, business-profile self-service. **Partially implemented**, Frontend Milestone 3 (2026-08-16): incoming-request accept/reject, a read-only job list, availability-slot create/list; SOS-availability toggle (`SosAvailabilityToggle`) added Frontend Milestone 4 (2026-08-17). **Job-status progression (on-the-way/complete) is now built, Frontend Milestone 6 (2026-08-18)** — but lives on `features/booking/OrderTrackingPage.tsx`, not in this package; `MyJobsPage` here remains intentionally read-only/link-only. **Grew in Frontend Milestone 8 (2026-08-18)**: a 4th `ProDashboardLayout` tab, `/pro/profile` (`ProfileEditorPage.tsx` + `ProfessionalProfileImageField.tsx`), reading/writing `professionals/me` — distinct from the shared, read-only `app/ProfilePage.tsx` (`users/me`). |
 | `features/notifications` | In-app notification bell: nav badge + anchored dropdown feed, consuming the backend `notifications` package via short-polling. **Implemented, Frontend Milestone 5 (2026-08-18)** — `NotificationBell.tsx`/`notificationLabels.ts`; the status-polling primitive itself (`usePolling`/`useOrderStatus`) shipped earlier, in Frontend Milestone 3, and remains consumed directly by `features/booking`/`features/dashboard` for order tracking, separate from this module's own `useNotifications` hook. No dedicated page/route — the backend feed has no pagination. |
-| `shared/api` | Backend API client. **Grew in Frontend Milestone 3 (2026-08-16)**: `bookings.ts`, `availability.ts`, and a `getIssue` addition to `issues.ts`; grew again in Frontend Milestone 4 (2026-08-17): SOS-listing/order functions in `bookings.ts` and SOS-availability functions in `availability.ts`. **Grew in Frontend Milestone 5 (2026-08-18)**: `notifications.ts` (new), consuming the already-complete backend `notifications` package, no backend changes. |
+| `shared/api` | Backend API client. **Grew in Frontend Milestone 3 (2026-08-16)**: `bookings.ts`, `availability.ts`, and a `getIssue` addition to `issues.ts`; grew again in Frontend Milestone 4 (2026-08-17): SOS-listing/order functions in `bookings.ts` and SOS-availability functions in `availability.ts`. **Grew in Frontend Milestone 5 (2026-08-18)**: `notifications.ts` (new), consuming the already-complete backend `notifications` package, no backend changes. **Grew in Frontend Milestone 8 (2026-08-18)**: `favorites.ts`/`professionals.ts` (new), `reviews.ts` gained `getReviews`. |
 | `shared/components` | Reusable UI components. **Grew in Frontend Milestone 3 (2026-08-16)**: `StatusBadge`. |
-| `shared/hooks` | Reusable React hooks (e.g. status-polling hook, auth context). **Grew in Frontend Milestone 3 (2026-08-16)**: `usePolling`/`useOrderStatus`. **Grew in the MS3/MS4 product-corrections pass (2026-08-17)**: booking-draft persistence (`bookingDraftContext.ts`/`BookingDraftProvider.tsx`/`useBookingDraft.ts`). **Grew in Frontend Milestone 5 (2026-08-18)**: `useNotifications.ts` (a plain polling hook wrapping `usePolling`, not a React Context — single consumer, unlike `useActiveOrder`/`useBookingDraft`). |
-| `app` | Routing, layout, root configuration. **Updated, Frontend Milestone 3 (2026-08-16)**: `/pro` now renders a real professional dashboard instead of a placeholder; booking/tracking/orders routes added. **Updated, Frontend Milestone 5 (2026-08-18)**: `AppLayout.tsx` renders `<NotificationBell />` in the nav for both roles (CUSTOMER and PROFESSIONAL, unlike the CUSTOMER-only `ActiveOrderIndicator`); no router change (the bell is a dropdown, not a route). |
+| `shared/hooks` | Reusable React hooks (e.g. status-polling hook, auth context). **Grew in Frontend Milestone 3 (2026-08-16)**: `usePolling`/`useOrderStatus`. **Grew in the MS3/MS4 product-corrections pass (2026-08-17)**: booking-draft persistence (`bookingDraftContext.ts`/`BookingDraftProvider.tsx`/`useBookingDraft.ts`). **Grew in Frontend Milestone 5 (2026-08-18)**: `useNotifications.ts` (a plain polling hook wrapping `usePolling`, not a React Context — single consumer, unlike `useActiveOrder`/`useBookingDraft`). **Grew in Frontend Milestone 8 (2026-08-18)**: `AuthProvider` gained `refreshUser()`, called after a professional edits their `fullName` via `/pro/profile` (writes to the underlying `users` row) so the top-nav's cached name doesn't go stale. |
+| `app` | Routing, layout, root configuration. **Updated, Frontend Milestone 3 (2026-08-16)**: `/pro` now renders a real professional dashboard instead of a placeholder; booking/tracking/orders routes added. **Updated, Frontend Milestone 5 (2026-08-18)**: `AppLayout.tsx` renders `<NotificationBell />` in the nav for both roles (CUSTOMER and PROFESSIONAL, unlike the CUSTOMER-only `ActiveOrderIndicator`); no router change (the bell is a dropdown, not a route). **Updated, Frontend Milestone 8 (2026-08-18)**: `router.tsx` gained `professionals/:professionalId`, `favorites`, and `pro/profile` routes. Same-day UX correction: `/favorites` is reached via `ProfilePage.tsx`'s "מועדפים" link, not an `AppLayout.tsx` nav link (favorites is a secondary customer feature, not primary nav). |
 
 ### Docs
 
@@ -628,6 +629,44 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
     pass — `canCancel` stays gated to `CUSTOMER`, an explicit decision, not an oversight.
     Slot edit/delete UI remains Frontend Milestone 7 scope. Favorites/reviews UI unchanged
     from prior frontend milestones.
+- **2026-08-18 — Frontend Milestone 8 (Professional Profiles, Reviews & Favorites)
+  functional/data QA-passed; documentation now closed.** Branch `frontend/MS8`, local only
+  — uncommitted, not pushed/merged; that remains the user's own explicit git action. Closes
+  the three leftover, never-built frontend areas of the backend feature set informally
+  called "Milestone 8" (`api-contract-professionals-reviews.md`, backend-complete since that
+  milestone, previously zero frontend consumption): favorites (add/remove/list, new
+  `features/favorites/` module + `/favorites` CUSTOMER-only route), a professional's own
+  profile self-service (bio/city/price/photo edit, new `ProfileEditorPage.tsx` as a 4th
+  `ProDashboardLayout` tab, `/pro/profile`), and reviews browsing (a new
+  `ProfessionalProfilePage.tsx` detail screen, `/professionals/:professionalId`, bare
+  `RequireAuth`, either role, plus a co-located `ReviewList.tsx`). `ProfessionalCard.tsx`
+  gained one new optional prop, `viewProfileContext`, making its identity block a secondary
+  link to the new detail page (router `state`, not a query param — deliberately
+  non-bookmarkable) while leaving its existing primary select button/`onSelect` behavior
+  completely unchanged — zero regression to either booking flow's own selection logic. New
+  `shared/api` clients: `favorites.ts`, `professionals.ts`; `reviews.ts` extended with
+  `getReviews`. `AuthProvider` gained `refreshUser()`, called after a professional edits
+  their `fullName` (which writes to the underlying `users` row) so the top-nav's cached name
+  doesn't go stale. Full detail, including the three judgment-call resolutions (favorites
+  nav placement, profile-editor location, view-profile-vs-select card affordance), is in
+  `docs/architecture/frontend-ms8-design.md` and `implementation-plan.md`'s "Frontend
+  Milestone 8" entry — not restated here.
+  - **QA**: functional/data checks **PASS** — live API round-trip testing against a real
+    backend/Postgres instance plus code review (no browser-automation tool available in this
+    environment, consistent with every prior frontend milestone). Full sign-off was withheld
+    pending the required per-package documentation updates, which this entry accompanies —
+    no functional or data defect was found at any point.
+  - **Also fixed, small/low-risk**: `formatRelativeAgeLabel`
+    (`shared/utils/formatDateTime.ts`) produced grammatically incorrect Hebrew at the
+    singular month/year boundary ("1 חודשים"/"1 שנים") — corrected to "חודש"/"שנה".
+  - **Known gaps/deferred, not blockers**: router-`state`-loss on refresh (accepted
+    degradation to a view-only detail page, not a defect); no pagination on `GET
+    /api/reviews`/`GET /api/favorites` (consistent with this project's existing MVP-scale
+    tolerance); empty-state copy for zero reviews/favorites was not specified by
+    `DESIGN_SYSTEM.md` and was written using reasonable judgment. The
+    newly-registered-professionals'-`city = NULL` gap (`api-contract-professionals-
+    reviews.md` §9 item 1) is unaffected but now has a real in-app remediation path
+    (`/pro/profile`) for professionals who choose to use it.
 
 ## 7. Backend architecture reference (as-built)
 

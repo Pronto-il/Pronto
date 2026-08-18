@@ -1209,6 +1209,123 @@ merged content.
   to `api-contract-professionals-reviews.md` §7 (the authoritative, current shape) was added
   to that doc instead of a full rewrite, consistent with how the original gap was handled.
 
+## Frontend Milestone 8 — Professional Profiles, Reviews & Favorites
+
+- **Status: functional/data QA-passed** (live API round-trip + code review, see "QA summary"
+  below); documentation was the only item blocking full sign-off and is closed by this entry
+  and the per-package `.md` updates it links to. Branch `frontend/MS8`, local only —
+  uncommitted, not pushed/merged; that remains the user's own explicit git action. Design
+  doc: `docs/architecture/frontend-ms8-design.md` — the scope-definition doc itself (no
+  prior frontend contract doc named this scope). Closes the three leftover, never-built
+  frontend areas of the backend feature set informally called "Milestone 8"
+  (`api-contract-professionals-reviews.md`, backend-complete since that milestone, zero
+  frontend consumption until now): favorites (add/remove/list), a professional's own
+  profile self-service (bio/city/price/photo edit), and reviews browsing (an individual
+  professional's review list before booking). The distance/ETA/rating-*display* part of
+  backend Milestone 8 was already consumed by Frontend Milestones 3/4 and is unaffected
+  here.
+- **Scope actually built**:
+  1. **Favorites** — new module `frontend/src/features/favorites/` (`FavoritesPage.tsx`,
+     `FavoriteProfessionalCard.tsx`), new route `/favorites` (CUSTOMER-only), new client
+     `shared/api/favorites.ts` (`addFavorite`/`removeFavorite`/`getFavorites`). Nav
+     placement: a CUSTOMER-only top-nav link in `app/AppLayout.tsx`, next to `/orders`,
+     matching `DESIGN_SYSTEM.md` §52's own desktop-nav mockup verbatim — decided over a
+     mobile-bottom-nav placement, since this project remains desktop-first and has no
+     bottom-nav implementation at all. `FavoriteProfessionalCard` is a deliberately lean,
+     dedicated component, **not** a reuse of `features/professionals`'s `ProfessionalCard`
+     — `FavoriteProfessionalSummary` has no `distanceKm`/`etaMinutes`/`sameCity` fields,
+     which `ProfessionalCard`'s props require as non-nullable; reusing it would mean
+     fabricating placeholder values with no real listing-context behind them.
+  2. **Professional profile self-service** — new `frontend/src/features/dashboard/
+     ProfileEditorPage.tsx` (+ `ProfessionalProfileImageField.tsx`), reached via a new 4th
+     `ProDashboardLayout` tab, `/pro/profile` (PROFESSIONAL-only). Reads/writes
+     `professionals/me` via new `shared/api/professionals.ts`
+     (`getMyProfessionalProfile`/`updateMyProfessionalProfile`/
+     `uploadProfessionalProfileImage`). Decided as a **new dashboard tab**, not an
+     edit-mode bolted onto the existing shared `app/ProfilePage.tsx` — the two pages read
+     different DTOs for different concerns (`users/me` identity data vs. `professionals/me`
+     business-listing data), and `DESIGN_SYSTEM.md` §53's own sidebar mockup already lists
+     `▢ פרופיל` as a dashboard item, the closest concrete precedent. `categoryId` is
+     read-only (no field in the update DTO to change it); `approvalStatus` isn't rendered
+     (auto-approved in v1.0, no actionable meaning yet). Because `fullName` writes to the
+     underlying `users` row, `shared/hooks/AuthProvider.tsx` gained a new
+     `refreshUser(): Promise<void>` method, called by `ProfileEditorPage` after every
+     successful save, so the top-nav's cached display name doesn't go stale until the next
+     page load/re-login (closes design doc §6 Risk 1). `ProfessionalProfileImageField`
+     composes the existing `shared/components/ImageUploadField.tsx` but uploads immediately
+     on file selection (mirroring `PhotoUploader.tsx`'s pattern), since the backend models
+     the profile image as its own endpoint independent of the `PUT /me` field save.
+  3. **Reviews browsing + professional-detail page** — new
+     `frontend/src/features/professionals/ProfessionalProfilePage.tsx` (+ `ReviewList.tsx`),
+     new route `/professionals/:professionalId` (bare `RequireAuth`, either role, matching
+     the backend's route-gate-free `GET /api/professionals/{id}`). Fetches
+     `getProfessionalProfile(id)` and the new `getReviews(id)` (extending
+     `shared/api/reviews.ts`) independently in parallel, so a slow/failed review fetch never
+     blocks the rest of the page. Renders photo/name/rating/bio/price, the review list (5
+     stars + relative age label + comment, via a new `formatRelativeAgeLabel` utility in
+     `shared/utils/formatDateTime.ts`), a favorite toggle (CUSTOMER-only, optimistic with
+     revert-on-failure), and a "select professional" CTA. `ReviewList` is co-located in
+     `features/professionals/` (its only consumer) rather than a new `features/reviews/`
+     module for one presentational component with no route of its own.
+  4. **`ProfessionalCard.tsx`'s new `viewProfileContext` prop** — the judgment call that
+     ties the above together. The card's identity block (photo + name) becomes a secondary
+     link to the new detail page when `viewProfileContext` is supplied (both
+     `BookingFlowPage`/`SosBookingFlowPage` always supply it), carrying `{ fromIssueId,
+     urgencyType }` via router **`state`**, not a query param — deliberately transient/
+     non-bookmarkable, since "reached from an active, category-filtered booking flow" is a
+     fact that shouldn't survive a refresh or a shared link (accepted consequence: a page
+     refresh on the detail page loses the "select professional" CTA and degrades to
+     view-only, not an error). **The card's existing primary button/`onSelect` behavior is
+     completely unchanged** — zero regression to either flow's own selection logic. The
+     detail page's "select professional" CTA reuses each flow's existing draft/resume
+     mechanism (`updateDraft(...)` + `navigate(...)`) rather than reimplementing selection.
+- **Reused vs. added**: reused `shared/components/ImageUploadField.tsx`/`Card`/`Button`/
+  `PageHeader`, `shared/hooks/useAuth`/`useBookingDraft`, the existing draft/resume
+  mechanism, `getCategoryNameHe`. Added: `features/favorites/` (new module),
+  `ProfessionalProfilePage.tsx`/`ReviewList.tsx` (new, in `features/professionals/`),
+  `ProfileEditorPage.tsx`/`ProfessionalProfileImageField.tsx` (new, in
+  `features/dashboard/`), `shared/api/favorites.ts`/`professionals.ts` (new),
+  `shared/api/reviews.ts`'s `getReviews` (extension), `AuthProvider.refreshUser()`
+  (extension), `formatRelativeAgeLabel` (extension to `shared/utils/formatDateTime.ts`),
+  three new routes, one new nav link, one new `ProfessionalCard` prop.
+- **QA summary**: functional/data checks **PASS** — live API round-trip testing (real
+  backend against a real Postgres DB, exercising favorite add/remove/list,
+  professional-profile read/update/image-upload, and review-list fetch through real HTTP
+  calls) plus code review (no browser-automation tool available in this environment,
+  consistent with every prior frontend milestone's QA method). Documentation sign-off was
+  withheld pending the per-package `.md` updates this entry accompanies (see below) — that
+  is the only reason full sign-off was not recorded at the same time as the functional
+  pass; no functional/data defect was found.
+- **Documentation updated as part of closing this milestone** (per this project's own
+  "every package/module gets a named `.md` doc" rule, part of the milestone's definition of
+  done, not a follow-up task): `frontend/src/features/favorites/README.md` (new),
+  `frontend/src/features/professionals/README.md`, `frontend/src/features/dashboard/README.md`,
+  `frontend/src/app/README.md`, `frontend/src/shared/api/README.md` (all updated), plus this
+  entry and the corresponding `overview.md` §6 changelog entry.
+- **Also fixed in this pass (flagged by QA, small/low-risk)**: `formatRelativeAgeLabel`
+  (`shared/utils/formatDateTime.ts`) produced grammatically incorrect Hebrew at the singular
+  month/year boundary ("1 חודשים"/"1 שנים") — corrected to "חודש"/"שנה" (no leading numeral,
+  matching this file's existing "היום"/"אתמול" no-numeral convention). No other change to
+  that file.
+- **Known gaps/deferred, not blockers** (restated from the design doc's own §6, for
+  visibility here):
+  - Router-`state`-loss on refresh (§2.3 above) — a deliberate, accepted degradation to a
+    view-only detail page, not a defect.
+  - No pagination on `GET /api/reviews`/`GET /api/favorites` (confirmed backend behavior) —
+    consistent with this project's existing MVP-scale tolerance for every other unpaginated
+    list endpoint; this is simply the first UI actually rendering either list.
+  - Empty-state copy for zero reviews / zero favorites was not specified by
+    `DESIGN_SYSTEM.md` and was written using reasonable on-brand Hebrew judgment, not a
+    settled requirement from any source document.
+  - The newly-registered-professionals'-`city = NULL` gap
+    (`api-contract-professionals-reviews.md` §9 item 1) is unaffected by this milestone, but
+    a professional now has a real in-app way to fix it themselves (visit `/pro/profile`, set
+    `city`, save) for the first time — a professional who never visits the new editor still
+    has the gap. Worth noting for `pronto-lead` in case this changes the gap's priority.
+  - A `PROFESSIONAL` caller can open `/professionals/:id` for any professional, including
+    themselves (the backend route has no ownership check) — harmless (read-only for that
+    role, no favorite toggle, no select CTA), not a designed-for use case, no action needed.
+
 ## Cross-cutting rules for every milestone
 
 - Planning docs (`overview.md`, this file) are updated if a milestone's actual

@@ -18,16 +18,24 @@ feature modules together into the single-page app described in
   `useAuth()` internally for its cross-account leakage guard — see `shared/hooks/README.md`).
   **As of the Active Booking Floating Indicator feature**: also wraps `ActiveOrderProvider`
   (sibling-nested with `BookingDraftProvider`, since it too needs `useAuth()` internally).
-- `router.tsx` — route tree. All routes render inside `AppLayout`; `/profile` and
-  `/orders/:orderId` are nested under a bare `RequireAuth` (either role); `/issues/new`,
-  `/issues/:issueId/booking`, and `/orders` are nested under `RequireAuth role="CUSTOMER"`;
-  `/pro` and `/pro/availability` are nested under `RequireAuth role="PROFESSIONAL"` and,
-  within that, under `features/dashboard`'s `ProDashboardLayout` (a shared two-tab shell).
+- `router.tsx` — route tree. All routes render inside `AppLayout`; `/profile`,
+  `/orders/:orderId`, and (**as of Frontend Milestone 8**) `/professionals/:professionalId`
+  are nested under a bare `RequireAuth` (either role — matching the backend's
+  route-gate-free `GET /api/professionals/{id}`); `/issues/new`,
+  `/issues/:issueId/booking`, `/orders`, and (**as of Frontend Milestone 8**) `/favorites`
+  are nested under `RequireAuth role="CUSTOMER"`; `/pro`, `/pro/availability`, and (**as of
+  Frontend Milestone 8**) `/pro/profile` are nested under `RequireAuth role="PROFESSIONAL"`
+  and, within that, under `features/dashboard`'s `ProDashboardLayout` (now a four-tab
+  shell).
 - `AppLayout.tsx` — top nav shell (brand + login/register or profile/logout links
   depending on auth state). Frontend Milestone 3 added the first two real primary-nav
   destinations now that they exist as real screens: a customer's "ההזמנות שלי" (`/orders`)
-  and a professional's own "לוח בקרה" (`/pro`) link. Favorites/a full mobile bottom nav
-  (DESIGN_SYSTEM.md §50-51) still have no backing screen and are not added.
+  and a professional's own "לוח בקרה" (`/pro`) link. **As of Frontend Milestone 8
+  (2026-08-18)**, revised same-day per an approved UX correction: `/favorites`
+  (`features/favorites`) is deliberately **not** a top-nav link — it's a secondary customer
+  feature reached via `app/ProfilePage.tsx`'s "מועדפים" link instead, not
+  `DESIGN_SYSTEM.md` §52's literal desktop-nav mockup. A full mobile bottom nav (§50-51)
+  still has no implementation at all and remains out of scope.
 - `RequireAuth.tsx` — route guard. Redirects to `/login` when not authenticated (after
   the auth provider's initial rehydration finishes); supports an optional `role` prop to
   gate a route to one role.
@@ -80,6 +88,14 @@ feature modules together into the single-page app described in
   `router.tsx`'s nesting), so `AppLayout`'s nav — and the bell inside it — is already
   present above every `/pro/*` screen.
 
+- `AppLayout.tsx`/`router.tsx` — **Frontend Milestone 8 (2026-08-18)**: three new routes
+  (`professionals/:professionalId`, `favorites`, `pro/profile`). `/favorites` is reached via
+  `ProfilePage.tsx`, **not** an `AppLayout` nav link (revised same-day per an approved UX
+  correction — see "Structure" above). No new provider/context — favorites/profile-editing
+  state is local to their own pages, not app-wide. Full detail:
+  `docs/architecture/frontend-ms8-design.md` and `features/favorites/README.md`/
+  `features/professionals/README.md`/`features/dashboard/README.md`.
+
 ## Status
 **Frontend Milestone 3 (2026-08-16, Standard booking flow) implemented.** `ProPlaceholderPage`
 was removed — the professional's `/pro` route now renders a real dashboard
@@ -110,3 +126,16 @@ record: `docs/architecture/active-booking-floating-indicator.md` §7-§8.
 `<NotificationBell />` in `<nav>` (see "Structure" above). No `App.tsx`/`router.tsx` changes
 — the bell has no provider (it's a plain hook, `shared/hooks/useNotifications.ts`, not a
 context) and no dedicated route (an anchored dropdown, not a page).
+
+**Frontend Milestone 8 — Professional Profiles, Reviews & Favorites (2026-08-18)**:
+`router.tsx` gained three new routes (`professionals/:professionalId`, `favorites`,
+`pro/profile`) — see "Structure" above for placement/role-gating. **Same-day UX
+correction**: `/favorites` was originally a CUSTOMER-only `AppLayout.tsx` nav link; per
+approved UX decisions, it moved to be reachable only via `ProfilePage.tsx`'s "מועדפים"
+link (secondary customer feature, not primary nav) — `AppLayout.tsx`'s nav link was
+removed. The other two Milestone 8 UX decisions (professional profile editing lives under
+`/pro/profile`, not the public profile; "view profile" and "select professional" are
+separate actions, both reachable from the card and the detail page) were already the
+as-built behavior and needed no change. No new `App.tsx` provider. QA-passed (live API
+round-trip + code review); full detail in `docs/architecture/implementation-plan.md`'s
+"Frontend Milestone 8" entry and `docs/architecture/frontend-ms8-design.md`.

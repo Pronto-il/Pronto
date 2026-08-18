@@ -18,7 +18,15 @@ import {
   OrderTrackingPage,
   CompletionReviewPage,
 } from '../features/booking';
-import { ProDashboardLayout, IncomingRequestsPage, MyJobsPage, AvailabilityPage } from '../features/dashboard';
+import {
+  ProDashboardLayout,
+  IncomingRequestsPage,
+  MyJobsPage,
+  AvailabilityPage,
+  ProfileEditorPage,
+} from '../features/dashboard';
+import { ProfessionalProfilePage } from '../features/professionals';
+import { FavoritesPage } from '../features/favorites';
 
 /**
  * Root route configuration. Feature routes (auth, issues, booking, etc.) are added here
@@ -33,7 +41,11 @@ import { ProDashboardLayout, IncomingRequestsPage, MyJobsPage, AvailabilityPage 
  * once it leaves the pending feed. Frontend Milestone 4 adds the SOS booking flow
  * (`/issues/:issueId/sos-booking`, CUSTOMER-only, alongside the existing Standard
  * `/issues/:issueId/booking` route) — the professional's SOS-availability toggle has no
- * route of its own, it's rendered inline on the existing `/pro/availability` page.
+ * route of its own, it's rendered inline on the existing `/pro/availability` page. Frontend
+ * Milestone 8 adds `/professionals/:professionalId` (bare `RequireAuth`, either role, matching
+ * the backend's route-gate-free `GET /api/professionals/{id}`), `/favorites`
+ * (CUSTOMER-only), and `/pro/profile` (a 4th `ProDashboardLayout` tab) — see
+ * `docs/architecture/frontend-ms8-design.md` §3.
  */
 export const router = createBrowserRouter([
   {
@@ -51,6 +63,7 @@ export const router = createBrowserRouter([
         children: [
           { path: 'profile', element: <ProfilePage /> },
           { path: 'orders/:orderId', element: <OrderTrackingPage /> },
+          { path: 'professionals/:professionalId', element: <ProfessionalProfilePage /> },
         ],
       },
       {
@@ -61,6 +74,7 @@ export const router = createBrowserRouter([
           { path: 'issues/:issueId/sos-booking', element: <SosBookingFlowPage /> },
           { path: 'orders', element: <MyOrdersPage /> },
           { path: 'orders/:orderId/review', element: <CompletionReviewPage /> },
+          { path: 'favorites', element: <FavoritesPage /> },
         ],
       },
       {
@@ -72,6 +86,7 @@ export const router = createBrowserRouter([
               { path: 'pro', element: <IncomingRequestsPage /> },
               { path: 'pro/jobs', element: <MyJobsPage /> },
               { path: 'pro/availability', element: <AvailabilityPage /> },
+              { path: 'pro/profile', element: <ProfileEditorPage /> },
             ],
           },
         ],

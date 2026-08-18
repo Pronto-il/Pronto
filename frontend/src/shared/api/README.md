@@ -65,13 +65,42 @@ API described in `docs/architecture/overview.md` §3.2.
   `getMyAvailabilitySlots` (`GET /api/availability/slots/me`). Type names match the real
   backend DTO names directly (`SlotResponse`/`SlotListItem`/`SlotListResponse`/
   `CreateSlotRequest`).
-- `reviews.ts` — **new, Active Booking Floating Indicator feature (2026-08-17).**
-  `CreateReviewRequest`/`ReviewResponse` types + `createReview(payload)` wrapping
-  `POST /api/reviews`. **First frontend consumer of this endpoint** — the backend endpoint
-  itself was already implemented and QA-signed-off with no UI caller (Milestone 8); this file
-  is what `features/booking/CompletionReviewPage.tsx` calls. Shapes verified directly against
-  `reviews.dto.CreateReviewRequest`/`reviews.dto.ReviewResponse`, same "read the real backend
-  DTOs" convention `bookings.ts`'s own header comment already established.
+- `reviews.ts` — **new, Active Booking Floating Indicator feature (2026-08-17); extended,
+  Frontend Milestone 8 (2026-08-18).** `CreateReviewRequest`/`ReviewResponse` types +
+  `createReview(payload)` wrapping `POST /api/reviews`. **First frontend consumer of this
+  endpoint** — the backend endpoint itself was already implemented and QA-signed-off with no
+  UI caller (backend Milestone 8); this file is what `features/booking/CompletionReviewPage.tsx`
+  calls. Shapes verified directly against `reviews.dto.CreateReviewRequest`/
+  `reviews.dto.ReviewResponse`, same "read the real backend DTOs" convention `bookings.ts`'s
+  own header comment already established. **Frontend Milestone 8** added `ReviewListResponse`
+  (`{ professionalId, averageRating, reviewCount, reviews }`) + `getReviews(professionalId)`
+  wrapping `GET /api/reviews?professionalId=` (either role, no route gate, no pagination) —
+  first and only consumer: `features/professionals/ReviewList.tsx`, reached from
+  `ProfessionalProfilePage.tsx`.
+- `favorites.ts` — **new, Frontend Milestone 8 (2026-08-18).** `favorites` domain
+  (`backend/src/main/java/com/pronto/favorites/`), all three endpoints CUSTOMER-only:
+  `FavoriteProfessionalSummary`/`FavoritesListResponse` types, `addFavorite(professionalId)`
+  (`POST /api/favorites`, idempotent — `204` even if already favorited),
+  `removeFavorite(professionalId)` (`DELETE /api/favorites/{id}`, idempotent), `getFavorites()`
+  (`GET /api/favorites`, `created_at DESC`, no pagination). Shapes verified directly against
+  `favorites.dto.FavoritesListResponse`/`FavoriteProfessionalSummary`. Consumers:
+  `features/favorites/` (list + remove) and `features/professionals/ProfessionalProfilePage.tsx`
+  (the actual favorite/unfavorite toggle — `addFavorite` is only ever called from there).
+- `professionals.ts` — **new, Frontend Milestone 8 (2026-08-18)** — the `professionals`
+  package's first frontend client, mirroring `bookings.ts`'s pattern of a dedicated file per
+  backend package. `ProfessionalProfileResponse` (`favorited: boolean | null`, populated
+  only by `getProfessionalProfile()` for a `CUSTOMER` caller, `null` everywhere else),
+  `UpdateProfessionalProfileRequest` (an allowlist DTO — `fullName`/`serviceArea`/`city`/
+  `bio?`/`basePrice`, deliberately excludes `id`/`categoryId`/`approvalStatus`/rating
+  fields/`profileImageKey`), `ProfileImageUploadResponse` types. Functions:
+  `getMyProfessionalProfile()`/`updateMyProfessionalProfile(payload)` (`GET`/`PUT
+  /api/professionals/me`, PROFESSIONAL-only), `uploadProfessionalProfileImage(file)` (`POST
+  /api/professionals/me/profile-image`, multipart field `file`, PROFESSIONAL-only),
+  `getProfessionalProfile(professionalId)` (`GET /api/professionals/{id}`, either role, no
+  route gate). Shapes verified directly against `professionals.dto.ProfessionalProfileResponse`/
+  `UpdateProfessionalProfileRequest`/`ProfileImageUploadResponse`. Consumers:
+  `features/dashboard/ProfileEditorPage.tsx`+`ProfessionalProfileImageField.tsx` (the `/me`
+  functions) and `features/professionals/ProfessionalProfilePage.tsx` (`getProfessionalProfile`).
 
 **As of the Active Booking Floating Indicator feature**: `bookings.ts` also gained
 `expectedArrivalAt: string | null` on `OrderResponse`/`OrderDetailResponse`/`OrderSummary`
@@ -105,4 +134,9 @@ gained `defaultAddress`; `bookings.ts` gained the 3 new service-address fields a
 Notifications (2026-08-18)**: `notifications.ts` is new, consuming the already-complete
 backend `notifications` package (read-only, no backend changes). QA-signed-off, PASS, no bugs
 found; full detail in `docs/architecture/implementation-plan.md`'s "Frontend Milestone 5"
-entry.
+entry. **Frontend Milestone 8 — Professional Profiles, Reviews & Favorites (2026-08-18)**:
+`favorites.ts` and `professionals.ts` are new; `reviews.ts` gained `getReviews`/
+`ReviewListResponse` (see above) — all three consuming already-complete backend endpoints,
+no backend changes. QA-passed (live API round-trip + code review); full detail in
+`docs/architecture/implementation-plan.md`'s "Frontend Milestone 8" entry and
+`docs/architecture/frontend-ms8-design.md`.

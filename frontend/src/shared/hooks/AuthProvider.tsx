@@ -80,8 +80,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }
 
+  async function refreshUser(): Promise<void> {
+    if (!tokenRef.current) {
+      return;
+    }
+    try {
+      const me = await getMe();
+      setUser(me);
+    } catch {
+      // Best-effort refresh only — a transient failure here leaves the previous (stale but
+      // valid) `user` in place rather than surfacing an error to an unrelated caller.
+    }
+  }
+
   return (
-    <AuthContext.Provider value={{ token, user, isLoading, login, logout }}>
+    <AuthContext.Provider value={{ token, user, isLoading, login, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

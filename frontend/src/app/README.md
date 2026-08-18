@@ -48,7 +48,20 @@ feature modules together into the single-page app described in
   — `null` for a `PROFESSIONAL` caller or a pre-`V20` `CUSTOMER` with no recorded default,
   per that field's own "absent means no such object" convention. This was a live QA fix
   during this pass (the page previously did not render `defaultAddress` at all, even though
-  the backend already returned it).
+  the backend already returned it). **As of Frontend Milestone 9 (2026-08-18)**: gained
+  account deletion, below the existing "יציאה מהחשבון" logout button — a two-step inline
+  button swap (no new modal component), per `docs/architecture/frontend-ms9-gap-fixes-design.md`
+  §2. Default state is a single "מחיקת חשבון" (`destructive`) button; clicking it swaps to a
+  confirm/cancel pair with an irreversibility message, no API call yet. Confirming calls the
+  new `deleteMe()` (`DELETE /api/users/me`, `shared/api/users.ts`); on success, ends the
+  session the same way `handleLogout` already does (`useAuth().logout()` then `navigate('/login',
+  { replace: true })`); on failure, shows `GENERIC_ERROR_MESSAGE` in a `role="alert"` banner
+  and stays in the confirming state so the user can retry without re-initiating. **Fully
+  QA-verified live, no bugs found**: QA confirmed the complete round trip against a real
+  backend/Postgres instance, including DB-level confirmation that the account row's
+  `deleted_at` gets set and its email gets anonymized on delete, and confirmed that a
+  subsequent login attempt using the deleted account's credentials correctly fails
+  afterward.
 - `BookingDraftIndicator.tsx` — new, MS3/MS4 product-corrections pass. A persistent nav
   widget for an in-progress booking draft (see `shared/hooks/README.md`), rendered inside
   `AppLayout`'s nav, conditional on a draft existing (naturally never true for a
@@ -139,3 +152,14 @@ separate actions, both reachable from the card and the detail page) were already
 as-built behavior and needed no change. No new `App.tsx` provider. QA-passed (live API
 round-trip + code review); full detail in `docs/architecture/implementation-plan.md`'s
 "Frontend Milestone 8" entry and `docs/architecture/frontend-ms8-design.md`.
+
+**Frontend Milestone 9 — gap-fixes (2026-08-18)**: `ProfilePage.tsx` gained the account-
+deletion two-step confirmation described above — **fully implemented and fully
+QA-verified live, no bugs found**. No router/App.tsx changes. This is one of three
+gap-fixes landed in this pass (branch `frontend/MS9-gap-fixes`, local only — uncommitted,
+not pushed/merged); the other two (availability slot edit/delete, and a professional
+seeing issue photos before accepting) live in `features/dashboard/` — see that package's
+README for their status, which is **not** uniformly "done" (the issue-photos item is
+code-complete but currently non-functional in-browser due to a pre-existing image-auth
+gap, unrelated to and unfixed by this pass). Full design record:
+`docs/architecture/frontend-ms9-gap-fixes-design.md` §2.

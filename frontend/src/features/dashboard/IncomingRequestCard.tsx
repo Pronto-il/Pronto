@@ -47,6 +47,16 @@ export function IncomingRequestCard({
 
       {issue && <p className={styles.description}>“{issue.description}”</p>}
 
+      {issue && issue.images.length > 0 && (
+        <div className={styles.photoRow}>
+          {issue.images.map((image) => (
+            <div key={image.id} className={styles.photoThumbWrapper}>
+              <img src={image.imageUrl} alt="" className={styles.photoThumb} />
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className={styles.timeRow}>
         <span className={styles.timeDate}>{formatDateLabel(order.bookedStart)}</span>
         <span className={styles.timeRange}>

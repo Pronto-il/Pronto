@@ -70,15 +70,26 @@ pronto:
     # local | s3. Default local — zero AWS credentials needed, matches M1's
     # zero-external-dependency default. See docs/architecture/api-contract-issues.md §3.2.
     mode: ${STORAGE_MODE:local}
-    # Base URL this backend is reachable at, used by BOTH storage modes to build the
-    # backend-proxied GET /api/storage/images/** URL returned as imageUrl (local mode
-    # serves straight off disk; s3 mode still proxies through this same endpoint rather
-    # than exposing a raw/public S3 URL, since the bucket blocks all public access — see
-    # storage.client.S3StorageClient's Javadoc). Override in any non-local deployment via
-    # STORAGE_PUBLIC_BASE_URL.
+    # How long a presigned/signed image URL stays valid from the moment it's minted (backend
+    # MS9, docs/architecture/backend-ms9-presigned-image-urls-design.md §6). One value, one
+    # source of truth: local mode's HMAC-signed query-string URLs and S3 mode's
+    # GetObjectPresignRequest.signatureDuration both read this same property.
+    presigned-url-ttl-seconds: ${STORAGE_PRESIGNED_URL_TTL_SECONDS:300}
+    # Base URL this backend is reachable at. Narrowed in scope by MS9 (§10): only local mode
+    # still uses this, to build GET /api/storage/images/{key}?expires=...&sig=... — s3 mode's
+    # presigned URLs come entirely from S3Presigner and point directly at the S3 endpoint,
+    # never at this backend. Override in any non-local deployment via STORAGE_PUBLIC_BASE_URL.
     public-base-url: ${STORAGE_PUBLIC_BASE_URL:http://localhost:${server.port:8080}}
     local:
       base-dir: ${STORAGE_LOCAL_BASE_DIR:./data/uploads}
+      # Local-dev-only default, NOT production-safe — same "obviously a placeholder, loudly
+      # insecure" convention as pronto.jwt.secret above. Every real deployment running
+      # STORAGE_MODE=local must override this via the STORAGE_LOCAL_HMAC_SECRET env var.
+      # Signs/verifies the expires/sig query parameters on GET /api/storage/images/** — a
+      # dedicated secret, deliberately not shared with JWT_SECRET (different blast radius: this
+      # one authorizes a single short-lived image-URL grant, not a whole session). See
+      # docs/architecture/backend-ms9-presigned-image-urls-design.md §3.
+      hmac-secret: ${STORAGE_LOCAL_HMAC_SECRET:local-dev-only-insecure-hmac-secret-please-override-via-STORAGE_LOCAL_HMAC_SECRET-env-var-before-any-real-deployment}
     # Only used when mode=s3, see storage.client.S3StorageClient's Javadoc.
     bucket: ${STORAGE_S3_BUCKET:}
     region: ${STORAGE_S3_REGION:eu-central-1}

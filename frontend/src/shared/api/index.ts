@@ -13,7 +13,7 @@ export type {
   LoginResponse,
 } from './auth';
 
-export { getMe } from './users';
+export { getMe, deleteMe } from './users';
 export type { ProfessionalInfo, UserMeResponse, UserMeDefaultAddress } from './users';
 
 export { CATEGORIES, getCategoryNameHe } from './categories';
@@ -21,8 +21,8 @@ export type { Category } from './categories';
 
 export { GENERIC_ERROR_MESSAGE, getFieldErrorMessages } from './errorMessages';
 
-export { uploadImage } from './storage';
-export type { UploadImageResponse } from './storage';
+export { uploadImage, getPresignedImageUrls } from './storage';
+export type { UploadImageResponse, PresignedImageUrlEntry, PresignedImageUrlsResponse } from './storage';
 
 export { classifyIssue, createIssue, getIssue } from './issues';
 export type {
@@ -71,6 +71,8 @@ export type {
 
 export {
   createAvailabilitySlot,
+  updateAvailabilitySlot,
+  deleteAvailabilitySlot,
   getMyAvailabilitySlots,
   getSosAvailability,
   updateSosAvailability,

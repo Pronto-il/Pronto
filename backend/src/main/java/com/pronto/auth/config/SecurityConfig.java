@@ -5,6 +5,7 @@ import com.pronto.auth.security.JwtAuthenticationFilter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -25,8 +26,14 @@ import java.util.List;
  *
  * <p>Public (no token required): {@code /actuator/health} (Milestone 0's health-check
  * acceptance criterion — must not regress now that spring-boot-starter-security is on the
- * classpath) and {@code /api/auth/**} (register/verify/login, which by definition happen
- * before the caller has a token). Everything else — including {@code /api/users/me} and
+ * classpath), {@code /api/auth/**} (register/verify/login, which by definition happen
+ * before the caller has a token), and {@code GET /api/storage/images/**} (image retrieval,
+ * backend MS9 — a plain {@code <img src>} cannot attach an {@code Authorization} header, so
+ * this route authorizes via a presigned/HMAC-signed URL instead of a JWT; see
+ * {@code docs/architecture/backend-ms9-presigned-image-urls-design.md} §4 and
+ * {@code storage.service.StorageService#retrieveBySignedUrl}. Scoped to {@code GET} only —
+ * {@code POST /api/storage/images} (upload) is untouched by this exemption and stays fully
+ * JWT-gated via the catch-all below). Everything else — including {@code /api/users/me} and
  * any endpoint added by a later milestone — requires a valid, non-revoked JWT.
  *
  * <p>CSRF and form-login are disabled: this is a stateless token API with no server-side
@@ -60,6 +67,7 @@ public class SecurityConfig {
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/health", "/api/auth/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/storage/images/**").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(eh -> eh.authenticationEntryPoint(authenticationEntryPoint))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

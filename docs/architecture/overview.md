@@ -8,14 +8,29 @@ here as part of Milestone 8's documentation pass). On the frontend, **Frontend M
 (auth screens) is implemented, as of 2026-08-15; Frontend Milestone 3 (Standard booking
 flow) is implemented, as of 2026-08-16; Frontend Milestone 4 (SOS booking flow UI) is
 implemented and QA-signed-off, as of 2026-08-17; Frontend Milestone 5 (in-app
-notification bell) is implemented and QA-signed-off, as of 2026-08-18; and Frontend
+notification bell) is implemented and QA-signed-off, as of 2026-08-18; Frontend
 Milestone 6 (professional job-status progression actions — "mark on the way" / "mark
-completed") is implemented and QA-passed, as of 2026-08-18** — see §6 below and
-`implementation-plan.md`'s Milestone 1 / Milestone 3 / Milestone 4 / Milestone 5 / Milestone
-6 entries for full status detail; the rest of `frontend/` (favorites/reviews UI, slot
-edit/delete UI) remains design-only or backend-only, pending later frontend milestones. This
-is the living source of truth for architecture/decisions — keep it in sync with the actual
-implementation as it lands (owned going forward by the `pronto-documentation` agent).
+completed") is implemented and QA-passed, as of 2026-08-18; Frontend Milestone 8
+(Professional Profiles, Reviews & Favorites) is implemented and functional/data
+QA-passed, as of 2026-08-18; and Frontend Milestone 9 (gap-fixes: availability-slot
+edit/delete, account deletion, and a professional seeing issue photos before accepting) is
+**mixed status, not uniformly done, as of 2026-08-18** — the first two of those three are
+fully implemented and fully QA-verified live; the third was code-complete and correctly
+implemented but was, at the time Frontend Milestone 9 closed, non-functional in a real
+browser due to a pre-existing, cross-cutting image-loading bug outside that round's scope
+(see §6 below for the full breakdown). **That blocking bug is now fixed, separately, by
+backend MS9 (presigned image URLs, 2026-08-18)** — retrieval no longer requires a JWT a
+plain `<img>` tag can't attach, so the third item's frontend code (already correct) now
+actually renders images end-to-end; backend MS9 also fixed two further, previously-open
+bugs found along the way (stale persisted issue-image URLs; a professional with a
+confirmed order never being authorized to view that issue's photos at all) and a related
+booking-draft photo-staleness gap. See §6 below (both the Frontend Milestone 9 and backend
+MS9 entries) and `implementation-plan.md`'s Milestone 1 / Milestone 3 / Milestone 4 /
+Milestone 5 / Milestone 6 / Frontend Milestone 8 / Frontend Milestone 9 / Backend Milestone
+9 entries for full status detail; the rest of `frontend/` remains design-only or
+backend-only, pending later frontend milestones. This is the living source of truth for
+architecture/decisions — keep it in sync with the actual implementation as it lands (owned
+going forward by the `pronto-documentation` agent).
 
 ## 1. Consolidated understanding
 
@@ -107,9 +122,18 @@ wrapped in its own service so it can be tested/mocked independently of the issue
 flow.
 
 ### 3.5 Image uploads
-Images upload to S3 (recommendation, per §2's AWS specifics) with the backend issuing
-pre-signed upload URLs or proxying the upload; `IssueImages.image_url` stores the
-resulting object URL. Max upload time target: 5s (PRD §5.1.4).
+Images upload to S3 (recommendation, per §2's AWS specifics) with the backend proxying the
+upload (decided, `api-contract-issues.md` §2.3); `issue_images.image_key` stores the raw
+storage object key (renamed from `image_url`, backend MS9, 2026-08-18 — see §6 below), not
+a URL. **Retrieval reversed a prior decision, backend MS9**: originally every image fetch
+was also backend-proxied (a deliberate decision at the time, per `S3StorageClient`'s
+now-superseded Javadoc); this was reversed once it was found that a plain `<img src>`
+cannot attach the `Authorization` header a JWT-gated proxy route required
+(`net::ERR_BLOCKED_BY_ORB`) — retrieval now issues time-limited presigned URLs instead
+(real AWS S3 presigned URLs in `s3` mode, HMAC-signed URLs back to this backend in `local`
+mode). See `storage/README.md` and
+`docs/architecture/backend-ms9-presigned-image-urls-design.md`. Max upload time target: 5s
+(PRD §5.1.4).
 
 ### 3.6 Notifications
 `Notifications` table (per PRD §6) records outgoing notifications with a `channel`
@@ -165,7 +189,7 @@ changes it, per the shared project rule.
 | `ai` | OpenAI client wrapper + classification service, kept separate from `issues` so it's independently testable/mockable. |
 | `bookings` | `Orders` — Standard + SOS booking flows, accept/reject, status transitions. **As of 2026-08-15**, also owns the service-address snapshot/SOS-surcharge pricing on order creation, and consumes `matching` to enrich professional listings with distance/ETA and a `sort=FASTEST` mode. |
 | `notifications` | Notification records + status polling endpoints, plus email dispatch. |
-| `storage` | Image upload/retrieval, backend-proxied, behind a `StorageClient` abstraction swappable between a local-disk fake (dev/QA default) and real S3 (`pronto.storage.mode`). **As of 2026-08-15**, also serves professional profile images (`professionals/`-prefixed keys), publicly readable by any authenticated caller of either role — see `storage/README.md`'s "Role enforcement" section. |
+| `storage` | Image upload (backend-proxied)/retrieval, behind a `StorageClient` abstraction swappable between a local-disk fake (dev/QA default) and real S3 (`pronto.storage.mode`). **As of 2026-08-15**, also serves professional profile images (`professionals/`-prefixed keys), publicly readable by any authenticated caller of either role — see `storage/README.md`'s "Role enforcement" section. **As of backend MS9 (2026-08-18)**: retrieval reworked from backend-proxied/JWT-gated to presigned/HMAC-signed, time-limited URLs — a deliberate reversal of the prior backend-proxying decision, fixing a `net::ERR_BLOCKED_BY_ORB` bug where a plain `<img src>` couldn't attach the JWT the old route required. See §6 below and `storage/README.md`. |
 | `reviews` | **New, 2026-08-15.** Customer reviews of a professional (1-5 star rating + optional comment), one per completed order. Full CRUD (`POST`/`GET`/`PUT`/`DELETE /api/reviews`). See `reviews/README.md`. |
 | `favorites` | **New, 2026-08-15.** A customer's bookmarked professionals — add/remove/list (`POST`/`GET /api/favorites`, `DELETE /api/favorites/{professionalId}`). See `favorites/README.md`. |
 | `matching` | **New, 2026-08-15.** Distance/ETA approximation between a professional's city and a customer's service address, plus the "fastest" sort this powers on professional-listing endpoints. Pure computation only — no table, no endpoint of its own, consumed in-process by `bookings`. Implements the ETA-scope override recorded in §2 above — see `matching/README.md`. |
@@ -180,12 +204,12 @@ changes it, per the shared project rule.
 | `features/booking` | Standard professional list, SOS professional list, booking confirmation, tracking screen. **Standard and SOS flows both implemented** — Standard: Frontend Milestone 3 (2026-08-16), `BookingFlowPage`/`MyOrdersPage`/`OrderTrackingPage`; SOS: Frontend Milestone 4 (2026-08-17), `SosBookingFlowPage`/`SosBookingSummary`. **Extended in the MS3/MS4 product-corrections pass (2026-08-17)**: `AddressSelectionStep` (default-vs-custom address chooser), full 7-field service address, booking-draft resume. **Extended, Frontend Milestone 6 (2026-08-18)**: professional-side "mark on the way"/"mark completed" job-status progression actions on `OrderTrackingPage`. See §6 below and `implementation-plan.md`'s entries. |
 | `features/professionals` | Professional card/list components shared by Standard and SOS (per PRD §7.4, SOS reuses the professional-selection component with urgent filtering rather than a fully separate screen), plus (as of Frontend Milestone 8) the standalone professional-profile detail screen and review list. **Implemented, Frontend Milestone 3 (2026-08-16)**; SOS reuse landed Frontend Milestone 4 (2026-08-17) — both flows now consume `ProfessionalCard`/`ProfessionalList` via `ProfessionalList`. **Sort-toggle reconciled in the MS3/MS4 product-corrections pass (2026-08-17)**: both flows now expose an identical 2-way `Recommended | Cheapest` chip toggle. **Grew in Frontend Milestone 8 (2026-08-18)**: `ProfessionalProfilePage.tsx`/`ReviewList.tsx` (new, `/professionals/:professionalId`), `ProfessionalCard.tsx`'s new optional `viewProfileContext` prop (primary select button unchanged). |
 | `features/favorites` | Customer's saved-favorites list — add/remove/browse. **New, Frontend Milestone 8 (2026-08-18)**: `FavoritesPage.tsx` (`/favorites`, CUSTOMER-only), `FavoriteProfessionalCard.tsx` (a deliberately lean, dedicated card, not a reuse of `ProfessionalCard` — the favorites DTO has no distance/ETA fields). |
-| `features/dashboard` | Professional dashboard — availability management, incoming requests, job status actions, business-profile self-service. **Partially implemented**, Frontend Milestone 3 (2026-08-16): incoming-request accept/reject, a read-only job list, availability-slot create/list; SOS-availability toggle (`SosAvailabilityToggle`) added Frontend Milestone 4 (2026-08-17). **Job-status progression (on-the-way/complete) is now built, Frontend Milestone 6 (2026-08-18)** — but lives on `features/booking/OrderTrackingPage.tsx`, not in this package; `MyJobsPage` here remains intentionally read-only/link-only. **Grew in Frontend Milestone 8 (2026-08-18)**: a 4th `ProDashboardLayout` tab, `/pro/profile` (`ProfileEditorPage.tsx` + `ProfessionalProfileImageField.tsx`), reading/writing `professionals/me` — distinct from the shared, read-only `app/ProfilePage.tsx` (`users/me`). |
+| `features/dashboard` | Professional dashboard — availability management, incoming requests, job status actions, business-profile self-service. **Partially implemented**, Frontend Milestone 3 (2026-08-16): incoming-request accept/reject, a read-only job list, availability-slot create/list; SOS-availability toggle (`SosAvailabilityToggle`) added Frontend Milestone 4 (2026-08-17). **Job-status progression (on-the-way/complete) is now built, Frontend Milestone 6 (2026-08-18)** — but lives on `features/booking/OrderTrackingPage.tsx`, not in this package; `MyJobsPage` here remains intentionally read-only/link-only. **Grew in Frontend Milestone 8 (2026-08-18)**: a 4th `ProDashboardLayout` tab, `/pro/profile` (`ProfileEditorPage.tsx` + `ProfessionalProfileImageField.tsx`), reading/writing `professionals/me` — distinct from the shared, read-only `app/ProfilePage.tsx` (`users/me`). **Grew in Frontend Milestone 9 (2026-08-18), mixed status at the time**: `SlotList` gained inline edit/delete for not-yet-booked slots (fully QA-verified live, after two follow-up bug fixes); `IncomingRequestCard` gained a read-only issue-photo thumbnail row that was code-correct but non-functional in-browser due to a pre-existing, cross-cutting image-auth gap — **fixed separately by backend MS9 (2026-08-18)**, see `features/dashboard/README.md` and `storage/README.md`. |
 | `features/notifications` | In-app notification bell: nav badge + anchored dropdown feed, consuming the backend `notifications` package via short-polling. **Implemented, Frontend Milestone 5 (2026-08-18)** — `NotificationBell.tsx`/`notificationLabels.ts`; the status-polling primitive itself (`usePolling`/`useOrderStatus`) shipped earlier, in Frontend Milestone 3, and remains consumed directly by `features/booking`/`features/dashboard` for order tracking, separate from this module's own `useNotifications` hook. No dedicated page/route — the backend feed has no pagination. |
-| `shared/api` | Backend API client. **Grew in Frontend Milestone 3 (2026-08-16)**: `bookings.ts`, `availability.ts`, and a `getIssue` addition to `issues.ts`; grew again in Frontend Milestone 4 (2026-08-17): SOS-listing/order functions in `bookings.ts` and SOS-availability functions in `availability.ts`. **Grew in Frontend Milestone 5 (2026-08-18)**: `notifications.ts` (new), consuming the already-complete backend `notifications` package, no backend changes. **Grew in Frontend Milestone 8 (2026-08-18)**: `favorites.ts`/`professionals.ts` (new), `reviews.ts` gained `getReviews`. |
+| `shared/api` | Backend API client. **Grew in Frontend Milestone 3 (2026-08-16)**: `bookings.ts`, `availability.ts`, and a `getIssue` addition to `issues.ts`; grew again in Frontend Milestone 4 (2026-08-17): SOS-listing/order functions in `bookings.ts` and SOS-availability functions in `availability.ts`. **Grew in Frontend Milestone 5 (2026-08-18)**: `notifications.ts` (new), consuming the already-complete backend `notifications` package, no backend changes. **Grew in Frontend Milestone 8 (2026-08-18)**: `favorites.ts`/`professionals.ts` (new), `reviews.ts` gained `getReviews`. **Grew in Frontend Milestone 9 (2026-08-18)**: `availability.ts` gained `updateAvailabilitySlot`/`deleteAvailabilitySlot`, `users.ts` gained `deleteMe` — both fully QA-verified live. |
 | `shared/components` | Reusable UI components. **Grew in Frontend Milestone 3 (2026-08-16)**: `StatusBadge`. |
 | `shared/hooks` | Reusable React hooks (e.g. status-polling hook, auth context). **Grew in Frontend Milestone 3 (2026-08-16)**: `usePolling`/`useOrderStatus`. **Grew in the MS3/MS4 product-corrections pass (2026-08-17)**: booking-draft persistence (`bookingDraftContext.ts`/`BookingDraftProvider.tsx`/`useBookingDraft.ts`). **Grew in Frontend Milestone 5 (2026-08-18)**: `useNotifications.ts` (a plain polling hook wrapping `usePolling`, not a React Context — single consumer, unlike `useActiveOrder`/`useBookingDraft`). **Grew in Frontend Milestone 8 (2026-08-18)**: `AuthProvider` gained `refreshUser()`, called after a professional edits their `fullName` via `/pro/profile` (writes to the underlying `users` row) so the top-nav's cached name doesn't go stale. |
-| `app` | Routing, layout, root configuration. **Updated, Frontend Milestone 3 (2026-08-16)**: `/pro` now renders a real professional dashboard instead of a placeholder; booking/tracking/orders routes added. **Updated, Frontend Milestone 5 (2026-08-18)**: `AppLayout.tsx` renders `<NotificationBell />` in the nav for both roles (CUSTOMER and PROFESSIONAL, unlike the CUSTOMER-only `ActiveOrderIndicator`); no router change (the bell is a dropdown, not a route). **Updated, Frontend Milestone 8 (2026-08-18)**: `router.tsx` gained `professionals/:professionalId`, `favorites`, and `pro/profile` routes. Same-day UX correction: `/favorites` is reached via `ProfilePage.tsx`'s "מועדפים" link, not an `AppLayout.tsx` nav link (favorites is a secondary customer feature, not primary nav). |
+| `app` | Routing, layout, root configuration. **Updated, Frontend Milestone 3 (2026-08-16)**: `/pro` now renders a real professional dashboard instead of a placeholder; booking/tracking/orders routes added. **Updated, Frontend Milestone 5 (2026-08-18)**: `AppLayout.tsx` renders `<NotificationBell />` in the nav for both roles (CUSTOMER and PROFESSIONAL, unlike the CUSTOMER-only `ActiveOrderIndicator`); no router change (the bell is a dropdown, not a route). **Updated, Frontend Milestone 8 (2026-08-18)**: `router.tsx` gained `professionals/:professionalId`, `favorites`, and `pro/profile` routes. Same-day UX correction: `/favorites` is reached via `ProfilePage.tsx`'s "מועדפים" link, not an `AppLayout.tsx` nav link (favorites is a secondary customer feature, not primary nav). **Updated, Frontend Milestone 9 (2026-08-18)**: `ProfilePage.tsx` gained a two-step account-deletion confirmation, fully QA-verified live, no bugs found; no router change. |
 
 ### Docs
 
@@ -293,9 +317,12 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
   - **Storage object "permanence" after issue confirmation isn't designed.** Uploaded
     objects keep their original `.../temp/...`-style key forever; nothing promotes them to
     a permanent, issue-scoped path on confirm. Functionally harmless today (the DB row's
-    `image_url` is authoritative regardless of key naming), but a future S3 lifecycle/cost
-    policy that assumes `.../temp/...` objects are safe to expire would be wrong once one is
-    referenced by a persisted `issue_images` row.
+    `image_url` — renamed `image_key` in backend MS9, 2026-08-18, see §6 below — is
+    authoritative regardless of key naming), but a future S3 lifecycle/cost policy that
+    assumes `.../temp/...` objects are safe to expire would be wrong once one is referenced
+    by a persisted `issue_images` row. Still unresolved/not designed as of MS9 — MS9 only
+    changed what the column stores (key vs. URL) and when it's resolved, not this
+    lifecycle-permanence question.
   - **`S3StorageClient` and `OpenAiClassificationClient` are implemented and compile but
     were never live-tested this milestone** (no AWS/OpenAI credentials available) — an
     explicit, documented deferral per the task brief, not a silently-accepted gap. Both
@@ -503,9 +530,15 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
      shape/location, wired into `App.tsx` nested inside `AuthProvider`) plus a persistent nav
      indicator (`app/BookingDraftIndicator.tsx`) — a customer's in-progress issue-creation or
      booking-flow state now survives navigation/reload and can be resumed without re-entering
-     already-completed data. Supporting fix: `PhotoUploader.tsx` now also threads through the
-     durable `imageUrl` from the upload response (previously discarded), so draft-persisted
-     photos survive a reload.
+     already-completed data. Supporting fix (at the time): `PhotoUploader.tsx` now also
+     threads through the `imageUrl` from the upload response (previously discarded), so
+     draft-persisted photos survive a reload. **Superseded by backend MS9 (2026-08-18,
+     below)**: this "durable `imageUrl`" claim was only true while upload responses returned
+     a permanent, non-expiring proxy URL. Once backend MS9 made every image URL this app
+     issues presigned/time-limited, persisting `imageUrl` into a draft stopped being safe —
+     `BookingDraftPhoto` now persists only the raw `imageKey`, re-resolved to a fresh
+     presigned URL on resume via a new batch endpoint. See
+     `frontend/src/shared/hooks/README.md`'s `bookingDraftContext.ts` entry.
   - **QA**: full pass, **PASS**, signed off 2026-08-17.
   - **Stale-doc corrections made as part of this pass**: `bookings/README.md` and
     `ProfessionalSort.java`'s Javadoc both still described the unauthorized "SOS defaults to
@@ -667,6 +700,128 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
     newly-registered-professionals'-`city = NULL` gap (`api-contract-professionals-
     reviews.md` §9 item 1) is unaffected but now has a real in-app remediation path
     (`/pro/profile`) for professionals who choose to use it.
+- **2026-08-18 — Frontend Milestone 9 (Gap-fixes) landed — mixed status, do not read as
+  uniformly "done."** Branch `frontend/MS9-gap-fixes`, local only — uncommitted, not
+  pushed/merged; that remains the user's own explicit git action. Three independently
+  approved frontend gap-fixes, not one cohesive feature. Design doc:
+  `docs/architecture/frontend-ms9-gap-fixes-design.md`. Full detail in
+  `implementation-plan.md`'s "Frontend Milestone 9" entry — summarized here:
+  1. **Availability-slot edit/delete** — **fully implemented and fully QA-verified live**,
+     including two follow-up bug fixes QA's live race-condition testing surfaced and closed
+     (a stuck-open edit row on conflict, then a conflict message that stopped rendering
+     entirely because of React 18 batching unmounting the form before its local banner could
+     paint — fixed by moving the message into `SlotList`'s own persistent banner state).
+     `shared/api/availability.ts` gained `updateAvailabilitySlot`/`deleteAvailabilitySlot`;
+     `SlotForm.tsx`/`SlotList.tsx`/`AvailabilityPage.tsx` in `features/dashboard/` updated
+     accordingly.
+  2. **Account deletion** — **fully implemented and fully QA-verified live, no bugs found.**
+     New `deleteMe()` in `shared/api/users.ts`; `app/ProfilePage.tsx` gained a two-step
+     inline button-swap confirmation (deliberately not a new modal component — single call
+     site). QA confirmed the full round trip including DB-level soft-delete/anonymization and
+     a correctly-failing post-delete login attempt.
+  3. **Professional sees issue photos before accepting** — **code is complete and correctly
+     implemented, but the feature is currently non-functional in a real browser**, due to a
+     pre-existing, cross-cutting bug this round did not introduce and did not fix.
+     `IncomingRequestCard.tsx` (`features/dashboard/`) correctly renders a read-only
+     thumbnail row from `issue.images`, but QA found, live, that plain `<img src="...">` tags
+     cannot load images from the JWT-protected `GET /api/storage/images/**` endpoint
+     (`net::ERR_BLOCKED_BY_ORB` — a plain `<img>` cannot attach an `Authorization` header, and
+     that endpoint is not `permitAll()` in `SecurityConfig.java`). QA confirmed this identical
+     failure already exists app-wide, for every other pre-existing
+     `<img src={profileImageUrl}>` usage (`ProfessionalCard.tsx`, `ProfessionalProfilePage.tsx`,
+     `FavoriteProfessionalCard.tsx`, `ProfessionalProfileImageField.tsx`) — a systemic gap, not
+     specific to this round's change. **Was an open, unresolved issue at the time this
+     milestone closed, explicitly flagged for a separate scoping decision** (likely
+     direction: fetch authenticated images as a blob/object URL via `httpClient`, or make
+     image retrieval genuinely public/presigned) — not addressed by this milestone.
+     **Resolved separately, backend MS9 (2026-08-18, see below)**: image retrieval now
+     issues presigned/signed URLs instead of requiring a JWT-gated `<img>` fetch — this
+     item's frontend code, already correct, now renders end-to-end.
+  - **QA**: recorded per item, not blurred together. Items 1-2: full live round-trip pass,
+    **PASS**, deliberately including edge-case/race-condition testing, not just the happy
+    path. Item 3: code review confirms correct implementation; live browser testing found it
+    does not work end-to-end, for the documented pre-existing reason above — no functional
+    sign-off for this item this round.
+  - **Documentation updated as part of closing this milestone**: `frontend/src/features/
+    dashboard/README.md`, `frontend/src/app/README.md`, `frontend/src/shared/api/README.md`,
+    plus this entry and `implementation-plan.md`'s "Frontend Milestone 9" entry.
+- **2026-08-18 — Backend MS9 (Presigned Image URLs) landed, QA-verified live, resolving
+  Frontend Milestone 9 item 3's blocking bug.** Branch `frontend/MS9-gap-fixes` (same branch
+  as the frontend gap-fixes round above — this is its backend-focused counterpart, not a
+  separate branch), local only — uncommitted, not pushed/merged; that remains the user's own
+  explicit git action. Full design record:
+  `docs/architecture/backend-ms9-presigned-image-urls-design.md`.
+  - **The root problem, restated precisely**: every `<img src>` pointing at an authenticated
+    image failed with `net::ERR_BLOCKED_BY_ORB`, because `GET /api/storage/images/**`
+    required a JWT `Authorization` header — something a plain HTML `<img>` tag cannot send.
+  - **The fix — an explicit, deliberate reversal of this project's prior recorded
+    architecture decision, not a re-litigation of it and not a silent contradiction.**
+    `storage.client.S3StorageClient`'s Javadoc previously stated (and the code implemented)
+    that "every image fetch is backend-proxied, never a direct-to-S3 redirect or a
+    pre-signed URL (a deliberate decision, not a placeholder pending one)." **By direct user
+    instruction this round, that decision is reversed**: backend-proxied image *retrieval*
+    (not upload — upload stays backend-proxied, unchanged) is replaced by presigned URLs —
+    real AWS S3 presigned GET URLs in `s3` storage mode, HMAC-SHA256-signed query-string
+    URLs back to this backend's own retrieval route in `local` mode, both valid for 300s
+    (`pronto.storage.presigned-url-ttl-seconds`). Authorization is still checked
+    server-side, before a URL is ever issued, reusing the exact pre-existing
+    `ImageKeyUtils.isPubliclyReadable`/`belongsTo` rules (`storage.service
+    .StorageService#getPresignedUrl`) — the storage retrieval route itself became
+    `permitAll()` at the Spring Security layer (`HttpMethod.GET` only; upload stays fully
+    JWT-gated), with the local-mode HMAC signature+expiry now serving as the sole real gate
+    for that route. QA live-verified this genuinely rejects unauthorized access: a tampered
+    signature, a tampered/expired timestamp, and a missing signature on a local-mode signed
+    URL all correctly `401`.
+  - **Two further, previously-undiscovered bugs found and fixed in the same round** (both in
+    `issues`, surfaced while investigating the ORB bug, not separately reported):
+    1. `issue_images` used to persist a *resolved* URL forever (`image_url` column,
+       resolved once by `IssuesService.create` and read back verbatim by `getById`) — fine
+       while URLs were permanent, silently broken once URLs became time-limited. Fixed by
+       `V24__rename_issue_images_image_url_to_image_key.sql` (column renamed to `image_key`,
+       now stores the raw key) plus resolving fresh at read time in both `create` and
+       `getById`. See `data-model.md` §2.8 and `issues/README.md`.
+    2. A professional with a confirmed order on an issue was **never actually authorized to
+       view that issue's photos** — a gap explicitly deferred since Milestone 2
+       (`api-contract-issues.md` §4 / this doc's own Milestone-2 open-items list above) and
+       never picked up through Milestone 6. Invisible until now because every such request
+       was already failing earlier, at the missing-JWT stage. Fixed via a narrow,
+       explicitly-named bypass, `StorageService#getPresignedUrlAssumingCallerAuthorized`,
+       called only from `IssuesService.getById` (whose own broader role check already
+       proves the caller may view every image on that issue) — **not to be reused at a new
+       call site without re-justifying the exemption to `pronto-lead`**. See
+       `issues/README.md`.
+  - **Booking-draft photo staleness, also fixed this round** (flagged as a known,
+    deliberately-deferred gap in the MS3/MS4 product-corrections pass above, now resolved,
+    not merely re-flagged): a paused "new issue" draft used to persist a *resolved*
+    `imageUrl` to `localStorage` (`BookingDraftPhoto.imageUrl`) — would go stale after the
+    presigned-URL TTL elapsed, well before a paused draft is likely to be resumed. Now
+    persists only the raw `imageKey`; `NewIssuePage.tsx`'s resume flow re-resolves every
+    photo's key into a fresh presigned URL via a new batch endpoint,
+    `POST /api/storage/images/presigned-urls`, on mount. See
+    `frontend/src/shared/hooks/README.md` and `frontend/src/shared/components/README.md`.
+  - **Deviation from the design doc, confirmed and documented in code, not silently
+    followed**: the design doc's §5 instructed adding a
+    `software.amazon.awssdk:s3-presigner` Maven dependency; that coordinate does not
+    actually exist on Maven Central (verified) — `S3Presigner` ships inside the
+    already-declared `s3` artifact. `backend/pom.xml`'s comment on the `s3` dependency
+    records this explicitly.
+  - **QA**: 163/163 backend tests pass. Live browser QA confirmed professional/avatar/
+    favorite images render, issue photos render for both the owning customer and an
+    authorized professional with a real order, unauthorized access is genuinely rejected
+    with real tampered/forged requests (see above), and booking-draft resume works.
+  - **Documentation updated as part of closing this round**: `storage/README.md` (full
+    rewrite of the retrieval-flow/"Role enforcement" sections), `storage/config
+    /StorageWebConfig.java` javadoc, `storage/client/StorageClient.java`/`S3StorageClient
+    .java`/`LocalDiskStorageClient.java` javadocs (already updated in-code by
+    `pronto-coding`), `storage/package-info.java`, `issues/README.md`, `bookings/README.md`/
+    `favorites/README.md`/`professionals/README.md` (each had a `StorageClient` direct-
+    injection call site migrated to `StorageService`), `data-model.md` §2.4/§2.8,
+    `application.yml`'s config comments (already accurate in-code), `frontend/src/shared/
+    components/README.md`, `frontend/src/shared/hooks/README.md`,
+    `frontend/src/features/dashboard/README.md` (resolved its now-stale open-issue note),
+    `api-contract-issues.md` §4 (a stale claim `hardening-plan.md` §5.3 had already flagged
+    for this pass), plus this entry and `implementation-plan.md`'s "Backend Milestone 9"
+    entry.
 
 ## 7. Backend architecture reference (as-built)
 
@@ -758,8 +913,10 @@ above).
 | `JWT_SECRET` | HMAC-SHA256 JWT signing key (≥32 bytes) | **yes, in any real deployment** — enforced at startup by `JwtSecretStartupGuard` when `PRONTO_ENVIRONMENT != local` |
 | `JWT_EXPIRATION_SECONDS` | Token TTL | no (defaults `86400` = 24h) |
 | `STORAGE_MODE` | `local` \| `s3` | no (defaults `local`) |
-| `STORAGE_PUBLIC_BASE_URL` | Base URL for the backend-proxied `GET /api/storage/images/**` URL, both storage modes | no (defaults `http://localhost:${server.port}`) |
+| `STORAGE_PUBLIC_BASE_URL` | Base URL used to build local-mode's HMAC-signed `GET /api/storage/images/**` URL. **Narrowed in scope by backend MS9 (2026-08-18)** — previously used by both storage modes; `s3` mode no longer uses it at all, since S3 presigned URLs come entirely from `S3Presigner` and point directly at the S3 endpoint. | no (defaults `http://localhost:${server.port}`) |
+| `STORAGE_PRESIGNED_URL_TTL_SECONDS` | **New, backend MS9.** How long a presigned/signed image URL stays valid from the moment it's minted — one value, read by both storage modes (local mode's HMAC `expires` param, S3 mode's `GetObjectPresignRequest.signatureDuration`). | no (defaults `300`, 5 minutes) |
 | `STORAGE_LOCAL_BASE_DIR` | Filesystem root for local-mode uploads | no (defaults `./data/uploads`) |
+| `STORAGE_LOCAL_HMAC_SECRET` | **New, backend MS9.** Signs/verifies the `expires`/`sig` query parameters on local-mode's `GET /api/storage/images/**` — a dedicated secret, deliberately not shared with `JWT_SECRET` (different blast radius: authorizes one short-lived image-URL grant, not a whole session). | **yes, in any real deployment running `STORAGE_MODE=local`** — same "obviously a placeholder, loudly insecure" local-dev default convention as `JWT_SECRET` (no startup-guard enforcement yet, unlike `JWT_SECRET`'s `JwtSecretStartupGuard` — flagged as a recommended follow-up in the MS9 design doc §3, not yet built) |
 | `STORAGE_S3_BUCKET` | Target S3 bucket | **yes, when `STORAGE_MODE=s3`** |
 | `STORAGE_S3_REGION` | AWS region | no (defaults `eu-central-1`), meaningless unless `STORAGE_MODE=s3` |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (or instance role) | AWS credentials, resolved by the AWS SDK's `DefaultCredentialsProvider` chain — not read directly by this app's own config classes | **yes, when `STORAGE_MODE=s3`**. See `hardening-plan.md` §2.5: the local dev values currently in use are root-account keys, which **must** be rotated to scoped IAM credentials before any real deployment. |

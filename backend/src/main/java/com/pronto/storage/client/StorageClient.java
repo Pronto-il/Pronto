@@ -1,20 +1,22 @@
 package com.pronto.storage.client;
 
+import java.time.Duration;
+
 /**
  * Storage abstraction behind which {@code local}/{@code s3} implementations are swapped via
  * {@code pronto.storage.mode} — mirrors the {@code auth.email.EmailSender} mock/real split
  * from Milestone 1. See {@code docs/architecture/api-contract-issues.md} §3.2.
  *
  * <p><b>Deviation from the contract doc's exact interface snippet, flagged.</b> §3.2 shows
- * only {@code upload}/{@code download}/{@code exists}. A fourth method, {@link #resolveUrl},
- * was added because §2.2 step 6 requires re-deriving the <em>same</em> URL an already-
- * uploaded key originally resolved to — at issue-creation time, only the key is known (no
- * {@code issue_images} row, and therefore no stored URL, exists yet at upload time; see §3.3).
- * Both implementations compute the URL deterministically from the key alone, so
- * {@code resolveUrl} needs no new state — {@link #upload} itself is implemented in terms of
- * it. Not calling {@link #upload} again was the alternative rejected: it would re-write the
- * object's bytes for no reason and require {@code issues} to hold onto raw image bytes
- * across the classify→confirm gap, which it never does.
+ * only {@code upload}/{@code download}/{@code exists}. A fourth method, {@link #presignUrl},
+ * was added — originally as {@code resolveUrl} (a deterministic, non-expiring URL), replaced
+ * by this time-limited presigned-URL form in backend MS9
+ * ({@code docs/architecture/backend-ms9-presigned-image-urls-design.md} §1) to fix a
+ * {@code net::ERR_BLOCKED_BY_ORB} bug: a plain {@code <img src>} cannot carry the
+ * {@code Authorization} header the old JWT-gated retrieval route required. {@code resolveUrl}
+ * was removed rather than deprecated — see that design doc §1 for the full reasoning (keeping
+ * a second, differently-behaved URL-producing method around risked a future call site silently
+ * reintroducing the ORB bug or a permanent-URL leak).
  */
 public interface StorageClient {
 
@@ -39,6 +41,15 @@ public interface StorageClient {
      */
     boolean exists(String key);
 
-    /** Deterministic, side-effect-free: does not verify the object actually exists. */
-    String resolveUrl(String key);
+    /**
+     * Returns a URL from which {@code key} can be fetched directly — no Authorization header,
+     * no cookie, nothing but the URL itself — valid for {@code expiry} from the moment this
+     * method returns. Performs NO authorization of its own; the caller ({@code StorageService})
+     * is responsible for deciding whether the current caller should be allowed to see this key
+     * BEFORE calling this method. Local mode: an HMAC-signed query-string URL back to this
+     * backend's own {@code GET /api/storage/images/**}. S3 mode: a real AWS S3 presigned GET
+     * URL, pointing directly at S3, never touching this backend. See
+     * {@code docs/architecture/backend-ms9-presigned-image-urls-design.md} §1/§3/§5.
+     */
+    String presignUrl(String key, Duration expiry);
 }

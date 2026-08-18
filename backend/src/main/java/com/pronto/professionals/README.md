@@ -51,7 +51,7 @@ config layer, added alongside the reviews/favorites/matching feature set. Implem
 | `repository.CategoryRepository` | Plain `JpaRepository`, `existsById`-only usage — unchanged since Milestone 1. |
 | `repository.ReviewAggregateRepository` | **New this pass.** A narrow, read-only `Repository<Review, Long>` (not `JpaRepository` — exists purely to expose one aggregate query, not full CRUD) reading `reviews.entity.Review` from outside its owning package, projecting into `ProfessionalRatingAggregate`. Deliberately lives here, not in `reviews` — mirrors the intentional narrow-cross-package-repository pattern `bookings.repository.ProfessionalListingRepository` already established (a package reading another package's entity for its own projection need, rather than that dependency running the other direction). |
 | `repository.ProfessionalRatingAggregate` | Projection record, `(averageRating, reviewCount)`. `averageRating` is `null` and `reviewCount` is `0` when the professional has no reviews (JPQL `AVG`/`COUNT` over zero rows) — always exactly one row is returned (aggregate functions never produce zero result rows), so callers never need an `Optional`. |
-| `service.ProfessionalsService` | **New this pass.** All business logic for the four endpoints above — resolving "the caller's own professional" (with a defense-in-depth `403 FORBIDDEN` if a `PROFESSIONAL`-role caller somehow has no `professionals` row, not expected to be reachable in practice), the profile-image upload flow, and the shared response-building helper that resolves the profile-image URL (via `storage.client.StorageClient#resolveUrl`) and the rating aggregate (via `ReviewAggregateRepository`) for both the self-view and the public-detail-view endpoints. |
+| `service.ProfessionalsService` | **New this pass.** All business logic for the four endpoints above — resolving "the caller's own professional" (with a defense-in-depth `403 FORBIDDEN` if a `PROFESSIONAL`-role caller somehow has no `professionals` row, not expected to be reachable in practice), the profile-image upload flow, and the shared response-building helper that resolves the profile-image URL and the rating aggregate (via `ReviewAggregateRepository`) for both the self-view and the public-detail-view endpoints. **As of backend MS9 (2026-08-18)**: the profile-image URL is resolved via `storage.service.StorageService#getPresignedUrl(callerId, key)` (a time-limited presigned URL) — this class previously also injected `storage.client.StorageClient` directly and called `resolveUrl` (a permanent, non-expiring proxy URL); that field/constructor param was dropped since this class already separately injected `StorageService` (for `uploadWithKey`). `toResponse` now takes a `callerId` param, threaded in from all three of its call sites. |
 | `controller.ProfessionalsController` | **New this pass.** `/api/professionals/me` (`GET`/`PUT`), `/api/professionals/me/profile-image` (`POST`, `multipart/form-data`), `/api/professionals/{professionalId}` (`GET`). Manual path-id parsing, same convention as every other controller in this codebase. |
 | `config.ProfessionalsWebConfig` | **New this pass.** A single `RoleRequiredInterceptor(PROFESSIONAL)` registered on the literal paths `/api/professionals/me` and `/api/professionals/me/profile-image` (not a blanket `/api/professionals/**` — this package mixes a `PROFESSIONAL`-only surface with the either-role `{professionalId}` detail route, the same reason `bookings`/`issues` use literal-pattern lists instead of a wildcard). `GET /api/professionals/{professionalId}` is left ungated at the route level. |
 | `dto.ProfessionalProfileResponse` | Shared response shape for `GET`/`PUT /api/professionals/me` and `GET /api/professionals/{professionalId}` — `favorited` is `Boolean` (not `boolean`), since it's meaningfully three-valued (`null` on self-views/non-`CUSTOMER` callers, `true`/`false` for a `CUSTOMER` viewing another professional's card). |
@@ -81,9 +81,15 @@ config layer, added alongside the reviews/favorites/matching feature set. Implem
   (not new to this pass, restated here for discoverability).
 - **New this pass**: depends on `reviews` (`ReviewAggregateRepository`'s narrow read into
   `reviews.entity.Review`), `favorites` (`FavoriteRepository`, for the `favorited` flag on
-  `GET /api/professionals/{professionalId}`), and `storage` (`StorageClient`/`StorageService`,
-  for profile-image upload/URL resolution — a new dependency edge this package did not have
-  in Milestone 1, when it had no service layer at all).
+  `GET /api/professionals/{professionalId}`), and `storage` (`StorageService`, for
+  profile-image upload via `uploadWithKey` and, as of backend MS9, URL resolution via
+  `getPresignedUrl` too — a new dependency edge this package did not have in Milestone 1,
+  when it had no service layer at all). **As of backend MS9 (2026-08-18)**: this class
+  dropped its separate direct `StorageClient` injection (previously used for `resolveUrl`,
+  now removed from that interface entirely) — `StorageService`, already injected for
+  `uploadWithKey`, now also covers URL resolution, so this package's `storage` dependency is
+  a single `StorageService` field, not two. See `storage/README.md` and
+  `docs/architecture/backend-ms9-presigned-image-urls-design.md` §9.3.
 - Depends on `common` for the error envelope (`ApiException`/`ErrorCode`) and
   `RoleRequiredInterceptor`/`AuthenticatedUser` — new dependency edge, this package's
   controller/service layer didn't exist before this pass to need it.
@@ -138,3 +144,12 @@ full QA summary (including the `city = NULL` known gap) and
 `docs/architecture/api-contract-professionals-reviews.md` §4.1-4.4 for the complete
 design/contract this layer implements. Unit-tested
 (`professionals.service.ProfessionalsServiceTest`).
+
+**Backend MS9 — presigned image URLs (2026-08-18)**: `toResponse`'s profile-image-URL
+resolution swapped from a direct `StorageClient#resolveUrl` call to
+`StorageService#getPresignedUrl(callerId, key)`, and the now-redundant direct
+`StorageClient` field/constructor param was dropped — see "Interactions" above. No
+entity/migration/`ErrorCode` changes in this package; the substantive fix (permanent proxy
+URLs replaced by time-limited presigned URLs) lives in `storage` — see that package's
+README and `docs/architecture/backend-ms9-presigned-image-urls-design.md` for the full
+record. Backend: 163/163 tests pass.

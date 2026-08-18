@@ -36,7 +36,7 @@ Implements `docs/architecture/api-contract-professionals-reviews.md` §4.9-4.11.
 | `entity.Favorite` | JPA entity for `favorites` — a genuinely composite-key row, `(customer_id, professional_id)`, **no surrogate `id`**. Mapped via `@IdClass(FavoriteId.class)`, not `@EmbeddedId` — see `entity.FavoriteId`'s Javadoc for why: `@IdClass` lets the same two plain FK fields double as the identifier without introducing a separate embeddable wrapper type this entity has no other use for. |
 | `entity.FavoriteId` | The `@IdClass` companion — field names/types must mirror `Favorite`'s `@Id` fields exactly (a `@IdClass` contract requirement), implements `equals`/`hashCode` over both fields (required for JPA's composite-key identity resolution). |
 | `repository.FavoriteRepository` | `existsByCustomerIdAndProfessionalId` (the idempotency check for `POST`/enrichment source elsewhere), `findByCustomerIdOrderByCreatedAtDesc` (the listing query), `deleteByCustomerIdAndProfessionalId` (the idempotent delete — a plain derived-query delete, no atomic guard needed since there's no state machine to race against, just presence/absence of a row). |
-| `service.FavoritesService` | Business logic for all three endpoints, including the idempotency handling for add/remove and the per-entry enrichment (profile image URL resolution via `StorageClient`, rating aggregate via `professionals.repository.ReviewAggregateRepository`) for the listing response. |
+| `service.FavoritesService` | Business logic for all three endpoints, including the idempotency handling for add/remove and the per-entry enrichment (profile image URL resolution via `StorageService#getPresignedUrl` — `StorageClient` was injected directly and called via `resolveUrl` before backend MS9, see "Interactions" below — rating aggregate via `professionals.repository.ReviewAggregateRepository`) for the listing response. |
 | `controller.FavoritesController` | `/api/favorites` (`POST`/`GET`), `/api/favorites/{professionalId}` (`DELETE`). Manual path-id parsing, same convention as every other controller in this codebase. |
 | `config.FavoritesWebConfig` | A **single blanket-pattern** `RoleRequiredInterceptor(CUSTOMER)` registration covering `/api/favorites` and `/api/favorites/**` — safe here (unlike `reviews`/`professionals`, which mix roles per-route) because every route in this package requires the same single role, mirroring `storage.config.StorageWebConfig`'s blanket-pattern precedent for the same reason. |
 | `dto.AddFavoriteRequest` | `{ professionalId }` — the sole write-request shape. |
@@ -47,7 +47,14 @@ Implements `docs/architecture/api-contract-professionals-reviews.md` §4.9-4.11.
 - Depends on `professionals` (`ProfessionalRepository` for the existence check on add, and
   `Professional`/`ReviewAggregateRepository`/`ProfessionalRatingAggregate` for the listing
   enrichment), `users` (`UserRepository`, for the favorited professional's display name), and
-  `storage` (`StorageClient#resolveUrl`, for the profile-image URL).
+  `storage` for the profile-image URL. **As of backend MS9 (2026-08-18)**: this dependency
+  changed from directly injecting `storage.client.StorageClient` (`resolveUrl(key)`, a
+  permanent, non-expiring proxy URL — now removed from that interface entirely) to
+  injecting `storage.service.StorageService` (`getPresignedUrl(callerId, key)`, a
+  time-limited presigned URL, 300s default TTL) — `toSummary` now threads `caller.id()`
+  through, since `getPresignedUrl` reuses the same ownership/visibility check every other
+  presign call site goes through. See `storage/README.md` and
+  `docs/architecture/backend-ms9-presigned-image-urls-design.md` §9.2.
 - **Read cross-package, in the other direction**: `bookings.repository
   .ProfessionalListingRepository` and `professionals.service.ProfessionalsService` both run a
   narrow, read-only query directly against `favorites.entity.Favorite`/
@@ -89,3 +96,11 @@ yet committed at the time this doc was written). See
 `docs/architecture/implementation-plan.md`'s Milestone 8 entry for the full QA summary and
 `docs/architecture/api-contract-professionals-reviews.md` for the complete design/contract
 this package implements. Unit-tested (`favorites.service.FavoritesServiceTest`).
+
+**Backend MS9 — presigned image URLs (2026-08-18)**: `toSummary`'s `storage` dependency
+swapped from `StorageClient#resolveUrl` to `StorageService#getPresignedUrl` — see
+"Interactions" above. No entity/migration/`ErrorCode` changes in this package; the
+substantive fix (permanent proxy URLs replaced by time-limited presigned URLs) lives in
+`storage` — see that package's README and
+`docs/architecture/backend-ms9-presigned-image-urls-design.md` for the full record.
+Backend: 163/163 tests pass.

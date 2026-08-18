@@ -7,6 +7,8 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 
 /**
  * Local-disk fake storage — the default ({@code pronto.storage.mode=local}), zero-AWS-
@@ -16,10 +18,17 @@ import java.nio.file.Path;
  *
  * <p>Writes/reads under {@code pronto.storage.local.base-dir}, preserving {@code key} as a
  * relative file path (so {@code customers/42/issues/temp/uuid.jpg} becomes a real nested
- * file). {@link #resolveUrl} points at the local retrieval endpoint,
- * {@code GET /api/storage/images/**} (§2.4), built from the shared, mode-agnostic
- * {@code pronto.storage.public-base-url} (see {@link S3StorageClient} for why this is
- * shared rather than local-mode-specific).
+ * file). {@link #presignUrl} points at the local retrieval endpoint,
+ * {@code GET /api/storage/images/**}, built from the shared, mode-agnostic
+ * {@code pronto.storage.public-base-url} (see {@link S3StorageClient} for why this is shared
+ * rather than local-mode-specific) — plus an HMAC-signed {@code expires}/{@code sig}
+ * query-string pair (delegated to {@link LocalHmacUrlSigner}) so the URL itself is a
+ * self-contained, time-limited bearer credential, matching {@link S3StorageClient}'s presigned
+ * URLs in spirit. See {@code docs/architecture/backend-ms9-presigned-image-urls-design.md}
+ * §1/§3 — this class previously resolved a permanent, non-expiring proxy URL
+ * ({@code resolveUrl}); that was reversed in MS9 in favor of presigned URLs to fix a
+ * {@code net::ERR_BLOCKED_BY_ORB} bug (a plain {@code <img src>} cannot carry the
+ * {@code Authorization} header the old JWT-gated route required).
  */
 @Component
 @ConditionalOnProperty(prefix = "pronto.storage", name = "mode", havingValue = "local", matchIfMissing = true)
@@ -27,12 +36,18 @@ public class LocalDiskStorageClient implements StorageClient {
 
     private final Path baseDir;
     private final String publicBaseUrl;
+    private final LocalHmacUrlSigner urlSigner;
+    private final Duration defaultPresignedUrlTtl;
 
     public LocalDiskStorageClient(
             @Value("${pronto.storage.local.base-dir}") String baseDir,
-            @Value("${pronto.storage.public-base-url}") String publicBaseUrl) {
+            @Value("${pronto.storage.public-base-url}") String publicBaseUrl,
+            LocalHmacUrlSigner urlSigner,
+            @Value("${pronto.storage.presigned-url-ttl-seconds}") long presignedUrlTtlSeconds) {
         this.baseDir = Path.of(baseDir).toAbsolutePath().normalize();
         this.publicBaseUrl = publicBaseUrl.replaceAll("/+$", "");
+        this.urlSigner = urlSigner;
+        this.defaultPresignedUrlTtl = Duration.ofSeconds(presignedUrlTtlSeconds);
         try {
             Files.createDirectories(this.baseDir);
         } catch (IOException e) {
@@ -49,7 +64,7 @@ public class LocalDiskStorageClient implements StorageClient {
         } catch (IOException e) {
             throw new StorageException("Failed to write local file for key: " + key, e);
         }
-        return new StoredObject(key, resolveUrl(key), contentType, content.length);
+        return new StoredObject(key, presignUrl(key, defaultPresignedUrlTtl), contentType, content.length);
     }
 
     @Override
@@ -67,8 +82,10 @@ public class LocalDiskStorageClient implements StorageClient {
     }
 
     @Override
-    public String resolveUrl(String key) {
-        return publicBaseUrl + "/api/storage/images/" + key;
+    public String presignUrl(String key, Duration expiry) {
+        long expiresEpochSeconds = Instant.now().plus(expiry).getEpochSecond();
+        String signature = urlSigner.sign(key, expiresEpochSeconds);
+        return publicBaseUrl + "/api/storage/images/" + key + "?expires=" + expiresEpochSeconds + "&sig=" + signature;
     }
 
     /**

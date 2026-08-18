@@ -12,7 +12,6 @@ import com.pronto.professionals.repository.ProfessionalRatingAggregate;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.professionals.repository.ReviewAggregateRepository;
 import com.pronto.storage.ImageContentType;
-import com.pronto.storage.client.StorageClient;
 import com.pronto.storage.client.StoredObject;
 import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
@@ -40,20 +39,17 @@ public class ProfessionalsService {
     private final UserRepository userRepository;
     private final ReviewAggregateRepository reviewAggregateRepository;
     private final FavoriteRepository favoriteRepository;
-    private final StorageClient storageClient;
     private final StorageService storageService;
 
     public ProfessionalsService(ProfessionalRepository professionalRepository,
                                  UserRepository userRepository,
                                  ReviewAggregateRepository reviewAggregateRepository,
                                  FavoriteRepository favoriteRepository,
-                                 StorageClient storageClient,
                                  StorageService storageService) {
         this.professionalRepository = professionalRepository;
         this.userRepository = userRepository;
         this.reviewAggregateRepository = reviewAggregateRepository;
         this.favoriteRepository = favoriteRepository;
-        this.storageClient = storageClient;
         this.storageService = storageService;
     }
 
@@ -62,7 +58,7 @@ public class ProfessionalsService {
     public ProfessionalProfileResponse getMyProfile(AuthenticatedUser caller) {
         Professional professional = resolveOwnProfessional(caller.id());
         User user = loadUser(professional.getUserId());
-        return toResponse(professional, user, null);
+        return toResponse(professional, user, null, caller.id());
     }
 
     /**
@@ -88,7 +84,7 @@ public class ProfessionalsService {
         professional.setBasePrice(request.basePrice());
         professional = professionalRepository.save(professional);
 
-        return toResponse(professional, user, null);
+        return toResponse(professional, user, null, caller.id());
     }
 
     /**
@@ -107,7 +103,7 @@ public class ProfessionalsService {
         if (UserRole.CUSTOMER.name().equals(caller.role())) {
             favorited = favoriteRepository.existsByCustomerIdAndProfessionalId(caller.id(), professionalId);
         }
-        return toResponse(professional, user, favorited);
+        return toResponse(professional, user, favorited, caller.id());
     }
 
     /**
@@ -145,10 +141,11 @@ public class ProfessionalsService {
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User " + userId + " not found."));
     }
 
-    private ProfessionalProfileResponse toResponse(Professional professional, User user, Boolean favorited) {
+    private ProfessionalProfileResponse toResponse(Professional professional, User user, Boolean favorited,
+                                                     Long callerId) {
         String profileImageUrl = professional.getProfileImageKey() == null
                 ? null
-                : storageClient.resolveUrl(professional.getProfileImageKey());
+                : storageService.getPresignedUrl(callerId, professional.getProfileImageKey());
 
         ProfessionalRatingAggregate aggregate = reviewAggregateRepository.getRatingAggregate(professional.getId());
         BigDecimal averageRating = aggregate.averageRating() == null

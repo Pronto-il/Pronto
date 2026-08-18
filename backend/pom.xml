@@ -95,7 +95,13 @@
 
         <!-- storage.client.S3StorageClient (pronto.storage.mode=s3), per
              docs/architecture/api-contract-issues.md §3.2. Version managed by the AWS SDK
-             BOM above. -->
+             BOM above. Also provides S3Presigner/GetObjectPresignRequest (backend MS9,
+             docs/architecture/backend-ms9-presigned-image-urls-design.md §5): a separate
+             "software.amazon.awssdk:s3-presigner" coordinate does NOT exist on Maven Central
+             (verified); S3Presigner ships inside this "s3" artifact itself, under the
+             software.amazon.awssdk.services.s3.presigner package. The design doc's §5
+             instruction to add a separate s3-presigner dependency was factually incorrect,
+             flagged rather than silently followed. -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>s3</artifactId>

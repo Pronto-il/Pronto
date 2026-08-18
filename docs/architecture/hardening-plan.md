@@ -614,6 +614,14 @@ URL. **Recommendation**: flag for `pronto-documentation`'s next pass to update
 longer is — not fixed in this document per the standing convention of flagging cross-doc
 edits rather than making them here.
 
+**Update, backend MS9 (2026-08-18)**: `api-contract-issues.md` §4 has been updated per this
+recommendation. Note that the *specific mechanism* this finding described as resolved
+(backend-proxied retrieval) has itself since been reversed, by explicit user instruction, in
+favor of presigned/HMAC-signed URLs — the underlying *privacy* property this finding is
+actually about (the bucket blocks all public access) remains true and unaffected; only how a
+private object becomes viewable changed. See
+`docs/architecture/backend-ms9-presigned-image-urls-design.md`.
+
 ### 5.4 No CORS configuration anywhere in `SecurityConfig`
 
 Forward-looking gap, not a current v1.0 blocker (no frontend exists to be blocked yet), but

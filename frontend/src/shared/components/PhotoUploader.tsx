@@ -6,11 +6,24 @@ import styles from './PhotoUploader.module.css';
 
 export interface UploadedPhoto {
   imageKey: string;
-  previewUrl: string;
-  /** Durable backend URL from the upload response, unlike `previewUrl` (an ephemeral
-   *  `URL.createObjectURL(file)` blob that doesn't survive a full page reload). Used for
-   *  booking-draft persistence (`BookingDraftPhoto`, see `shared/hooks/bookingDraftContext.ts`). */
+  /** `null` is a deliberate, distinct sentinel for "not yet (re-)resolved to a displayable
+   *  URL" — used only during `NewIssuePage`'s draft-resume flow, while a batch presigned-URL
+   *  lookup is in flight (backend MS9 design §12.4). Every other producer of `UploadedPhoto`
+   *  (a live upload via this component) always sets a real string immediately. */
+  previewUrl: string | null;
+  /** Same-page-load display URL from the upload response — an ephemeral presigned URL (backend
+   *  MS9, 300s TTL), NOT a durable/persistable one. Unlike `previewUrl` (a `URL.
+   *  createObjectURL(file)` blob), this is a real backend URL, but it must never be persisted
+   *  across a page reload (e.g. into `BookingDraftPhoto`, see `shared/hooks/
+   *  bookingDraftContext.ts`) — only the bare `imageKey` survives a reload; `imageUrl` is
+   *  re-resolved fresh on resume via `shared/api/storage.ts`'s `getPresignedImageUrls`. */
   imageUrl: string;
+  /** Set only when a resume-time re-resolution of this photo's `imageKey` failed outright
+   *  (backend MS9 design §12.4's sub-case (a) — a full batch-request failure, not a
+   *  per-key-missing partial response, which instead drops the photo from state entirely).
+   *  Never set for a live upload failure — that's `PendingUpload.error`, a separate,
+   *  differently-triggered case. */
+  error?: string;
 }
 
 export interface PhotoUploaderProps {
@@ -82,7 +95,13 @@ export function PhotoUploader({ label, photos, onChange, maxCount = 6, hint, onU
       <div className={styles.grid}>
         {photos.map((photo) => (
           <div key={photo.imageKey} className={styles.thumbWrapper}>
-            <img src={photo.previewUrl} alt="" className={styles.thumb} />
+            {photo.previewUrl === null ? (
+              <div className={styles.uploadingOverlay}>
+                <span className={styles.spinner} aria-hidden="true" />
+              </div>
+            ) : (
+              <img src={photo.previewUrl} alt="" className={styles.thumb} />
+            )}
             <button
               type="button"
               className={styles.removeButton}
@@ -91,6 +110,7 @@ export function PhotoUploader({ label, photos, onChange, maxCount = 6, hint, onU
             >
               <X size={14} />
             </button>
+            {photo.error && <span className={styles.itemError}>{photo.error}</span>}
           </div>
         ))}
         {pending.map((item) => (

@@ -26,6 +26,7 @@ import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.storage.ImageKeyUtils;
 import com.pronto.storage.client.StorageClient;
 import com.pronto.storage.client.StorageException;
+import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.entity.UserRole;
 import com.pronto.users.repository.UserRepository;
@@ -49,6 +50,7 @@ public class IssuesService {
     private final IssueImageRepository issueImageRepository;
     private final CategoryRepository categoryRepository;
     private final StorageClient storageClient;
+    private final StorageService storageService;
     private final ClassificationService classificationService;
     private final ProfessionalRepository professionalRepository;
     private final OrderRepository orderRepository;
@@ -58,6 +60,7 @@ public class IssuesService {
                           IssueImageRepository issueImageRepository,
                           CategoryRepository categoryRepository,
                           StorageClient storageClient,
+                          StorageService storageService,
                           ClassificationService classificationService,
                           ProfessionalRepository professionalRepository,
                           OrderRepository orderRepository,
@@ -66,6 +69,7 @@ public class IssuesService {
         this.issueImageRepository = issueImageRepository;
         this.categoryRepository = categoryRepository;
         this.storageClient = storageClient;
+        this.storageService = storageService;
         this.classificationService = classificationService;
         this.professionalRepository = professionalRepository;
         this.orderRepository = orderRepository;
@@ -110,11 +114,10 @@ public class IssuesService {
 
         List<IssueImage> images = new ArrayList<>();
         for (String key : imageKeys) {
-            String url = storageClient.resolveUrl(key);
-            images.add(issueImageRepository.save(new IssueImage(issue.getId(), url)));
+            images.add(issueImageRepository.save(new IssueImage(issue.getId(), key)));
         }
 
-        return toResponse(issue, images);
+        return toResponse(callerId, issue, images);
     }
 
     /**
@@ -146,8 +149,16 @@ public class IssuesService {
 
         String categoryCode = categoryRepository.findById(issue.getCategoryId()).map(Category::getCode).orElse(null);
 
+        // Resolved fresh on every read, never persisted (backend MS9 §9.4.1) — and, per §9.4.2,
+        // deliberately bypasses the general per-key ownership check: getById's own role-based
+        // branch above already established (customer owns the issue OR professional has an
+        // order on it) that the caller may view this issue and everything attached to it, a
+        // strict superset of "may view every image this issue owns." Re-running the general
+        // check here would wrongly reject the exact professional caller just approved above,
+        // since a customers/{customerId}/... key never embeds a professional's own id.
         List<IssueImageResponse> images = issueImageRepository.findByIssueId(issueId).stream()
-                .map(img -> new IssueImageResponse(img.getId(), img.getImageUrl(), img.getUploadedAt()))
+                .map(img -> new IssueImageResponse(img.getId(),
+                        storageService.getPresignedUrlAssumingCallerAuthorized(img.getImageKey()), img.getUploadedAt()))
                 .toList();
 
         LatestOrderSummary latestOrder = orderRepository.findFirstByIssueIdOrderByCreatedAtDesc(issueId)
@@ -197,9 +208,14 @@ public class IssuesService {
         return imageKeys;
     }
 
-    private IssueResponse toResponse(Issue issue, List<IssueImage> images) {
+    private IssueResponse toResponse(Long callerId, Issue issue, List<IssueImage> images) {
+        // Customer viewing their own image they just uploaded — the general, checked
+        // getPresignedUrl path applies cleanly here (no exemption needed): every key in
+        // `images` is guaranteed to already belong to `callerId`, since validateImageKeys
+        // enforced that before any image was ever persisted (see #create above).
         List<IssueImageResponse> imageResponses = images.stream()
-                .map(img -> new IssueImageResponse(img.getId(), img.getImageUrl(), img.getUploadedAt()))
+                .map(img -> new IssueImageResponse(img.getId(),
+                        storageService.getPresignedUrl(callerId, img.getImageKey()), img.getUploadedAt()))
                 .toList();
         return new IssueResponse(issue.getId(), issue.getCustomerId(), issue.getCategoryId(),
                 issue.getDescription(), issue.getUrgencyType(), issue.getStatus(), imageResponses, issue.getCreatedAt());

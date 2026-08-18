@@ -26,6 +26,16 @@ export function createAvailabilitySlot(payload: CreateSlotRequest): Promise<Slot
   return httpClient.post<SlotResponse>('/api/availability/slots', payload);
 }
 
+/** `PUT /api/availability/slots/{slotId}` — PROFESSIONAL only, must be the slot's owner. */
+export function updateAvailabilitySlot(slotId: number, payload: CreateSlotRequest): Promise<SlotResponse> {
+  return httpClient.put<SlotResponse>(`/api/availability/slots/${slotId}`, payload);
+}
+
+/** `DELETE /api/availability/slots/{slotId}` — PROFESSIONAL only, must be the slot's owner. */
+export function deleteAvailabilitySlot(slotId: number): Promise<void> {
+  return httpClient.delete<void>(`/api/availability/slots/${slotId}`);
+}
+
 /** Note: no `professionalId` on list items (implicit — it's always the caller's own). */
 export interface SlotListItem {
   id: number;

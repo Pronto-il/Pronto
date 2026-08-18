@@ -34,7 +34,7 @@ import com.pronto.notifications.entity.NotificationMessageType;
 import com.pronto.notifications.service.NotificationService;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRepository;
-import com.pronto.storage.client.StorageClient;
+import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.entity.UserRole;
 import com.pronto.users.repository.UserRepository;
@@ -82,7 +82,7 @@ public class BookingsService {
     private final UserRepository userRepository;
     private final NotificationService notificationService;
     private final DistanceEtaStrategy distanceEtaStrategy;
-    private final StorageClient storageClient;
+    private final StorageService storageService;
 
     public BookingsService(IssueRepository issueRepository,
                             ProfessionalRepository professionalRepository,
@@ -93,7 +93,7 @@ public class BookingsService {
                             UserRepository userRepository,
                             NotificationService notificationService,
                             DistanceEtaStrategy distanceEtaStrategy,
-                            StorageClient storageClient) {
+                            StorageService storageService) {
         this.issueRepository = issueRepository;
         this.professionalRepository = professionalRepository;
         this.professionalListingRepository = professionalListingRepository;
@@ -103,7 +103,7 @@ public class BookingsService {
         this.userRepository = userRepository;
         this.notificationService = notificationService;
         this.distanceEtaStrategy = distanceEtaStrategy;
-        this.storageClient = storageClient;
+        this.storageService = storageService;
     }
 
     /** §2.2, extended with the service-location/sort matching design. */
@@ -122,7 +122,7 @@ public class BookingsService {
         }
         List<ProfessionalCard> professionals =
                 professionalListingRepository.listByCategory(issue.getCategoryId(), callerId);
-        professionals = enrichAndSort(professionals, location, parseSort(sortParam, ProfessionalSort.CHEAPEST));
+        professionals = enrichAndSort(callerId, professionals, location, parseSort(sortParam, ProfessionalSort.CHEAPEST));
         return new ProfessionalListingResponse(issue.getId(), issue.getCategoryId(), professionals);
     }
 
@@ -229,7 +229,7 @@ public class BookingsService {
         }
         List<ProfessionalCard> professionals =
                 professionalListingRepository.listSosAvailableByCategory(issue.getCategoryId(), callerId);
-        professionals = enrichAndSort(professionals, location, parseSort(sortParam, ProfessionalSort.CHEAPEST));
+        professionals = enrichAndSort(callerId, professionals, location, parseSort(sortParam, ProfessionalSort.CHEAPEST));
         return new ProfessionalListingResponse(issue.getId(), issue.getCategoryId(), professionals);
     }
 
@@ -601,23 +601,24 @@ public class BookingsService {
      * Post-fetch, in-Java-only enrichment pass (never in SQL, per the approved design):
      * resolves each card's raw {@code profileImageUrl} slot (currently the raw
      * {@code profile_image_key} column value, per {@code ProfessionalCard}'s Javadoc) to a
-     * real URL via {@link StorageClient#resolveUrl}, and computes distance/ETA via
-     * {@link DistanceEtaStrategy#calculate} using a single, uniform {@code requestTime =
-     * Instant.now()} for the whole listing — applied unconditionally regardless of
-     * {@code sort} (§7). When {@code sort == FASTEST}, the resulting list is re-sorted by
-     * {@code etaMinutes} ascending; when {@code sort == RECOMMENDED}, by
+     * presigned URL via {@link StorageService#getPresignedUrl(Long, String)} (backend MS9,
+     * {@code docs/architecture/backend-ms9-presigned-image-urls-design.md} §9.1), and computes
+     * distance/ETA via {@link DistanceEtaStrategy#calculate} using a single, uniform
+     * {@code requestTime = Instant.now()} for the whole listing — applied unconditionally
+     * regardless of {@code sort} (§7). When {@code sort == FASTEST}, the resulting list is
+     * re-sorted by {@code etaMinutes} ascending; when {@code sort == RECOMMENDED}, by
      * {@code averageRating} descending (professionals with no reviews yet sort last), then
      * {@code reviewCount} descending as a tiebreak; {@code CHEAPEST} leaves the DB's
      * {@code base_price ASC} order untouched.
      */
-    private List<ProfessionalCard> enrichAndSort(List<ProfessionalCard> cards, ServiceLocation location,
-                                                  ProfessionalSort sort) {
+    private List<ProfessionalCard> enrichAndSort(Long callerId, List<ProfessionalCard> cards,
+                                                  ServiceLocation location, ProfessionalSort sort) {
         Instant requestTime = Instant.now();
         List<ProfessionalCard> enriched = cards.stream()
                 .map(card -> {
                     String profileImageUrl = card.profileImageUrl() == null
                             ? null
-                            : storageClient.resolveUrl(card.profileImageUrl());
+                            : storageService.getPresignedUrl(callerId, card.profileImageUrl());
                     EtaResult eta = distanceEtaStrategy.calculate(card.city(), location, requestTime);
                     return new ProfessionalCard(card.professionalId(), card.fullName(), card.serviceArea(),
                             card.basePrice(), card.reliabilityScore(), card.city(), profileImageUrl,

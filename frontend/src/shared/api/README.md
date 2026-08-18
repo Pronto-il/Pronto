@@ -29,11 +29,27 @@ API described in `docs/architecture/overview.md` §3.2.
   `UserMeResponse` gained a nested `defaultAddress` (`UserMeDefaultAddress | null`) field —
   `null` for a `PROFESSIONAL` caller or a pre-`V20` `CUSTOMER` with no recorded default
   address, mirroring `professional`'s existing "absent means no such object" convention.
+  **As of Frontend Milestone 9 (2026-08-18)**: gained `deleteMe()` (`DELETE /api/users/me`,
+  either role, soft-deletes the caller's account server-side) — first and only consumer:
+  `app/ProfilePage.tsx`'s account-deletion confirmation. Fully QA-verified live, no bugs
+  found (see `app/README.md`'s Frontend Milestone 9 section for what was checked).
 - `categories.ts` — static mirror of the fixed 8-category list seeded by
   `V10__seed_categories.sql` (no public categories endpoint exists yet).
 - `errorMessages.ts` — `GENERIC_ERROR_MESSAGE` fallback copy, and
   `getFieldErrorMessages` which maps a `400 VALIDATION_ERROR`'s `details` array to
   `{ field: hebrewMessage }` so forms can attribute errors per-field.
+- `storage.ts` — `uploadImage(file)` (`POST /api/storage/images`, Milestone 2). **As of
+  backend MS9 (presigned image URLs, 2026-08-18)**: gained `getPresignedImageUrls(imageKeys)`
+  (`POST /api/storage/images/presigned-urls`), a batch key-to-presigned-URL lookup used
+  exclusively by `features/issues/NewIssuePage.tsx`'s draft-resume flow — a paused booking
+  draft only ever persists a photo's `imageKey` (never a URL, see `shared/hooks/
+  bookingDraftContext.ts`'s `BookingDraftPhoto`, also changed this round), since backend MS9
+  made every image URL this app issues time-limited (300s TTL) rather than permanent. Returns
+  `{ images: { imageKey, imageUrl }[] }`, possibly fewer entries than requested (a
+  missing/stale key is simply dropped, not an error — see
+  `docs/architecture/backend-ms9-presigned-image-urls-design.md` §12.2/§12.5). Shapes verified
+  directly against the real backend DTOs (`storage.dto.PresignedImageUrls{Request,Response}`,
+  `PresignedImageUrlEntry`).
 - `issues.ts` — `classifyIssue`, `createIssue` (Milestone 2), plus a Frontend Milestone 3
   addition: `getIssue` (`GET /api/issues/{id}`, either CUSTOMER-owner or PROFESSIONAL-
   with-an-order), returning `IssueDetailResponse` including a `latestOrder` summary.
@@ -64,7 +80,16 @@ API described in `docs/architecture/overview.md` §3.2.
   calendar: `createAvailabilitySlot` (`POST /api/availability/slots`),
   `getMyAvailabilitySlots` (`GET /api/availability/slots/me`). Type names match the real
   backend DTO names directly (`SlotResponse`/`SlotListItem`/`SlotListResponse`/
-  `CreateSlotRequest`).
+  `CreateSlotRequest`). **As of Frontend Milestone 9 (2026-08-18)**: gained
+  `updateAvailabilitySlot(slotId, payload)` (`PUT /api/availability/slots/{slotId}`) and
+  `deleteAvailabilitySlot(slotId)` (`DELETE /api/availability/slots/{slotId}`), both
+  PROFESSIONAL-only/owner-only — backend was already complete; this is the first frontend
+  wiring. Consumers: `features/dashboard/SlotForm.tsx` (edit mode) and
+  `features/dashboard/SlotList.tsx` (delete). Fully QA-verified live, including the
+  `SLOT_IN_USE` (409) race-condition path — see `features/dashboard/README.md`'s Frontend
+  Milestone 9 section for the two follow-up bug fixes QA's live testing surfaced and closed
+  on that path (both in `SlotForm.tsx`/`SlotList.tsx`, not in this file — this file's two
+  functions themselves needed no changes after their initial addition).
 - `reviews.ts` — **new, Active Booking Floating Indicator feature (2026-08-17); extended,
   Frontend Milestone 8 (2026-08-18).** `CreateReviewRequest`/`ReviewResponse` types +
   `createReview(payload)` wrapping `POST /api/reviews`. **First frontend consumer of this
@@ -139,4 +164,20 @@ entry. **Frontend Milestone 8 — Professional Profiles, Reviews & Favorites (20
 `ReviewListResponse` (see above) — all three consuming already-complete backend endpoints,
 no backend changes. QA-passed (live API round-trip + code review); full detail in
 `docs/architecture/implementation-plan.md`'s "Frontend Milestone 8" entry and
-`docs/architecture/frontend-ms8-design.md`.
+`docs/architecture/frontend-ms8-design.md`. **Frontend Milestone 9 — gap-fixes
+(2026-08-18)**: `availability.ts` gained `updateAvailabilitySlot`/`deleteAvailabilitySlot`;
+`users.ts` gained `deleteMe` (see above) — both consuming already-complete backend
+endpoints, no backend changes. Both additions are fully QA-verified live, no bugs left open
+in this file (the `SLOT_IN_USE` follow-up fixes needed were in the calling components, not
+here — see `features/dashboard/README.md`). Note this milestone's third item (issue-photo
+thumbnails in `IncomingRequestCard`) made **no** `shared/api` change at all — it consumes
+`issue.images`, already returned by the existing `getIssue` call — and that item is
+currently non-functional in-browser for reasons unrelated to this package (a pre-existing
+image-auth gap; see `features/dashboard/README.md`'s Frontend Milestone 9 section). That
+gap is fixed by backend MS9 (below) — **backend MS9 — presigned image URLs (2026-08-18)**:
+`storage.ts` gained `getPresignedImageUrls` (see above); no other file in this package
+changed, since every other consumer of `imageUrl` fields returned by existing endpoints
+(`getIssue`, `getMyProfessionalProfile`, `getFavorites`, etc.) needed no frontend change —
+those endpoints' response shapes are unchanged, only how the backend computes the `imageUrl`
+string inside them changed (now a presigned URL, not a permanent backend-proxy URL). Full
+design record: `docs/architecture/frontend-ms9-gap-fixes-design.md`.

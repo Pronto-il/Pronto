@@ -11,7 +11,7 @@ import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRatingAggregate;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.professionals.repository.ReviewAggregateRepository;
-import com.pronto.storage.client.StorageClient;
+import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.entity.UserRole;
 import com.pronto.users.repository.UserRepository;
@@ -48,7 +48,7 @@ class FavoritesServiceTest {
     private ProfessionalRepository professionalRepository;
     private UserRepository userRepository;
     private ReviewAggregateRepository reviewAggregateRepository;
-    private StorageClient storageClient;
+    private StorageService storageService;
     private FavoritesService favoritesService;
     private final AuthenticatedUser customer = new AuthenticatedUser(CUSTOMER_ID, "CUSTOMER");
 
@@ -58,9 +58,9 @@ class FavoritesServiceTest {
         professionalRepository = Mockito.mock(ProfessionalRepository.class);
         userRepository = Mockito.mock(UserRepository.class);
         reviewAggregateRepository = Mockito.mock(ReviewAggregateRepository.class);
-        storageClient = Mockito.mock(StorageClient.class);
+        storageService = Mockito.mock(StorageService.class);
         favoritesService = new FavoritesService(favoriteRepository, professionalRepository, userRepository,
-                reviewAggregateRepository, storageClient);
+                reviewAggregateRepository, storageService);
     }
 
     private static void setField(Object entity, String fieldName, Object value) {

@@ -8,7 +8,6 @@ import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRatingAggregate;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.professionals.repository.ReviewAggregateRepository;
-import com.pronto.storage.client.StorageClient;
 import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.entity.UserRole;
@@ -44,7 +43,7 @@ class ProfessionalsServiceTest {
     private UserRepository userRepository;
     private ReviewAggregateRepository reviewAggregateRepository;
     private FavoriteRepository favoriteRepository;
-    private StorageClient storageClient;
+    private StorageService storageService;
     private ProfessionalsService professionalsService;
     private final AuthenticatedUser professionalCaller = new AuthenticatedUser(CALLER_ID, "PROFESSIONAL");
 
@@ -54,10 +53,9 @@ class ProfessionalsServiceTest {
         userRepository = Mockito.mock(UserRepository.class);
         reviewAggregateRepository = Mockito.mock(ReviewAggregateRepository.class);
         favoriteRepository = Mockito.mock(FavoriteRepository.class);
-        storageClient = Mockito.mock(StorageClient.class);
-        StorageService storageService = Mockito.mock(StorageService.class);
+        storageService = Mockito.mock(StorageService.class);
         professionalsService = new ProfessionalsService(professionalRepository, userRepository,
-                reviewAggregateRepository, favoriteRepository, storageClient, storageService);
+                reviewAggregateRepository, favoriteRepository, storageService);
         when(reviewAggregateRepository.getRatingAggregate(PROFESSIONAL_ID))
                 .thenReturn(new ProfessionalRatingAggregate(null, 0L));
     }

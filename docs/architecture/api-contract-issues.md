@@ -327,10 +327,16 @@ brief's instruction not to silently pick:
    `urgency_type`, `status = 'OPEN'` (column default, matches `V6`).
 6. For each validated `imageKeys` entry, insert an `issue_images` row: `issue_id` (just
    created), `image_url` = the URL resolved for that key (§3.3/§3.2 — same URL the upload
-   response originally returned). **The underlying storage object is not moved/renamed** on
-   confirm — it stays at whatever key it was uploaded to (e.g. still under a `.../temp/...`
-   path segment); `issue_images.image_url` simply now has a permanent DB row pointing at
-   it. See §4 for why a "promote to a permanent path" step isn't designed this milestone.
+   response originally returned). **Superseded, backend MS9 (2026-08-18) — this step as
+   originally designed is no longer what the real code does, and doing it this way stopped
+   being safe once image URLs became time-limited.** The column was renamed `image_key`
+   (`V24`) and now stores the raw key, not a resolved URL; the presigned URL is resolved
+   fresh every time an issue is read, not written once at creation time — see
+   `issues/README.md` and `data-model.md` §2.8. **The underlying storage object is not
+   moved/renamed** on confirm — it stays at whatever key it was uploaded to (e.g. still under
+   a `.../temp/...` path segment); `issue_images.image_key` simply now has a permanent DB row
+   pointing at it. See §4 for why a "promote to a permanent path" step isn't designed this
+   milestone.
 7. Steps 5–6 execute in a single transaction — either the issue and all its image rows are
    persisted, or none are (a partial `issues`-row-with-no-images outcome is never left
    behind by a mid-request failure).
@@ -451,7 +457,22 @@ retrieval endpoint below, e.g.
 
 ### 2.4 `GET /api/storage/images/{key}`
 
-Auth required: **yes** (role: CUSTOMER — the owner embedded in the key only, see below).
+**Superseded — this section describes the endpoint's original, Milestone-2-era design; the
+real endpoint has since evolved twice and no longer requires a JWT at all.** By Milestone 7
+it had already become either-role (not CUSTOMER-only) with per-key-prefix authorization in
+the service layer, once `professionals/`-prefixed profile-image keys needed to be publicly
+viewable (see `storage/README.md`'s "Role enforcement" section). As of backend MS9
+(2026-08-18), it went further: this route is now `permitAll()` at the Spring Security
+layer (a plain `<img src>` cannot attach a JWT, so requiring one made every such request
+fail with `net::ERR_BLOCKED_BY_ORB`) — authorization moved entirely to URL-issuance time
+(`storage.service.StorageService#getPresignedUrl`) plus, in local mode only, an HMAC
+signature+expiry check on the `GET` itself. See `storage/README.md` and
+`docs/architecture/backend-ms9-presigned-image-urls-design.md` for the actual, current
+design. The rest of this section (below) is kept for historical reference only, not as a
+current spec.
+
+Auth required (**as originally designed, Milestone 2 — no longer accurate, see note
+above**): **yes** (role: CUSTOMER — the owner embedded in the key only, see below).
 
 **Only meaningful/exposed when `pronto.storage.mode=local`.** In `s3` mode, `imageUrl`
 returned by §2.3 and echoed in §2.2's response already points directly at a real,
@@ -669,23 +690,35 @@ re-classifies) with zero side effects before step 3 actually commits anything.
     isn't a security or data-integrity problem, just a minor redundancy) — not treated as a
     defect, just noted for completeness.
 - **S3 image URL privacy / bucket access policy — resolved (updated, Milestone 7,
-  2026-08-14).** At the time this doc was originally written, this was flagged as
-  genuinely undecided. It has since been decided and built: the actual, already-implemented
-  `backend/src/main/java/com/pronto/storage/client/S3StorageClient.java` Javadoc states
-  that the bucket blocks all public access (default SSE-S3 encryption, no public-read
-  policy), so `resolveUrl` deliberately does **not** return a raw S3 URL (which would
-  always `403`). Instead, exactly like `LocalDiskStorageClient`, it points at this
-  backend's own `GET /api/storage/images/**` retrieval endpoint (§2.4), built from the
-  shared `pronto.storage.public-base-url` config property — the controller/service layer
-  downloads the bytes from S3 server-side and streams them back to the caller. In other
-  words, **every image fetch is backend-proxied in both `local` and `s3` storage modes**,
-  never a direct-to-S3 redirect or a pre-signed URL — this is a deliberate, already-built
-  decision, not a placeholder pending one. This doc's own §3.1 already anticipated this
-  outcome ("reduces the urgency of the still-open S3 bucket-privacy question... OpenAI
-  never touches the object's URL directly") without confirming it was actually resolved
-  this way — it now is, per `S3StorageClient.java`'s Javadoc, cross-referenced here so this
-  section stops describing a closed question as open. (Flagged as a doc-drift finding in
-  `docs/architecture/hardening-plan.md` §5.3, corrected here per that finding.)
+  2026-08-14; retrieval mechanism reversed again, backend MS9, 2026-08-18 — see below).**
+  At the time this doc was originally written, this was flagged as genuinely undecided. As
+  of Milestone 7 it had been decided and built as backend-proxied retrieval: the bucket
+  blocks all public access (default SSE-S3 encryption, no public-read policy — this part is
+  still true, unchanged), and at that point every image fetch, in both `local` and `s3`
+  storage modes, was proxied through this backend's own `GET /api/storage/images/**`
+  retrieval endpoint (§2.4) rather than a direct-to-S3 redirect or a pre-signed URL — stated
+  at the time as "a deliberate, already-built decision, not a placeholder pending one."
+  **That specific retrieval-mechanism decision was itself explicitly reversed in backend MS9
+  (2026-08-18), by direct user instruction — a deliberate reversal, not a silent
+  contradiction of the Milestone 7 record above.** Backend-proxied retrieval required every
+  `<img src>` consumer to attach a JWT `Authorization` header, which a plain HTML `<img>` tag
+  cannot do, so it made every such request fail with `net::ERR_BLOCKED_BY_ORB`. As of MS9,
+  retrieval instead issues presigned URLs — a real AWS S3 presigned GET URL in `s3` mode
+  (pointing directly at S3, bypassing this backend entirely), or an HMAC-signed URL back to
+  this same `GET /api/storage/images/**` route in `local` mode — both time-limited (300s
+  default TTL). **The bucket-privacy property this bullet is actually about is unaffected by
+  that reversal**: the bucket still blocks all public access; a presigned URL grants
+  time-limited access to one specific object, not a public-read policy on the bucket. See
+  `backend/src/main/java/com/pronto/storage/client/S3StorageClient.java`'s Javadoc and
+  `docs/architecture/backend-ms9-presigned-image-urls-design.md` for the full MS9 record, and
+  §2.4 below (also updated) for the current retrieval-endpoint behavior. This doc's own §3.1
+  already anticipated the underlying privacy question's resolution ("reduces the urgency of
+  the still-open S3 bucket-privacy question... OpenAI never touches the object's URL
+  directly") without confirming which mechanism it would be resolved by — it's now
+  presigned URLs, not backend-proxying. (Milestone 7's backend-proxying finding was itself
+  flagged as a doc-drift correction in `docs/architecture/hardening-plan.md` §5.3; this MS9
+  update is the next `pronto-documentation` pass that same section anticipated, now
+  correcting the Milestone 7 text in turn.)
 - **No rate limiting on `/classify`.** Since it's stateless/cheap-to-call-repeatedly by
   design (§3.4), nothing currently stops a customer from spamming it, which is a real
   OpenAI-cost exposure once `pronto.ai.mode=openai` is live (mock mode has no such cost).

@@ -18,7 +18,12 @@ exclusion list). **Superseded, Frontend Milestone 6 (2026-08-18)**: the on-the-w
 actions are now built, but they live on `features/booking/OrderTrackingPage.tsx`, not in
 this package — see that bullet below and `features/booking/README.md`'s Frontend Milestone
 6 section for full detail. `MyJobsPage` in this package remains intentionally read-only/
-link-only.
+link-only. **Frontend Milestone 9 (2026-08-18)**: `SlotList` gained inline edit/delete for
+not-yet-booked slots (fully QA-verified live, after two follow-up bug fixes), and
+`IncomingRequestCard` gained a read-only issue-photos row (code complete and correct; was
+**non-functional in a real browser at the time this round closed**, due to a pre-existing,
+cross-cutting image-auth gap — **resolved separately by backend MS9, 2026-08-18**, now
+renders correctly) — see that section below for full detail.
 
 **Frontend Milestone 4 (2026-08-17):**
 - `SosAvailabilityToggle` (new component, rendered at the top of `AvailabilityPage`, above
@@ -64,10 +69,9 @@ link-only.
   unbuilt/out of scope, since that's no longer accurate; the page's own behavior did not
   change.
 - `AvailabilityPage` (`/pro/availability`) combines `SlotForm` (two `datetime-local`
-  inputs → `POST /api/availability/slots`) and a read-only `SlotList` (`GET
-  /api/availability/slots/me`, showing each slot's `isAvailable` state). No edit/delete
-  controls — out of this milestone's scope, and deliberately not stubbed as disabled
-  buttons (FRONTEND_AGENT.md §53).
+  inputs → `POST /api/availability/slots`) and `SlotList` (`GET /api/availability/slots/me`,
+  showing each slot's `isAvailable` state). **As of Frontend Milestone 9 (2026-08-18)**,
+  `SlotList` also supports inline edit/delete for not-yet-booked slots — see below.
 
 **Post-QA fix (2026-08-17):** `IncomingRequestCard`'s loading spinner now tracks which
 action is actually in flight — `IncomingRequestsPage` stores `{ orderId, action }` instead
@@ -81,6 +85,99 @@ screens yet, apart from `פרופיל`, added Frontend Milestone 8, see below). 
 buttons (on-the-way/complete) **are now built** (Frontend Milestone 6, 2026-08-18) but
 belong to `features/booking/OrderTrackingPage.tsx`, not this package — see that package's
 README.
+
+## Frontend Milestone 9 — gap-fixes (2026-08-18)
+
+Full design record: `docs/architecture/frontend-ms9-gap-fixes-design.md`. Branch
+`frontend/MS9-gap-fixes`, local only — uncommitted, not pushed/merged.
+
+**Real, verified status (not the same for all three items — read carefully):**
+- Availability slot edit/delete (`SlotForm`/`SlotList`/`AvailabilityPage`): **fully
+  implemented and fully QA-verified live**, including two follow-up bug fixes found and
+  closed during QA (see below).
+- `IncomingRequestCard`'s issue-photo thumbnail row: **code was complete and correct at the
+  time this round closed, but the feature was then non-functional in a real browser**, due
+  to a pre-existing, cross-cutting bug outside this round's scope. **Resolved separately,
+  immediately after, by backend MS9 (2026-08-18)** — see the dedicated note below, now
+  updated to reflect the fix.
+
+- **`SlotForm.tsx`** — now reusable for both create and edit via an optional `slot` prop.
+  In edit mode, pre-fills `startTime`/`endTime` from the given slot (new local
+  `toDateTimeLocalValue` helper, the inverse of the existing ISO-string submit conversion),
+  submits via the new `updateAvailabilitySlot(slot.id, payload)` instead of
+  `createAvailabilitySlot`, shows a "ביטול" secondary button (`onCancel`, edit-mode only),
+  and uses an "עדכון" submit label instead of "הוספת זמן פנוי". `onCreated` was renamed to
+  `onSaved` (fires on either a successful create or update) — the one existing call site
+  (`AvailabilityPage`) was updated in the same pass. Handles `SLOT_IN_USE` (409) as a
+  distinct message, edit-mode only (unreachable in create mode — a slot can't be "in use"
+  before it exists), and fires a new optional `onConflict` callback alongside it so the
+  owning `SlotList` can react (see below) — this callback is a small addition beyond the
+  design doc's literal `SlotFormProps` listing, needed to bridge the "trigger a re-fetch on
+  `SLOT_IN_USE`" behavior the doc calls for in §1b without `SlotList` re-implementing
+  `SlotForm`'s own error-catching; the doc explicitly leaves the refetch-trigger mechanism to
+  implementation judgment ("pronto-coding may choose to trigger a re-fetch...").
+- **`SlotList.tsx`** — no longer read-only. A slot with `isAvailable === false` ("תפוס")
+  still renders only the time range + badge (editing/deleting a booked slot is a
+  guaranteed-fail round trip, so the controls simply aren't offered — not stubbed as
+  disabled buttons). A slot with `isAvailable === true` gets `lucide-react` `Pencil`/`Trash2`
+  icon buttons. Edit swaps that one row's static display for an inline `<SlotForm slot=.../>`
+  (`editingSlotId` local state — only one row can be in edit mode at a time). Delete calls
+  `deleteAvailabilitySlot` directly with **no confirmation dialog** (low-stakes,
+  easily-recreated, unlike account deletion — see `app/README.md`'s Frontend Milestone 9
+  section). `SLOT_IN_USE` from either path shows a specific Hebrew message (not
+  `GENERIC_ERROR_MESSAGE`) in a list-level banner and triggers a new `onRefreshNeeded`
+  callback (wired to `AvailabilityPage`'s existing `loadSlots`) so the affected row's
+  `isAvailable` state self-corrects once the re-fetch lands — this callback is the same
+  small, doc-sanctioned addition mentioned above for `SlotForm.onConflict`.
+- **Two follow-up bug fixes found and closed during live QA of the `SLOT_IN_USE` race
+  condition** (QA actually reproduced the race — a slot was booked externally while its
+  edit form was still open — rather than only exercising the happy path):
+  1. The row being edited initially got stuck open (still showing the `SlotForm`) instead
+     of collapsing back to its read-only display once the `SLOT_IN_USE` conflict came back
+     — fixed.
+  2. After fixing (1), the conflict message stopped rendering at all: collapsing the row
+     unmounts `SlotForm` in the same React 18 batched update that would have shown its own
+     local banner, so the banner never got a chance to paint. Fixed by routing the message
+     through `SlotList`'s own persistent banner state instead (`SlotForm`'s new `onConflict`
+     callback, see above) rather than `SlotForm` trying to show it locally right before
+     unmounting. Both fixes were confirmed live afterward — the specific `SLOT_IN_USE`
+     Hebrew message now reliably appears and the row correctly reflects `isAvailable: false`
+     once `onRefreshNeeded` re-fetches.
+- **`AvailabilityPage.tsx`** — wires `SlotList`'s new `onSlotUpdated`/`onSlotDeleted`/
+  `onRefreshNeeded` props into its existing `slots` state (replace-by-id, filter-out, and
+  `loadSlots` respectively); `SlotForm`'s create-mode call site updated to `onSaved`.
+- **`IncomingRequestCard.tsx`** — gained a read-only 88×88px thumbnail row (`issue.images`,
+  already fetched via `getIssue`, no new API call), placed after the description and before
+  the accept/reject actions. Matches `shared/components/PhotoUploader.tsx`'s existing
+  thumbnail sizing/`object-fit: cover` convention without reusing that component (its
+  upload/remove machinery is unneeded for a read-only display). Zero images renders nothing,
+  same conditional pattern already used for `issue?.description`. No lightbox. **This code is
+  correct and matches the design doc exactly, but does not actually display photos for a
+  real user today** — see the dedicated note immediately below.
+- **Resolved, backend MS9 (2026-08-18) — was an open, unresolved issue at the time this
+  round closed.** QA had found, live, in a real browser, that `GET
+  /api/storage/images/**` requests issued from a plain `<img src="...">` failed with
+  `net::ERR_BLOCKED_BY_ORB`, because the endpoint required a JWT bearer token and a plain
+  `<img>` tag has no way to attach an `Authorization` header — confirmed at the time to be a
+  systemic, cross-cutting gap, identical for every other pre-existing
+  `<img src={profileImageUrl}>` usage in the app (`features/professionals/
+  ProfessionalCard.tsx`, `features/professionals/ProfessionalProfilePage.tsx`,
+  `features/favorites/FavoriteProfessionalCard.tsx`,
+  `features/dashboard/ProfessionalProfileImageField.tsx`), not specific to this component.
+  **Fixed by backend MS9**: image retrieval now issues presigned/HMAC-signed, time-limited
+  URLs instead of requiring a JWT-gated `<img>` fetch (`GET /api/storage/images/**` became
+  `permitAll()`, with the presigned/signed URL itself as the authorization mechanism) — no
+  frontend code change was needed for this component specifically, since its `<img>` usage
+  was already correct; the fix was entirely on the backend. QA live-verified, in a real
+  browser, that issue photos now render both for the owning customer and for a professional
+  with a confirmed order on the issue (a second, previously-undiscovered authorization gap
+  also fixed in the same round — a professional was never actually authorized to view a
+  customer's issue photos at all, even once the ORB bug was fixed, until backend MS9's
+  `IssuesService.getById` change). Full design record:
+  `docs/architecture/backend-ms9-presigned-image-urls-design.md`.
+- `frontend/src/shared/api/availability.ts` gained `updateAvailabilitySlot`
+  (`PUT /api/availability/slots/{slotId}`) and `deleteAvailabilitySlot`
+  (`DELETE /api/availability/slots/{slotId}`).
 
 ## Frontend Milestone 8 (2026-08-18): `/pro/profile` — professional business-profile self-service
 

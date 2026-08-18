@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -14,8 +15,12 @@ class LocalDiskStorageClientTest {
     @TempDir
     Path tempDir;
 
+    private static final long DEFAULT_TTL_SECONDS = 300;
+
+    private final LocalHmacUrlSigner urlSigner = new LocalHmacUrlSigner("test-hmac-secret");
+
     private LocalDiskStorageClient client(Path baseDir) {
-        return new LocalDiskStorageClient(baseDir.toString(), "http://localhost:8080");
+        return new LocalDiskStorageClient(baseDir.toString(), "http://localhost:8080", urlSigner, DEFAULT_TTL_SECONDS);
     }
 
     @Test
@@ -34,6 +39,17 @@ class LocalDiskStorageClientTest {
     }
 
     @Test
+    void upload_returnsAPresignedUrlPointingAtTheRetrievalEndpoint() {
+        LocalDiskStorageClient client = client(tempDir);
+        String key = "customers/42/issues/temp/some-uuid.jpg";
+
+        StoredObject stored = client.upload(key, "x".getBytes(StandardCharsets.UTF_8), "image/jpeg");
+
+        assertThat(stored.url()).startsWith("http://localhost:8080/api/storage/images/" + key + "?expires=");
+        assertThat(stored.url()).contains("&sig=");
+    }
+
+    @Test
     void exists_falseForNeverUploadedKey() {
         LocalDiskStorageClient client = client(tempDir);
         assertThat(client.exists("customers/1/issues/temp/never-uploaded.png")).isFalse();
@@ -47,10 +63,16 @@ class LocalDiskStorageClientTest {
     }
 
     @Test
-    void resolveUrl_pointsAtTheLocalRetrievalEndpoint() {
+    void presignUrl_pointsAtTheLocalRetrievalEndpointWithAValidSignature() {
         LocalDiskStorageClient client = client(tempDir);
         String key = "customers/42/issues/temp/uuid.png";
-        assertThat(client.resolveUrl(key)).isEqualTo("http://localhost:8080/api/storage/images/" + key);
+
+        String url = client.presignUrl(key, Duration.ofSeconds(DEFAULT_TTL_SECONDS));
+
+        assertThat(url).startsWith("http://localhost:8080/api/storage/images/" + key + "?expires=");
+        String expiresParam = url.substring(url.indexOf("expires=") + "expires=".length(), url.indexOf("&sig="));
+        String sigParam = url.substring(url.indexOf("&sig=") + "&sig=".length());
+        assertThat(urlSigner.isValid(key, Long.parseLong(expiresParam), sigParam)).isTrue();
     }
 
     @Test

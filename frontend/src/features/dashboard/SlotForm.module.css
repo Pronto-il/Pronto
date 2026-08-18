@@ -10,6 +10,11 @@
   gap: var(--space-4);
 }
 
+.actionsRow {
+  display: flex;
+  gap: var(--space-3);
+}
+
 .banner {
   padding: var(--space-4);
   border-radius: var(--radius-md);

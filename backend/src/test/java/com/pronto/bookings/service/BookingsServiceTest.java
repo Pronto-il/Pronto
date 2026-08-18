@@ -24,7 +24,7 @@ import com.pronto.matching.ServiceLocation;
 import com.pronto.notifications.service.NotificationService;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRepository;
-import com.pronto.storage.client.StorageClient;
+import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.entity.UserRole;
 import com.pronto.users.repository.UserRepository;
@@ -73,7 +73,7 @@ class BookingsServiceTest {
     private UserRepository userRepository;
     private NotificationService notificationService;
     private DistanceEtaStrategy distanceEtaStrategy;
-    private StorageClient storageClient;
+    private StorageService storageService;
     private BookingsService bookingsService;
 
     @BeforeEach
@@ -87,10 +87,10 @@ class BookingsServiceTest {
         userRepository = Mockito.mock(UserRepository.class);
         notificationService = Mockito.mock(NotificationService.class);
         distanceEtaStrategy = Mockito.mock(DistanceEtaStrategy.class);
-        storageClient = Mockito.mock(StorageClient.class);
+        storageService = Mockito.mock(StorageService.class);
         bookingsService = new BookingsService(issueRepository, professionalRepository, professionalListingRepository,
                 availabilitySlotRepository, sosAvailabilityRepository, orderRepository, userRepository,
-                notificationService, distanceEtaStrategy, storageClient);
+                notificationService, distanceEtaStrategy, storageService);
     }
 
     private static void setField(Object entity, String fieldName, Object value) {

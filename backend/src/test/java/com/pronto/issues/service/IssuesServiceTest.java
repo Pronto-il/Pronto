@@ -14,6 +14,7 @@ import com.pronto.issues.repository.IssueRepository;
 import com.pronto.professionals.repository.CategoryRepository;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.storage.client.StorageClient;
+import com.pronto.storage.service.StorageService;
 import com.pronto.users.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,6 +50,7 @@ class IssuesServiceTest {
                 Mockito.mock(IssueImageRepository.class),
                 Mockito.mock(CategoryRepository.class),
                 Mockito.mock(StorageClient.class),
+                Mockito.mock(StorageService.class),
                 classificationService,
                 Mockito.mock(ProfessionalRepository.class),
                 Mockito.mock(OrderRepository.class),

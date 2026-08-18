@@ -1,8 +1,9 @@
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Heart } from 'lucide-react';
 import { PageHeader, Card, Button } from '../shared/components';
 import { useAuth } from '../shared/hooks';
-import { getCategoryNameHe, type UserRole } from '../shared/api';
+import { getCategoryNameHe, deleteMe, GENERIC_ERROR_MESSAGE, type UserRole } from '../shared/api';
 import styles from './ProfilePage.module.css';
 
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -24,6 +25,9 @@ const ROLE_LABELS: Record<UserRole, string> = {
 export default function ProfilePage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   if (!user) {
     return null;
@@ -32,6 +36,20 @@ export default function ProfilePage() {
   function handleLogout() {
     logout();
     navigate('/login', { replace: true });
+  }
+
+  async function handleDeleteAccount() {
+    setDeleteError(null);
+    setIsDeleting(true);
+    try {
+      await deleteMe();
+      logout();
+      navigate('/login', { replace: true });
+    } catch {
+      setDeleteError(GENERIC_ERROR_MESSAGE);
+    } finally {
+      setIsDeleting(false);
+    }
   }
 
   return (
@@ -118,6 +136,30 @@ export default function ProfilePage() {
       <Button variant="secondary" onClick={handleLogout}>
         יציאה מהחשבון
       </Button>
+
+      {deleteError && (
+        <div className={styles.banner} role="alert">
+          <p>{deleteError}</p>
+        </div>
+      )}
+
+      {confirmingDelete ? (
+        <div className={styles.deleteConfirm}>
+          <p>מחיקת החשבון היא פעולה בלתי הפיכה. להמשיך?</p>
+          <div className={styles.deleteConfirmActions}>
+            <Button variant="destructive" loading={isDeleting} onClick={handleDeleteAccount}>
+              כן, מחק את החשבון
+            </Button>
+            <Button variant="secondary" disabled={isDeleting} onClick={() => setConfirmingDelete(false)}>
+              ביטול
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <Button variant="destructive" onClick={() => setConfirmingDelete(true)}>
+          מחיקת חשבון
+        </Button>
+      )}
     </div>
   );
 }

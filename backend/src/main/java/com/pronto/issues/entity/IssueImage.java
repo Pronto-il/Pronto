@@ -13,12 +13,21 @@ import java.time.Instant;
 /**
  * JPA entity for the {@code issue_images} table. {@code issueId} is a plain FK column, not
  * a {@code @ManyToOne} association — see {@code Issue}'s Javadoc for the same rationale.
- * Mapping matches the already-applied {@code V7__create_issue_images.sql} migration
- * exactly. See {@code docs/architecture/data-model.md} §2.7.
+ * Mapping matches the {@code V7__create_issue_images.sql} migration plus
+ * {@code V24__rename_issue_images_image_url_to_image_key.sql} (backend MS9). See
+ * {@code docs/architecture/data-model.md} §2.7.
  *
- * <p>{@code imageUrl} is the URL {@code storage.StorageClient.resolveUrl} returns for the
- * same key the object was originally uploaded to — the underlying object is never
- * moved/renamed on issue confirmation (§2.2 step 6 / §4).
+ * <p>{@code imageKey} is the raw storage key the image was originally uploaded to — never a
+ * resolved URL. Resolved to a presigned URL only at read time (never persisted resolved), by
+ * {@code storage.service.StorageService#getPresignedUrl}/
+ * {@code #getPresignedUrlAssumingCallerAuthorized}, called from
+ * {@code issues.service.IssuesService#create}/{@code #getById} respectively. This column used
+ * to store a resolved, non-expiring proxy URL directly — reversed in backend MS9
+ * ({@code docs/architecture/backend-ms9-presigned-image-urls-design.md} §9.4.1) once presigned
+ * URLs became time-limited (a URL saved at creation time would be long expired by the time a
+ * later {@code getById} read it back verbatim). Now matches
+ * {@code professionals.profile_image_key}'s existing key-not-URL pattern. The underlying
+ * storage object is never moved/renamed on issue confirmation (§2.2 step 6 / §4).
  */
 @Entity
 @Table(name = "issue_images")
@@ -31,8 +40,8 @@ public class IssueImage {
     @Column(name = "issue_id", nullable = false)
     private Long issueId;
 
-    @Column(name = "image_url", nullable = false, length = 500)
-    private String imageUrl;
+    @Column(name = "image_key", nullable = false, length = 500)
+    private String imageKey;
 
     @Column(name = "uploaded_at", nullable = false)
     private Instant uploadedAt;
@@ -41,9 +50,9 @@ public class IssueImage {
         // JPA
     }
 
-    public IssueImage(Long issueId, String imageUrl) {
+    public IssueImage(Long issueId, String imageKey) {
         this.issueId = issueId;
-        this.imageUrl = imageUrl;
+        this.imageKey = imageKey;
     }
 
     @PrePersist
@@ -59,8 +68,8 @@ public class IssueImage {
         return issueId;
     }
 
-    public String getImageUrl() {
-        return imageUrl;
+    public String getImageKey() {
+        return imageKey;
     }
 
     public Instant getUploadedAt() {

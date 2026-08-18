@@ -30,6 +30,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -84,7 +85,7 @@ class AuthServiceTest {
         // same "real collaborator over the client boundary" choice
         // professionals.service.ProfessionalsServiceTest makes for StorageClient.
         StorageClient storageClient = Mockito.mock(StorageClient.class);
-        storageService = new StorageService(storageClient);
+        storageService = new StorageService(storageClient, Optional.empty(), 300L);
         when(storageClient.upload(anyString(), any(), anyString())).thenAnswer(inv ->
                 new com.pronto.storage.client.StoredObject(
                         inv.getArgument(0), "http://localhost/x", inv.getArgument(2), 5));
@@ -345,7 +346,7 @@ class AuthServiceTest {
         stubValidCategory();
         StorageClient failingClient = Mockito.mock(StorageClient.class);
         when(failingClient.upload(anyString(), any(), anyString())).thenThrow(new StorageException("disk full", null));
-        StorageService failingStorageService = new StorageService(failingClient);
+        StorageService failingStorageService = new StorageService(failingClient, Optional.empty(), 300L);
         AuthService serviceWithFailingStorage = new AuthService(userRepository, professionalRepository,
                 sosAvailabilityRepository, categoryRepository, verificationCodeRepository, passwordEncoder,
                 emailSender, jwtService, loginAttemptRecorder, failingStorageService);

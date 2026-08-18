@@ -13,7 +13,7 @@ import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRatingAggregate;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.professionals.repository.ReviewAggregateRepository;
-import com.pronto.storage.client.StorageClient;
+import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.repository.UserRepository;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -37,18 +37,18 @@ public class FavoritesService {
     private final ProfessionalRepository professionalRepository;
     private final UserRepository userRepository;
     private final ReviewAggregateRepository reviewAggregateRepository;
-    private final StorageClient storageClient;
+    private final StorageService storageService;
 
     public FavoritesService(FavoriteRepository favoriteRepository,
                              ProfessionalRepository professionalRepository,
                              UserRepository userRepository,
                              ReviewAggregateRepository reviewAggregateRepository,
-                             StorageClient storageClient) {
+                             StorageService storageService) {
         this.favoriteRepository = favoriteRepository;
         this.professionalRepository = professionalRepository;
         this.userRepository = userRepository;
         this.reviewAggregateRepository = reviewAggregateRepository;
-        this.storageClient = storageClient;
+        this.storageService = storageService;
     }
 
     /**
@@ -88,7 +88,7 @@ public class FavoritesService {
     public FavoritesListResponse listFavorites(AuthenticatedUser caller) {
         List<Favorite> favorites = favoriteRepository.findByCustomerIdOrderByCreatedAtDesc(caller.id());
         List<FavoriteProfessionalSummary> summaries = favorites.stream()
-                .map(this::toSummary)
+                .map(favorite -> toSummary(caller.id(), favorite))
                 .filter(Objects::nonNull)
                 .toList();
         return new FavoritesListResponse(summaries);
@@ -101,7 +101,7 @@ public class FavoritesService {
      * miss — but resolved defensively (returns {@code null}, filtered out) rather than
      * throwing, since a listing endpoint shouldn't 500 over one stale row.
      */
-    private FavoriteProfessionalSummary toSummary(Favorite favorite) {
+    private FavoriteProfessionalSummary toSummary(Long callerId, Favorite favorite) {
         Professional professional = professionalRepository.findById(favorite.getProfessionalId()).orElse(null);
         if (professional == null) {
             return null;
@@ -111,7 +111,7 @@ public class FavoritesService {
 
         String profileImageUrl = professional.getProfileImageKey() == null
                 ? null
-                : storageClient.resolveUrl(professional.getProfileImageKey());
+                : storageService.getPresignedUrl(callerId, professional.getProfileImageKey());
 
         ProfessionalRatingAggregate aggregate = reviewAggregateRepository.getRatingAggregate(professional.getId());
         BigDecimal averageRating = aggregate.averageRating() == null

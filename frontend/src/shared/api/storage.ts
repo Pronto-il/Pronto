@@ -17,3 +17,29 @@ export function uploadImage(file: File): Promise<UploadImageResponse> {
   formData.append('file', file);
   return httpClient.post<UploadImageResponse>('/api/storage/images', formData);
 }
+
+export interface PresignedImageUrlEntry {
+  imageKey: string;
+  imageUrl: string;
+}
+
+export interface PresignedImageUrlsResponse {
+  images: PresignedImageUrlEntry[];
+}
+
+/**
+ * `POST /api/storage/images/presigned-urls` — batch re-resolves already-known image keys
+ * into fresh presigned URLs (each valid for the standard TTL, see backend MS9 design
+ * §6/§12). Used exclusively by `NewIssuePage`'s draft-resume flow: a paused draft only ever
+ * persists `imageKey`s (never a URL, see `bookingDraftContext.ts`'s `BookingDraftPhoto`),
+ * so this is how a resumed draft's photos become displayable again. May return fewer
+ * entries than `imageKeys.length` requested — a missing entry means that key could not be
+ * resolved (e.g. a corrupted/stale draft) and is dropped from the resulting `photos` state,
+ * not treated as a hard error. See design doc §12.5.
+ */
+export function getPresignedImageUrls(imageKeys: string[]): Promise<PresignedImageUrlsResponse> {
+  if (imageKeys.length === 0) {
+    return Promise.resolve({ images: [] }); // avoid a pointless round trip on a photo-less draft
+  }
+  return httpClient.post<PresignedImageUrlsResponse>('/api/storage/images/presigned-urls', { imageKeys });
+}

@@ -57,7 +57,23 @@ Reusable React hooks shared across features.
   `AddressValue`), and the professional/slot-selection fields (`professionalId`/`sort`,
   narrowed to `'RECOMMENDED' | 'CHEAPEST'` — not the 3-value API `ProfessionalSort` type,
   since a draft only round-trips a value the UI itself set/could set — and `slotId`,
-  STANDARD-only).
+  STANDARD-only). **`BookingDraftPhoto` — corrected, backend MS9 (2026-08-18): dropped
+  `imageUrl`, now `{ imageKey: string }` only.** Previously held both `imageKey` and a
+  `imageUrl` described as "durable" — that was true only while `POST /api/storage/images`'s
+  response returned a permanent, non-expiring proxy URL; it stopped being true once upload
+  responses became presigned (300s TTL), since a URL saved into a paused draft would
+  routinely be expired by the time the draft is resumed. **Consequence: resuming a draft
+  is no longer a pure `localStorage` read with zero network cost.**
+  `features/issues/NewIssuePage.tsx`'s resume flow now also fires a batch request —
+  `shared/api/storage.ts`'s `getPresignedImageUrls(imageKeys)` — immediately on mount, to
+  re-resolve every persisted photo's raw `imageKey` into a fresh presigned URL before it can
+  be displayed (each photo shows a spinner placeholder, via `PhotoUploader`'s widened
+  `previewUrl: string | null`, until its URL resolves). A partial response (some keys
+  unresolvable, e.g. a corrupted/stale draft) degrades gracefully — the affected photo is
+  dropped from state and the draft self-heals on the next save, with a non-blocking inline
+  notice — rather than failing the whole resume. See
+  `docs/architecture/backend-ms9-presigned-image-urls-design.md` §12 for the full design and
+  `frontend/src/shared/components/README.md`'s corrected paragraph on `PhotoUploader`.
 - `BookingDraftProvider.tsx` — the context provider. Mirrors `AuthProvider`'s shape/location
   exactly (global, cross-feature, `localStorage`-backed state, consumed by both the app
   shell and multiple `features/*` folders — deliberately placed here rather than in a new
@@ -165,3 +181,12 @@ mechanism).
 "Structure" above), consuming the already-complete backend `notifications` package
 (read-only, no backend changes). Consumed by `features/notifications/NotificationBell.tsx`
 (see `features/notifications/README.md`).
+
+**Backend MS9 — presigned image URLs (2026-08-18)**: `bookingDraftContext.ts`'s
+`BookingDraftPhoto` dropped `imageUrl`, keeping only `imageKey` (see "Structure" above) —
+this fixes a real, concretely-reachable bug (a paused draft's photos going blank after the
+presigned-URL TTL elapsed on resume), not just a naming cleanup. Consumed by
+`features/issues/NewIssuePage.tsx`'s resume flow, which now also calls the new
+`getPresignedImageUrls` batch endpoint on mount. QA live-verified booking-draft resume works
+correctly after this change. Full design record:
+`docs/architecture/backend-ms9-presigned-image-urls-design.md` §12.

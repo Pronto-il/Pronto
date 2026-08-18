@@ -16,11 +16,18 @@ export type BookingDraftStage =
   | 'BOOKING_CONFIRM'; // 'confirm' step (both flows)
 
 export interface BookingDraftPhoto {
+  /** Raw storage key only — a resolved URL is never persisted here. Presigned URLs expire
+   *  (backend MS9 design §6, 300s TTL) long before a paused draft is likely to be resumed, so
+   *  a URL saved at upload time would already be dead by the time `NewIssuePage` rehydrates
+   *  it. Instead, `NewIssuePage`'s resume flow re-resolves every photo's `imageKey` into a
+   *  fresh presigned URL via a single batch call (`shared/api/storage.ts`'s
+   *  `getPresignedImageUrls`) immediately on mount — see
+   *  `docs/architecture/backend-ms9-presigned-image-urls-design.md` §12. This interface
+   *  previously also carried an `imageUrl` field described as "durable" — that was true only
+   *  while `POST /api/storage/images`'s response returned a non-expiring proxy URL; it
+   *  stopped being true the moment upload responses became presigned (§7) and is corrected
+   *  here, not left contradicting the new behavior. */
   imageKey: string;
-  /** Durable backend URL from the upload response (`UploadImageResponse.imageUrl`) — NOT the
-   *  ephemeral `URL.createObjectURL(file)` blob preview, which does not survive a full page
-   *  reload. See §4.7. */
-  imageUrl: string;
 }
 
 export interface BookingDraft {

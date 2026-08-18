@@ -49,12 +49,29 @@ registration/login/verify screens. Extended as later milestones need new shared 
 `StatusBadge` was added in **Frontend Milestone 3 — Standard booking flow (2026-08-16)**.
 
 **MS3/MS4 product-corrections pass (2026-08-17)**: `PhotoUploader`'s `UploadedPhoto` shape
-gained a durable `imageUrl` field (`result.imageUrl` from `POST /api/storage/images`'s
-response, previously received but discarded — only the ephemeral `previewUrl`
-(`URL.createObjectURL(file)`) was kept). `previewUrl` is a blob URL tied to the current
-document session and does not survive a full page reload; `imageUrl` does. This was a
-supporting fix for `shared/hooks`' new booking-draft persistence
-(`BookingDraftPhoto.imageUrl`, see that package's README) — without it, a draft rehydrated
-after a hard reload would have valid `imageKey`s but broken/blank photo thumbnails. Both
-fields are populated together on every successful upload; nothing else about
-`PhotoUploader`'s behavior changed.
+gained an `imageUrl` field (`result.imageUrl` from `POST /api/storage/images`'s response,
+previously received but discarded — only the ephemeral `previewUrl`
+(`URL.createObjectURL(file)`) was kept). At the time, `imageUrl` was described as "durable"
+and the field was added as a supporting fix for `shared/hooks`' new booking-draft
+persistence (`BookingDraftPhoto.imageUrl`) — without it, a draft rehydrated after a hard
+reload would have valid `imageKey`s but broken/blank photo thumbnails.
+
+**Correction, backend MS9 (2026-08-18): that "durable" framing is no longer accurate, and
+`imageUrl` no longer does the cross-reload job described above.** `POST /api/storage/images`'s
+response `imageUrl` became a presigned URL in backend MS9 (300s TTL, not permanent) — it is
+still exactly right for the job it's actually needed for, same-page-load display right after
+a successful upload, well within the TTL — but persisting it across a reload/pause-and-resume
+gap is no longer safe. `BookingDraftPhoto` (the cross-reload-persisted shape) dropped its own
+`imageUrl` field entirely and now persists only `imageKey`, re-resolved to a fresh presigned
+URL on resume via a new batch endpoint — see `frontend/src/shared/hooks/README.md`'s
+`bookingDraftContext.ts` entry and
+`docs/architecture/backend-ms9-presigned-image-urls-design.md` §12.1. `UploadedPhoto.imageUrl`
+itself is unaffected — it remains on this component's own shape, unchanged in purpose, doing
+only its original same-session job. `PhotoUploader` gained two related, narrower additions to
+support draft-resume: `UploadedPhoto.previewUrl` widened from `string` to `string | null`
+(`null` is a deliberate sentinel for "not yet re-resolved," used only while
+`NewIssuePage.tsx`'s resume flow is fetching fresh presigned URLs for a draft's photos — the
+render loop shows the same spinner/`uploadingOverlay` markup already used for a live in-flight
+upload), and a new optional `UploadedPhoto.error` string (set only when a resume-time batch
+re-resolution fails outright, reusing the existing `itemError` treatment — a distinct case
+from a live upload failure).

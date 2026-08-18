@@ -38,6 +38,12 @@ export interface UserMeResponse {
   defaultAddress: UserMeDefaultAddress | null;
 }
 
+/** `GET /api/users/me` — either role, the caller's own profile. */
 export function getMe(): Promise<UserMeResponse> {
   return httpClient.get<UserMeResponse>('/api/users/me');
+}
+
+/** `DELETE /api/users/me` — either role. Soft-deletes the caller's account server-side. */
+export function deleteMe(): Promise<void> {
+  return httpClient.delete<void>('/api/users/me');
 }

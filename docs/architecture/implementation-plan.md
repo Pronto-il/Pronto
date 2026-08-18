@@ -1326,6 +1326,210 @@ merged content.
     themselves (the backend route has no ownership check) — harmless (read-only for that
     role, no favorite toggle, no select CTA), not a designed-for use case, no action needed.
 
+## Frontend Milestone 9 — Gap-fixes
+
+- **Status: mixed — do not treat this milestone as uniformly "done."** Two of three
+  approved gap-fixes are fully implemented and fully QA-verified live; the third is
+  code-complete and correctly implemented but currently **non-functional in a real
+  browser** due to a pre-existing, cross-cutting bug outside this round's scope. Branch
+  `frontend/MS9-gap-fixes`, local only — uncommitted, not pushed/merged; that remains the
+  user's own explicit git action. Design doc:
+  `docs/architecture/frontend-ms9-gap-fixes-design.md`. Three approved, independent
+  frontend gaps, not a single cohesive feature: (1) availability-slot edit/delete, (2)
+  account deletion, (3) professional sees issue photos before accepting.
+- **Scope actually built**:
+  1. **Availability-slot edit/delete** — **fully implemented, fully QA-verified live,
+     including two follow-up bug fixes closed during QA.** `shared/api/availability.ts`
+     gained `updateAvailabilitySlot`/`deleteAvailabilitySlot` (`PUT`/`DELETE
+     /api/availability/slots/{slotId}`, backend already complete, first frontend wiring).
+     `SlotForm.tsx` became reusable for create **and** edit (optional `slot` prop,
+     `onSaved`/`onCancel`/`onConflict` props, `onCreated` renamed to `onSaved`). `SlotList.tsx`
+     is no longer read-only: `lucide-react` `Pencil`/`Trash2` icon buttons render only for
+     `isAvailable === true` rows (booked rows show no controls — offering controls that
+     always 409 was judged worse UX than not offering them, per the design doc's own
+     reasoning, and this codebase's existing convention against stubbing controls that imply
+     a nonexistent capability). Delete has no confirmation step (low-stakes,
+     easily-recreated, unlike account deletion below). `SLOT_IN_USE` (409) — the race where a
+     slot gets booked between render and click — is handled as a distinct, specific Hebrew
+     error message on both the edit and delete paths, and QA actually live-verified this race
+     condition (not just the happy path), which surfaced two real bugs, both fixed and
+     re-verified live in the same pass:
+     - The row being edited initially got stuck open on `SLOT_IN_USE` instead of collapsing
+       back to its read-only display — fixed.
+     - After that fix, the conflict message stopped rendering at all — collapsing the row
+       unmounted `SlotForm` in the same React 18 batched update that would have painted its
+       own local banner, so the message never appeared. Fixed by routing the message through
+       `SlotList`'s own persistent banner state (`SlotForm`'s new `onConflict` callback)
+       instead of relying on `SlotForm`'s local banner, which does not survive the unmount.
+     `AvailabilityPage.tsx` wires the new `SlotList` callbacks (`onSlotUpdated`/
+     `onSlotDeleted`/`onRefreshNeeded`) into its existing `slots` state.
+  2. **Account deletion** — **fully implemented, fully QA-verified live, no bugs found.**
+     `shared/api/users.ts` gained `deleteMe()` (`DELETE /api/users/me`, either role,
+     soft-delete). `ProfilePage.tsx` gained a "מחיקת חשבון" destructive button below the
+     existing logout button, using a two-step inline button-swap confirmation — deliberately
+     **not** a new shared modal/dialog component (see design doc §2: a single call site does
+     not justify that infrastructure investment yet). Confirm → `deleteMe()` → same
+     session-ending path the existing logout button already uses (`useAuth().logout()` then
+     `navigate('/login', { replace: true })`). Failure shows `GENERIC_ERROR_MESSAGE` and stays
+     in the confirming state so the user can retry without re-initiating. QA live-verified the
+     full round trip, including DB-level confirmation (`deleted_at` set, email anonymized) and
+     confirmed a subsequent login attempt with the deleted account's credentials correctly
+     fails.
+  3. **Professional sees issue photos before accepting** — **code is complete and correctly
+     implemented, matching the design doc exactly, but the feature is currently
+     non-functional in a real browser.** `IncomingRequestCard.tsx` renders a read-only 88×88px
+     thumbnail row from `issue.images` (already fetched via the existing `getIssue` call, no
+     new API call), placed between the description and the accept/reject actions. Zero
+     images renders nothing; no lightbox. This part of the implementation is not in question.
+     **The blocker**: QA found, live, in a real browser, that authenticated `GET
+     /api/storage/images/**` requests issued from a plain `<img src="...">` tag fail with
+     `net::ERR_BLOCKED_BY_ORB`, because that endpoint requires a JWT bearer token (per
+     `backend/src/main/java/com/pronto/auth/config/SecurityConfig.java`, only
+     `/actuator/health` and `/api/auth/**` are `permitAll()`) and a plain `<img>` tag has no
+     way to attach an `Authorization` header. **This is not new in this round** — QA confirmed
+     the identical failure already exists for every other pre-existing
+     `<img src={profileImageUrl}>` usage in the app (`ProfessionalCard.tsx`,
+     `ProfessionalProfilePage.tsx`, `FavoriteProfessionalCard.tsx`,
+     `ProfessionalProfileImageField.tsx`) — a systemic, cross-cutting gap this round did not
+     introduce and is not responsible for fixing. Net effect: the new thumbnails will not
+     actually display for a real user today, despite correct code. **This is an open,
+     unresolved issue, explicitly flagged to `pronto-lead`/the user for a separate scoping
+     decision** (likely fix directions: fetch authenticated images via `httpClient` as a
+     blob/object URL, or make image retrieval genuinely public/presigned) — **explicitly not
+     fixed as part of this round.**
+- **QA summary**: mixed, recorded per item, not blurred together. Items 1 and 2: full live
+  round-trip QA against a real backend/Postgres instance, **PASS**, including deliberate
+  race-condition/edge-case testing (item 1's `SLOT_IN_USE` race, item 2's DB-level
+  soft-delete + post-delete login-failure check), not just happy-path testing — item 1
+  required two follow-up fixes before sign-off, both confirmed live afterward; item 2 needed
+  none. Item 3: code review confirms the implementation matches the design doc; **live
+  browser testing found the feature does not work**, for a documented, pre-existing,
+  out-of-scope reason (see above) — this item does not get a functional sign-off in this
+  round.
+- **Documentation updated as part of closing this milestone**: `frontend/src/features/
+  dashboard/README.md`, `frontend/src/app/README.md`, `frontend/src/shared/api/README.md`
+  (all updated), plus this entry and the corresponding `overview.md` §6 changelog entry.
+- **Known gaps/open items, not closed by this pass**:
+  - The `<img>`-tag authenticated-image-loading gap (item 3 above) — systemic, pre-existing,
+    affects at least 5 components app-wide, flagged for a separate scoping decision.
+    **Resolved separately, immediately after, by Backend Milestone 9 below** — not left
+    open.
+  - No confirmation dialog on slot delete — a deliberate MVP-simplicity call (see design doc
+    §1a), not an oversight.
+  - No new shared modal/dialog primitive was added for account-deletion confirmation — a
+    deliberate call to avoid speculative infrastructure investment for a single call site
+    (see design doc §2); if/when a second real destructive-action-needing-a-dialog use case
+    shows up, the design doc notes sizing guidance is already documented and ready to use.
+
+## Backend Milestone 9 — Presigned Image URLs
+
+- **Status: implemented and QA-verified live.** Branch `frontend/MS9-gap-fixes` (same
+  branch as Frontend Milestone 9 above — this is that round's backend-focused
+  counterpart, fixing the one item Frontend Milestone 9 left blocked), local only —
+  uncommitted, not pushed/merged; that remains the user's own explicit git action. Full
+  design record: `docs/architecture/backend-ms9-presigned-image-urls-design.md`.
+- **Root problem**: every `<img src>` pointing at an authenticated image (issue photos,
+  professional/avatar/favorite profile images) failed with `net::ERR_BLOCKED_BY_ORB`,
+  because `GET /api/storage/images/**` required a JWT `Authorization` header — a plain
+  HTML `<img>` tag cannot attach one. First recorded by QA during Frontend Milestone 9
+  (see that entry's item 3 above).
+- **The fix — an explicit, deliberate reversal of a previously-recorded architecture
+  decision, per direct user instruction this round, not a re-litigation of it.**
+  `storage.client.S3StorageClient`'s Javadoc previously stated, and the code implemented,
+  that "every image fetch is backend-proxied... a deliberate decision, not a placeholder
+  pending one." That decision is reversed for *retrieval* only (upload stays
+  backend-proxied and JWT-gated, unchanged): `StorageClient#resolveUrl` (a permanent,
+  non-expiring proxy URL) is removed entirely and replaced by `StorageClient#presignUrl
+  (key, expiry)`:
+  - **S3 mode**: a real AWS S3 presigned GET URL, minted by `S3Presigner`/
+    `GetObjectPresignRequest`, pointing directly at S3 — this backend is never touched by
+    the actual image fetch.
+  - **Local mode**: a new HMAC-SHA256-signed query-string URL (`?expires=...&sig=...`)
+    back to this same backend's retrieval route, signed/verified by the new
+    `storage.client.LocalHmacUrlSigner` using a dedicated secret
+    (`pronto.storage.local.hmac-secret`, deliberately not shared with `JWT_SECRET`).
+  - Both default to a 300-second TTL (`pronto.storage.presigned-url-ttl-seconds`).
+  - **Authorization moved from the Spring Security filter layer to URL-issuance time.**
+    `GET /api/storage/images/**` became `permitAll()` in `SecurityConfig` (scoped to
+    `HttpMethod.GET` only — `POST` upload untouched). The pre-existing per-key ownership
+    check (`ImageKeyUtils.isPubliclyReadable`/`belongsTo`) is unchanged in substance, just
+    moved earlier — into `storage.service.StorageService#getPresignedUrl`, called at the
+    moment a URL is minted, not on the later `GET` that fetches bytes. The local-mode HMAC
+    signature+expiry is now the sole real gate on the `GET` route itself. **QA
+    live-verified this genuinely rejects unauthorized access**, not just theoretically: a
+    tampered signature, a tampered/expired timestamp, and a missing signature on a
+    local-mode signed URL all correctly returned `401`.
+  - **New batch endpoint**: `POST /api/storage/images/presigned-urls` (`{ imageKeys }` →
+    `{ images: [{ imageKey, imageUrl }] }`, gracefully omits unresolvable keys rather than
+    failing the whole batch), backing the booking-draft-resume fix below.
+- **Two further, previously-undiscovered bugs found and fixed in the same round** (both
+  surfaced while investigating the ORB bug, not separately reported):
+  1. **Stale persisted issue-image URLs.** `issue_images.image_url` used to store a
+     *resolved* URL, written once at issue-creation time and read back verbatim by
+     `getById` forever after — harmless while URLs were permanent, silently broken once
+     URLs became time-limited (a URL saved at creation time would already be expired by
+     the time a later request served it back). Fixed by
+     `V24__rename_issue_images_image_url_to_image_key.sql` (column renamed to
+     `image_key`, now stores the raw key, never a resolved URL) plus re-resolving fresh at
+     read time in both `IssuesService.create` and `getById`. This exact tradeoff had
+     already been flagged as a recommendation in `data-model.md` §2.8 back when the
+     column was originally designed ("storing the key instead of a full URL would be more
+     flexible... easily-migrated-later") — that migration happened this round.
+  2. **Professional-viewing-issue-images gap, closed — deferred since Milestone 2, never
+     picked up before now.** A professional with a confirmed order on an issue was never
+     actually authorized to view that issue's photos: `ImageKeyUtils.belongsTo` matches a
+     `customers/{callerId}/...` key's embedded owner id against the *viewing* caller's
+     id, which can never match a professional's own caller id, regardless of whether they
+     have a legitimate order on the issue. This gap was explicitly recorded as deferred at
+     Milestone 2 (`api-contract-issues.md` §4) and confirmed never picked up through
+     Milestone 6 (`bookings/README.md`'s own Status section recorded it as "remains an
+     unresolved open item" as recently as that milestone). It was invisible in practice
+     until this round, because every such request was already failing earlier, at the
+     missing-JWT stage (bug 1 above) — fixing that bug without also fixing this one would
+     have exposed a real, reachable `403` for a legitimate professional instead. Fixed via
+     a narrow, explicitly-named bypass method,
+     `StorageService#getPresignedUrlAssumingCallerAuthorized`, called only from
+     `IssuesService.getById` — safe specifically because `getById`'s own pre-existing
+     role-based check (customer owns the issue, OR professional has an order on it) is
+     already a strict superset of "may view every image this issue owns." **Not to be
+     reused at a new call site without re-justifying the exemption to `pronto-lead`.**
+- **Booking-draft photo staleness, also fixed this round** (flagged as a known,
+  deliberately-deferred gap in the MS3/MS4 product-corrections pass, now resolved rather
+  than re-flagged): a paused "new issue" draft used to persist a *resolved* `imageUrl` to
+  `localStorage` (`BookingDraftPhoto.imageUrl`) — would go stale after the presigned-URL
+  TTL elapsed, well before a paused draft is realistically resumed. `BookingDraftPhoto` now
+  persists only the raw `imageKey`; `NewIssuePage.tsx`'s resume flow re-resolves every
+  photo's key into a fresh presigned URL via the new batch endpoint on mount (a resumed
+  draft is therefore no longer a pure `localStorage` read with no network call). Partial/
+  missing-key responses degrade gracefully (the affected photo is dropped from state, a
+  non-blocking inline notice is shown, the narrowed draft self-heals on the next save) —
+  not a hard failure.
+- **Deviation from the design doc, confirmed and documented in code, not silently
+  followed.** The design doc's §5 instructed adding a
+  `software.amazon.awssdk:s3-presigner` Maven dependency; that coordinate does not
+  actually exist on Maven Central (verified against the local Maven repository) —
+  `S3Presigner` ships inside the already-declared `s3` artifact itself. `backend/pom.xml`'s
+  comment on the `s3` dependency records this explicitly, so a future reader isn't
+  confused by the discrepancy between the design doc and the actual dependency list.
+- **QA**: 163/163 backend tests pass. Live browser QA confirmed: professional/avatar/
+  favorite images render; issue photos render for both the owning customer and an
+  authorized professional with a real order (closing Frontend Milestone 9 item 3, above);
+  unauthorized access is genuinely rejected with real tampered/forged requests (see above);
+  and booking-draft resume works end-to-end.
+- **Documentation updated as part of closing this round**: `storage/README.md` (full
+  rewrite of the retrieval-flow/"Role enforcement" sections, not a patch — the underlying
+  mechanism is genuinely different), `storage/config/StorageWebConfig.java` javadoc,
+  `storage/package-info.java`, `issues/README.md`, `bookings/README.md`/
+  `favorites/README.md`/`professionals/README.md` (each had a `StorageClient`
+  direct-injection call site migrated to `StorageService`), `data-model.md` §2.4/§2.8,
+  `frontend/src/shared/components/README.md`, `frontend/src/shared/hooks/README.md`,
+  `frontend/src/features/dashboard/README.md` (resolved its now-stale open-issue note),
+  `api-contract-issues.md` §4 (a stale claim `hardening-plan.md` §5.3 had already flagged
+  for this pass), plus this entry and the corresponding `overview.md` §6 changelog entry.
+  `storage/client/StorageClient.java`/`S3StorageClient.java`/`LocalDiskStorageClient.java`
+  javadocs were already updated in-code by `pronto-coding` as part of implementation, not
+  by this documentation pass.
+
 ## Cross-cutting rules for every milestone
 
 - Planning docs (`overview.md`, this file) are updated if a milestone's actual

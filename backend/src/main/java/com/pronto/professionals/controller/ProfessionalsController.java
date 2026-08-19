@@ -3,9 +3,11 @@ package com.pronto.professionals.controller;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
+import com.pronto.professionals.dto.MySubServicesResponse;
 import com.pronto.professionals.dto.ProfessionalProfileResponse;
 import com.pronto.professionals.dto.ProfileImageUploadResponse;
 import com.pronto.professionals.dto.UpdateProfessionalProfileRequest;
+import com.pronto.professionals.dto.UpdateSubServicesRequest;
 import com.pronto.professionals.service.ProfessionalsService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -58,6 +60,21 @@ public class ProfessionalsController {
             @RequestParam("file") MultipartFile file) {
         ProfileImageUploadResponse response = professionalsService.uploadProfileImage(principal, file);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    /** MS11 §3.2. */
+    @GetMapping("/me/sub-services")
+    public ResponseEntity<MySubServicesResponse> getMySubServices(
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        return ResponseEntity.ok(professionalsService.getMySubServices(principal));
+    }
+
+    /** MS11 §3.2. */
+    @PutMapping("/me/sub-services")
+    public ResponseEntity<MySubServicesResponse> updateMySubServices(
+            @AuthenticationPrincipal AuthenticatedUser principal,
+            @Valid @RequestBody UpdateSubServicesRequest request) {
+        return ResponseEntity.ok(professionalsService.updateMySubServices(principal, request));
     }
 
     @GetMapping("/{professionalId}")

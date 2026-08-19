@@ -110,11 +110,17 @@ export {
   updateMyProfessionalProfile,
   uploadProfessionalProfileImage,
   getProfessionalProfile,
+  getCategoriesWithSubServices,
+  getMySubServices,
+  updateMySubServices,
 } from './professionals';
 export type {
   ProfessionalProfileResponse,
   UpdateProfessionalProfileRequest,
   ProfileImageUploadResponse,
+  SubServiceResponse,
+  CategoryWithSubServicesResponse,
+  MySubServicesResponse,
 } from './professionals';
 
 export { getNotifications, markNotificationRead, markAllNotificationsRead } from './notifications';

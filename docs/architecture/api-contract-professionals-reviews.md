@@ -834,3 +834,107 @@ Every item below was verified directly against the real code; none are hypotheti
   documentation pass, no changes needed).
 - JWT/error-envelope/role-gating base mechanism — `api-contract.md` §0/§1, reused verbatim
   everywhere in this doc.
+
+---
+
+## 11. MS11 — Services & Sub-services (new endpoints, 2026-08-19)
+
+Full design record: `docs/architecture/product-ms11-sub-services-design.md`. Adds a new
+child reference table one level below `categories` (`sub_services`, §2.1 of that doc /
+`data-model.md` §2.15) and a professional's selected subset of their own category's
+sub-services (`professional_sub_services`, §2.2 / `data-model.md` §2.16). Does **not**
+reopen the single-category-per-professional decision (§0/§1 of that doc) — sub-services are
+a finer-grained descriptive attribute *within* the one category a professional already has.
+
+### 11.1 `GET /api/categories`
+
+Auth: **none** — public, unauthenticated. `professionals.controller.CategoriesController`.
+
+Returns every category, ordered by `display_order`, each with its `subServices` nested list
+(also ordered by `display_order`, scoped within that category). The concrete mechanism
+satisfying "support future service/sub-service changes without hardcoding the entire
+structure into the UI" — adding/renaming/reordering a category or sub-service is a migration,
+not a frontend redeploy.
+
+**Response `200`:**
+```json
+[
+  {
+    "id": 1,
+    "code": "plumbing",
+    "nameHe": "אינסטלציה",
+    "nameEn": "Plumbing",
+    "displayOrder": 1,
+    "subServices": [
+      { "id": 101, "code": "plumbing_unclog", "nameHe": "פתיחת סתימות", "nameEn": "Unclogging", "displayOrder": 1 }
+    ]
+  }
+]
+```
+
+**Status codes**: `200` only (no auth/role gate to fail, no path/body input to validate).
+
+### 11.2 `GET /api/professionals/me/sub-services`
+
+Auth: **yes**. Role: **PROFESSIONAL**.
+
+Returns only the caller's currently-selected sub-service ids — deliberately not full
+sub-service objects, since the frontend already has (or separately fetches) the full catalog
+via §11.1 and only needs to know which ids are checked.
+
+**Response `200`:**
+```json
+{ "subServiceIds": [101, 102, 104] }
+```
+
+**Status codes**: `200` · `401 UNAUTHORIZED` · `403 FORBIDDEN`.
+
+### 11.3 `PUT /api/professionals/me/sub-services`
+
+Auth: **yes**. Role: **PROFESSIONAL**. Same full-replace shape precedent as `PUT
+/api/availability/working-hours` (`availability.service.AvailabilityService
+#updateWorkingHours`), per the design doc's explicit instruction to reuse that shape.
+
+**Request:**
+```json
+{ "subServiceIds": [101, 104, 106] }
+```
+
+`@NotNull List<@NotNull Long> subServiceIds` — deliberately **no `@NotEmpty`**: an empty
+list is a valid, un-blocking save (design doc §6 item 2, lead-approved — a professional who
+hasn't picked any sub-services yet is a valid state, same bias toward optional fields `bio`
+already has). Server-side dedupe via a `Set` before persisting (defensive; a checkbox UI
+can't itself produce duplicates).
+
+**Field validation, in order**:
+1. Every id must exist in `sub_services` — any unknown id → **`400 VALIDATION_ERROR`** (a
+   body-referenced id pointing at another entity, per §0's existing rule, not a path id
+   naming the resource itself).
+2. Every id's `category_id` must equal the caller's own `professionals.category_id` — a
+   mismatch → **`400 CATEGORY_MISMATCH`**, reusing the **existing** `ErrorCode
+   .CATEGORY_MISMATCH` (already used by `bookings.service.BookingsService#categoryMismatch`
+   for "the professional's category doesn't match the issue's category") — a direct semantic
+   fit, no new error code added.
+
+**Behavior — diff-based update, not delete-all-then-reinsert**: load the caller's existing
+`professional_sub_services` rows, compute the symmetric difference against the requested id
+set, delete only the removed rows, insert only the newly-added rows, leave unchanged rows
+untouched — preserves `created_at` for sub-services that stay selected across an edit, all
+inside one `@Transactional` method.
+
+**Response `200`**: same shape as §11.2, the canonical post-save state.
+
+**Status codes**: `200` · `400 VALIDATION_ERROR` · `400 CATEGORY_MISMATCH` ·
+`401 UNAUTHORIZED` · `403 FORBIDDEN`.
+
+### 11.4 What is deliberately not changed
+
+- `shared/api/categories.ts`'s static `CATEGORIES` mirror (frontend) is left as-is, not
+  migrated to §11.1 — deliberate proportionality call, not an oversight (design doc §3.3/§6
+  item 5). Flagged as a candidate follow-up, not built in this pass.
+- No customer-facing sub-service filter/matching — Standard/SOS professional-listing queries
+  are unchanged, still filtered only by `issue.category_id` vs. `professional.category_id`
+  (design doc §4).
+- `professionals.category_id`, `UpdateProfessionalProfileRequest`, and `PUT
+  /api/professionals/me`'s existing behavior are all unchanged — sub-service selection is a
+  fully separate endpoint pair.

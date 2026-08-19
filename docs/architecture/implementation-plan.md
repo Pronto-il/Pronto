@@ -1950,6 +1950,89 @@ passes on every changed file across all six milestones.
   `docs/architecture/data-model.md` was checked and confirmed to need no update — Reading A
   of §3.1 adds no column/migration, and no stray schema reference was found.
 
+## MS11 — Services & Sub-services
+
+- **Status: implemented and QA-signed-off, no known defects.** Working tree on `main`,
+  uncommitted — not pushed/merged; that remains the user's own explicit git action. Full
+  design record: `docs/architecture/product-ms11-sub-services-design.md`.
+- **Scope actually built**:
+  1. **Backend — data model**: `sub_services` (new reference table, child of `categories`,
+     one level down — `V29__create_sub_services.sql`, create + a 34-row seed in one
+     migration) and `professional_sub_services` (new join table —
+     `V30__create_professional_sub_services.sql`, empty at migration time). Full specs in
+     `data-model.md` §2.15/§2.16, verified column-for-column against the real migration
+     files during this closing pass.
+  2. **Backend — endpoints**: new public `GET /api/categories`
+     (`professionals.controller.CategoriesController`, `permitAll()` added to
+     `auth.config.SecurityConfig`) — every category, `display_order`-sorted, each with a
+     nested, `display_order`-sorted `subServices` list; the concrete mechanism satisfying
+     "support future service/sub-service changes without hardcoding the entire structure
+     into the UI." New `PROFESSIONAL`-only `GET`/`PUT /api/professionals/me/sub-services`
+     (`ProfessionalsController`/`ProfessionalsService`/`ProfessionalsWebConfig`), reusing
+     `PUT /api/availability/working-hours`'s full-replace shape precedent exactly. `PUT`
+     validates every requested id exists (unknown id → `400 VALIDATION_ERROR`) and belongs
+     to the caller's own `category_id` (mismatch → `400 CATEGORY_MISMATCH` — confirmed this
+     **reuses** the pre-existing `ErrorCode.CATEGORY_MISMATCH`, already used by
+     `bookings.service.BookingsService#categoryMismatch`; no new error code was added), then
+     applies a diff-based update (delete only removed rows, insert only newly-added rows,
+     leave unchanged rows — and their `created_at` — untouched) inside one `@Transactional`
+     method. Full endpoint spec, including both error cases:
+     `docs/architecture/api-contract-professionals-reviews.md` §11.
+  3. **Frontend**: new `shared/components/Checkbox.tsx` (+ `.module.css`) — the first-ever
+     consumer of the `Checkbox` primitive `DESIGN_SYSTEM.md` §85 had listed by name but left
+     unbuilt. `shared/api/professionals.ts` gained `getCategoriesWithSubServices`/
+     `getMySubServices`/`updateMySubServices`. `/pro/profile`
+     (`ProfileEditorPage.tsx`/`.module.css`) gained a sub-services checklist `<fieldset>`,
+     below `basePrice`/above the main save button, scoped strictly to the professional's own
+     `categoryId` (never shows another category's sub-services — reinforces that this is a
+     within-one-category attribute, not multi-category support). Its own independent
+     "שמירת תחומי עיסוק" save button/loading/error/success state, fully separate from the
+     main form's `handleSubmit` — a deliberate, lead-approved second save button on the page
+     (two separate backend endpoints already, no shared validation, folding them into one
+     visual save would imply one atomic operation across two unrelated API calls for no real
+     benefit).
+- **Explicitly does not reopen single-category-per-professional.** `professionals.category_id`
+  remains a single FK, unchanged — sub-services are a finer-grained, within-one-category
+  descriptive attribute, not a second category axis. This framing is recorded permanently in
+  `data-model.md` §2.4's `category_id` row (added by this closing pass, not just in the
+  point-in-time design doc), so a future reader of that file alone won't misread the new
+  `sub_services` table as evidence multi-category support was added.
+- **Seed content is placeholder, explicitly flagged, not settled product copy.** The 34-row
+  seed (`V29`) — Hebrew/English sub-service names and their category assignments — is
+  invented content from this design/build pass, not sourced from any PRD/poster/other
+  product document, and **needs real product sign-off before being treated as final**.
+  Trivially editable later via a fresh migration; flagged in `data-model.md` §2.15,
+  `professionals/README.md`'s "Assumptions" section, and `overview.md`'s corresponding
+  entry — not left to read as finished copy in any of them.
+- **What is deliberately not changed**: `shared/api/categories.ts`'s pre-existing static
+  `CATEGORIES` mirror is left untouched, not migrated to the new `GET /api/categories`
+  endpoint (proportionality call, flagged as a candidate follow-up ticket). No
+  customer-facing sub-service filter/matching — Standard/SOS professional-listing queries
+  are unchanged. `professionals.category_id`/`UpdateProfessionalProfileRequest`/`PUT
+  /api/professionals/me` are all unchanged — sub-service selection is a fully separate
+  endpoint pair.
+- **Testing**: backend unit-tested (`professionals.service.ProfessionalsServiceTest`, new
+  cases: unknown-id rejection → `VALIDATION_ERROR`, category-mismatch rejection →
+  `CATEGORY_MISMATCH`, diff-based update preserving unchanged rows' `created_at`, empty-list
+  save allowed). Full backend suite passing. Frontend: `tsc -b` clean.
+- **QA**: signed off, no known defects.
+- **Documentation updated/confirmed as part of closing this pass**:
+  `docs/architecture/api-contract-professionals-reviews.md` §11 (confirmed complete — all
+  three endpoints, request/response shapes, both validation error cases, and the
+  reused-not-new `CATEGORY_MISMATCH` note); `docs/architecture/data-model.md` §1/§2.15/§2.16
+  (confirmed column-for-column against the real `V29`/`V30` migration files)/§6 (ER diagram)
+  and a new clarifying note on §2.4's `category_id` row (added this pass, see above);
+  `frontend/src/shared/components/README.md`, `frontend/src/shared/api/README.md`,
+  `frontend/src/features/dashboard/README.md`,
+  `backend/src/main/java/com/pronto/professionals/README.md`,
+  `backend/src/main/java/com/pronto/auth/README.md` (all updated by `pronto-coding` along
+  the way and confirmed accurate by this closing pass — no correction needed); plus this
+  entry and `overview.md`'s new "MS11 — Services & Sub-services" §6 entry and package-table
+  (§4) updates. `docs/architecture/api-contract.md` was checked and confirmed to need no
+  update — its §2.4 (`GET /api/users/me`) nests only the pre-existing `professional` summary
+  object, never intended to carry sub-services; the new endpoints are a fully separate
+  `/api/professionals/*`/`/api/categories` surface, no cross-reference gap found.
+
 ## Cross-cutting rules for every milestone
 
 - Planning docs (`overview.md`, this file) are updated if a milestone's actual

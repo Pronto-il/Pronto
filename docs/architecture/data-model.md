@@ -37,6 +37,10 @@ table. Translating this into Flyway `CREATE TABLE` migrations is `pronto-coding`
 categories (reference table, 8 fixed rows)
   ← issues.category_id
   ← professionals.category_id
+  ← sub_services.category_id (new, 2026-08-19)
+
+sub_services (reference table, 34 fixed rows, child of categories)
+  ← professional_sub_services.sub_service_id (new, 2026-08-19)
 
 users
   ← professionals.user_id (1:1)
@@ -55,6 +59,8 @@ professionals (extends a user with role = PROFESSIONAL)
   ← favorites.professional_id (new, 2026-08-15)
   ← professional_working_hours.professional_id (new, 2026-08-18; ≤7 rows, one per weekday)
   ← professional_availability_blocks.professional_id (new, 2026-08-18)
+  ← professional_sub_services.professional_id (new, 2026-08-19; composite PK with
+                                                 professional_sub_services.sub_service_id)
 
 issues
   ← issue_images.issue_id
@@ -172,7 +178,7 @@ sign-off in §3 — summary here, detail there.
 |---|---|---|---|---|
 | `id` | `BIGINT` (identity) | NO | — | PK |
 | `user_id` | `BIGINT` | NO | — | FK → `users(id)` `ON DELETE RESTRICT`. `UNIQUE` — one professional profile per user account (see §3 item 3 for the limitation this implies). |
-| `category_id` | `BIGINT` | NO | — | **Reinterprets PRD's `profession_type` (free text) as a FK into `categories`.** FK → `categories(id)` `ON DELETE RESTRICT`. Flagged for sign-off, §3 item 2. |
+| `category_id` | `BIGINT` | NO | — | **Reinterprets PRD's `profession_type` (free text) as a FK into `categories`.** FK → `categories(id)` `ON DELETE RESTRICT`. Flagged for sign-off, §3 item 2. **Still a single FK, unchanged by MS11 (2026-08-19, §2.15/§2.16 below)** — the new `sub_services`/`professional_sub_services` tables add a finer-grained "which of this one category's sub-services do I offer" attribute *within* the one category a professional already has; they do **not** add a second `category_id`-like column or a `professional_categories` many-to-many join, and a future reader should not infer multi-category support from their existence. The `professional_categories` extension flagged as a possible future extension in §3 item 2 remains unbuilt and is a separate, unrelated question from MS11. See `docs/architecture/product-ms11-sub-services-design.md` §1 for the full reasoning. |
 | `service_area` | `VARCHAR(150)` | NO | — | Free text (e.g. city/region name) — kept as PRD implies (no fixed-list source document exists for areas, unlike categories, so no lookup table invented here). |
 | `approval_status` | `VARCHAR(20)` | NO | `'APPROVED'` | `CHECK (approval_status IN ('PENDING','APPROVED','REJECTED'))`. **Column is kept but functionally inert in v1.0** — every insert defaults to and stays `'APPROVED'`, no query/workflow gates on it. See §3 item 1 for the keep-vs-drop reasoning. |
 | `reliability_score` | `NUMERIC(3,2)` | YES | `NULL` | `CHECK (reliability_score IS NULL OR (reliability_score BETWEEN 0 AND 5))`. Nullable until a score exists. **Open question, §4** — no rating/review submission mechanism exists anywhere in the PRD or wireframes, so the source of this score is undefined. |
@@ -528,6 +534,64 @@ manual blocked-time exception).
 
 ---
 
+### 2.15 `sub_services` — *new table, 2026-08-19 (MS11 — Services & Sub-services)*
+
+New table, added by `V29__create_sub_services.sql`. A child reference table one level down
+from `categories` (§2.1) — the sub-services a given category offers (e.g. Plumbing →
+"unclogging", "leak repair"). See `docs/architecture/product-ms11-sub-services-design.md`
+§2.1/§2.3 for the full design record, including the seed content's own placeholder-content
+caveat.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `BIGINT` (identity) | NO | — | PK |
+| `category_id` | `BIGINT` | NO | — | FK → `categories(id)` `ON DELETE RESTRICT` — same core-reference-data FK policy `categories` itself already receives elsewhere in this schema (§0). |
+| `code` | `VARCHAR(50)` | NO | — | Stable machine key (e.g. `'plumbing_unclog'`), same role `categories.code` plays. `UNIQUE` (kept globally unique rather than a `(category_id, code)` composite, matching `categories.code`'s own plain `UNIQUE` convention — harmless since every seed code is already category-prefixed). |
+| `name_he` | `VARCHAR(100)` | NO | — | Hebrew display name. |
+| `name_en` | `VARCHAR(100)` | NO | — | English display name (internal/dev use). |
+| `display_order` | `SMALLINT` | NO | — | Fixed UI ordering **within a category** (not global — each category's sub-services are numbered 1..N independently). |
+| `created_at` | `TIMESTAMPTZ` | NO | `now()` | |
+
+**Constraints**: PK(`id`); FK(`category_id`) → `categories(id)` `ON DELETE RESTRICT`;
+`UNIQUE(code)`.
+**Indexes**: `idx_sub_services_category ON (category_id)` — the primary read pattern ("this
+category's sub-services," both for `GET /api/categories`'s nested list and for validating a
+professional's selection against their own `category_id`).
+
+**Seed data**: 34 rows across the 8 fixed categories, inserted by the same migration
+(combining create+seed, unlike `categories`' historical `V1`/`V10` split). See the design
+doc §2.3 for the full seed table — **explicitly flagged there as placeholder product content
+pending real sign-off**, not sourced from any PRD/poster document; trivially editable later
+via a fresh migration.
+
+### 2.16 `professional_sub_services` — *new table, 2026-08-19 (MS11)*
+
+New table, added by `V30__create_professional_sub_services.sql`. A professional's selected
+sub-services — pure many-to-many join between `professionals` and `sub_services`, no
+independent meaning beyond the relationship itself. Modeled directly on `favorites` (§2.12),
+the closest existing precedent for a composite-PK, no-surrogate-`id` join row.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `professional_id` | `BIGINT` | NO | — | **PK, part 1**. FK → `professionals(id)` `ON DELETE CASCADE` — same convention every other professional-owned child row with no independent meaning already uses (`sos_availability`, `professional_working_hours`, `professional_availability_blocks`, `favorites.professional_id`). |
+| `sub_service_id` | `BIGINT` | NO | — | **PK, part 2**. FK → `sub_services(id)` `ON DELETE CASCADE` — **deliberately CASCADE, not RESTRICT**, even though `sub_services` is reference data: this join row is a pure bookmark relationship (same reasoning `favorites` already uses for its own FK into the core `professionals` entity), not the kind of core-entity reference `sub_services.category_id` itself is. |
+| `created_at` | `TIMESTAMPTZ` | NO | `now()` | When the professional added this sub-service to their selection. **Preserved across an edit** for sub-services that stay selected — `PUT /api/professionals/me/sub-services` is diff-based (delete only removed rows, insert only newly-added rows), not delete-all-then-reinsert. |
+
+**Constraints**: PK(`professional_id`, `sub_service_id`); FK(`professional_id`) →
+`professionals(id)` `ON DELETE CASCADE`; FK(`sub_service_id`) → `sub_services(id)` `ON
+DELETE CASCADE`.
+**Indexes**: none beyond the PK — the only v1.0 access pattern is "this professional's
+selected sub-services," served by the PK's leading `professional_id` column. No index on
+`sub_service_id` alone (no "which professionals offer sub-service X" query exists in this
+pass — see the design doc §4 for the deliberately-out-of-scope customer-facing filter
+extension this would support).
+
+**No data migration** — every professional starts with zero selected sub-services, same
+"expected onboarding state, not a migration gap" framing `professional_working_hours` (§2.13)
+already established.
+
+---
+
 ## 3. Decisions requiring explicit sign-off before `pronto-coding` writes migrations
 
 These are meaningful assumptions/decisions, each presented with the tradeoff, per the
@@ -864,8 +928,9 @@ this diagram was and remains unaffected by it. **Updated again 2026-08-18** for 
 professional weekly availability calendar feature's M1 backend slice: the two new tables in
 §2.13/§2.14 (`professional_working_hours`/`professional_availability_blocks`, `V25`/`V26`)
 and the new `ck_orders_no_overlap` exclusion constraint on `orders` (`V27`, §2.9) — the
-latter adds no new column/relationship, so it isn't drawn as a separate edge below. All
-relationships below are real DB-level
+latter adds no new column/relationship, so it isn't drawn as a separate edge below. **Updated
+again 2026-08-19** for MS11 (Services & Sub-services): the two new tables in §2.15/§2.16
+(`sub_services`/`professional_sub_services`, `V29`/`V30`). All relationships below are real DB-level
 foreign keys (from the Flyway migrations, §2 above) — none are JPA object-graph associations
 (§0's convention: every FK is a plain `@Column`, never `@ManyToOne`/`@OneToMany`/etc.,
 navigated by application code via repository lookups, not Hibernate-managed navigation).
@@ -882,6 +947,7 @@ erDiagram
 
     CATEGORIES ||--o{ PROFESSIONALS : "category_id (RESTRICT)"
     CATEGORIES ||--o{ ISSUES : "category_id (RESTRICT)"
+    CATEGORIES ||--o{ SUB_SERVICES : "category_id (RESTRICT)"
 
     PROFESSIONALS ||--o{ AVAILABILITY_SLOTS : "professional_id (CASCADE)"
     PROFESSIONALS ||--o| SOS_AVAILABILITY : "professional_id (PK+FK, CASCADE)"
@@ -890,6 +956,9 @@ erDiagram
     PROFESSIONALS ||--o{ FAVORITES : "professional_id (PK part, CASCADE)"
     PROFESSIONALS ||--o{ PROFESSIONAL_WORKING_HOURS : "professional_id (CASCADE) -- <=7 rows, one per weekday"
     PROFESSIONALS ||--o{ PROFESSIONAL_AVAILABILITY_BLOCKS : "professional_id (CASCADE)"
+    PROFESSIONALS ||--o{ PROFESSIONAL_SUB_SERVICES : "professional_id (PK part, CASCADE)"
+
+    SUB_SERVICES ||--o{ PROFESSIONAL_SUB_SERVICES : "sub_service_id (PK part, CASCADE)"
 
     ISSUES ||--o{ ISSUE_IMAGES : "issue_id (CASCADE)"
     ISSUES ||--o{ ORDERS : "issue_id (RESTRICT)"
@@ -1021,5 +1090,18 @@ erDiagram
         timestamptz start_at
         timestamptz end_at
         varchar reason
+    }
+    SUB_SERVICES {
+        bigint id PK
+        bigint category_id FK
+        varchar code
+        varchar name_he
+        varchar name_en
+        smallint display_order
+    }
+    PROFESSIONAL_SUB_SERVICES {
+        bigint professional_id PK_FK
+        bigint sub_service_id PK_FK
+        timestamptz created_at
     }
 ```

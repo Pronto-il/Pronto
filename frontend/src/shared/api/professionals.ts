@@ -65,3 +65,45 @@ export function uploadProfessionalProfileImage(file: File): Promise<ProfileImage
 export function getProfessionalProfile(professionalId: number): Promise<ProfessionalProfileResponse> {
   return httpClient.get<ProfessionalProfileResponse>(`/api/professionals/${professionalId}`);
 }
+
+/**
+ * MS11 — Services & Sub-services (`docs/architecture/product-ms11-sub-services-design.md`
+ * §3.1-§3.2). Shapes verified directly against
+ * `professionals.dto.CategoryWithSubServicesResponse`/`SubServiceResponse`/
+ * `MySubServicesResponse`/`UpdateSubServicesRequest`.
+ */
+export interface SubServiceResponse {
+  id: number;
+  code: string;
+  nameHe: string;
+  nameEn: string;
+  displayOrder: number;
+}
+
+export interface CategoryWithSubServicesResponse {
+  id: number;
+  code: string;
+  nameHe: string;
+  nameEn: string;
+  displayOrder: number;
+  subServices: SubServiceResponse[];
+}
+
+export interface MySubServicesResponse {
+  subServiceIds: number[];
+}
+
+/** GET /api/categories — public, no auth required (called authenticated here like every other call on this page). */
+export function getCategoriesWithSubServices(): Promise<CategoryWithSubServicesResponse[]> {
+  return httpClient.get<CategoryWithSubServicesResponse[]>('/api/categories');
+}
+
+/** GET /api/professionals/me/sub-services — PROFESSIONAL only. */
+export function getMySubServices(): Promise<MySubServicesResponse> {
+  return httpClient.get<MySubServicesResponse>('/api/professionals/me/sub-services');
+}
+
+/** PUT /api/professionals/me/sub-services — PROFESSIONAL only, full-replace, empty list allowed. */
+export function updateMySubServices(subServiceIds: number[]): Promise<MySubServicesResponse> {
+  return httpClient.put<MySubServicesResponse>('/api/professionals/me/sub-services', { subServiceIds });
+}

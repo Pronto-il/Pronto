@@ -27,14 +27,18 @@ import java.util.List;
  * <p>Public (no token required): {@code /actuator/health} (Milestone 0's health-check
  * acceptance criterion — must not regress now that spring-boot-starter-security is on the
  * classpath), {@code /api/auth/**} (register/verify/login, which by definition happen
- * before the caller has a token), and {@code GET /api/storage/images/**} (image retrieval,
+ * before the caller has a token), {@code GET /api/storage/images/**} (image retrieval,
  * backend MS9 — a plain {@code <img src>} cannot attach an {@code Authorization} header, so
  * this route authorizes via a presigned/HMAC-signed URL instead of a JWT; see
  * {@code docs/architecture/backend-ms9-presigned-image-urls-design.md} §4 and
  * {@code storage.service.StorageService#retrieveBySignedUrl}. Scoped to {@code GET} only —
  * {@code POST /api/storage/images} (upload) is untouched by this exemption and stays fully
- * JWT-gated via the catch-all below). Everything else — including {@code /api/users/me} and
- * any endpoint added by a later milestone — requires a valid, non-revoked JWT.
+ * JWT-gated via the catch-all below), and {@code GET /api/categories} (MS11 — Services &amp;
+ * Sub-services — non-sensitive reference data, deliberately public per
+ * {@code docs/architecture/product-ms11-sub-services-design.md} §3.1, so it could someday
+ * also serve the pre-login registration screen without redesign). Everything else —
+ * including {@code /api/users/me} and any endpoint added by a later milestone — requires a
+ * valid, non-revoked JWT.
  *
  * <p>CSRF and form-login are disabled: this is a stateless token API with no server-side
  * session/cookie-based auth, so neither applies.
@@ -68,6 +72,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/health", "/api/auth/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/storage/images/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/categories").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(eh -> eh.authenticationEntryPoint(authenticationEntryPoint))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

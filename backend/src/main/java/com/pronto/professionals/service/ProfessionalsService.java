@@ -1,16 +1,24 @@
 package com.pronto.professionals.service;
 
+import com.pronto.common.dto.FieldError;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
 import com.pronto.favorites.repository.FavoriteRepository;
+import com.pronto.professionals.dto.MySubServicesResponse;
 import com.pronto.professionals.dto.ProfessionalProfileResponse;
 import com.pronto.professionals.dto.ProfileImageUploadResponse;
 import com.pronto.professionals.dto.UpdateProfessionalProfileRequest;
+import com.pronto.professionals.dto.UpdateSubServicesRequest;
 import com.pronto.professionals.entity.Professional;
+import com.pronto.professionals.entity.ProfessionalSubService;
+import com.pronto.professionals.entity.ProfessionalSubServiceId;
+import com.pronto.professionals.entity.SubService;
 import com.pronto.professionals.repository.ProfessionalRatingAggregate;
 import com.pronto.professionals.repository.ProfessionalRepository;
+import com.pronto.professionals.repository.ProfessionalSubServiceRepository;
 import com.pronto.professionals.repository.ReviewAggregateRepository;
+import com.pronto.professionals.repository.SubServiceRepository;
 import com.pronto.storage.ImageContentType;
 import com.pronto.storage.client.StoredObject;
 import com.pronto.storage.service.StorageService;
@@ -23,14 +31,22 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * {@code GET}/{@code PUT /api/professionals/me}, {@code POST
- * /api/professionals/me/profile-image}, {@code GET /api/professionals/{professionalId}}.
- * Route-level role gating ({@code PROFESSIONAL}-only on the {@code /me} routes) happens in
- * {@code professionals.config.ProfessionalsWebConfig}; the {@code {professionalId}} detail
- * route is either-role and has no route-level gate.
+ * /api/professionals/me/profile-image}, {@code GET /api/professionals/{professionalId}}, and,
+ * as of MS11 (Services &amp; Sub-services), {@code GET}/{@code PUT
+ * /api/professionals/me/sub-services}. Route-level role gating ({@code PROFESSIONAL}-only on
+ * the {@code /me} routes) happens in {@code professionals.config.ProfessionalsWebConfig}; the
+ * {@code {professionalId}} detail route is either-role and has no route-level gate. See
+ * {@code docs/architecture/product-ms11-sub-services-design.md} §3.2 for the sub-services
+ * endpoints' full validation/update-semantics spec.
  */
 @Service
 public class ProfessionalsService {
@@ -40,17 +56,23 @@ public class ProfessionalsService {
     private final ReviewAggregateRepository reviewAggregateRepository;
     private final FavoriteRepository favoriteRepository;
     private final StorageService storageService;
+    private final SubServiceRepository subServiceRepository;
+    private final ProfessionalSubServiceRepository professionalSubServiceRepository;
 
     public ProfessionalsService(ProfessionalRepository professionalRepository,
                                  UserRepository userRepository,
                                  ReviewAggregateRepository reviewAggregateRepository,
                                  FavoriteRepository favoriteRepository,
-                                 StorageService storageService) {
+                                 StorageService storageService,
+                                 SubServiceRepository subServiceRepository,
+                                 ProfessionalSubServiceRepository professionalSubServiceRepository) {
         this.professionalRepository = professionalRepository;
         this.userRepository = userRepository;
         this.reviewAggregateRepository = reviewAggregateRepository;
         this.favoriteRepository = favoriteRepository;
         this.storageService = storageService;
+        this.subServiceRepository = subServiceRepository;
+        this.professionalSubServiceRepository = professionalSubServiceRepository;
     }
 
     /** PROFESSIONAL only. {@code favorited} is always {@code null} on this self-view. */
@@ -128,6 +150,72 @@ public class ProfessionalsService {
         professionalRepository.save(professional);
 
         return new ProfileImageUploadResponse(stored.key(), stored.url(), stored.contentType(), stored.sizeBytes());
+    }
+
+    /** MS11 §3.2. PROFESSIONAL only. */
+    @Transactional(readOnly = true)
+    public MySubServicesResponse getMySubServices(AuthenticatedUser caller) {
+        Professional professional = resolveOwnProfessional(caller.id());
+        List<Long> subServiceIds = professionalSubServiceRepository.findByProfessionalId(professional.getId())
+                .stream()
+                .map(ProfessionalSubService::getSubServiceId)
+                .toList();
+        return new MySubServicesResponse(subServiceIds);
+    }
+
+    /**
+     * MS11 §3.2. PROFESSIONAL only. Full-replace of the caller's sub-service selection,
+     * reusing {@code availability.service.AvailabilityService#updateWorkingHours}'s shape
+     * precedent. Validation, in order: (1) every requested id must exist in {@code
+     * sub_services} -- unknown id -&gt; {@code 400 VALIDATION_ERROR}; (2) every id's {@code
+     * category_id} must equal the caller's own {@code professionals.category_id} -- mismatch
+     * -&gt; {@code 400 CATEGORY_MISMATCH} (reuses the existing error code, see {@code
+     * bookings.service.BookingsService#categoryMismatch}). Update semantics are diff-based
+     * (not delete-all-then-reinsert): only removed rows are deleted and only newly-added rows
+     * are inserted, so {@code created_at} is preserved for sub-services that stay selected
+     * across an edit.
+     */
+    @Transactional
+    public MySubServicesResponse updateMySubServices(AuthenticatedUser caller, UpdateSubServicesRequest request) {
+        Professional professional = resolveOwnProfessional(caller.id());
+
+        // Server-side dedupe -- defensive, a checkbox-driven UI can't produce duplicates but
+        // the endpoint shouldn't rely on that.
+        Set<Long> requestedIds = new HashSet<>(request.subServiceIds());
+
+        if (!requestedIds.isEmpty()) {
+            Map<Long, SubService> subServicesById = subServiceRepository.findAllById(requestedIds).stream()
+                    .collect(Collectors.toMap(SubService::getId, s -> s));
+
+            for (Long id : requestedIds) {
+                SubService subService = subServicesById.get(id);
+                if (subService == null) {
+                    throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
+                            List.of(new FieldError("subServiceIds", "unknown sub-service id " + id)));
+                }
+                if (!subService.getCategoryId().equals(professional.getCategoryId())) {
+                    throw new ApiException(ErrorCode.CATEGORY_MISMATCH,
+                            "Sub-service " + id + " does not belong to the caller's own category.");
+                }
+            }
+        }
+
+        Set<Long> existingIds = professionalSubServiceRepository.findByProfessionalId(professional.getId())
+                .stream()
+                .map(ProfessionalSubService::getSubServiceId)
+                .collect(Collectors.toSet());
+
+        Set<Long> toRemove = new HashSet<>(existingIds);
+        toRemove.removeAll(requestedIds);
+        Set<Long> toAdd = new HashSet<>(requestedIds);
+        toAdd.removeAll(existingIds);
+
+        toRemove.forEach(id -> professionalSubServiceRepository
+                .deleteById(new ProfessionalSubServiceId(professional.getId(), id)));
+        toAdd.forEach(id -> professionalSubServiceRepository
+                .save(new ProfessionalSubService(professional.getId(), id)));
+
+        return getMySubServices(caller);
     }
 
     private Professional resolveOwnProfessional(Long callerId) {

@@ -17,6 +17,12 @@ primitives, etc.) — not feature-specific components, which live under their ow
   double-submission).
 - `Input` — labeled text input; `error` renders an inline message below the field, `hint`
   renders quiet supporting text when there's no error.
+- `Checkbox` — labeled native `<input type="checkbox">` + `<label>`, added MS11 (Services &
+  Sub-services, 2026-08-19; `docs/architecture/product-ms11-sub-services-design.md` §5.1) —
+  the first-ever consumer of the `Checkbox` primitive `DESIGN_SYSTEM.md` §85 had listed by
+  name but left unbuilt. No `error`/`hint` props (unlike `Input`/`Textarea`) — the sub-services
+  checklist it was built for has no per-item validation, only a list-level save error. First
+  and only consumer: `features/dashboard/ProfileEditorPage.tsx`'s sub-services checklist.
 - `Select` — labeled select with the same states as `Input`; used for service category.
 - `Card` — base card (white surface, border, `--radius-lg`, no heavy shadow).
 - `PageHeader` — page title + optional description + optional back action (back arrow

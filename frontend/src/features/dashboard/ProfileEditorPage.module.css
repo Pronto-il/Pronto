@@ -68,6 +68,35 @@
   margin-block-end: var(--space-4);
 }
 
+/* MS11 — sub-services checklist section, own border/legend/save button, independent of the
+   main form's save state. */
+.subServicesFieldset {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin: 0 0 var(--space-4);
+}
+
+.subServicesLegend {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  padding-inline: var(--space-2);
+}
+
+.subServicesList {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-3);
+  margin-block-end: var(--space-4);
+}
+
+.subServicesEmptyState {
+  font-size: 14px;
+  color: var(--color-text-muted);
+  margin-block-end: var(--space-4);
+}
+
 @media (min-width: 900px) {
   .card {
     display: grid;

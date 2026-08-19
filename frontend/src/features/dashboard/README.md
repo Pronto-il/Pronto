@@ -562,3 +562,37 @@ Full design record: `docs/architecture/product-ms10-profile-redesign-design.md` 
   column holds `ProfilePhoto` plus the read-only "תחום שירות" row, the form column holds
   the existing `fullName`/`serviceArea`/`city`/`bio`/`basePrice` fields, unchanged in
   meaning/validation.
+
+## MS11 — Services & Sub-services (2026-08-19)
+
+Full design record: `docs/architecture/product-ms11-sub-services-design.md` §5.1.
+
+`ProfileEditorPage.tsx` + `.module.css` gained a sub-services checklist `<fieldset>`, placed
+below the existing `basePrice` field and above the main save button, inside the same `.form`
+column MS10 established — not a new page/route, an addition to this one.
+
+- **Data flow**: a second, fully independent `useEffect` (alongside the existing profile
+  `useEffect`) runs `Promise.all([getCategoriesWithSubServices(), getMySubServices()])` on
+  mount — the full catalog (`GET /api/categories`, public but called authenticated here like
+  every other call on this page) and the caller's current selection (`GET
+  /api/professionals/me/sub-services`). The checklist's option set is always scoped to
+  `categories.find(c => c.id === profile.categoryId)?.subServices` — a professional never
+  sees another category's sub-services, reinforcing the design doc §1 distinction that this
+  is a within-one-category attribute, not multi-category support.
+- **Rendering**: each sub-service is a `shared/components/Checkbox` (new this milestone, see
+  `shared/components/README.md`), Hebrew `nameHe` label, checked state driven by a local
+  `Set<number>` of selected ids. An empty catalog for the professional's own category (no
+  sub-services configured yet) renders a plain Hebrew empty-state message instead of an
+  empty box.
+- **Save — deliberately its own button, not merged into the main form's submit**: a compact
+  secondary `"שמירת תחומי עיסוק"` `Button` (`type="button"`, so it can't accidentally trigger
+  the surrounding `<form>`'s `onSubmit` even though it's nested inside the same `<form>`
+  element for layout purposes), calling `updateMySubServices(Array.from(selectedIds))`
+  directly. Its own independent `isSavingSubServices`/`subServicesSaveError`/
+  `subServicesSavedAt` state — completely separate from the main form's `isSaving`/
+  `bannerError`/`savedAt` — per the design doc's §5.1/§6 item 4 reasoning (two separate
+  backend endpoints already, no shared validation, folding them into one visual "save" would
+  imply one atomic operation across two unrelated API calls for no real benefit). This is an
+  explicit, lead-approved product decision: the page now has two save buttons, not one.
+- **`shared/api/professionals.ts` additions**: `getCategoriesWithSubServices`/
+  `getMySubServices`/`updateMySubServices` — see `shared/api/README.md`'s own MS11 entry.

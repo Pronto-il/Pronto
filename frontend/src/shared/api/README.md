@@ -178,7 +178,22 @@ API described in `docs/architecture/overview.md` §3.2.
   the MS10 profile redesign (2026-08-19)**: `uploadProfessionalProfileImage`'s call site
   moved from the now-deleted `ProfessionalProfileImageField.tsx` wrapper directly into
   `ProfileEditorPage.tsx` itself (see `features/dashboard/README.md`'s MS10 section) — no
-  change to this file's own exports.
+  change to this file's own exports. **As of MS11 — Services & Sub-services (2026-08-19,
+  `docs/architecture/product-ms11-sub-services-design.md`)**: gained
+  `getCategoriesWithSubServices()` (`GET /api/categories`, public/unauthenticated but called
+  authenticated here like every other call on this page, returns
+  `CategoryWithSubServicesResponse[]` — each category with a nested, `display_order`-sorted
+  `subServices` list), `getMySubServices()` (`GET /api/professionals/me/sub-services`,
+  PROFESSIONAL-only, `MySubServicesResponse` — ids only, not full objects), and
+  `updateMySubServices(subServiceIds)` (`PUT /api/professionals/me/sub-services`,
+  PROFESSIONAL-only, full-replace, empty array allowed, same `MySubServicesResponse` return
+  shape). Shapes verified directly against `professionals.dto
+  .CategoryWithSubServicesResponse`/`SubServiceResponse`/`MySubServicesResponse`/
+  `UpdateSubServicesRequest`. **Note**: `categories.ts`'s pre-existing static `CATEGORIES`
+  mirror is deliberately left untouched by this addition, not migrated to the new endpoint —
+  see that file's own header comment and the design doc §3.3/§6 item 5 for the full
+  proportionality reasoning. First and only consumer of all three new functions:
+  `features/dashboard/ProfileEditorPage.tsx`'s new sub-services checklist section.
 
 **As of the Active Booking Floating Indicator feature**: `bookings.ts` also gained
 `expectedArrivalAt: string | null` on `OrderResponse`/`OrderDetailResponse`/`OrderSummary`
@@ -273,3 +288,11 @@ and the old retired route were regression-checked) — see `features/booking/REA
 section for the full record, including the `deriveStartTimeCandidates` cross-check
 methodology (no frontend unit-test runner exists in this codebase). Same "no browser
 available" caveat as every prior milestone above.
+
+**MS11 — Services & Sub-services (2026-08-19)**: `professionals.ts` gained
+`getCategoriesWithSubServices`/`getMySubServices`/`updateMySubServices` (see above) —
+consuming newly-built backend endpoints (`GET /api/categories`,
+`GET`/`PUT /api/professionals/me/sub-services`), first frontend wiring for all three. Shapes
+verified directly against the real backend DTOs. `categories.ts` itself is unchanged, by
+deliberate design-doc decision (see above). Full design record:
+`docs/architecture/product-ms11-sub-services-design.md`.

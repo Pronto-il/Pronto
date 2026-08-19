@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { PageHeader, Card, Input, Textarea, Button, ProfilePhoto } from '../../shared/components';
+import { PageHeader, Card, Input, Textarea, Button, ProfilePhoto, Checkbox } from '../../shared/components';
 import { useAuth } from '../../shared/hooks';
 import {
   getMyProfessionalProfile,
   updateMyProfessionalProfile,
   uploadProfessionalProfileImage,
+  getCategoriesWithSubServices,
+  getMySubServices,
+  updateMySubServices,
   GENERIC_ERROR_MESSAGE,
   getFieldErrorMessages,
   getCategoryNameHe,
 } from '../../shared/api';
-import type { ProfessionalProfileResponse } from '../../shared/api';
+import type { ProfessionalProfileResponse, CategoryWithSubServicesResponse } from '../../shared/api';
 import styles from './ProfileEditorPage.module.css';
 
 /**
@@ -37,6 +40,16 @@ import styles from './ProfileEditorPage.module.css';
  * is just a callback). Layout became a responsive two-region grid (`<900px` single column,
  * `>=900px` a `240px 1fr` grid) to fix the "large empty area on the left" root cause (§1.3)
  * — the previous `.card { max-width: 480px }` capped width with no auto margins.
+ *
+ * **MS11 — Services & Sub-services (2026-08-19)**: gained a sub-services checklist section,
+ * below `basePrice`, above the main save button (`docs/architecture/product-ms11-sub-
+ * services-design.md` §5.1). One unified always-editable checklist (no separate onboarding
+ * step, design §6 item 3) scoped to the professional's own `categoryId` (never shows another
+ * category's sub-services). Its own independent "שמירת תחומי עיסוק" save button, calling
+ * `updateMySubServices` — a fully separate API call/loading/error/success state from the
+ * main form's `handleSubmit` (design §6 item 4, lead-approved: two backend endpoints, two
+ * independent saves, not one atomic action). The checklist's checkbox items use the new
+ * `shared/components/Checkbox` primitive (this feature's first consumer).
  */
 export default function ProfileEditorPage() {
   const { refreshUser } = useAuth();
@@ -58,6 +71,15 @@ export default function ProfileEditorPage() {
 
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [photoUploadError, setPhotoUploadError] = useState<string | undefined>();
+
+  // Sub-services checklist (MS11) — fully independent state from the main profile form above.
+  const [categories, setCategories] = useState<CategoryWithSubServicesResponse[] | null>(null);
+  const [selectedSubServiceIds, setSelectedSubServiceIds] = useState<Set<number>>(new Set());
+  const [isLoadingSubServices, setIsLoadingSubServices] = useState(true);
+  const [subServicesLoadError, setSubServicesLoadError] = useState<string | null>(null);
+  const [isSavingSubServices, setIsSavingSubServices] = useState(false);
+  const [subServicesSaveError, setSubServicesSaveError] = useState<string | null>(null);
+  const [subServicesSavedAt, setSubServicesSavedAt] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,6 +103,56 @@ export default function ProfileEditorPage() {
       cancelled = true;
     };
   }, []);
+
+  // MS11 §5.1: fetched alongside the profile above but as a fully independent request/state
+  // pair — the catalog (GET /api/categories) and the current selection (GET
+  // /api/professionals/me/sub-services) are loaded together here since both are needed before
+  // the checklist can render its pre-checked boxes.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([getCategoriesWithSubServices(), getMySubServices()])
+      .then(([categoriesResult, mineResult]) => {
+        if (cancelled) return;
+        setCategories(categoriesResult);
+        setSelectedSubServiceIds(new Set(mineResult.subServiceIds));
+      })
+      .catch(() => {
+        if (!cancelled) setSubServicesLoadError(GENERIC_ERROR_MESSAGE);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingSubServices(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function toggleSubService(subServiceId: number) {
+    setSelectedSubServiceIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(subServiceId)) {
+        next.delete(subServiceId);
+      } else {
+        next.add(subServiceId);
+      }
+      return next;
+    });
+  }
+
+  async function handleSaveSubServices() {
+    setSubServicesSaveError(null);
+    setSubServicesSavedAt(null);
+    setIsSavingSubServices(true);
+    try {
+      const result = await updateMySubServices(Array.from(selectedSubServiceIds));
+      setSelectedSubServiceIds(new Set(result.subServiceIds));
+      setSubServicesSavedAt(Date.now());
+    } catch {
+      setSubServicesSaveError(GENERIC_ERROR_MESSAGE);
+    } finally {
+      setIsSavingSubServices(false);
+    }
+  }
 
   function handlePhotoUpload(file: File) {
     setPhotoUploadError(undefined);
@@ -193,6 +265,54 @@ export default function ProfileEditorPage() {
               error={fieldErrors.basePrice}
               required
             />
+
+            <fieldset className={styles.subServicesFieldset}>
+              <legend className={styles.subServicesLegend}>תחומי עיסוק</legend>
+
+              {isLoadingSubServices && <p>טוען…</p>}
+
+              {!isLoadingSubServices && subServicesLoadError && (
+                <div className={styles.banner} role="alert">
+                  <p>{subServicesLoadError}</p>
+                </div>
+              )}
+
+              {!isLoadingSubServices && !subServicesLoadError && categories && (
+                <>
+                  {(categories.find((c) => c.id === profile.categoryId)?.subServices.length ?? 0) === 0 ? (
+                    <p className={styles.subServicesEmptyState}>אין עדיין תת-שירותים מוגדרים עבור התחום שלך.</p>
+                  ) : (
+                    <div className={styles.subServicesList}>
+                      {categories
+                        .find((c) => c.id === profile.categoryId)
+                        ?.subServices.map((subService) => (
+                          <Checkbox
+                            key={subService.id}
+                            label={subService.nameHe}
+                            checked={selectedSubServiceIds.has(subService.id)}
+                            onChange={() => toggleSubService(subService.id)}
+                          />
+                        ))}
+                    </div>
+                  )}
+
+                  {subServicesSaveError && (
+                    <div className={styles.banner} role="alert">
+                      <p>{subServicesSaveError}</p>
+                    </div>
+                  )}
+                  {subServicesSavedAt && (
+                    <p className={styles.savedNotice} role="status">
+                      תחומי העיסוק נשמרו בהצלחה.
+                    </p>
+                  )}
+
+                  <Button type="button" variant="secondary" loading={isSavingSubServices} onClick={handleSaveSubServices}>
+                    שמירת תחומי עיסוק
+                  </Button>
+                </>
+              )}
+            </fieldset>
 
             {bannerError && (
               <div className={styles.banner} role="alert">

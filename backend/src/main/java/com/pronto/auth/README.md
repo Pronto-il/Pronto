@@ -28,7 +28,11 @@ Implements `docs/architecture/api-contract.md` §2.1–2.3 and §3.1–3.3.
   24h expiry (`pronto.jwt.secret`/`pronto.jwt.expiration-seconds` in `application.yml`).
 - The `SecurityFilterChain` (`config/SecurityConfig`): stateless, CSRF/form-login
   disabled, `/actuator/health` and `/api/auth/**` public, everything else authenticated.
-  Also owns the `BCryptPasswordEncoder` bean.
+  Also owns the `BCryptPasswordEncoder` bean. Also permits `GET /api/storage/images/**`
+  (backend MS9, image retrieval via presigned/signed URL, not a JWT) and, as of MS11
+  (Services & Sub-services, 2026-08-19), `GET /api/categories` (public reference data — see
+  `professionals/README.md`'s MS11 section and
+  `docs/architecture/product-ms11-sub-services-design.md` §3.1).
 - `config/SecurityConfig` also owns a `corsConfigurationSource()` bean, sourced from
   `pronto.cors.allowed-origins` (env var `CORS_ALLOWED_ORIGINS`, default
   `http://localhost:5173`, now present in `application.yml` under the `pronto:` block).

@@ -2033,6 +2033,46 @@ passes on every changed file across all six milestones.
   object, never intended to carry sub-services; the new endpoints are a fully separate
   `/api/professionals/*`/`/api/categories` surface, no cross-reference gap found.
 
+## MS12 — Availability UX Cleanup
+
+- **Status: implemented and QA-signed-off, no known defects.** Working tree on `main`,
+  uncommitted — not pushed/merged; that remains the user's own explicit git action. Full
+  design record: `docs/architecture/product-ms12-availability-ux-cleanup-design.md`.
+  Frontend-only, confined to `WeeklyAvailabilityPage.tsx`/`.module.css`; no backend change.
+- **Scope actually built**: `WeeklyAvailabilityPage`'s post-setup branch no longer renders a
+  permanently-visible working-hours summary list (`WorkingHoursSummary` deleted) —
+  `WeeklyCalendarGrid` is now the sole dominant content block, immediately visible with no
+  7-row list above it. The "עריכת שעות עבודה" entry point is now a real `Button`
+  (`variant="secondary"`, `Pencil` icon) in a slim header row above the calendar, opening
+  `WorkingHoursForm` inside the shared `Modal` primitive (`size="normal"`) — the same usage
+  pattern `CalendarBlockModal.tsx` already established. This resolves the deviation the
+  page's own doc comment had flagged since M3/M4: `professional-weekly-calendar-design.md`
+  §7.2 always intended a modal for the edit entry point; the earlier inline-expansion was
+  only a stand-in because `Modal.tsx` didn't exist yet at the time of that pass.
+- `isEditingHours` (boolean, drove inline expand/collapse) renamed to `isEditModalOpen`
+  (drives `Modal`'s `isOpen`); `handleSaved` now closes the modal instead of collapsing an
+  inline `Card`. No change to `WorkingHoursForm`'s own validation, the `PUT
+  /api/availability/working-hours` full-week-replace contract, or `WeeklyCalendarGrid`'s data
+  fetching/polling/click-routing — `WeeklyCalendarGrid.tsx`, `WorkingHoursForm.tsx`, and
+  `Modal.tsx` are all unchanged by this pass.
+- CSS cleanup: removed now-dead `.summaryCard`/`.summaryRow`/`.summaryDay`/`.summaryHours`/
+  `.summaryOff`/`.editLink` rules from `WeeklyAvailabilityPage.module.css`. Added one small
+  new rule, `.editButtonLabel` (inline-flex + gap), since the shared `Button`'s own `.label`
+  wrapper has no gap defined (every other `Button` usage in this codebase so far passes plain
+  text, not an icon+text pair).
+- AVAILABLE/BLOCKED/BOOKED visual states in `WeeklyCalendarGrid` were confirmed, during
+  design review, to already meet the "distinct fill + icon/label, not color-only"
+  accessibility bar — not touched by this pass.
+- **QA**: signed off, no known defects (uncommitted working-tree changes).
+- **Documentation updated as part of closing this pass**:
+  `frontend/src/features/dashboard/README.md` (new MS12 section; also cleaned up the
+  strikethrough-style historical edit marks left in its M3/M4 section into clean prose,
+  since that section now describes behavior fully superseded by this pass),
+  `docs/architecture/professional-weekly-calendar-design.md` §7.2 (a short forward-pointer
+  note added, so a future reader doesn't mistake the M3/M4 inline-expansion deviation that
+  doc self-flags as still current), plus this entry and `overview.md`'s new MS12 changelog
+  bullet and `features/dashboard` package-table (§4) update.
+
 ## Cross-cutting rules for every milestone
 
 - Planning docs (`overview.md`, this file) are updated if a milestone's actual

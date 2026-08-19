@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Pencil } from 'lucide-react';
-import { Button, Card } from '../../shared/components';
+import { Button, Card, Modal } from '../../shared/components';
 import { getWorkingHours, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { WorkingHoursItem } from '../../shared/api';
 import { SosAvailabilityToggle } from './SosAvailabilityToggle';
 import { WorkingHoursForm } from './WorkingHoursForm';
 import { WeeklyCalendarGrid } from './WeeklyCalendarGrid';
 import styles from './WeeklyAvailabilityPage.module.css';
-
-const WEEKDAY_LABELS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 
 /** A configured week has exactly 7 entries (`PUT` always writes the full week transactionally,
  *  design §4.2) — fewer than 7 means first-time setup hasn't completed yet (design §4.1). */
@@ -28,22 +26,20 @@ function isSetupComplete(workingHours: WorkingHoursItem[]): boolean {
  * full-page instead of the calendar — but it's **skippable**, not a hard gate (per the design's
  * own "a professional who skips simply sees an all-'outside working hours' calendar" framing):
  * a "דלג, אגדיר מאוחר יותר" ghost action reveals the (all-muted) calendar without saving
- * anything. Once a week is configured, the page instead shows a compact read-only summary with
- * an "עריכת שעות עבודה" entry point that expands the same form inline.
+ * anything. Once a week is configured, the page instead makes `WeeklyCalendarGrid` the sole
+ * dominant element, with a slim header row above it holding an "עריכת שעות עבודה" `Button`
+ * that opens `WorkingHoursForm` inside the shared `Modal` primitive — no permanently-visible
+ * working-hours list competes with the calendar (design
+ * `docs/architecture/product-ms12-availability-ux-cleanup-design.md`).
  *
- * **Deviation from the design doc, flagged**: §7.2 says the later-edit entry point should open
- * "in a modal/drawer (reuse whatever new `Modal` primitive M5 introduces)." That primitive does
- * not exist yet — it's explicitly introduced in M5 (§7.4/§10), and this milestone's brief
- * explicitly says not to build it speculatively here. Until M5 lands, the edit entry point
- * expands the form **inline** on the page instead (the same "toggle an inline editor" pattern
- * this package's own `SlotList.tsx` already uses for its row-level edit mode) — a functionally
- * equivalent, lower-risk substitute that M5 can swap for the real modal without changing this
- * page's data flow (`WorkingHoursForm`'s own props already fully support either host).
+ * The later-edit entry point opening in a `Modal` matches §7.2's original intent exactly
+ * (previously a temporary inline-expansion stand-in before `Modal.tsx` existed; MS12 replaced
+ * it with the real modal, same pattern `CalendarBlockModal.tsx` already established).
  */
 export default function WeeklyAvailabilityPage() {
   const [workingHours, setWorkingHours] = useState<WorkingHoursItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [isEditingHours, setIsEditingHours] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [hasSkippedSetup, setHasSkippedSetup] = useState(false);
 
   function loadWorkingHours() {
@@ -59,7 +55,7 @@ export default function WeeklyAvailabilityPage() {
 
   function handleSaved(saved: WorkingHoursItem[]) {
     setWorkingHours(saved);
-    setIsEditingHours(false);
+    setIsEditModalOpen(false);
   }
 
   const setupComplete = workingHours !== null && isSetupComplete(workingHours);
@@ -101,51 +97,23 @@ export default function WeeklyAvailabilityPage() {
       )}
 
       {workingHours !== null && !showFullPageSetup && (
-        <>
-          <div>
-            <div className={styles.sectionHeaderRow}>
-              <p className={styles.sectionTitle}>שעות עבודה</p>
-              {!isEditingHours && (
-                <button type="button" className={styles.editLink} onClick={() => setIsEditingHours(true)}>
-                  <Pencil size={14} aria-hidden="true" />
-                  עריכת שעות עבודה
-                </button>
-              )}
-            </div>
-            {isEditingHours ? (
-              <Card>
-                <WorkingHoursForm workingHours={workingHours} onSaved={handleSaved} onCancel={() => setIsEditingHours(false)} />
-              </Card>
-            ) : (
-              <WorkingHoursSummary workingHours={workingHours} />
-            )}
-          </div>
-
-          <div>
+        <div>
+          <div className={styles.sectionHeaderRow}>
             <p className={styles.sectionTitle}>יומן זמינות שבועי</p>
-            <WeeklyCalendarGrid />
+            <Button variant="secondary" onClick={() => setIsEditModalOpen(true)}>
+              <span className={styles.editButtonLabel}>
+                <Pencil size={14} aria-hidden="true" />
+                עריכת שעות עבודה
+              </span>
+            </Button>
           </div>
-        </>
+          <WeeklyCalendarGrid />
+
+          <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} title="עריכת שעות עבודה" size="normal">
+            <WorkingHoursForm workingHours={workingHours} onSaved={handleSaved} onCancel={() => setIsEditModalOpen(false)} />
+          </Modal>
+        </div>
       )}
     </div>
-  );
-}
-
-function WorkingHoursSummary({ workingHours }: { workingHours: WorkingHoursItem[] }) {
-  const byWeekday = new Map(workingHours.map((wh) => [wh.weekday, wh]));
-  return (
-    <Card className={styles.summaryCard}>
-      {Array.from({ length: 7 }, (_, weekday) => {
-        const row = byWeekday.get(weekday);
-        return (
-          <div key={weekday} className={styles.summaryRow}>
-            <span className={styles.summaryDay}>{WEEKDAY_LABELS[weekday]}</span>
-            <span className={row?.enabled ? styles.summaryHours : styles.summaryOff}>
-              {row?.enabled ? `${row.startTime}–${row.endTime}` : 'לא עובד/ת'}
-            </span>
-          </div>
-        );
-      })}
-    </Card>
   );
 }

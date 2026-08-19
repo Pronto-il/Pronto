@@ -626,6 +626,15 @@ component:
   above the calendar grid, opening the same form in a modal/drawer (reuse whatever new
   `Modal` primitive M5 introduces, §7.4, §10).
 
+  > **Note (2026-08-19): this intent is now fully implemented as designed.** The M3/M4
+  > build initially shipped a temporary inline-expansion stand-in instead (`Modal.tsx`
+  > didn't exist yet at that time — see `frontend/src/features/dashboard/README.md`'s
+  > M3/M4 section for that historical detail). MS12 — Availability UX Cleanup
+  > (`docs/architecture/product-ms12-availability-ux-cleanup-design.md`) replaced the
+  > inline stand-in with the real `Modal`-based flow described here and also removed the
+  > permanently-visible working-hours summary list. If you're reading this design doc for
+  > current behavior, treat MS12 as the superseding source, not this deviation note.
+
 ### 7.3 `WeeklyCalendarGrid.tsx`
 
 The Google-Calendar-like weekly view. Consumes `GET /api/availability/calendar?from=&to=`

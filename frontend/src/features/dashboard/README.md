@@ -50,18 +50,23 @@ entry points to render:
   "דלג, אגדיר מאוחר יותר" (skip, configure later) ghost action — per the design's explicit
   "skippable, not a hard gate" framing (§7.2): skipping reveals the (all-muted,
   outside-working-hours) calendar without saving anything.
-- **Later edit** (exactly 7 entries already configured): a compact read-only summary (one
-  line per weekday: hours or "לא עובד/ת") plus an "עריכת שעות עבודה" link that expands the
-  same form inline.
+- **Later edit** (exactly 7 entries already configured), **as originally built in M3 —
+  historical, superseded by MS12, see below**: a compact read-only summary (one line per
+  weekday: hours or "לא עובד/ת") plus an "עריכת שעות עבודה" link that expanded the same form
+  inline. **As of MS12 (2026-08-19)**, this is no longer the current behavior: the permanent
+  summary was removed and the edit entry point now opens `WorkingHoursForm` in the shared
+  `Modal` primitive instead of inline — see the MS12 section below for the current behavior.
 
-**Deviation from the design doc, flagged explicitly**: §7.2 says the edit entry point should
-open the form "in a modal/drawer (reuse whatever new `Modal` primitive M5 introduces)." That
-primitive doesn't exist yet — the design itself assigns it to M5, and this pass's brief
-explicitly says not to build it speculatively now. Until M5 lands, the edit entry point
-expands `WorkingHoursForm` **inline** on the page instead (the same "toggle an inline editor"
-pattern `SlotList.tsx` already uses for its own row-level edit mode) — functionally
-equivalent, and `WorkingHoursForm`'s own props already fully support either host, so M5 can
-swap in the real modal later without touching this component's data flow.
+**Deviation from the design doc (historical — resolved by MS12, see below)**: §7.2 said the
+edit entry point should open the form "in a modal/drawer (reuse whatever new `Modal` primitive
+M5 introduces)." That primitive didn't exist yet at the time of this M3/M4 pass — the design
+itself assigned it to M5, and this pass's brief explicitly said not to build it speculatively
+then. Until M5 landed, the edit entry point expanded `WorkingHoursForm` **inline** on the page
+instead (the same "toggle an inline editor" pattern `SlotList.tsx` already uses for its own
+row-level edit mode) — functionally equivalent at the time, and `WorkingHoursForm`'s own props
+already fully supported either host. `Modal.tsx` was subsequently built (M5), and MS12
+(2026-08-19, see below) completed the swap this paragraph anticipated — **this deviation no
+longer exists in the current code.**
 
 ### `WeeklyCalendarGrid.tsx` (new) — M4, view-only
 
@@ -596,3 +601,33 @@ column MS10 established — not a new page/route, an addition to this one.
   explicit, lead-approved product decision: the page now has two save buttons, not one.
 - **`shared/api/professionals.ts` additions**: `getCategoriesWithSubServices`/
   `getMySubServices`/`updateMySubServices` — see `shared/api/README.md`'s own MS11 entry.
+
+## MS12 — Availability UX Cleanup (2026-08-19)
+
+Full design record: `docs/architecture/product-ms12-availability-ux-cleanup-design.md`.
+Frontend-only, confined to `WeeklyAvailabilityPage.tsx`/`.module.css`; `WeeklyCalendarGrid.tsx`,
+`WorkingHoursForm.tsx`, and `Modal.tsx` are unchanged.
+
+- The post-setup branch of `WeeklyAvailabilityPage` no longer renders a permanently-visible
+  working-hours list (`WorkingHoursSummary` deleted). `WeeklyCalendarGrid` is now the sole
+  dominant content block, immediately visible with no 7-row list above it.
+- The "עריכת שעות עבודה" entry point is now a real `Button` (`variant="secondary"`, `Pencil`
+  icon) in a slim header row above the calendar, opening `WorkingHoursForm` inside the shared
+  `Modal` primitive (`size="normal"`) — the same usage pattern `CalendarBlockModal.tsx`
+  established. This resolves the deviation the page's doc comment previously flagged (§7.2 of
+  `professional-weekly-calendar-design.md` always intended a modal; the earlier inline-expansion
+  was only a stand-in before `Modal.tsx` existed).
+- `isEditingHours` (boolean, drove inline expand/collapse) renamed to `isEditModalOpen`
+  (drives `Modal`'s `isOpen`); `handleSaved` now closes the modal instead of collapsing an
+  inline `Card`. No change to `WorkingHoursForm`'s own validation, the `PUT
+  /api/availability/working-hours` full-week-replace contract, or `WeeklyCalendarGrid`'s data
+  fetching/polling/click-routing.
+- CSS cleanup: removed now-dead `.summaryCard`/`.summaryRow`/`.summaryDay`/`.summaryHours`/
+  `.summaryOff`/`.editLink` rules from `WeeklyAvailabilityPage.module.css`. Added one small new
+  rule, `.editButtonLabel` (inline-flex + gap), because the shared `Button`'s own `.label`
+  wrapper has no gap defined (every other `Button` usage in this codebase so far passes plain
+  text, not an icon+text pair) — needed to keep the `Pencil` icon and the Hebrew label visually
+  separated inside the button.
+- AVAILABLE/BLOCKED/BOOKED visual states in `WeeklyCalendarGrid` were confirmed already meeting
+  the "distinct fill + icon/label, not color-only" bar per the design doc's own review — not
+  touched by this pass.

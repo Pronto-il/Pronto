@@ -49,6 +49,23 @@ primitives, etc.) — not feature-specific components, which live under their ow
   Portal-rendered into `document.body` (`createPortal`), closes on overlay click and
   `Escape`, locks body scroll while open. First (and, as of M5, only) consumer:
   `features/dashboard/CalendarBlockModal.tsx`.
+- `ProfilePhoto` — circular, centered profile photo/avatar (MS10 profile redesign,
+  2026-08-19; `docs/architecture/product-ms10-profile-redesign-design.md` §2.1). Renders a
+  photo (`imageUrl`) or an initials fallback (`fallbackInitial`), `96`/`104px` sizing per
+  `DESIGN_SYSTEM.md`'s profile-page range. Omit `onUpload` for a read-only avatar (no edit
+  affordance, e.g. a customer's own photo or a professional viewed by someone else);
+  supply it for exactly one edit affordance — a small round icon button overlapping the
+  photo's bottom-inline-end edge, wired straight to a hidden `<input type="file">` (no
+  separate "Add photo" control). Clicking the photo itself opens `ImageLightbox` when a real
+  `imageUrl` exists. Replaces the retired `features/dashboard/ProfessionalProfileImageField.tsx`
+  and is also reused, without `onUpload`, on the shared `app/ProfilePage.tsx`.
+- `ImageLightbox` — full-viewport, dark-overlay ("Facebook-style") image viewer:
+  `isOpen`/`onClose`/`imageUrl`/`alt`. Portal-rendered, closes on `Escape`/overlay click,
+  locks body scroll while open — same three behaviors `Modal` has, reimplemented here
+  because the visual shape (full-bleed image, no title/footer/padding box) doesn't fit
+  `Modal`'s form-dialog-shaped API (see `docs/architecture/product-ms10-profile-redesign-
+  design.md` §1.7/§2.2 for the full reasoning). First (and, as of MS10, only) consumer:
+  `ProfilePhoto`.
 
 Each CSS-module file (`ComponentName.module.css`) sits next to its component.
 
@@ -57,6 +74,7 @@ Implemented in **Milestone 1 — Auth & user management**
 (`docs/architecture/implementation-plan.md`), first consumed by `features/auth`'s
 registration/login/verify screens. Extended as later milestones need new shared UI —
 `StatusBadge` was added in **Frontend Milestone 3 — Standard booking flow (2026-08-16)**;
+`ProfilePhoto`/`ImageLightbox` were added in **MS10 — Profile UI Redesign (2026-08-19)**;
 `Modal` was added in **the professional weekly availability calendar feature, M5
 (2026-08-18)** — see its entry above.
 

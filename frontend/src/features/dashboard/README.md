@@ -539,3 +539,26 @@ professional-dashboard-sidebar mockup already lists `▢ פרופיל` alongside
   failed refresh silently leaves the previous (stale but valid) `user` in place rather than
   surfacing an error to an unrelated caller. `ProfileEditorPage` is this method's first and
   (as of this milestone) only caller.
+
+## MS10 — Profile UI Redesign (2026-08-19)
+
+Full design record: `docs/architecture/product-ms10-profile-redesign-design.md` §2.1/§2.3.
+
+- **`ProfessionalProfileImageField.tsx` + `.module.css` — retired, deleted.** Its job
+  (photo display + upload trigger) is now `shared/components/ProfilePhoto.tsx`
+  (`shared/components/README.md`), used with `onUpload` wired directly to
+  `uploadProfessionalProfileImage(file)`. Upload orchestration (`isUploading`/error state)
+  moved from the old wrapper component into `ProfileEditorPage.tsx` itself, since
+  `ProfilePhoto` is upload-mechanism-agnostic (`onUpload` is just a callback, not tied to
+  any specific endpoint).
+- **`ProfileEditorPage.tsx` + `.module.css`** — photo widget swapped for `ProfilePhoto`
+  (circular, centered, one edit-in-place affordance, click-to-enlarge via `ImageLightbox`
+  — resolves the previous mismatched "photo with no affordance next to an unrelated 'Add
+  photo' control" finding). Layout became a responsive two-region design to fix the "large
+  empty area on the left" root cause (`.card { max-width: 480px }` with no width-filling,
+  under `dir="rtl"` the unused space landed on the physical left): `<900px` stays a single
+  column (`.card` max-width raised to `560px`, centered via `margin-inline: auto`);
+  `>=900px` becomes a `240px 1fr` CSS grid (`.card` max-width raised to `880px`) — the photo
+  column holds `ProfilePhoto` plus the read-only "תחום שירות" row, the form column holds
+  the existing `fullName`/`serviceArea`/`city`/`bio`/`basePrice` fields, unchanged in
+  meaning/validation.

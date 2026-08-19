@@ -1876,6 +1876,80 @@ passes on every changed file across all six milestones.
   `frontend/src/app/router.tsx`'s own header doc comment was already accurate, added by
   `pronto-coding` in the same pass as the code change — no correction needed.
 
+## MS10 — Profile UI Redesign
+
+- **Status: implemented and QA-signed-off, no known defects.** Working tree on `main`,
+  uncommitted — not pushed/merged; that remains the user's own explicit git action. Full
+  design record: `docs/architecture/product-ms10-profile-redesign-design.md`.
+- **Scope actually built**:
+  1. **Professional `/pro/profile`** (`features/dashboard/ProfileEditorPage.tsx`): the photo
+     widget is now the new `shared/components/ProfilePhoto.tsx` — circular, centered,
+     exactly one edit-in-place affordance (a small round icon button wired straight to a
+     hidden file input, no separate "Add photo" control), click-to-enlarge via the new
+     `shared/components/ImageLightbox.tsx`. The retired `ProfessionalProfileImageField.tsx`
+     (+ `.module.css`) is deleted; upload orchestration moved directly into
+     `ProfileEditorPage.tsx`. Layout became a responsive two-region design (`<900px` single
+     column, `.card` max-width `560px`; `>=900px` a `240px 1fr` photo/form CSS grid, `.card`
+     max-width `880px`), fixing the "large empty area on the left" root cause — the old
+     `.card { max-width: 480px }` had no width-filling, so under `dir="rtl"` the unused space
+     landed entirely on the physical left.
+  2. **Shared `/profile`** (`app/ProfilePage.tsx`): both roles now render `ProfilePhoto` at
+     the top; the old `justify-content: space-between` label/value row layout (label at one
+     edge, value at the other) is replaced with "label directly above value," matching
+     `Input`'s own label-above-control rhythm. A `CUSTOMER` caller additionally gets a real,
+     always-editable form (`fullName`/`phone`/`defaultAddress` via the new
+     `PUT /api/users/me`) — same "form + save button" pattern `ProfileEditorPage.tsx` already
+     uses, not a view/edit-mode toggle. A `PROFESSIONAL` caller stays fully read-only (no
+     product ask for a second editing surface for `fullName`, already editable at
+     `/pro/profile`) but now sees their own existing photo, read-only
+     (`user.professional.profileImageUrl`).
+  3. **Backend**: new `PUT /api/users/me` — `CUSTOMER`-only (new
+     `users.config.UsersWebConfig`, a route-level `RoleRequiredInterceptor` scoped to `PUT`
+     only, mirroring `reviews.config.ReviewsWebConfig`'s existing "same path, different
+     HTTP-method role gates" precedent, plus a defense-in-depth `403` re-check in
+     `UsersService.updateMe`). Updates `fullName`/`phone`/all 7 `default_*` columns via the
+     entity's already-existing setters — no new migration. `users.dto.ProfessionalInfo`
+     gained `profileImageUrl` (resolved the same way
+     `professionals.dto.ProfessionalProfileResponse.profileImageUrl` already is), so a
+     professional's own photo can be shown on the shared `/profile` page.
+- **Two ambiguities in the design doc, resolved by `pronto-lead` before `pronto-coding`
+  started**:
+  - §3.1 — "same circular, centered profile-image approach" for the customer reads as
+    styling parity only (**Reading A**), not photo upload: a `CUSTOMER` gets `ProfilePhoto`
+    rendered without `onUpload` — a non-upload initials avatar, no click-to-enlarge (nothing
+    to enlarge). No schema change, no new endpoint, no `profileImageUrl` field for a
+    customer under this milestone.
+  - §3.2 — approved amending `defaultAddress`/`phone` from `api-contract.md`'s previous
+    "read-only, no endpoint exists" language to editable via the new `PUT /api/users/me`.
+    Deliberate, not a silent reinterpretation: `orders.service_city`/`service_street`/
+    `service_house_number`/`service_apartment` are their own snapshot captured at
+    order-creation time (`V18`), decoupled from `users.default_*`, so retroactively editing a
+    saved default address has no correctness impact on any existing/in-flight order. `email`
+    stays read-only on purpose (changing it would need to re-trigger email verification, a
+    materially different, unrequested feature).
+- **Testing**: backend unit-tested (`users.service.UsersServiceTest`, new) — the
+  `CUSTOMER`-only `updateMe` happy path, the `PROFESSIONAL`-caller defense-in-depth `403`
+  (and that it doesn't touch the `users` row at all), the deleted-user `401`, and both
+  branches of the new `profileImageUrl` resolution (present/absent `profileImageKey`). No
+  new `ErrorCode` values.
+- **Frontend-only, incidental gap fix bundled into this pass**: `shared/api/users.ts`'s
+  `UserMeResponse` type gained `phone` — already present on the real backend response since
+  the professional weekly availability calendar design's M2, but missing from this frontend
+  type until now (a pre-existing frontend-only gap, not new backend scope).
+- **QA**: signed off, no known defects.
+- **Documentation updated as part of closing this pass**: `docs/architecture/api-contract.md`
+  §2.4/§2.6 (the new `PUT /api/users/me` entry, and the `defaultAddress`/`phone` amendment
+  note), `frontend/src/shared/components/README.md`, `frontend/src/features/dashboard/
+  README.md`, `frontend/src/app/README.md`, `backend/src/main/java/com/pronto/users/
+  README.md` (all kept current by `pronto-coding` along the way, confirmed accurate by this
+  closing pass — no correction needed); `frontend/src/shared/api/README.md` (a gap
+  `pronto-coding` missed — the `users.ts`/`professionals.ts` entries didn't yet reflect
+  `updateMe`/the `phone` gap-fix/the retired `ProfessionalProfileImageField.tsx` consumer
+  reference, fixed in this pass); plus this entry and `overview.md`'s new "MS10 — Profile UI
+  Redesign" §6 entry and package-table (§4) updates.
+  `docs/architecture/data-model.md` was checked and confirmed to need no update — Reading A
+  of §3.1 adds no column/migration, and no stray schema reference was found.
+
 ## Cross-cutting rules for every milestone
 
 - Planning docs (`overview.md`, this file) are updated if a milestone's actual

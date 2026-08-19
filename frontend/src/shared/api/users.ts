@@ -5,6 +5,10 @@ export interface ProfessionalInfo {
   categoryId: number;
   serviceArea: string;
   basePrice: number;
+  /** Added MS10 profile redesign §6, so a professional's own photo can be shown read-only
+   *  on the shared `/profile` page. `null` when no photo has been uploaded (mirrors
+   *  `professionals.dto.ProfessionalProfileResponse.profileImageUrl`'s own nullability). */
+  profileImageUrl: string | null;
 }
 
 /**
@@ -36,6 +40,12 @@ export interface UserMeResponse {
   emailVerified: boolean;
   professional: ProfessionalInfo | null;
   defaultAddress: UserMeDefaultAddress | null;
+  /** `null` for a `PROFESSIONAL` caller and for a `CUSTOMER` with no recorded phone
+   *  (pre-V28 accounts) — mirrors `defaultAddress`'s own nullability convention. Present on
+   *  the backend response since the professional weekly availability calendar design's M2,
+   *  but was missing from this frontend type until the MS10 profile redesign added it (a
+   *  pre-existing gap, not new backend scope — `api-contract.md` §2.4 already documented it). */
+  phone: string | null;
 }
 
 /** `GET /api/users/me` — either role, the caller's own profile. */
@@ -46,4 +56,29 @@ export function getMe(): Promise<UserMeResponse> {
 /** `DELETE /api/users/me` — either role. Soft-deletes the caller's account server-side. */
 export function deleteMe(): Promise<void> {
   return httpClient.delete<void>('/api/users/me');
+}
+
+/**
+ * Request body for `PUT /api/users/me` (MS10 profile redesign §4/§4.5, CUSTOMER-only).
+ * `defaultAddress` is always required in full (not partial-updatable) — same shape as
+ * `AddressValue`/`DefaultAddressRequest`, `city`/`street`/`houseNumber` required, the rest
+ * optional.
+ */
+export interface UpdateUserMeRequest {
+  fullName: string;
+  phone: string;
+  defaultAddress: {
+    city: string;
+    street: string;
+    houseNumber: string;
+    apartment?: string;
+    floor?: string;
+    entrance?: string;
+    addressNotes?: string;
+  };
+}
+
+/** `PUT /api/users/me` — CUSTOMER only. Returns the same shape `getMe()` does. */
+export function updateMe(payload: UpdateUserMeRequest): Promise<UserMeResponse> {
+  return httpClient.put<UserMeResponse>('/api/users/me', payload);
 }

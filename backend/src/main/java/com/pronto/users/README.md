@@ -3,7 +3,8 @@
 ## Purpose
 
 Shared `User` JPA entity/profile plus the self-service `/api/users/me` endpoints (get own
-profile, delete own account). Implements `docs/architecture/api-contract.md` §2.4–2.5.
+profile, update own profile — `CUSTOMER` only, delete own account). Implements
+`docs/architecture/api-contract.md` §2.4–2.6.
 
 ## Responsibilities
 
@@ -22,9 +23,26 @@ profile, delete own account). Implements `docs/architecture/api-contract.md` §2
   availability calendar design's M2 (2026-08-18)**: also includes a top-level `phone` field
   (not nested), mirroring `defaultAddress`'s exact nullability/placement convention — `null`
   for a `PROFESSIONAL` caller, `null` for a `CUSTOMER` with no recorded phone (a pre-`V28`
-  account), same read-only-after-registration treatment (no update endpoint). Set once at
-  registration via the new `customer.phone` field (`auth` package, `V28`'s `users.phone`
-  column). See `docs/architecture/professional-weekly-calendar-design.md` §9.1.
+  account). Set once at registration via the new `customer.phone` field (`auth` package,
+  `V28`'s `users.phone` column). **As of the MS10 profile redesign (2026-08-19)**: the
+  nested `professional` object also gained `profileImageUrl` (`null` if no photo, else a
+  presigned URL — resolved the same way `professionals.dto.ProfessionalProfileResponse
+  .profileImageUrl` already is, via `StorageService#getPresignedUrl`), and both
+  `defaultAddress`/`phone` are **no longer read-only** — see `PUT /api/users/me` below.
+- `PUT /api/users/me` — new, MS10 profile redesign (2026-08-19). `CUSTOMER` only (route-level
+  gate, `config.UsersWebConfig`, plus a defense-in-depth service-layer re-check). Updates
+  `fullName`/`phone`/all 7 `default_*` columns via `UpdateUserMeRequest` (a locally-defined
+  DTO — its nested address sub-record deliberately mirrors `auth.dto.DefaultAddressRequest`'s
+  shape/validation independently rather than reusing it directly, avoiding a new
+  `users -> auth` package dependency edge, same pattern `dto.DefaultAddressInfo` already
+  established). Load-mutate-save on a single-owner row (no migration; every setter already
+  existed). Returns the same `UserMeResponse` shape `GET /api/users/me` does. This reverses
+  the previous "read-only, no endpoint" framing for `defaultAddress`/`phone` — deliberate,
+  since `orders.service_*` is captured as its own snapshot at order-creation time, decoupled
+  from `users.default_*`, so editing a saved default address has no correctness impact on any
+  existing/in-flight order. `email` stays read-only on purpose (changing it would need to
+  re-trigger email verification, out of scope here). See
+  `docs/architecture/product-ms10-profile-redesign-design.md` §3.2/§4.
 - `DELETE /api/users/me` — soft-delete + PII anonymization (`deleted_at`, `full_name`,
   `email` per the exact rule in `api-contract.md` §2.5). Does **not** touch
   `professionals`/`issues`/`orders` rows — flagged there as a dependency later
@@ -37,13 +55,16 @@ profile, delete own account). Implements `docs/architecture/api-contract.md` §2
 | `entity.User` | JPA entity for `users`. |
 | `entity.UserRole` | `CUSTOMER` \| `PROFESSIONAL` enum, `@Enumerated(STRING)`. |
 | `repository.UserRepository` | `findByEmailIgnoreCase`, `existsByEmailIgnoreCase` (case-insensitive, matches `ux_users_email_lower`). |
-| `dto.UserMeResponse` / `dto.ProfessionalInfo` / `dto.DefaultAddressInfo` | `GET /api/users/me` response shape. `DefaultAddressInfo` is new as of the MS3/MS4 product-corrections pass. `UserMeResponse` gained a top-level `phone` field as of the professional weekly availability calendar design's M2 — no new nested DTO needed (unlike `defaultAddress`, `phone` is a plain scalar, read directly off `User.getPhone()`). |
-| `service.UsersService` | `getMe`/`deleteMe` business logic. |
-| `controller.UsersController` | `/api/users/me` GET/DELETE. |
+| `dto.UserMeResponse` / `dto.ProfessionalInfo` / `dto.DefaultAddressInfo` | `GET`/`PUT /api/users/me` response shape. `DefaultAddressInfo` is new as of the MS3/MS4 product-corrections pass. `UserMeResponse` gained a top-level `phone` field as of the professional weekly availability calendar design's M2 — no new nested DTO needed (unlike `defaultAddress`, `phone` is a plain scalar, read directly off `User.getPhone()`). `ProfessionalInfo` gained `profileImageUrl` as of MS10. |
+| `dto.UpdateUserMeRequest` | New, MS10. Request DTO for `PUT /api/users/me` — `fullName`/`phone`/`defaultAddress` (nested `Address` record, locally defined, mirrors `auth.dto.DefaultAddressRequest`'s shape without depending on it). |
+| `config.UsersWebConfig` | New, MS10. Registers a `RoleRequiredInterceptor` scoped to `PUT` only on `/api/users/me` (`CUSTOMER`-only) — mirrors `reviews.config.ReviewsWebConfig`'s same-path/different-HTTP-method-gate precedent. `GET`/`DELETE` on the same path stay ungated. |
+| `service.UsersService` | `getMe`/`updateMe`/`deleteMe` business logic. |
+| `controller.UsersController` | `/api/users/me` GET/PUT/DELETE. |
 
-Both endpoints require a valid JWT — enforced entirely by `auth`'s `SecurityConfig` +
+All three endpoints require a valid JWT — enforced entirely by `auth`'s `SecurityConfig` +
 `JwtAuthenticationFilter`; this package's controller has no auth logic of its own beyond
-reading `@AuthenticationPrincipal AuthenticatedUser` (a `common` type).
+reading `@AuthenticationPrincipal AuthenticatedUser` (a `common` type). `PUT`'s role gate is
+this package's own `config.UsersWebConfig`, not `auth`.
 
 ## Interactions with other packages
 
@@ -51,6 +72,9 @@ reading `@AuthenticationPrincipal AuthenticatedUser` (a `common` type).
   per-request JWT validation).
 - Depends on `professionals` (`ProfessionalRepository`) to populate the nested
   `professional` object in `GET /api/users/me` for professional callers.
+- **As of MS10**: depends on `storage` (`StorageService#getPresignedUrl`) to resolve
+  `professional.profileImageUrl` — same collaborator `professionals.service
+  .ProfessionalsService` already depends on for its own photo resolution.
 - Depends on `common` for the error envelope (`ApiException`/`ErrorCode`) and the
   `AuthenticatedUser` principal resolved from the JWT.
 - `issues`, `bookings`, `notifications` (later milestones) are expected to reference
@@ -99,3 +123,12 @@ a `PROFESSIONAL` registration left `users.phone = NULL`. See
 `docs/architecture/professional-weekly-calendar-design.md` §9.1 and
 `backend/.../bookings/README.md`'s M2 section for the order-visibility half of this same
 feature.
+
+**MS10 — Profile UI Redesign (2026-08-19)**: added `PUT /api/users/me`
+(`dto.UpdateUserMeRequest`, `config.UsersWebConfig`, `UsersService#updateMe`) and one new
+`ProfessionalInfo.profileImageUrl` field, both described above. Unit-tested
+(`UsersServiceTest`): the `CUSTOMER`-only update happy path, the `PROFESSIONAL`-caller
+defense-in-depth `403 FORBIDDEN` (and that it doesn't touch the `users` row at all), the
+deleted-user `401 UNAUTHORIZED` path, and both branches of the new `profileImageUrl`
+resolution (present/absent `profileImageKey`). No new migration, no new `ErrorCode`. Full
+design record: `docs/architecture/product-ms10-profile-redesign-design.md`.

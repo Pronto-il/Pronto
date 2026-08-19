@@ -36,3 +36,9 @@ export type { StatusBadgeProps } from './StatusBadge';
 
 export { Modal } from './Modal';
 export type { ModalProps, ModalSize } from './Modal';
+
+export { ProfilePhoto } from './ProfilePhoto';
+export type { ProfilePhotoProps } from './ProfilePhoto';
+
+export { ImageLightbox } from './ImageLightbox';
+export type { ImageLightboxProps } from './ImageLightbox';

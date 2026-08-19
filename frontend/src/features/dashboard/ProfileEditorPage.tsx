@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { PageHeader, Card, Input, Textarea, Button } from '../../shared/components';
+import { PageHeader, Card, Input, Textarea, Button, ProfilePhoto } from '../../shared/components';
 import { useAuth } from '../../shared/hooks';
 import {
   getMyProfessionalProfile,
   updateMyProfessionalProfile,
+  uploadProfessionalProfileImage,
   GENERIC_ERROR_MESSAGE,
   getFieldErrorMessages,
   getCategoryNameHe,
 } from '../../shared/api';
 import type { ProfessionalProfileResponse } from '../../shared/api';
-import { ProfessionalProfileImageField } from './ProfessionalProfileImageField';
 import styles from './ProfileEditorPage.module.css';
 
 /**
@@ -26,6 +26,17 @@ import styles from './ProfileEditorPage.module.css';
  * `fullName` writes to the underlying `users` row (§0 of the design doc), so a successful
  * save also calls `useAuth().refreshUser()` — otherwise the top-nav/`ProfilePage`'s cached
  * `user.fullName` would go stale until the next full page load or re-login (§6 Risk 1).
+ *
+ * **MS10 profile redesign (2026-08-19)**: the photo widget is now `shared/components`'
+ * `ProfilePhoto` (replacing the retired `ProfessionalProfileImageField.tsx` — see
+ * `docs/architecture/product-ms10-profile-redesign-design.md` §2.1/§2.3) — circular,
+ * centered, exactly one edit-in-place affordance, click-to-enlarge via `ImageLightbox`.
+ * Upload orchestration (calling `uploadProfessionalProfileImage`, tracking
+ * `isUploading`/`uploadError`) now lives directly in this page rather than in a dedicated
+ * wrapper component, since `ProfilePhoto` itself is upload-mechanism-agnostic (`onUpload`
+ * is just a callback). Layout became a responsive two-region grid (`<900px` single column,
+ * `>=900px` a `240px 1fr` grid) to fix the "large empty area on the left" root cause (§1.3)
+ * — the previous `.card { max-width: 480px }` capped width with no auto margins.
  */
 export default function ProfileEditorPage() {
   const { refreshUser } = useAuth();
@@ -44,6 +55,9 @@ export default function ProfileEditorPage() {
   const [bannerError, setBannerError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [photoUploadError, setPhotoUploadError] = useState<string | undefined>();
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +81,21 @@ export default function ProfileEditorPage() {
       cancelled = true;
     };
   }, []);
+
+  function handlePhotoUpload(file: File) {
+    setPhotoUploadError(undefined);
+    setIsUploadingPhoto(true);
+    uploadProfessionalProfileImage(file)
+      .then((result) => {
+        setProfile((prev) => (prev ? { ...prev, profileImageUrl: result.imageUrl } : prev));
+      })
+      .catch(() => {
+        setPhotoUploadError('ההעלאה נכשלה, אפשר לנסות שוב.');
+      })
+      .finally(() => {
+        setIsUploadingPhoto(false);
+      });
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -118,17 +147,21 @@ export default function ProfileEditorPage() {
 
       {!isLoading && profile && (
         <Card className={styles.card}>
-          <ProfessionalProfileImageField
-            currentImageUrl={profile.profileImageUrl}
-            onUploaded={(imageUrl) => setProfile((prev) => (prev ? { ...prev, profileImageUrl: imageUrl } : prev))}
-          />
-
-          <form className={styles.form} onSubmit={handleSubmit} noValidate>
+          <div className={styles.photoColumn}>
+            <ProfilePhoto
+              imageUrl={profile.profileImageUrl}
+              fallbackInitial={profile.fullName.charAt(0)}
+              onUpload={handlePhotoUpload}
+              isUploading={isUploadingPhoto}
+              uploadError={photoUploadError}
+            />
             <div className={styles.readonlyRow}>
               <span className={styles.readonlyLabel}>תחום שירות</span>
               <span className={styles.readonlyValue}>{getCategoryNameHe(profile.categoryId)}</span>
             </div>
+          </div>
 
+          <form className={styles.form} onSubmit={handleSubmit} noValidate>
             <Input
               label="שם מלא"
               value={fullName}

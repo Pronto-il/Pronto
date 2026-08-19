@@ -13,8 +13,8 @@ export type {
   LoginResponse,
 } from './auth';
 
-export { getMe, deleteMe } from './users';
-export type { ProfessionalInfo, UserMeResponse, UserMeDefaultAddress } from './users';
+export { getMe, deleteMe, updateMe } from './users';
+export type { ProfessionalInfo, UserMeResponse, UserMeDefaultAddress, UpdateUserMeRequest } from './users';
 
 export { CATEGORIES, getCategoryNameHe } from './categories';
 export type { Category } from './categories';

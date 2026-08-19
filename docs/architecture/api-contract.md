@@ -378,7 +378,8 @@ load, rather than only ever trusting decoded JWT claims client-side).
   "professional": {
     "categoryId": 1,
     "serviceArea": "תל אביב",
-    "basePrice": 150.00
+    "basePrice": 150.00,
+    "profileImageUrl": null
   },
   "defaultAddress": null,
   "phone": null
@@ -391,21 +392,29 @@ convention: `null` for a `PROFESSIONAL` caller (the `users.default_*` columns ar
 for that role) and also `null` for a `CUSTOMER` with no recorded default city (a pre-`V20`
 account). When present, always carries all 7 fields (`city`/`street`/`houseNumber` are
 required at registration per `V20`; `apartment`/`floor`/`entrance`/`addressNotes` may
-individually be `null`). Read-only — no endpoint exists in this API to update the default
-address; it is only ever set once, at registration (§2.1 step 3, `V20`'s
+individually be `null`). Initially set once at registration (§2.1 step 3, `V20`'s
 `default_city`/`default_street`/`default_house_number`/`default_apartment`/`default_floor`/
-`default_entrance`/`default_address_notes` columns). See
-`docs/architecture/ms3-ms4-corrections-design.md` §1.
+`default_entrance`/`default_address_notes` columns); **amended by the MS10 profile redesign
+(2026-08-19): now also editable by a `CUSTOMER` caller via `PUT /api/users/me` (§2.6)** — no
+longer read-only. See `docs/architecture/ms3-ms4-corrections-design.md` §1.
 
 **`phone`** — added by the professional weekly availability calendar design's M2
 (2026-08-18). A top-level string field (not nested), mirroring `defaultAddress`'s exact
 nullability/placement convention: `null` for a `PROFESSIONAL` caller, and `null` for a
-`CUSTOMER` with no recorded phone (a pre-`V28` account). Read-only — no endpoint exists in
-this API to update it, set once at registration (§2.1's `customer.phone` field, `V28`'s
-`users.phone` column). This is the customer viewing **their own** phone on their own account
-screen — an entirely separate, ungated concern from the order-based professional-visibility
-rule `docs/architecture/api-contract-bookings.md` §2.8 adds (`OrderDetailResponse
-.customerPhone`). See `docs/architecture/professional-weekly-calendar-design.md` §9.1.
+`CUSTOMER` with no recorded phone (a pre-`V28` account). Initially set once at registration
+(§2.1's `customer.phone` field, `V28`'s `users.phone` column); **amended by the MS10 profile
+redesign (2026-08-19): now also editable by a `CUSTOMER` caller via `PUT /api/users/me`
+(§2.6)** — no longer read-only. This is the customer viewing **their own** phone on their own
+account screen — an entirely separate, ungated concern from the order-based
+professional-visibility rule `docs/architecture/api-contract-bookings.md` §2.8 adds
+(`OrderDetailResponse.customerPhone`). See
+`docs/architecture/professional-weekly-calendar-design.md` §9.1.
+
+**`professional.profileImageUrl`** — added by the MS10 profile redesign (2026-08-19), so a
+professional caller can see their own existing photo on the shared `/profile` page (`app/
+ProfilePage.tsx`), read-only there. `null` when no photo has been uploaded, otherwise a
+presigned URL resolved the same way `GET /api/professionals/me`'s `profileImageUrl` already
+is. See `docs/architecture/product-ms10-profile-redesign-design.md` §6.
 
 **Status codes**: `200` success · `401 UNAUTHORIZED` (missing/invalid/expired token, or the
 token's user no longer exists / is soft-deleted).
@@ -451,6 +460,64 @@ intentional consequence of the token-revocation design in §3.1, not a separate
 idempotency guard.
 
 **Status codes**: `204` success · `401 UNAUTHORIZED`.
+
+---
+
+### 2.6 `PUT /api/users/me`
+
+Added by the MS10 profile redesign (2026-08-19, `docs/architecture/product-ms10-profile-
+redesign-design.md` §4). Auth required: **yes**. Role: **`CUSTOMER` only** — a `PROFESSIONAL`
+caller gets `403 FORBIDDEN` (route-level gate, `users.config.UsersWebConfig`, plus a
+defense-in-depth re-check in `UsersService.updateMe`). Does not cover the photo (customer
+profile photo upload is out of scope for this milestone — see §3.1 "Reading A" of the design
+doc).
+
+**Request body:**
+```json
+{
+  "fullName": "ישראל ישראלי",
+  "phone": "0501234567",
+  "defaultAddress": {
+    "city": "תל אביב",
+    "street": "אלנבי",
+    "houseNumber": "12",
+    "apartment": "4",
+    "floor": "2",
+    "entrance": "א",
+    "addressNotes": "קוד כניסה 1234"
+  }
+}
+```
+- `fullName`: `@NotBlank @Size(max = 150)`.
+- `phone`: `@NotBlank @Size(max = 20)` — required on every call (mirrors the existing
+  registration-time requirement for a `CUSTOMER`; there is no "leave phone unset" state).
+- `defaultAddress`: `@NotNull @Valid`, always required in full — no partial-address update.
+  `city`/`street`/`houseNumber` are `@NotBlank`; `apartment`/`floor`/`entrance`/
+  `addressNotes` are optional. Same shape/validation as `auth.dto.DefaultAddressRequest`
+  (registration), reused here as an independently-defined nested record
+  (`users.dto.UpdateUserMeRequest.Address`) to avoid a new `users -> auth` package
+  dependency. Also usable by a pre-`V20` customer (`defaultAddress: null` on `GET /me`) to
+  supply a default address for the first time — no separate "add address" endpoint needed.
+
+**Behavior:**
+1. Defense-in-depth `403 FORBIDDEN` if the caller's role isn't `CUSTOMER`.
+2. Load the caller's active `users` row.
+3. Set `full_name`, `phone`, and all 7 `default_*` columns via the entity's existing setters
+   — no new column, no new migration.
+4. Save, then return the same shape `GET /api/users/me` returns (`UserMeResponse`) — no new
+   response DTO.
+
+**Status codes**: `200` success · `400 VALIDATION_ERROR` · `401 UNAUTHORIZED` ·
+`403 FORBIDDEN`. No new `ErrorCode` values.
+
+**Amendment note**: this reverses §2.4's previous "read-only, no endpoint exists" language
+for `defaultAddress`/`phone` (see those fields' entries in §2.4, now updated). Deliberate,
+not a silent reinterpretation — `orders.service_city`/`service_street`/
+`service_house_number`/`service_apartment` are captured as their own snapshot at
+order-creation time (`V18`), decoupled from `users.default_*`, so retroactively editing a
+customer's saved default address has no correctness impact on any existing or in-flight
+order. `email` stays read-only (excluded on purpose — changing it would need to re-trigger
+email verification, a materially different, unrequested feature).
 
 ---
 

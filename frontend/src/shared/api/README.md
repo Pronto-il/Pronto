@@ -33,6 +33,17 @@ API described in `docs/architecture/overview.md` §3.2.
   either role, soft-deletes the caller's account server-side) — first and only consumer:
   `app/ProfilePage.tsx`'s account-deletion confirmation. Fully QA-verified live, no bugs
   found (see `app/README.md`'s Frontend Milestone 9 section for what was checked).
+  **As of the MS10 profile redesign (2026-08-19,
+  `docs/architecture/product-ms10-profile-redesign-design.md` §4.5)**: gained `updateMe`
+  (`PUT /api/users/me`, `CUSTOMER`-only) plus its `UpdateUserMeRequest` type
+  (`fullName`/`phone`/`defaultAddress`, the last always required in full — no partial-address
+  update); first and only consumer: `app/ProfilePage.tsx`'s new customer edit form. Also two
+  response-shape additions: `ProfessionalInfo` gained `profileImageUrl: string | null` (§6 of
+  the design doc, so a professional's own `/pro/profile` photo can be shown read-only on the
+  shared `/profile` page), and `UserMeResponse.phone` — already present on the real backend
+  response since the professional weekly availability calendar design's M2, but missing from
+  this frontend type until now (a pre-existing frontend-only gap fixed incidentally in this
+  pass, not new backend scope — `api-contract.md` §2.4 already documented `phone`).
 - `categories.ts` — static mirror of the fixed 8-category list seeded by
   `V10__seed_categories.sql` (no public categories endpoint exists yet).
 - `errorMessages.ts` — `GENERIC_ERROR_MESSAGE` fallback copy, and
@@ -162,8 +173,12 @@ API described in `docs/architecture/overview.md` §3.2.
   `getProfessionalProfile(professionalId)` (`GET /api/professionals/{id}`, either role, no
   route gate). Shapes verified directly against `professionals.dto.ProfessionalProfileResponse`/
   `UpdateProfessionalProfileRequest`/`ProfileImageUploadResponse`. Consumers:
-  `features/dashboard/ProfileEditorPage.tsx`+`ProfessionalProfileImageField.tsx` (the `/me`
-  functions) and `features/professionals/ProfessionalProfilePage.tsx` (`getProfessionalProfile`).
+  `features/dashboard/ProfileEditorPage.tsx` (the `/me` functions) and
+  `features/professionals/ProfessionalProfilePage.tsx` (`getProfessionalProfile`). **As of
+  the MS10 profile redesign (2026-08-19)**: `uploadProfessionalProfileImage`'s call site
+  moved from the now-deleted `ProfessionalProfileImageField.tsx` wrapper directly into
+  `ProfileEditorPage.tsx` itself (see `features/dashboard/README.md`'s MS10 section) — no
+  change to this file's own exports.
 
 **As of the Active Booking Floating Indicator feature**: `bookings.ts` also gained
 `expectedArrivalAt: string | null` on `OrderResponse`/`OrderDetailResponse`/`OrderSummary`

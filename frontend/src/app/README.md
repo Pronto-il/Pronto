@@ -52,8 +52,19 @@ feature modules together into the single-page app described in
 - `HomePage.tsx` — placeholder home route (unchanged content since Milestone 0; only its
   wrapping element changed from `<main>` to `<div>` since `AppLayout` now owns the page's
   `<main>` landmark).
-- `ProfilePage.tsx` — read-only display of `GET /api/users/me` + logout, behind
-  `RequireAuth`. **As of the MS3/MS4 product-corrections pass (2026-08-17)**: also displays
+- `ProfilePage.tsx` — behind `RequireAuth`, plus logout/account-deletion. **As of the MS10
+  profile redesign (2026-08-19, `docs/architecture/product-ms10-profile-redesign-design.md`
+  §2.4)**: a `CUSTOMER` caller now gets a real edit form (`fullName`/`phone`/
+  `defaultAddress` via the new `PUT /api/users/me`, always-editable — same "form + save
+  button" pattern `features/dashboard/ProfileEditorPage.tsx` uses, not a view/edit-mode
+  toggle); a `PROFESSIONAL` caller stays fully read-only (no product ask for a second
+  editing surface for `fullName`, already editable at `/pro/profile`). Both roles now show
+  `shared/components/ProfilePhoto` at the top — a `CUSTOMER` gets a non-upload initials
+  avatar (no photo field for a customer in this milestone), a `PROFESSIONAL` sees their own
+  `/pro/profile` photo read-only (`user.professional.profileImageUrl`). The old
+  `justify-content: space-between` label/value row layout was replaced with "label directly
+  above value." **Previously (pre-MS10)**: read-only display of `GET /api/users/me` +
+  logout only. **As of the MS3/MS4 product-corrections pass (2026-08-17)**: also displays
   the customer's saved default address (`user.defaultAddress`, all 7 fields, when non-null)
   — `null` for a `PROFESSIONAL` caller or a pre-`V20` `CUSTOMER` with no recorded default,
   per that field's own "absent means no such object" convention. This was a live QA fix
@@ -209,3 +220,7 @@ is the only other file changed; `app/`'s own change is limited to the one `route
 Working tree on `main`, uncommitted — not pushed/merged. QA also surfaced a separate,
 pre-existing, out-of-scope overflow bug in this package's own `AppLayout.tsx` header nav —
 see "Known issues" above; not fixed by this pass.
+
+**MS10 — Profile UI Redesign (2026-08-19)**: `ProfilePage.tsx`/`.module.css` gained a
+`CUSTOMER`-only edit form (see "Structure" above) — no router/`App.tsx` change. Full design
+record: `docs/architecture/product-ms10-profile-redesign-design.md`.

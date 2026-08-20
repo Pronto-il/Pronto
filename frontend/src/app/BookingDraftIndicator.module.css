@@ -37,3 +37,14 @@
 .dismiss:hover {
   color: var(--color-error);
 }
+
+/* Narrow mobile top bar (design doc §3.2/§9 item 7) — drop the label, keep icon + dismiss. */
+@media (max-width: 360px) {
+  .body span {
+    display: none;
+  }
+
+  .wrapper {
+    padding-inline-start: var(--space-2);
+  }
+}

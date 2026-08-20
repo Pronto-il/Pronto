@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import type { TargetAndTransition, Transition, Variants } from 'framer-motion';
 import { PageHeader } from '../../shared/components';
 import type { UploadedPhoto } from '../../shared/components';
 import { classifyIssue, getPresignedImageUrls, GENERIC_ERROR_MESSAGE } from '../../shared/api';
@@ -11,10 +13,12 @@ import type {
 } from '../../shared/api';
 import { useBookingDraft } from '../../shared/hooks';
 import type { BookingDraftPhoto } from '../../shared/hooks';
+import { stepTransition } from '../../shared/motion/variants';
 import { DescribeIssueStep } from './DescribeIssueStep';
 import { ClarifyQuestionsStep } from './ClarifyQuestionsStep';
 import { ReviewStep } from './ReviewStep';
 import { IssueSuccessStep } from './IssueSuccessStep';
+import { AiAnalyzingOverlay } from './AiAnalyzingOverlay';
 import styles from './NewIssuePage.module.css';
 
 type Step =
@@ -27,6 +31,14 @@ const STEP_LABELS: Partial<Record<Step['name'], string>> = {
   describe: 'שלב 1 מתוך 3',
   clarify: 'שלב 2 מתוך 3',
   review: 'שלב 3 מתוך 3',
+};
+
+/** Feeds `PageHeader`'s `steps` progress-bar prop (design doc §7.1) — omitted for `'success'`,
+ *  same as `STEP_LABELS` already omits a `'success'` key (arrival, not an in-progress step). */
+const STEP_NUMBERS: Partial<Record<Step['name'], number>> = {
+  describe: 1,
+  clarify: 2,
+  review: 3,
 };
 
 const ISSUE_DRAFT_STAGES = new Set(['ISSUE_DESCRIBE', 'ISSUE_CLARIFY', 'ISSUE_REVIEW']);
@@ -76,6 +88,11 @@ export default function NewIssuePage() {
   const [step, setStep] = useState<Step>({ name: 'describe' });
   const [isResuming, setIsResuming] = useState(() => canHydrate && initialDraft!.stage !== 'ISSUE_DESCRIBE');
   const [resumeError, setResumeError] = useState<string | null>(null);
+  // Design doc §2.2/§2.5 — purely local, no persistence, no draft interaction.
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  /** `1` = advancing forward, `-1` = going back — drives `stepTransition`'s slide direction. */
+  const [direction, setDirection] = useState(1);
+  const shouldReduceMotion = useReducedMotion();
   /** Non-blocking notice for when the resume-time photo re-resolution (below) came back with
    *  fewer entries than requested — backend MS9 design §12.5, "graceful, not all-or-nothing"
    *  degradation. Reuses the existing `warningBanner` styling this file already uses twice. */
@@ -175,6 +192,7 @@ export default function NewIssuePage() {
       result.status === 'QUESTIONS'
         ? { name: 'clarify', classification: result }
         : { name: 'review', classification: result };
+    setDirection(1);
     setStep(nextStep);
     updateDraft({
       stage: nextStep.name === 'clarify' ? 'ISSUE_CLARIFY' : 'ISSUE_REVIEW',
@@ -189,12 +207,14 @@ export default function NewIssuePage() {
     if (step.name === 'describe') {
       navigate('/');
     } else if (step.name !== 'success') {
+      setDirection(-1);
       setStep({ name: 'describe' });
       updateDraft({ stage: 'ISSUE_DESCRIBE', urgencyType, description, photos: toDraftPhotos(photos) });
     }
   }
 
   function handleConfirmed(issue: IssueResponse) {
+    setDirection(1);
     setStep({ name: 'success', issue });
     // Issue creation is explicitly NOT a clear-trigger (§4.5.1) — the draft moves forward into
     // the booking flow instead of being discarded.
@@ -206,9 +226,35 @@ export default function NewIssuePage() {
     });
   }
 
+  // Same neutralization pattern `RegistrationWizardShell.tsx`/`AiAnalyzingOverlay.tsx` already
+  // apply — `stepTransition`'s `animate`/`exit` targets each carry their own embedded spring
+  // `transition`, which wins over a component-level `transition` prop. Copied locally per
+  // design doc §2.5/§9.4 rather than extracted into `shared/motion` this milestone.
+  const stepVariants: Variants = useMemo(() => {
+    if (!shouldReduceMotion) {
+      return stepTransition;
+    }
+    const instant: Transition = { duration: 0 };
+    const animate = stepTransition.animate as TargetAndTransition;
+    const initial = stepTransition.initial as (custom: number) => TargetAndTransition;
+    const exit = stepTransition.exit as (custom: number) => TargetAndTransition;
+    return {
+      initial: (custom: number) => ({ ...initial(custom), transition: instant }),
+      animate: { ...animate, transition: instant },
+      exit: (custom: number) => ({ ...exit(custom), transition: instant }),
+    };
+  }, [shouldReduceMotion]);
+
+  const stepNumber = STEP_NUMBERS[step.name];
+
   return (
     <div className="focused-page">
-      <PageHeader title="יש לי תקלה" description={STEP_LABELS[step.name]} onBack={handleBack} />
+      <PageHeader
+        title="יש לי תקלה"
+        description={STEP_LABELS[step.name]}
+        onBack={step.name === 'success' ? undefined : handleBack}
+        steps={stepNumber !== undefined ? { current: stepNumber, total: 3 } : undefined}
+      />
 
       {hasConflictingDraft && !warningDismissed && step.name === 'describe' && (
         <div className={styles.warningBanner} role="alert">
@@ -219,11 +265,10 @@ export default function NewIssuePage() {
         </div>
       )}
 
-      {isResuming && (
-        <div className={styles.resumingWrapper}>
-          <p>טוענים את הבקשה שלכם…</p>
-        </div>
-      )}
+      {/* Unified with the in-session AiAnalyzingOverlay (design doc §2.4) — always mounted so
+          its own internal AnimatePresence can play the exit transition when isResuming flips
+          false, instead of the previous plain-text block disappearing instantly. */}
+      <AiAnalyzingOverlay variant="inline" show={isResuming} />
 
       {!isResuming && resumeError && step.name === 'describe' && (
         <div className={styles.warningBanner} role="alert">
@@ -237,35 +282,55 @@ export default function NewIssuePage() {
         </div>
       )}
 
-      {!isResuming && step.name === 'describe' && (
-        <DescribeIssueStep
-          description={description}
-          onDescriptionChange={setDescription}
-          photos={photos}
-          onPhotosChange={setPhotos}
-          urgencyType={urgencyType}
-          onUrgencyChange={setUrgencyType}
-          onClassified={handleClassified}
-        />
+      {!isResuming && (
+        <div className={styles.stepViewport} aria-hidden={isAnalyzing}>
+          <AnimatePresence mode="wait" custom={direction}>
+            <motion.div
+              key={step.name}
+              custom={direction}
+              variants={stepVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              {step.name === 'describe' && (
+                <DescribeIssueStep
+                  description={description}
+                  onDescriptionChange={setDescription}
+                  photos={photos}
+                  onPhotosChange={setPhotos}
+                  urgencyType={urgencyType}
+                  onUrgencyChange={setUrgencyType}
+                  onClassified={handleClassified}
+                  onAnalyzingChange={setIsAnalyzing}
+                />
+              )}
+              {step.name === 'clarify' && (
+                <ClarifyQuestionsStep
+                  description={description}
+                  photos={photos}
+                  questions={step.classification.questions}
+                  onClassified={handleClassified}
+                  onAnalyzingChange={setIsAnalyzing}
+                />
+              )}
+              {step.name === 'review' && (
+                <ReviewStep
+                  classification={step.classification}
+                  description={description}
+                  photos={photos}
+                  urgencyType={urgencyType}
+                  onConfirmed={handleConfirmed}
+                />
+              )}
+              {step.name === 'success' && (
+                <IssueSuccessStep issueId={step.issue.id} urgencyType={step.issue.urgencyType} />
+              )}
+            </motion.div>
+          </AnimatePresence>
+          <AiAnalyzingOverlay variant="overlay" show={isAnalyzing} />
+        </div>
       )}
-      {!isResuming && step.name === 'clarify' && (
-        <ClarifyQuestionsStep
-          description={description}
-          photos={photos}
-          questions={step.classification.questions}
-          onClassified={handleClassified}
-        />
-      )}
-      {!isResuming && step.name === 'review' && (
-        <ReviewStep
-          classification={step.classification}
-          description={description}
-          photos={photos}
-          urgencyType={urgencyType}
-          onConfirmed={handleConfirmed}
-        />
-      )}
-      {step.name === 'success' && <IssueSuccessStep issueId={step.issue.id} urgencyType={step.issue.urgencyType} />}
     </div>
   );
 }

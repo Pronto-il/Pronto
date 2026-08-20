@@ -7,19 +7,24 @@
   padding-inline: var(--space-6);
   border-radius: var(--radius-md);
   border: 1px solid transparent;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
   transition:
-    background-color 150ms ease,
-    border-color 150ms ease,
-    color 150ms ease,
-    opacity 150ms ease;
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-instant) var(--ease-out);
 }
 
 .button:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.28);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+
+.button:active:not(:disabled) {
+  transform: scale(var(--motion-press-scale));
 }
 
 .button:disabled {
@@ -93,7 +98,7 @@
   filter: brightness(0.85);
 }
 
-/* --- Loading spinner --- */
+/* --- Loading spinner --- keyframe lives in shared `styles/motion.css` (`pronto-spin`) */
 .spinner {
   width: 16px;
   height: 16px;
@@ -101,10 +106,4 @@
   border: 2px solid currentColor;
   border-inline-end-color: transparent;
   animation: pronto-spin 700ms linear infinite;
-}
-
-@keyframes pronto-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }

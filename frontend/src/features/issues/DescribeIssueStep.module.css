@@ -1,3 +1,24 @@
+/* Mascot + heading lead, above the Card (design doc §3.5/§3.6) — same restrained, static,
+   decorative pattern `LoginPage.tsx` established. */
+.lead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-block-end: var(--space-4);
+}
+
+.heading {
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.card {
+  padding: var(--space-6);
+}
+
 .form {
   display: flex;
   flex-direction: column;
@@ -17,39 +38,149 @@
   margin: 0;
 }
 
-.urgencyRow {
+/* --- Example prompts (design doc §3.2/§3.4) — `FilterChip`'s visual *look* reused via local
+   CSS, not the component itself: these are one-shot prefill triggers, not a `role="radiogroup"`
+   selection state. --- */
+
+.examplesRow {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
+  margin-block-start: var(--space-2);
   margin-block-end: var(--space-4);
 }
 
-.urgencyChip,
-.sosChip {
-  flex: 1;
-  min-height: 44px;
+.exampleChip {
+  height: 36px;
+  padding-inline: var(--space-4);
   border-radius: var(--radius-md);
-  border: 1px solid var(--color-border-strong);
   background: var(--color-surface);
   color: var(--color-text-secondary);
-  font-size: 14px;
-  font-weight: 600;
+  border: 1px solid var(--color-border);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
 }
 
-.urgencyChipActive {
+.exampleChip:hover {
   border-color: var(--color-primary);
-  background: var(--color-primary-light);
   color: var(--color-primary);
 }
 
-.sosChipActive {
+.exampleChip:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+/* --- Urgency section (design doc §3.3/§3.4) --- */
+
+.urgencySection {
+  margin-block-start: var(--space-2);
+}
+
+.urgencyHeading {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0 0 var(--space-3);
+}
+
+.urgencyRow {
+  display: flex;
+  gap: var(--space-3);
+  margin-block-end: var(--space-6);
+}
+
+.urgencyCard {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  text-align: start;
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.urgencyCard:hover {
+  border-color: var(--color-primary);
+}
+
+.urgencyCard:active {
+  transform: scale(0.98);
+}
+
+.urgencyIcon {
+  color: var(--color-text-secondary);
+}
+
+.urgencyTitle {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.urgencySubcopy {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--color-text-secondary);
+}
+
+.urgencyCardActive {
+  border: 2px solid var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.urgencyCardActive .urgencyIcon,
+.urgencyCardActive .urgencyTitle {
+  color: var(--color-primary);
+}
+
+.sosCard:hover {
   border-color: var(--color-sos);
+}
+
+.sosCardActive {
+  border: 2px solid var(--color-sos);
   background: var(--color-sos-bg);
+}
+
+.sosCardActive .urgencyIcon,
+.sosCardActive .urgencyTitle {
   color: var(--color-sos);
 }
 
-.sosNote {
-  margin-block-end: var(--space-4);
-  font-size: 14px;
-  color: var(--color-text-secondary);
+/* --- Mobile (design doc §3.7) --- */
+
+@media (max-width: 640px) {
+  .card {
+    padding: var(--space-4);
+  }
+
+  .examplesRow {
+    flex-wrap: wrap;
+  }
+
+  .urgencyRow {
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .exampleChip,
+  .urgencyCard {
+    transition: none;
+  }
 }

@@ -72,6 +72,105 @@ primitives, etc.) — not feature-specific components, which live under their ow
   `Modal`'s form-dialog-shaped API (see `docs/architecture/product-ms10-profile-redesign-
   design.md` §1.7/§2.2 for the full reasoning). First (and, as of MS10, only) consumer:
   `ProfilePhoto`.
+- `Skeleton` — shared loading placeholder (MS1 — Visual Foundation & Motion System,
+  2026-08-20). `variant: 'text'|'rect'|'circle'` (default `'rect'`); `lines` (default `1`,
+  `text` variant only — renders that many shimmer lines, the last one shortened when
+  `lines > 1`); `radius` overrides the variant's default border-radius (`rect` →
+  `--radius-lg`, `circle` → `50%`, `text` line → `--radius-sm`). Deliberately has no
+  width/height prop — callers size the placeholder to match real content via
+  `className`/`style`, same as the two ad hoc blocks it replaces. Uses the shared
+  `pronto-skeleton` shimmer keyframe from `styles/motion.css`. Replaces the duplicated
+  inline `.skeleton` blocks in `ProfessionalList.module.css` and
+  `StartTimePicker.module.css`.
+- `Badge` — generic status/label pill, per DESIGN_SYSTEM.md §33 (covers the "מומלץ עבורך"
+  recommended-badge treatment on its own) and backs the refactored `StatusBadge` below.
+  `tone: 'neutral'|'primary'|'success'|'warning'|'error'|'info'` (default `'neutral'`);
+  `size: 'sm'|'md'` (default `'md'`, an exact visual match for `StatusBadge`'s previous
+  standalone sizing — 28px height, `--space-3` inline padding, `--font-size-small`
+  semibold); optional `icon`.
+- `FilterChip` / `FilterChipGroup` — single-select filter chips, per DESIGN_SYSTEM.md §34.
+  `FilterChipGroup` renders `role="radiogroup"` wrapping `FilterChip`s (`role="radio"`,
+  a real `<button>` so native Tab focus + Enter/Space activation work with no extra
+  wiring). Deliberately **not** a roving-tabindex/arrow-key widget — every chip is
+  individually tabbable, per the MS1 plan's corrected scope decision (the current/near-term
+  consumer, `ProfessionalList`'s sort chips, doesn't need arrow-key nav). Each chip gets a
+  44px touch target via inset expansion (`::after`) while staying visually compact (36px),
+  satisfying DESIGN_SYSTEM §73's minimum touch target without changing the chip's look.
+  Replaces `ProfessionalList.module.css`'s inline `.chip`/`.chipActive`.
+- `EmptyState` — shared empty/error-state surface, covering both DESIGN_SYSTEM.md §60
+  (empty) and §61 (error) with one component switched by `tone: 'neutral'|'error'` (default
+  `'neutral'`; `'error'` adds `role="alert"` and swaps the default icon). `icon` overrides
+  the tone's default icon (`Inbox`/`AlertTriangle` from `lucide-react`); `title`/
+  `description`/`action` (e.g. a `<Button>`). No card/border wrapper — plain surface, per
+  the project's anti-generic-SaaS-container rule. Also accepts `mascotState`, a
+  forward-compat placeholder typed loosely as `string` (not `MascotState`, to avoid a
+  build-time dependency on `Mascot.tsx` from before it existed) — **currently accepted but
+  not rendered**; a follow-up task should tighten its type and render `<Mascot state=
+  {mascotState} ... />` in place of the default icon. Consolidates 4 duplicated empty-state
+  blocks + 5 duplicated error-copy blocks found across the codebase; MS1 only creates the
+  component, migrating the 9 pages that had ad hoc copies is later-milestone work.
+- `Mascot` — Pronto's brand mascot, state-driven rather than decorative (MS1). `state:
+  'idle'|'running'|'thinking'|'searching'|'found'|'success'`; `size: 'sm'|'md'|'lg'|'xl'`
+  (default `'md'`, explicit width/height per size to avoid layout shift); `label` (omit for
+  a fully decorative mascot — `aria-hidden`, `alt=""` — supply to make it a meaningful
+  image, used as `alt` text); `loop` (default `true` for `running`/`searching`/`thinking`,
+  `false` renders the pose statically instead; has no effect on `idle`, always static, or
+  `found`/`success`, always one-shot). **4 physical poses back 6 semantic states** — a
+  known, documented limitation, not a bug: `idle`/`thinking`/`found` all render the
+  `pointing` pose, differentiated only by motion treatment and surrounding page copy, not
+  distinct artwork; `running`→`running-wrench`, `searching`→`running-screwdriver` (visually
+  distinguishes "coming to you" from "looking for someone"); `success`→`success`. Motion is
+  CSS for the looping states (`running`/`searching` bounce + trailing 3-bar motion-lines,
+  `thinking` subtle pulse, all in `Mascot.module.css`) and one-shot `framer-motion` for
+  `found`'s slide-in and `success`'s pop (`shared/motion/variants.ts`'s
+  `mascotSlideIn`/`successPop`). RTL-aware motion-lines placement. Sourced from the 4
+  transparent PNGs in `frontend/src/assets/mascot/` — see `frontend/tools/mascot/README.md`
+  for how those are produced from the original brand renders. First consumer: `app/
+  HomePage.tsx` (see that package's README).
+- `ToastViewport` — portaled toast stack (`createPortal` into `document.body`, mirroring
+  `Modal.tsx`'s own portal pattern). No props — reads the live stack straight from
+  `ToastProvider`'s context via `useToast()` (see `shared/hooks/README.md`'s Toast triad
+  entry); renders `null` whenever the stack is empty, so mounting it before any
+  `showToast()` caller exists (MS1's own state) has zero visible effect. Docks to the
+  viewport's **top-center** (not the bottom corner `ActiveOrderIndicator` FAB occupies) at
+  `z-index: var(--z-toast)` (1100, above `Modal`'s `--z-overlay` 1000, so a toast triggered
+  from within a modal stays visible). `role="status"`/`aria-live="polite"` on the stack
+  container; enter/exit via `AnimatePresence` + the shared `toastTransition` variant,
+  respecting OS-level reduced motion via `framer-motion`'s own `useReducedMotion()`.
+
+**MS1 upgrades to existing primitives (2026-08-20, all additive/opt-in — zero behavior
+change when the new props are omitted):**
+- `Card` gained `interactive?: boolean` (default `false`) — only when `true` does the card
+  get CSS hover (border-strong + `--shadow-elevated`, desktop-only via
+  `@media (hover: hover) and (pointer: fine)`) and a `scale(0.99)` press. Plain/informational
+  `Card` usage (most existing call sites) is visually unchanged.
+- `Button` gained a CSS `:active` press-scale (`--motion-press-scale`); its transitions were
+  tokenized onto the new duration/ease tokens. No API change.
+- `PageHeader` gained `steps?: { current: number; total: number }` (1-indexed `current`),
+  rendering a thin animated `role="progressbar"` track below the title/description — closes
+  a DESIGN_SYSTEM §38 gap (previously text-only, e.g. "שלב 1 מתוך 3" with no visual bar).
+  Omitting `steps` keeps the exact previous text-only behavior. The back button's hit area
+  was also bumped to a real 44px `min-height` (was ~26px, a §73 violation).
+- `Input`/`Textarea`/`Select`/`Checkbox` got a token pass only (focus transition
+  duration/ease onto the new `--duration-*`/`--ease-*` tokens, a consolidated
+  `--color-focus-ring` replacing three duplicated hardcoded `rgba(...)` values) — no API
+  change.
+- `Modal` gained `framer-motion` entrance/exit (`AnimatePresence` + the shared
+  `modalTransition` variant — scale+fade on desktop, slide-up on mobile, selected via a
+  `matchMedia` read of the same `640px` breakpoint its CSS already uses; instant when
+  `useReducedMotion()` is on), plus a focus trap (`Tab`/`Shift+Tab` cycle within the panel's
+  focusable elements while open) and focus-restore-on-close (a real, previously-missing
+  a11y gap — the one live consumer, `CalendarBlockModal`, was re-verified working). Also
+  gained `mobilePresentation?: 'sheet' | 'dialog'` (default `'sheet'`, preserving today's
+  actual behavior for the existing consumer) — `'dialog'` opts a future consumer out of the
+  bottom-sheet treatment and keeps a centered dialog (with subtle motion) even on narrow
+  viewports. Shadow/z-index moved onto `--shadow-modal`/`--z-overlay`.
+- `StatusBadge` was refactored to render `Badge` internally (`size="md"`, tone mapping
+  unchanged: `PENDING`→info, `CONFIRMED`→primary, `ON_THE_WAY`→info, `COMPLETED`→success,
+  `CANCELLED`/`EXPIRED`→neutral, `REJECTED`→error) — public API/output unchanged (still
+  just `{ status: OrderStatus }`). Also gained a one-shot CSS fade whenever `status`
+  changes (re-keyed wrapper `<span>`, not a `framer-motion` variant, since it only needs to
+  play once per status change, not coordinate mount/unmount).
 
 Each CSS-module file (`ComponentName.module.css`) sits next to its component.
 
@@ -82,7 +181,10 @@ registration/login/verify screens. Extended as later milestones need new shared 
 `StatusBadge` was added in **Frontend Milestone 3 — Standard booking flow (2026-08-16)**;
 `ProfilePhoto`/`ImageLightbox` were added in **MS10 — Profile UI Redesign (2026-08-19)**;
 `Modal` was added in **the professional weekly availability calendar feature, M5
-(2026-08-18)** — see its entry above.
+(2026-08-18)** — see its entry above. `Skeleton`/`Badge`/`FilterChip`/`FilterChipGroup`/
+`EmptyState`/`Mascot`/`ToastViewport` were added, and `Card`/`Button`/`PageHeader`/
+`Input`-family/`Modal`/`StatusBadge` were upgraded, in **MS1 — Visual Foundation & Motion
+System (2026-08-20)** — see their entries above.
 
 **MS3/MS4 product-corrections pass (2026-08-17)**: `PhotoUploader`'s `UploadedPhoto` shape
 gained an `imageUrl` field (`result.imageUrl` from `POST /api/storage/images`'s response,
@@ -111,3 +213,15 @@ render loop shows the same spinner/`uploadingOverlay` markup already used for a 
 upload), and a new optional `UploadedPhoto.error` string (set only when a resume-time batch
 re-resolution fails outright, reusing the existing `itemError` treatment — a distinct case
 from a live upload failure).
+
+**MS1 — Visual Foundation & Motion System (2026-08-20)**: 7 new shared primitives
+(`Skeleton`, `Badge`, `FilterChip`/`FilterChipGroup`, `EmptyState`, `Mascot`,
+`ToastViewport`) and additive upgrades to 9 existing ones (`Card`, `Button`, `PageHeader`,
+`Input`, `Textarea`, `Select`, `Checkbox`, `Modal`, `StatusBadge`) — see each entry above for
+its exact API. All new/upgraded components are exported from `index.ts`. This milestone
+also fixed `app/HomePage.tsx`'s previously-broken mascot image (a 404'd
+`/assets/pronto-runner-wrench.png` reference) by wiring in the new `Mascot` component —
+see `app/README.md`'s MS1 entry. No product page beyond that one was redesigned; MS1 is
+foundation-only — a dev-only `/__design` showcase route (`app/DesignSystemPage.tsx`,
+gated behind `import.meta.env.DEV`) demonstrates every new/upgraded primitive from this
+milestone; see `app/README.md`'s MS1 entry for that route's own detail.

@@ -1,0 +1,48 @@
+.chip {
+  position: relative;
+  flex-shrink: 0;
+  height: 36px;
+  padding-inline: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+/*
+ * 44px touch target via inset expansion, per DESIGN_SYSTEM.md §73 — the visible chip stays
+ * 36px tall (matching §34's compact chip look); this invisible pseudo-element extends the
+ * clickable/touchable hit area to 44px (36px + 4px + 4px) without changing what's drawn.
+ */
+.chip::after {
+  content: '';
+  position: absolute;
+  inset-block: -4px;
+  inset-inline: -4px;
+}
+
+.chip:hover {
+  border-color: var(--color-border-strong);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.selected {
+  background: var(--color-dark);
+  color: #ffffff;
+  border-color: var(--color-dark);
+}
+
+.selected:hover {
+  border-color: var(--color-dark);
+}

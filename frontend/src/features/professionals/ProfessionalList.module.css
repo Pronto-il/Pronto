@@ -10,57 +10,15 @@
   color: var(--color-text-primary);
 }
 
-.chips {
-  display: flex;
-  gap: var(--space-2);
-  overflow-x: auto;
-}
-
-.chip {
-  flex-shrink: 0;
-  height: 36px;
-  padding-inline: var(--space-4);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  border: 1px solid var(--color-border);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.chipActive {
-  background: var(--color-dark);
-  color: #ffffff;
-  border-color: var(--color-dark);
-}
-
 .list {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
 }
 
+/* Sizing only — shimmer/background/radius come from the shared `Skeleton` component. */
 .skeleton {
   height: 168px;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(
-    90deg,
-    var(--color-surface-secondary) 25%,
-    var(--color-border) 37%,
-    var(--color-surface-secondary) 63%
-  );
-  background-size: 400% 100%;
-  animation: pronto-skeleton 1.4s ease infinite;
-}
-
-@keyframes pronto-skeleton {
-  0% {
-    background-position: 100% 50%;
-  }
-  100% {
-    background-position: 0 50%;
-  }
 }
 
 .empty {

@@ -16,13 +16,15 @@ export interface ReviewStepProps {
 const CATEGORY_OPTIONS = CATEGORIES.map((category) => ({ value: String(category.id), label: category.nameHe }));
 
 /**
- * AI Review screen. The suggestion is presented as a simple category confirmation, not as a
- * technical prediction (FRONTEND_AGENT.md §14 / DESIGN_SYSTEM.md §40) — `classification`'s
- * `explanation`/`confidence` fields are the AI's internal reasoning (useful for
- * debugging/logging, per api-contract-issues.md §2.1) and must never be rendered to the
- * customer; only `suggestedCategoryId`/`suggestedCategoryCode` drive this screen. Confirming
- * here is the call that actually persists the issue (`POST /api/issues`,
- * api-contract-issues.md §2.2).
+ * AI Review screen — a diagnosis-style category confirmation, not a technical prediction
+ * (FRONTEND_AGENT.md §14 / DESIGN_SYSTEM.md §40). `classification`'s `explanation`/
+ * `confidence` fields are the AI's internal reasoning (useful for debugging/logging, per
+ * api-contract-issues.md §2.1) and must **never** be rendered to the customer — a deliberate,
+ * backend-verified decision (design doc §5.3): in real (OpenAI) mode `explanation` is
+ * English-only prose (contradicts Pronto's Hebrew-only v1.0 scope); in mock mode it literally
+ * names the internal keyword-matching mechanism. Only `suggestedCategoryId`/
+ * `suggestedCategoryCode` drive this screen. Confirming here is the call that actually
+ * persists the issue (`POST /api/issues`, api-contract-issues.md §2.2).
  */
 export function ReviewStep({ classification, description, photos, urgencyType, onConfirmed }: ReviewStepProps) {
   const [categoryId, setCategoryId] = useState(String(classification.suggestedCategoryId ?? ''));
@@ -48,6 +50,8 @@ export function ReviewStep({ classification, description, photos, urgencyType, o
     }
   }
 
+  const categoryName = getCategoryNameHe(Number(categoryId));
+
   return (
     <div className={styles.wrapper}>
       {bannerError && (
@@ -56,7 +60,7 @@ export function ReviewStep({ classification, description, photos, urgencyType, o
         </div>
       )}
       <Card className={styles.card}>
-        <p className={styles.eyebrow}>מצאנו את בעל המקצוע המתאים</p>
+        <p className={styles.eyebrow}>האבחון שלנו</p>
         {isChangingCategory ? (
           <Select
             label="תחום שירות"
@@ -65,7 +69,13 @@ export function ReviewStep({ classification, description, photos, urgencyType, o
             options={CATEGORY_OPTIONS}
           />
         ) : (
-          <h2 className={styles.categoryName}>{getCategoryNameHe(Number(categoryId))}</h2>
+          <>
+            <div className={styles.headlineRow}>
+              <h2 className={styles.headline}>נראה שמדובר בתקלה ב־{categoryName}</h2>
+              {urgencyType === 'SOS' && <span className={styles.sosBadge}>דחוף — SOS</span>}
+            </div>
+            <p className={styles.reassurance}>כך נמצא לך את בעל המקצוע הכי מתאים.</p>
+          </>
         )}
         {!isChangingCategory && (
           <button type="button" className={styles.changeLink} onClick={() => setIsChangingCategory(true)}>

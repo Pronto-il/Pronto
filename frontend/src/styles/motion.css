@@ -1,0 +1,74 @@
+/*
+ * CSS-tier motion layer. Houses only shared keyframes + utilities for simple
+ * micro-interactions (hover, focus, press feedback, skeleton shimmer, spinners).
+ * Meaningful product motion (page/step transitions, modal/toast mount-exit, mascot
+ * movement, list entrance stagger, success celebration) belongs in
+ * `shared/motion/variants.ts` (framer-motion) instead — see `shared/motion/README.md`
+ * and this folder's own `README.md` for the full split.
+ *
+ * Imported once from `main.tsx`, after `index.css`.
+ */
+
+/* --- Shared keyframes --- */
+
+/*
+ * Spin, used by loading spinners. Consolidates the previously-duplicated
+ * `pronto-spin` (Button.module.css) and `photo-uploader-spin` (PhotoUploader.module.css)
+ * — both now reference this single global keyframe by name.
+ */
+@keyframes pronto-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+ * Skeleton shimmer, used by loading placeholders. Consolidates the previously-duplicated
+ * copies in ProfessionalList.module.css and StartTimePicker.module.css.
+ */
+@keyframes pronto-skeleton {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+/* --- List entrance utility --- */
+
+/*
+ * Simple CSS-driven list entrance (opacity/translateY rise) for cases where
+ * framer-motion would be overkill (e.g. skeleton placeholders). Apply the class and
+ * set `--motion-index` (0-based) per item to stagger the entrance.
+ */
+.motion-list-item {
+  animation: pronto-list-item-rise var(--duration-moderate) var(--ease-out) both;
+  animation-delay: calc(var(--motion-index, 0) * 40ms);
+}
+
+@keyframes pronto-list-item-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/*
+ * Global reduced-motion compliance: neutralize all CSS animation/transition duration
+ * rather than disabling them entirely. `animation-duration: 1ms` (not `0ms`/`none`) is
+ * used deliberately — some consumers listen for `animationend`, which `none` would
+ * silently suppress, potentially leaving UI stuck mid-state.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}

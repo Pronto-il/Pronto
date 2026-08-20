@@ -16,6 +16,9 @@ Reusable React hooks shared across features.
   Indicator feature (2026-08-17), see below.
 - Notification-bell polling hook (`useNotifications`) — shipped in Frontend Milestone 5
   (2026-08-18), see below.
+- Toast provider/hook triad (`ToastProvider`/`useToast`) — shipped in MS1 (Visual
+  Foundation & Motion System, 2026-08-20), mounted inert (no call sites yet) for MS2+ to
+  use, see below.
 
 ## Structure
 - `authContext.ts` — the `AuthContext` (React context) + `AuthContextValue` type. Kept
@@ -153,6 +156,27 @@ Reusable React hooks shared across features.
   to keep in sync. Both mutations update local state immediately and fire their `POST` in
   the background without awaiting it or forcing a `refetch()` afterwards — a failed request
   just self-corrects on the next poll tick (no error toast, low-stakes action).
+- `toastContext.ts` / `ToastProvider.tsx` / `useToast.ts` — **new, MS1 (Visual Foundation &
+  Motion System, 2026-08-20).** Same structural triad as `authContext.ts`/`AuthProvider.tsx`/
+  `useAuth.ts` (context + non-component values kept in their own file for the Fast-Refresh
+  lint reason noted above; provider owns state; hook throws outside the provider). Toast
+  tone vocabulary is a deliberately-trimmed subset of `Badge`'s `BadgeTone`
+  (`shared/components/Badge.tsx`) — `'neutral'|'success'|'error'|'info'` only; `'primary'`/
+  `'warning'` are dropped since no MS1+ toast consumer needs them yet (per the MS1 plan's
+  scope-discipline decision — extend from `BadgeTone` if/when a real consumer needs one, not
+  speculatively). `useToast()` exposes `{ toasts, showToast, dismissToast }`:
+  `showToast(message: string, options?: { tone?: ToastTone; duration?: number }): string`
+  enqueues a toast (default tone `'neutral'`, default `duration` `4000`ms) and returns its
+  `id`; `dismissToast(id: string): void` dismisses a toast before its auto-dismiss timer
+  fires (e.g. a manual close button). The stack is capped at `MAX_TOASTS = 3` — enqueuing a
+  4th dismisses the oldest immediately (oldest evicted first) rather than dropping the
+  newest. `ToastProvider` is mounted near the root in `App.tsx` (see `app/README.md`),
+  paired with `shared/components/ToastViewport.tsx` for the actual render (portaled,
+  `role="status"`/`aria-live="polite"`, `framer-motion` enter/exit — see
+  `shared/components/README.md`'s `ToastViewport` entry). **Mounted inert in MS1**: no
+  `showToast()` call sites exist yet anywhere in the app (the `/__design` dev showcase route
+  is the only current caller, for demonstration) — this is plumbing for MS2+ features (e.g.
+  booking-flow success/error feedback) to consume.
 
 ## Status
 `AuthProvider`/`useAuth` implemented in **Milestone 1 — Auth & user management**
@@ -208,3 +232,10 @@ updated to match (`parsed.version !== 2`); no other change to this file or
 `useBookingDraft.ts`. Resume-hydration logic itself lives in
 `features/booking/BookingFlowPage.tsx`, not here — see that package's README for the M6
 record and live-verification detail.
+
+**MS1 — Visual Foundation & Motion System (2026-08-20)**: `toastContext.ts`/
+`ToastProvider.tsx`/`useToast.ts` are new (see "Structure" above). `ToastProvider` is wired
+into `App.tsx` near the other providers, paired with `shared/components/ToastViewport.tsx`
+for rendering (see `app/README.md`'s MS1 entry for exact nesting). No other hook in this
+package changed for MS1 — the milestone's `Card`/`Button`/`Modal`/etc. work lives entirely
+in `shared/components/`.

@@ -1,0 +1,110 @@
+/*
+ * ToastViewport — top-center toast stack. Docked to the top of the viewport (not a screen
+ * corner) so it structurally cannot overlap `ActiveOrderIndicator`'s bottom-end FAB — see
+ * `ToastViewport.tsx`'s doc comment for the full reasoning.
+ */
+
+.viewport {
+  position: fixed;
+  top: var(--space-4);
+  inset-inline: 0;
+  z-index: var(--z-toast);
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+
+  /* Lets clicks fall through the empty space around toasts; individual toasts opt back in. */
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+
+  width: min(360px, calc(100vw - var(--space-8)));
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-2);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-modal);
+  border-inline-start: 3px solid var(--color-border-strong);
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.message {
+  flex: 1;
+  margin: 0;
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  line-height: var(--line-height-small);
+}
+
+.closeButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.closeButton:hover {
+  background: var(--color-surface-secondary);
+  color: var(--color-text-primary);
+}
+
+/* --- Tones (border accent + icon color only — surface stays neutral white per the brief's
+   anti-generic-SaaS-container rule, this isn't a solid-color banner) --- */
+
+.neutral {
+  border-inline-start-color: var(--color-border-strong);
+}
+
+.success {
+  border-inline-start-color: var(--color-success);
+}
+
+.success .icon {
+  color: var(--color-success);
+}
+
+.error {
+  border-inline-start-color: var(--color-error);
+}
+
+.error .icon {
+  color: var(--color-error);
+}
+
+.info {
+  border-inline-start-color: var(--color-info);
+}
+
+.info .icon {
+  color: var(--color-info);
+}
+
+@media (max-width: 640px) {
+  .viewport {
+    top: var(--space-3);
+  }
+
+  .toast {
+    width: calc(100vw - var(--space-6));
+  }
+}

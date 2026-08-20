@@ -27,9 +27,113 @@
   font-weight: 600;
 }
 
+.loginMascot {
+  display: flex;
+  justify-content: center;
+  margin-block-end: var(--space-2);
+}
+
+@media (max-height: 700px) {
+  .loginMascot {
+    display: none;
+  }
+}
+
+.footerLink {
+  margin-block-start: var(--space-6);
+  text-align: center;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.footerLink a {
+  color: var(--color-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.footerLink a:hover {
+  text-decoration: underline;
+}
+
 .sectionTitle {
   font-size: 16px;
   font-weight: 600;
   color: var(--color-text-primary);
   margin-block: var(--space-4) var(--space-2);
+}
+
+/* Read-only confirmation-stage summary (customer wizard stage 3 / professional wizard stage 4). */
+.summaryList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-secondary);
+}
+
+.summaryRow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.summaryRow dt {
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.summaryRow dd {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-weight: 600;
+  text-align: end;
+}
+
+/* Professional wizard stage 2's honest, non-interactive sub-service preview. */
+.subServicePreview {
+  margin-block-start: var(--space-2);
+}
+
+.subServiceNote {
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.subServiceChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Professional wizard stage 4's honest "what's next" block — informational only, no controls. */
+.nextSteps {
+  margin-block-start: var(--space-4);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-primary-light);
+}
+
+.nextStepsTitle {
+  margin: 0 0 var(--space-2);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.nextStepsList {
+  margin: 0;
+  padding-inline-start: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--color-text-secondary);
 }

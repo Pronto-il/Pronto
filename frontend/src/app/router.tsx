@@ -27,6 +27,8 @@ import {
 } from '../features/dashboard';
 import { ProfessionalProfilePage } from '../features/professionals';
 import { FavoritesPage } from '../features/favorites';
+import DesignSystemPage from './DesignSystemPage';
+import type { RouteObject } from 'react-router-dom';
 
 /**
  * Root route configuration. Feature routes (auth, issues, booking, etc.) are added here
@@ -58,8 +60,20 @@ import { FavoritesPage } from '../features/favorites';
  * (`IncomingRequestsPage`) moved to its own path, `/pro/requests`, matching its "בקשות
  * חדשות" nav label the same way `/pro/jobs`/`/pro/profile` already match theirs.
  * `/pro/jobs`, `/pro/availability`, and `/pro/profile` are otherwise unchanged.
+ *
+ * **MS1 dev-only showcase route (2026-08-20)**: `/__design` (`DesignSystemPage`) is a
+ * top-level sibling of the `AppLayout` tree below (not nested under it, so it needs no app
+ * chrome/auth) — see MS1 plan Architecture §9. Gated behind `import.meta.env.DEV` via the
+ * conditional spread `designSystemRoutes` so it's absent from the route table (and, per Vite's
+ * dead-code elimination on the statically-replaced `import.meta.env.DEV` literal, from the
+ * production bundle) entirely in production builds.
  */
+const designSystemRoutes: RouteObject[] = import.meta.env.DEV
+  ? [{ path: '/__design', element: <DesignSystemPage /> }]
+  : [];
+
 export const router = createBrowserRouter([
+  ...designSystemRoutes,
   {
     path: '/',
     element: <AppLayout />,

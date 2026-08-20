@@ -1,0 +1,198 @@
+/*
+ * Layout-only styles for the dev-only `/__design` showcase route (`DesignSystemPage.tsx`).
+ * Internal tool, not a product page — sectioning/spacing only, no attempt at visual polish
+ * beyond making each primitive/state easy to tell apart. See that file's module doc for the
+ * MS1 plan reference (Architecture §9).
+ */
+
+.page {
+  padding-block: var(--space-8) var(--space-16);
+}
+
+.pageTitle {
+  font-size: var(--font-size-display);
+  line-height: var(--line-height-display);
+  font-weight: var(--font-weight-bold);
+  margin-bottom: var(--space-2);
+}
+
+.pageSubtitle {
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-10);
+}
+
+.section {
+  padding-block: var(--space-8);
+  border-top: 1px solid var(--color-border);
+}
+
+.section:first-of-type {
+  border-top: none;
+}
+
+.sectionTitle {
+  font-size: var(--font-size-h2);
+  line-height: var(--line-height-h2);
+  font-weight: var(--font-weight-semibold);
+  margin-bottom: var(--space-1);
+}
+
+.sectionDescription {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+  margin-bottom: var(--space-5);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-5);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-4);
+}
+
+.tokenSample {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding-block: var(--space-2);
+  border-bottom: 1px dashed var(--color-border);
+}
+
+.tokenLabel {
+  flex-shrink: 0;
+  width: 220px;
+  font-family: monospace;
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+}
+
+.tokenValue {
+  color: var(--color-text-primary);
+}
+
+.shadowSwatch {
+  width: 200px;
+  height: 120px;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: monospace;
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+  text-align: center;
+  padding: var(--space-3);
+}
+
+.componentBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.componentBlockLabel {
+  font-family: monospace;
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+}
+
+.cardDemo {
+  width: 260px;
+  padding: var(--space-4);
+}
+
+.skeletonRect {
+  width: 220px;
+  height: 80px;
+}
+
+.skeletonCircle {
+  width: 64px;
+  height: 64px;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-5);
+  max-width: 900px;
+}
+
+.mascotBackgroundGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-5);
+}
+
+.mascotBackground {
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.mascotBackgroundLabel {
+  font-family: monospace;
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+}
+
+.mascotBgWhite {
+  background: #ffffff;
+  border: 1px solid var(--color-border);
+}
+
+.mascotBgApp {
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+}
+
+.mascotBgTint {
+  background: var(--color-primary-light);
+}
+
+.mascotStateGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.mascotStateLabel {
+  font-family: monospace;
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+}
+
+.mascotSizeRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.mascotSizeCell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.mascotSizeCellLabel {
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+}

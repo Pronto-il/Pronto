@@ -5,8 +5,8 @@
 }
 
 .label {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
   margin-block-end: var(--space-2);
   color: var(--color-text-primary);
 }
@@ -22,7 +22,10 @@
   padding-inline: 14px;
   background: var(--color-surface);
   color: var(--color-text-primary);
-  font-size: 16px;
+  font-size: var(--font-size-body);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .input::placeholder {
@@ -32,7 +35,7 @@
 .input:focus {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+  box-shadow: 0 0 0 3px var(--color-focus-ring-subtle);
 }
 
 .input:disabled {
@@ -51,12 +54,12 @@
 
 .errorMessage {
   margin-block-start: var(--space-2);
-  font-size: 14px;
+  font-size: var(--font-size-small);
   color: var(--color-error);
 }
 
 .hint {
   margin-block-start: var(--space-2);
-  font-size: 14px;
+  font-size: var(--font-size-small);
   color: var(--color-text-muted);
 }

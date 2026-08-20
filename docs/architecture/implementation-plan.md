@@ -2073,6 +2073,267 @@ passes on every changed file across all six milestones.
   doc self-flags as still current), plus this entry and `overview.md`'s new MS12 changelog
   bullet and `features/dashboard` package-table (§4) update.
 
+## MS2 — Home + Authentication Experience
+
+- **Status: implemented and QA-verified live, two real bugs found and fixed as part of
+  this same pass (both re-verified) — zero known open bugs at final sign-off.** Working
+  tree on `frontend/MS1-visual-foundation`, uncommitted — not pushed/merged; that remains
+  the user's own explicit git action. Full design record:
+  `docs/architecture/frontend-ms2-home-auth-design.md`. Builds directly on **MS1 — Visual
+  Foundation & Motion System** (tokens, `Button`/`Card`/`Input`/`Modal`/`PageHeader`/
+  `Mascot`, `framer-motion` variants), which shipped earlier on the same branch — MS1
+  itself has no dedicated entry in this file or in `overview.md`'s §6 changelog (a
+  pre-existing documentation gap, not introduced by this pass; flagged to `pronto-lead`
+  rather than backfilled here, since accurately reconstructing it is outside this pass's
+  scope — see each touched package's own `README.md` MS1 section instead, e.g.
+  `frontend/src/shared/components/README.md`).
+- **Scope actually built** (frontend-only, no backend change):
+  1. **Home Hero** (`app/HomePage.tsx`/`.module.css`): an authenticated greeting line
+     ("שלום, {first name} 👋"), the CTA panel rebuilt as a real horizontal flex row
+     composing `Mascot` as a genuine layout child on the inline-end side (replacing MS1's
+     placeholder absolutely-positioned overlay), and a new 3-item trust-indicator row
+     (`ShieldCheck`/`Tag`/`Activity`, local JSX, single consumer — no new shared
+     component), worded to describe real-time *status* notifications rather than
+     live/GPS tracking (a hard v1.0 exclusion). Mobile stacks the CTA panel vertically and
+     shrinks the mascot via CSS custom-property overrides, not a JS viewport check.
+     Deliberately does **not** build `DESIGN_SYSTEM.md` §35's "Popular services" section
+     (needs new product decisions out of scope) or a dedicated "Active booking" section
+     (judged already served, product-wide, by the existing `ActiveOrderIndicator`).
+  2. **Header/nav** (`app/AppLayout.tsx`/`.module.css`, new `app/BottomNav.tsx`/
+     `.module.css`): desktop got a bigger brand (header `64px`→`72px`) and a demoted,
+     icon-only logout button (`aria-label`/`title` only, no visible label). Mobile got a
+     slimmed-down top bar (role-conditional links/profile link dropped from it entirely)
+     plus a new fixed bottom nav — `CUSTOMER`-only, authenticated-only (same gating
+     condition as `ActiveOrderIndicator`), 4 items (בית/הזמנות/מועדפים/פרופיל) per
+     `DESIGN_SYSTEM.md` §50's explicit, binding list — **not** the milestone dispatch's
+     own non-binding "Notifications" suggestion, resolved in the design doc's §3.3 in
+     favor of the design system since `NotificationBell`'s dropdown already covers that
+     capability without a dedicated route. Small required "spillover" fixes:
+     `ActiveOrderIndicator.module.css`'s mobile `bottom` offset raised to clear the new
+     bar; `AppLayout.module.css`'s `.main` gained a mobile `padding-block-end: 68px`;
+     `BookingDraftIndicator.module.css` gained a `<360px` icon-only variant.
+     `features/dashboard/ProDashboardLayout` and its sidebar/tab bar are untouched — out
+     of scope, confirmed by direct inspection.
+  3. **Auth screens** (`features/auth/*`): Login (`LoginPage.tsx`/`LoginForm.tsx`) and
+     Register Choice (`RegisterChoicePage.tsx`/`RoleChooser.tsx`) got a visual pass with
+     **zero logic changes** — a `Card`-wrapped login form, a reciprocal login link on
+     Register Choice, two visually distinct role-option cards. Registration became
+     progressive multi-stage wizards behind a new shared `RegistrationWizardShell.tsx`
+     (justified by two real, simultaneous consumers — `CustomerRegisterForm`,
+     `ProfessionalRegisterForm`). Customer: 3 stages (basic info incl. new `phone` field /
+     address / confirmation), with submit-time field errors routed back to the stage that
+     owns the offending field. Professional: **4 stages, not the milestone dispatch's
+     originally-requested 6** — a deliberate, approved deviation, verified directly
+     against `backend/.../auth/service/AuthService.java` and
+     `ProfessionalRegistrationData`: neither `register()` nor `verify()` returns a JWT, so
+     there is no authenticated session available at any point during or immediately after
+     registration, and `ProfessionalRegistrationData` has no sub-service/availability
+     field at all — collecting such data in the wizard and silently discarding it on
+     submit would violate this codebase's "never fake product functionality" rule. The 4
+     stages instead fold that content into an honest, non-interactive sub-service preview
+     (stage 2) and a "what's next" block (stage 4). Full audit: design doc §6.5-6.6,
+     `features/auth/README.md`.
+- **P0 bug fix, pre-existing, found during this pass**: `phone` was entirely missing from
+  customer registration end-to-end — `backend/.../auth/dto/CustomerRegistrationData.java`'s
+  `phone` is `@NotBlank`, but `shared/api/auth.ts`'s `RegisterCustomerPayload`/
+  `RegisterRequestData.customer` had no `phone` field at all, and the customer form never
+  collected it — every real customer signup was silently getting a `400`. Fixed across all
+  three layers: `shared/api/auth.ts` (sent as `customer.phone`, sibling of `defaultAddress`,
+  not nested inside it), a new stage-1 `Input` (required, non-blank validation only, no
+  format regex), and the final `registerCustomer()` payload.
+- **Real bug found and fixed mid-milestone (introduced by this pass's own header
+  redesign, not pre-existing)**: a `PROFESSIONAL` mobile session initially had zero
+  nav-reachable logout after the header redesign — `BottomNav` is `CUSTOMER`-only,
+  `ProDashboardLayout`'s tab bar has no logout entry, and `/profile` (which does have a
+  logout button) had no mobile nav link pointing to it for that role. Fixed by moving
+  `AppLayout.tsx`'s `.logoutButton` to render as a sibling *after* `.desktopOnlyNav`
+  closes, instead of nested inside it, so it's visible at every viewport width for every
+  authenticated user regardless of role — zero effect on desktop layout.
+- **Two more real bugs found by QA and fixed in the same pass, both re-verified live**:
+  (a) `prefers-reduced-motion` wasn't actually respected on any of this milestone's new
+  `framer-motion` usages (`HomePage.tsx`'s hero/mascot, `LoginPage.tsx`,
+  `RegisterChoicePage.tsx`/`RoleChooser.tsx`, both registration pages' outer wrapper, and
+  — discovered mid-fix, then also fixed — `RegistrationWizardShell.tsx`'s own
+  stage-transition usage). The initially-attempted fix technique (overriding the
+  component's `transition` prop) does **not** work for any variant whose own `animate`
+  target embeds a `transition`, confirmed live via Playwright
+  (`reducedMotion: 'reduce'` context, rAF-sampled opacity) — framer-motion gives the
+  variant-level `transition` precedence over the component-level prop. The working fix
+  overrides the resolved `animate`/`initial`/`exit` target objects directly, matching
+  `Modal.tsx`/`ToastViewport.tsx`'s existing MS1 pattern. (b) `NotificationBell`'s
+  dropdown panel clipped off-screen at the new, narrower mobile top bar (this milestone's
+  own regression) — fixed via a `<640px` `position: fixed` + symmetric `inset-inline`
+  insets override anchored to the viewport instead of the bell's own wrapper; desktop
+  unchanged.
+- **QA**: full live Playwright verification against a real running frontend + a real
+  backend/Postgres instance, including a complete re-verification pass after all three
+  bug-fix rounds above (mobile-logout, phone, reduced-motion, notification-dropdown) —
+  zero known open bugs at final sign-off. Build and lint also re-run clean. Method
+  consistent with every prior frontend milestone in this project.
+- **Documentation updated as part of closing this pass**: `frontend/src/app/README.md`,
+  `frontend/src/features/auth/README.md`, `frontend/src/features/notifications/README.md`
+  (all substantially kept current by the implementing agents along the way — this closing
+  pass verified accuracy/gap-filled rather than writing from scratch; no material
+  inaccuracies found in any of the three); plus this entry and `overview.md`'s new MS2
+  changelog bullet and `app`/`features/auth`/`features/notifications` package-table (§4)
+  updates.
+
+## MS3 — Issue Creation + AI Experience
+
+- **Status: implemented and QA-signed-off, zero known open bugs.** Working tree on
+  `frontend/MS1-visual-foundation`, uncommitted — not pushed/merged; that remains the
+  user's own explicit git action. Full design record:
+  `docs/architecture/frontend-ms3-issue-ai-design.md`. Visual/UX redesign layered onto the
+  existing `features/issues` step-machine logic (built in Frontend Milestone 2 and extended
+  by the MS3/MS4 product-corrections booking-draft-persistence pass) — every
+  behavior/contract in that logic is preserved; only presentation, composition, and two
+  small, explicitly disclosed copy-accuracy fixes change.
+- **Scope actually built** (frontend-only, no backend change, all within
+  `frontend/src/features/issues/`):
+  1. **New: `AiAnalyzingOverlay.tsx`/`.module.css`.** A branded "Pronto בודק את התקלה..."
+     loading state (`Mascot state="thinking" size="lg" loop` + a status line inside a
+     `role="status" aria-live="polite"` region + a CSS-only 3-dot pulse — no fake
+     percentage/progress indicator per DESIGN_SYSTEM §41), replacing the bare `Button`
+     spinner the two real `classifyIssue` call sites (`DescribeIssueStep.handleSubmit`,
+     `ClarifyQuestionsStep.handleContinue`) previously showed alone. Each call site gained
+     a new `onAnalyzingChange` callback prop, invoked `true` immediately before the
+     existing `classifyIssue(...)` call and `false` in the existing `finally` block — no
+     other line in either component's `try`/`catch`/`finally` moved or reordered;
+     `isSubmitting`/`setIsSubmitting` are untouched (kept as redundant double-submit
+     defense, harmless since the overlay visually covers the button anyway).
+     `NewIssuePage` is the single render site: `<AiAnalyzingOverlay variant="overlay"
+     show={isAnalyzing} />`, absolutely positioned over a `position: relative`
+     step-viewport wrapper, with `aria-hidden={isAnalyzing}` on the wrapper and
+     `pointer-events: auto` on the overlay itself while shown.
+     - **Architecture decision: not a `Step`-union member.** The alternative — adding
+       `{ name: 'analyzing' }` to `NewIssuePage`'s `Step` union — was rejected because
+       `ClarifyQuestionsStep` holds its `answers: Record<string, string>` as **local,
+       non-lifted** state (not part of `useBookingDraft()`'s persisted shape). Today, if
+       `classifyIssue` fails from that step, the component never unmounts (only its
+       `isSubmitting` flag toggles), so already-selected answers survive a failed request.
+       Making `'analyzing'` a real step would force `ClarifyQuestionsStep` to unmount while
+       it showed and remount on failure, silently losing `answers` — a real regression this
+       milestone must not introduce unless `answers` were additionally lifted into the
+       draft, which is unwarranted new surface area for a purely visual milestone. The
+       chosen design — a sibling overlay over the still-mounted step — avoids that risk
+       entirely and also keeps `updateDraft()`'s stage vocabulary
+       (`ISSUE_DESCRIBE`/`ISSUE_CLARIFY`/`ISSUE_REVIEW`) untouched (no matching durable
+       `'analyzing'` stage exists or should exist).
+  2. **`isResuming` unified with the same overlay.** The old plain "טוענים את הבקשה
+     שלכם…" paragraph is gone. `isResuming` (only ever `true` when resuming into
+     `ISSUE_CLARIFY`/`ISSUE_REVIEW`, which re-calls `classifyIssue` the same way) now
+     renders `<AiAnalyzingOverlay variant="inline" show={isResuming} />` — always mounted
+     (not conditionally rendered) so the component's own internal `AnimatePresence` plays
+     an exit transition instead of disappearing instantly. The existing
+     `isResuming`/`setIsResuming(false)` state machine is otherwise untouched — only what
+     renders while it's `true` changed. The `ISSUE_DESCRIBE`-only resume case (photo-only
+     re-resolution, no `classifyIssue` call) was not touched — that path never sets
+     `isResuming` to `true` in the first place.
+  3. **Step-to-step transition (`stepTransition`, new consumer).** `NewIssuePage`'s
+     `describe`/`clarify`/`review`/`success` conditional chain is now wrapped in
+     `AnimatePresence mode="wait"` keyed on `step.name`, using
+     `shared/motion/variants.ts`'s `stepTransition` — its first real consumer in the app
+     (the variant's own doc comment already named this exact use case). `direction`
+     (`1`/`-1`) is new local `NewIssuePage` state, defaulting to `1`, flipping to `-1` only
+     in `handleBack`, reset to `1` in `handleClassified`/`handleConfirmed` — the
+     reduced-motion-neutralization boilerplate is copied locally from
+     `RegistrationWizardShell.tsx`'s existing pattern, not extracted into `shared/motion`
+     this milestone (flagged as a future cleanup once a third consumer appears).
+     `PageHeader` also now actually wires its previously-built-but-unused `steps` progress
+     prop, via a new `STEP_NUMBERS` map (`describe: 1, clarify: 2, review: 3`), omitted
+     entirely on `'success'`.
+  4. **Describe Issue composer redesign** (`DescribeIssueStep`): whole form wrapped in a
+     `Card` with a small static `Mascot state="idle" size="sm"` (same restrained pattern
+     MS2 gave `LoginForm`); new example-prompt chips (4, local array, `FilterChip`-styled
+     via local CSS not the component itself) shown only while the description field is
+     empty, prefilling `description` via the existing `onDescriptionChange` prop on click;
+     the two plain urgency buttons replaced with two larger icon+title+subcopy toggle cards
+     (רגיל/SOS — the SOS card's inline microcopy is now visible before selection, not only
+     after — a deliberate, minor, positive visibility-timing change; the underlying
+     `urgencyType`/`onUrgencyChange` contract is byte-for-byte identical). New copy: label
+     "מה קרה?" → "ספר לי מה קרה", new hint line, new urgency-section heading "באיזו דחיפות
+     מדובר?".
+  5. **Clarification-question redesign** (`ClarifyQuestionsStep`): `.option` buttons
+     restyled larger (min-height ~56px) with a leading `Circle`/`CheckCircle2` selection
+     icon (`lucide-react`) and proper `role="radiogroup"`/`role="radio"`/`aria-checked`
+     added (accessibility addition, not a behavior change). New: per-question progressive
+     reveal for the multi-question case only (`questions.length > 1`) — a local
+     `visibleCount` state, incremented whenever the currently-last-visible question
+     receives an answer, newly revealed questions mounting via `AnimatePresence` using
+     `pageTransition`'s exact shape (reused directly, no new variant); the single-question
+     case renders all-at-once, restyled only. `answers` state, `allAnswered` gating, and
+     `handleContinue`'s payload are byte-for-byte unchanged. `onAnalyzingChange(true)`
+     added before, `onAnalyzingChange(false)` in the existing `finally`, around the
+     existing `classifyIssue` call — no other reordering.
+  6. **Review/diagnosis-card redesign** (`ReviewStep`): eyebrow "מצאנו את בעל המקצוע
+     המתאים" (factually premature at this point — no professional is matched yet) →
+     "האבחון שלנו"; headline is now dynamic — "נראה שמדובר בתקלה ב־{קטגוריה}" (category
+     interpolated via the existing `getCategoryNameHe(...)` call, no new lookup),
+     replacing the flat `<h2>{category}</h2>`; a new static reassurance line follows ("כך
+     נמצא לך את בעל המקצוע הכי מתאים."). If `urgencyType === 'SOS'`, a new inline
+     "SOS — דחוף" badge renders next to the headline using `--color-sos`/`--color-sos-bg`
+     tokens directly (not `Badge` — its `BadgeTone` enum has no `'sos'` value, adding one
+     was judged out of this milestone's scope). The existing "זה לא נכון? שינוי תחום"
+     change-link mechanism and "אישור והמשך" confirm button are kept exactly, only
+     restyled. `handleConfirm`/`createIssue`'s payload, `categoryId`/`isChangingCategory`
+     state, and `onConfirmed` are unchanged.
+  7. **Success-screen redesign** (`IssueSuccessStep`): the plain `✓` circle span is
+     replaced with `<Mascot state="success" size="xl" label="הבקשה נשלחה בהצלחה" />`
+     (meaningful now, not decorative) + new headline "הבנתי. עכשיו נמצא לך מישהו."
+     (replacing "הבקשה נשלחה"). `state="success"` (not `"found"`) was the deliberate
+     choice — `"found"` is reserved by naming consistency for the actual
+     "found-a-professional" moment inside `features/booking`, a later milestone; `"success"`
+     has its own distinct artwork + `successPop`'s celebratory scale-in, matching this
+     component's own doc comment ("Calm confirmation state after `POST /api/issues`
+     succeeds"). Body copy (both `isStandard` branches), both CTA labels/destinations
+     (`/issues/${issueId}/booking` / `/issues/${issueId}/sos-booking`), and the secondary
+     "חזרה לדף הבית" button are byte-for-byte unchanged. **No auto-navigation** — the CTA
+     stays a required, explicit user action; DESIGN_SYSTEM §78's own worked example ends in
+     a manual button, not an auto-redirect, and auto-advancing would remove the user's
+     ability to actually read a confirmation screen whose SOS-vs-STANDARD copy materially
+     differs. The headline/body/actions block is now wrapped in `listStagger` with each
+     item reusing `pageTransition`'s fade+rise shape, so the mascot pops in first and the
+     text/CTAs settle in just after.
+- **Explicit, disclosed decision: `classification.explanation`/`.confidence` still never
+  rendered anywhere.** The design doc's dispatch permitted, but did not require, rendering
+  a short reworded sentence derived from `explanation`. Kept unrendered, deliberately, for
+  a reason verified directly against the real backend source (not a cautious default):
+  in real (OpenAI) mode, `OpenAiClassificationClient.java`'s own prompt instructs
+  `"explanation must be short and in English"` — rendering it verbatim would put
+  unlocalized English text inside an otherwise fully Hebrew, RTL screen, contradicting
+  Pronto's v1.0 Hebrew-only scope. In mock mode, `MockAiClassificationClient.java`'s
+  `explanation` strings literally read `"[מוק] סיווג לפי מילת המפתח ... שזוהתה בתיאור"` —
+  i.e. they name the internal keyword-matching mechanism by name, exactly the class of
+  "expose implementation terminology" DESIGN_SYSTEM §40/FRONTEND_AGENT §14 forbid. The
+  "supporting explanation when useful" ask is instead satisfied by the new static
+  reassurance line + SOS badge described above — real, accurate, always-safe content, not
+  the model's own raw reasoning text.
+- **Two small, disclosed opportunistic fixes**, both found while touching these files for
+  the redesign, neither part of the original dispatch:
+  1. `DescribeIssueStep`'s length-validation error message previously read "יש לתאר את
+     התקלה בלפחות 10 תווים" — only mentioning the 10-character minimum — even though the
+     same `if` condition (`trimmed.length < 10 || trimmed.length > 2000`) also enforces a
+     2000-character maximum, which the message never disclosed. Fixed to "יש לתאר את
+     התקלה באורך של 10 עד 2000 תווים" — same condition, same early-return, only the string
+     changed.
+  2. `IssueSuccessStep`'s back button was previously rendered and clickable but a dead
+     no-op: `handleBack`'s body only handles the `describe` step and the "not success"
+     case, so on `'success'` it silently did nothing while `PageHeader`'s back arrow still
+     showed. Fixed via `onBack={step.name === 'success' ? undefined : handleBack}` —
+     `PageHeader` already supports omitting `onBack` to hide the arrow entirely; the
+     success screen already has its own explicit "חזרה לדף הבית" action, so nothing is
+     lost.
+- **QA**: live Playwright testing against a real running backend (mock AI mode) and a real
+  frontend, including intercepted/mocked `classify` responses to exercise the
+  `ClarifyQuestionsStep` `QUESTIONS` path directly (the mock AI classifier never naturally
+  returns `status: "QUESTIONS"` on its own, so this path needed a mocked response to
+  reach) — zero bugs found, full pass on the first run.
+- **Documentation updated as part of closing this pass**: this entry,
+  `overview.md`'s new MS3 changelog bullet and `features/issues` package-table (§4)
+  update, and `frontend/src/features/issues/README.md` (kept current by the implementing
+  agent as part of the same pass — this closing pass verified accuracy rather than writing
+  from scratch; no inaccuracies found).
+
 ## Cross-cutting rules for every milestone
 
 - Planning docs (`overview.md`, this file) are updated if a milestone's actual

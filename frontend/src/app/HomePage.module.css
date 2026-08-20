@@ -8,6 +8,13 @@
   text-align: center;
 }
 
+.greeting {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-body-lg);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
 .title {
   margin: 0;
   font-size: 32px;
@@ -24,28 +31,28 @@
   color: var(--color-text-secondary);
 }
 
-.flowArea {
-  position: relative;
-  margin-block-start: var(--space-10);
-  padding-block-start: 90px;
-}
-
+/*
+ * CTA panel (design doc §2.3) — a horizontal flex row: text block (title/subtitle/arrow)
+ * on the inline-start side, the mascot composed in as a real flex child on the inline-end
+ * side (visually left in RTL, "coming toward" the text). Replaces MS1's absolutely-positioned
+ * overlay mascot placeholder.
+ */
 .cta {
   position: relative;
-  z-index: 2;
 
   display: flex;
-  flex-direction: column;
   align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
 
-  padding: var(--space-8) var(--space-6);
+  margin-block-start: var(--space-10);
+  padding: var(--space-8);
 
   border-radius: var(--radius-lg);
   border: 1px solid transparent;
 
   background: var(--color-primary-light);
   text-decoration: none;
-  text-align: center;
 
   overflow: hidden;
 
@@ -59,6 +66,13 @@
   border-color: var(--color-primary);
   transform: translateY(-2px);
   box-shadow: 0 12px 30px rgba(22, 67, 139, 0.12);
+}
+
+.ctaText {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: start;
 }
 
 .ctaTitle {
@@ -106,85 +120,36 @@
 }
 
 /* -------------------------
-   Pronto mascot
+   Pronto mascot — real flex participant now, not an absolutely-positioned overlay.
 ------------------------- */
 
 .mascotArea {
-  position: absolute;
-  z-index: 3;
-
-  top: -5px;
-  inset-inline-start: 50%;
-
-  width: 150px;
-  height: 110px;
-
-  transform: translateX(-50%);
-
+  flex-shrink: 0;
   pointer-events: none;
 }
 
-.mascot {
-  position: absolute;
+/* -------------------------
+   Trust indicator row (design doc §2.3) — priority-3 identity/trust info, rendered below
+   the CTA panel (not inside it, per DESIGN_SYSTEM §2/§90's one-dominant-action rule).
+------------------------- */
 
-  inset-inline-end: 0;
-  bottom: 0;
+.trustRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-8);
 
-  width: 105px;
-  height: auto;
-
-  object-fit: contain;
-
-  animation: mascotIdle 2.4s ease-in-out infinite;
+  margin-block-start: var(--space-6);
 }
 
-.motionLines {
-  position: absolute;
+.trustItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 
-  inset-inline-start: 0;
-  bottom: 25px;
-
-  width: 75px;
-  height: 35px;
-}
-
-.motionLines span {
-  position: absolute;
-  inset-inline-end: 0;
-
-  height: 3px;
-
-  border-radius: 999px;
-
-  background: var(--color-primary);
-
-  opacity: 0.4;
-}
-
-.motionLines span:nth-child(1) {
-  top: 3px;
-  width: 50px;
-}
-
-.motionLines span:nth-child(2) {
-  top: 14px;
-  width: 68px;
-}
-
-.motionLines span:nth-child(3) {
-  top: 25px;
-  width: 40px;
-}
-
-@keyframes mascotIdle {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-
-  50% {
-    transform: translateY(-5px);
-  }
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
 }
 
 /* -------------------------
@@ -206,34 +171,47 @@
     line-height: 24px;
   }
 
-  .flowArea {
-    padding-block-start: 75px;
-  }
-
-  .mascotArea {
-    width: 130px;
-    height: 95px;
-  }
-
-  .mascot {
-    width: 90px;
-  }
-
+  /* CTA panel stacks vertically — mascot above text (`column-reverse` flips the DOM order,
+     text-then-mascot, back to mascot-on-top), both centered, per design doc §2.4. */
   .cta {
+    flex-direction: column-reverse;
+    align-items: center;
+    gap: var(--space-4);
+    margin-block-start: var(--space-6);
     padding: var(--space-6) var(--space-4);
+  }
+
+  .ctaText {
+    align-items: center;
+    text-align: center;
   }
 
   .ctaTitle {
     font-size: 21px;
     line-height: 29px;
   }
+
+  .ctaArrow {
+    margin-block-start: var(--space-4);
+  }
+
+  /* Shrinks the mascot to `md`'s footprint (design doc §2.4) via its own CSS custom
+     properties rather than a JS viewport check — `Mascot`'s `size` prop stays `lg` (no
+     layout-shift risk from swapping components), only its rendered dimensions/scale change. */
+  .mascotArea {
+    --mascot-w: 75px;
+    --mascot-h: 96px;
+    --mascot-scale: 1;
+  }
+
+  .trustRow {
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mascot {
-    animation: none;
-  }
-
   .cta,
   .ctaArrow {
     transition: none;

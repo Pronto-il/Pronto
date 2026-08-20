@@ -1,0 +1,90 @@
+/*
+ * `AiAnalyzingOverlay` — see `AiAnalyzingOverlay.tsx` doc comment. `.overlay` (absolutely
+ * positioned, opaque-enough backdrop) and `.inline` (static, normal flow) share the same
+ * inner layout; only positioning differs.
+ */
+
+.overlay,
+.inline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  text-align: center;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  /* ~96% opaque `--color-surface` (#ffffff) — this moment *is* the content, not a dim scrim
+     over unrelated background. */
+  background: rgba(255, 255, 255, 0.96);
+  pointer-events: auto;
+}
+
+.inline {
+  padding-block: var(--space-12);
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* --- CSS-only 3-dot pulse, same staggered-opacity technique as Mascot.module.css's
+   `.motionLines` — a small local keyframe, not a new animation pattern. --- */
+
+.dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.dots span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+  animation: pronto-analyzing-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.dots span:nth-child(1) {
+  animation-delay: 0ms;
+}
+
+.dots span:nth-child(2) {
+  animation-delay: 160ms;
+}
+
+.dots span:nth-child(3) {
+  animation-delay: 320ms;
+}
+
+@keyframes pronto-analyzing-dot-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Mobile — shrinks the `size="lg"` mascot to `md`'s footprint via its own CSS custom
+   properties, the same technique `HomePage.module.css`'s `.mascotArea` already uses, rather
+   than swapping the `size` prop (avoids layout-shift risk). */
+@media (max-width: 640px) {
+  .mascotSize {
+    --mascot-w: 75px;
+    --mascot-h: 96px;
+    --mascot-scale: 1;
+  }
+}

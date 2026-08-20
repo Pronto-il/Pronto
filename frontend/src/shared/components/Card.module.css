@@ -4,3 +4,22 @@
   border-radius: var(--radius-lg);
   padding: var(--space-6);
 }
+
+/* Opt-in hover/press feedback for cards that act as clickable targets (DESIGN_SYSTEM §65). */
+.interactive {
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    transform var(--duration-instant) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .interactive:hover {
+    border-color: var(--color-border-strong);
+    box-shadow: var(--shadow-elevated);
+  }
+}
+
+.interactive:active {
+  transform: scale(0.99);
+}

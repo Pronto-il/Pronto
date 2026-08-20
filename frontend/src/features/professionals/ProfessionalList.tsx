@@ -1,5 +1,6 @@
 import { ProfessionalCard, type ViewProfileContext } from './ProfessionalCard';
 import type { ProfessionalCard as ProfessionalCardData, ProfessionalSort } from '../../shared/api';
+import { FilterChipGroup, Skeleton } from '../../shared/components';
 import styles from './ProfessionalList.module.css';
 
 export interface SortOption {
@@ -48,9 +49,9 @@ export function ProfessionalList({
     return (
       <div className={styles.wrapper}>
         <div className={styles.list}>
-          <div className={styles.skeleton} />
-          <div className={styles.skeleton} />
-          <div className={styles.skeleton} />
+          <Skeleton variant="rect" className={styles.skeleton} />
+          <Skeleton variant="rect" className={styles.skeleton} />
+          <Skeleton variant="rect" className={styles.skeleton} />
         </div>
       </div>
     );
@@ -59,18 +60,7 @@ export function ProfessionalList({
   return (
     <div className={styles.wrapper}>
       <p className={styles.heading}>מצאנו {professionals.length} בעלי מקצוע מתאימים</p>
-      <div className={styles.chips}>
-        {sortOptions.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            className={`${styles.chip} ${sort === option.value ? styles.chipActive : ''}`}
-            onClick={() => onSortChange(option.value)}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
+      <FilterChipGroup options={sortOptions} value={sort} onChange={onSortChange} aria-label="מיון תוצאות" />
       {professionals.length === 0 ? (
         <div className={styles.empty}>
           <p className={styles.emptyTitle}>לא נמצאו בעלי מקצוע פנויים</p>

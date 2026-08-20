@@ -33,9 +33,34 @@ unlike `ActiveOrderIndicator` (CUSTOMER-only), since `GET /api/notifications` is
 either-role, self-scoped feed. Positioned right after `BookingDraftIndicator` and before the
 role-conditional `/orders`/`/pro` link.
 
+## MS2 QA bugfix: dropdown panel clipped off-screen on the mobile top bar (2026-08-20)
+QA found the dropdown panel (`.panel` in `NotificationBell.module.css`) rendering with its
+inline-end edge ~33px past the viewport edge at 375px width (bounding box `x=68, width=340` →
+`408px` right edge on a 375px viewport), clipping its content. Root cause: `.panel` is
+`position: absolute`, anchored via `inset-inline-end: 0` to the bell's own 36px wrapper — not
+to the viewport edge — and the bell sits mid-toolbar (after `BookingDraftIndicator`, before
+the role-conditional link/logout), not at the screen edge. A fixed `340px` width anchored
+that way assumed desktop-level anchor room that doesn't exist in `AppLayout.tsx`'s mobile top
+bar; this milestone's own `AppLayout.module.css` narrowing of that bar is what turned a
+previously-harmless assumption into a real regression. Fixed with a `max-width: 640px` media
+query switch (this codebase's existing mobile breakpoint) to `position: fixed` with symmetric
+`inset-inline: var(--space-4)` insets — anchored to the *viewport*, not the wrapper — and
+`top: calc(56px + var(--space-2))` (matching `AppLayout.module.css`'s mobile header height).
+This guarantees the panel stays fully on-screen regardless of where the bell ends up in the
+toolbar; desktop (`>640px`) is untouched (still the original `340px`, wrapper-anchored
+panel). Verified live via Playwright against a real backend account: panel bounding box now
+stays within the viewport at both 375px (`x=16, width=343`, right edge `359 < 375`) and 320px
+(`x=16, width=288`, right edge `304 < 320`); desktop (1280px) confirmed unchanged
+(`width=340`, anchored to the bell). `BookingDraftIndicator` (same mobile top bar, flagged by
+QA as worth a quick look given the same regression class) was checked and found **not**
+affected — it's a static pill with no positioned dropdown/panel, so it has no equivalent
+overflow risk; no fix needed there.
+
 ## Status
 Implemented in **Milestone 5 — Notifications & real-time status**
 (`docs/architecture/implementation-plan.md`). Real-time status *updates on the order itself*
 (the Pending/Confirmed/On the Way/Completed/Cancelled/Expired lifecycle) are handled
 separately by `features/booking`'s `OrderTrackingPage` (`shared/hooks/useOrderStatus`) — this
-module is only the notification feed/bell, per its original stub description.
+module is only the notification feed/bell, per its original stub description. The mobile
+dropdown-overflow bugfix above landed as a QA-driven correction during **Frontend MS2 — Home
++ Authentication Experience** (the regression's actual cause), not separate scope.

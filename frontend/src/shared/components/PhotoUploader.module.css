@@ -42,19 +42,14 @@
   border-radius: var(--radius-md);
 }
 
-@keyframes photo-uploader-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
+/* keyframe lives in shared `styles/motion.css` (`pronto-spin`) */
 .spinner {
   width: 20px;
   height: 20px;
   border-radius: 50%;
   border: 2px solid #ffffff;
   border-inline-end-color: transparent;
-  animation: photo-uploader-spin 700ms linear infinite;
+  animation: pronto-spin 700ms linear infinite;
 }
 
 .itemError {

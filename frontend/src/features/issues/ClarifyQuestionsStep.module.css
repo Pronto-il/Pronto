@@ -45,6 +45,10 @@
 }
 
 .option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 56px;
   text-align: start;
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-md);
@@ -53,14 +57,51 @@
   color: var(--color-text-primary);
   font-size: 15px;
   cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
 }
 
 .option:hover {
   border-color: var(--color-primary);
 }
 
+.option:active {
+  transform: scale(0.99);
+}
+
+.optionIcon {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+}
+
 .optionSelected {
   border: 2px solid var(--color-primary);
   background: var(--color-primary-light);
   color: var(--color-primary);
+}
+
+.optionSelected .optionIcon {
+  color: var(--color-primary);
+}
+
+/* Design doc §4.4 — structurally identical to desktop (already a single stacked column);
+   only spacing/padding scale down slightly, and the intro line steps down one font-size
+   notch. */
+@media (max-width: 640px) {
+  .intro {
+    font-size: 15px;
+    line-height: 22px;
+  }
+
+  .option {
+    padding: var(--space-3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .option {
+    transition: none;
+  }
 }

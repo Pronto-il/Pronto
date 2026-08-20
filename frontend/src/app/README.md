@@ -18,6 +18,12 @@ feature modules together into the single-page app described in
   `useAuth()` internally for its cross-account leakage guard — see `shared/hooks/README.md`).
   **As of the Active Booking Floating Indicator feature**: also wraps `ActiveOrderProvider`
   (sibling-nested with `BookingDraftProvider`, since it too needs `useAuth()` internally).
+  **As of MS1 (2026-08-20)**: innermost, wraps `ToastProvider` around `RouterProvider`, with
+  `<ToastViewport />` (`shared/components`) rendered as `RouterProvider`'s sibling inside
+  that same `ToastProvider` (so `useToast()` works from any routed page and the portaled
+  viewport always has a live stack to read) — see `shared/hooks/README.md`'s Toast triad
+  entry. Nesting order is `AuthProvider > BookingDraftProvider > ActiveOrderProvider >
+  ToastProvider > (RouterProvider, ToastViewport)`.
 - `router.tsx` — route tree. All routes render inside `AppLayout`; `/profile`,
   `/orders/:orderId`, and (**as of Frontend Milestone 8**) `/professionals/:professionalId`
   are nested under a bare `RequireAuth` (either role — matching the backend's
@@ -44,14 +50,90 @@ feature modules together into the single-page app described in
   (2026-08-18)**, revised same-day per an approved UX correction: `/favorites`
   (`features/favorites`) is deliberately **not** a top-nav link — it's a secondary customer
   feature reached via `app/ProfilePage.tsx`'s "מועדפים" link instead, not
-  `DESIGN_SYSTEM.md` §52's literal desktop-nav mockup. A full mobile bottom nav (§50-51)
-  still has no implementation at all and remains out of scope.
+  `DESIGN_SYSTEM.md` §52's literal desktop-nav mockup.
+  **As of MS2 (2026-08-20, `docs/architecture/frontend-ms2-home-auth-design.md` §3)**: a
+  full mobile bottom nav now exists — `BottomNav.tsx`/`.module.css` (new), `CUSTOMER`-only +
+  authenticated-only (same gating condition as `<ActiveOrderIndicator>`), 4 items per
+  `DESIGN_SYSTEM.md` §50's explicit list (בית/הזמנות/מועדפים/פרופיל — not the milestone
+  dispatch's own "Notifications" suggestion, which the design doc's §3.3 resolves in favor
+  of the design system, since `NotificationBell`'s dropdown already covers that capability
+  without a dedicated route). Desktop also got a bigger brand (header `64px`→`72px`, logo
+  crop scaled ~1.167x) and a demoted, icon-only logout button (`aria-label`/`title` carry the
+  meaning, no visible "יציאה" label, moved after the profile link with its own gap).
+  `.desktopOnlyNav` (`display: contents` desktop, `display: none` <640px) originally wrapped
+  "ההזמנות שלי"/"לוח בקרה"/"הפרופיל שלי"/logout so those destinations dropped out of the mobile
+  top bar entirely (customers reach them via `<BottomNav>`; professionals still reach their
+  dashboard via `ProDashboardLayout`'s own <640px tab bar, untouched by this milestone) — see
+  the mobile-logout follow-up fix below, which moved logout back out of `.desktopOnlyNav`.
+  `BookingDraftIndicator`/`NotificationBell` stay visible in the mobile top bar at every
+  width. Two required "spillover" fixes from introducing the fixed bottom bar:
+  `ActiveOrderIndicator.module.css`'s mobile `bottom` offset now clears it
+  (`calc(68px + var(--space-3))`, was `var(--space-4)`), and `AppLayout.module.css`'s `.main`
+  gained an unconditional mobile `padding-block-end: 68px` so the bar never occludes the last
+  real content. `NotificationBell`'s dropdown anchor (`position: absolute` relative to its
+  own wrapper) was verified to still work correctly from the narrower mobile top bar — no
+  change needed there. `BookingDraftIndicator.module.css` also gained a `<360px` variant that
+  hides its text label (icon + dismiss only) so the pill still fits next to the bell on the
+  narrowest phones.
+  **Mobile-logout gap, fixed in a scoped follow-up**: MS2 originally left a `PROFESSIONAL`
+  session on a mobile viewport with no nav-reachable logout at all (`ProDashboardLayout`'s tab
+  bar has no logout entry, out of scope; `/profile` — which does have a logout button — was
+  reachable by URL but had no mobile nav link pointing to it for that role). Fixed by moving
+  `.logoutButton` in `AppLayout.tsx` to render as a sibling *after* `.desktopOnlyNav` closes
+  (instead of nested inside it), so it's visible at every viewport width for every
+  authenticated user regardless of role — `.desktopOnlyNav`'s `display: contents` on desktop
+  never introduced a box, so this has zero effect on desktop layout. `.logoutButton`'s
+  `margin-inline-start` (the desktop-only "own gap" after the profile link) is overridden back
+  to `0` in the existing `<640px` media query, since on mobile the button now sits directly
+  after `NotificationBell` rather than the profile link, and the compact top bar has less room
+  to spare.
 - `RequireAuth.tsx` — route guard. Redirects to `/login` when not authenticated (after
   the auth provider's initial rehydration finishes); supports an optional `role` prop to
   gate a route to one role.
 - `HomePage.tsx` — placeholder home route (unchanged content since Milestone 0; only its
   wrapping element changed from `<main>` to `<div>` since `AppLayout` now owns the page's
-  `<main>` landmark).
+  `<main>` landmark). **As of MS1 (Visual Foundation & Motion System, 2026-08-20)**: the
+  mascot inside `.mascotArea` was fixed — it previously referenced a non-existent
+  `/assets/pronto-runner-wrench.png` (a `public/`-relative path that never existed; the
+  page rendered no image and failed silently since `alt=""`) and now renders
+  `<Mascot state="running" size="lg" loop={false} />` (`shared/components/Mascot.tsx`) in
+  the same position/composition. `loop={false}` is deliberate restraint, not an oversight —
+  the mascot renders statically (its containing `.mascotArea` gets a single short
+  rise/fade entrance via the shared `motion-list-item` CSS utility, not a continuous
+  bounce). This is an asset/infra fix only, **not** a Hero redesign — headline, CTA,
+  layout, and trust indicators are untouched; the full "continuously in motion, Pronto is
+  on the way" hero treatment is explicitly out of scope here and deferred to MS2. The
+  local `mascotIdle` keyframe and its own `prefers-reduced-motion` override were deleted
+  (superseded by the global reduced-motion block in `styles/motion.css`), as was the local
+  `.motionLines` markup (not needed for this static usage). **As of MS2 (2026-08-20,
+  `docs/architecture/frontend-ms2-home-auth-design.md` §2)**: the full Hero redesign
+  deferred by MS1 landed — an authenticated greeting line ("שלום, {first name} 👋", first
+  token of `user.fullName`), the CTA panel rebuilt as a real horizontal flex row composing
+  `Mascot` (`loop`, `size="lg"`) as a flex child on the inline-end side instead of an
+  absolutely-positioned overlay, and a new 3-item trust-indicator row (`ShieldCheck`/`Tag`/
+  `Activity`, local JSX, single consumer — no new shared component) below the panel. Mobile
+  stacks the CTA panel vertically (`flex-direction: column-reverse`, mascot on top) and
+  shrinks the mascot to `md`'s footprint via a CSS custom-property override
+  (`--mascot-w`/`--mascot-h`/`--mascot-scale`) rather than a JS viewport check. Whole hero
+  wrapped in the shared `pageTransition` `framer-motion` variant (its first real consumer);
+  the mascot block additionally gets a one-shot `mascotSlideIn` entrance. Deliberately still
+  does **not** build `DESIGN_SYSTEM.md` §35's "Popular services"/"Active booking" sections —
+  see the design doc §2.7 for why (active booking is already served by
+  `ActiveOrderIndicator`; popular services needs new product decisions out of this
+  milestone's scope).
+- `DesignSystemPage.tsx` — **new, MS1 (2026-08-20).** Dev-only visual QA/showcase route
+  (`/__design`) rendering every token/primitive MS1 introduced or upgraded — type scale,
+  shadows, `Button`/`Card`/`Input`-family states, `Badge` tones, `FilterChipGroup`,
+  `Skeleton` variants, `EmptyState` (both tones), a `Modal` trigger (both
+  `mobilePresentation` values), `Toast` triggers (via `useToast()`), `PageHeader` with
+  `steps`, and all 6 `Mascot` states × 4 sizes on 3 backgrounds. Wired in `router.tsx` as a
+  top-level sibling of the `AppLayout` route tree (not nested under it — needs no app
+  chrome/auth) via a `designSystemRoutes` array that's only non-empty when
+  `import.meta.env.DEV` is true, so the route is absent from the route table and, per
+  Vite's dead-code elimination on that statically-replaced literal, from the production
+  bundle entirely. Renders only real components through their existing public APIs — no
+  new props/behavior were added to any component just to make a section demonstrable. Not
+  a product page; not part of any route table documented elsewhere in `docs/architecture`.
 - `ProfilePage.tsx` — behind `RequireAuth`, plus logout/account-deletion. **As of the MS10
   profile redesign (2026-08-19, `docs/architecture/product-ms10-profile-redesign-design.md`
   §2.4)**: a `CUSTOMER` caller now gets a real edit form (`fullName`/`phone`/
@@ -141,7 +223,11 @@ feature modules together into the single-page app described in
   `display: flex` with no wrapping/shrinking behavior defined for narrow widths). Confirmed
   via `git stash` to predate MS9 — **not** caused by, and out of scope for, that milestone.
   Not fixed as of this writing; flagged here as a known, open, out-of-scope item so it isn't
-  mistaken for a MS9 regression or silently lost.
+  mistaken for a MS9 regression or silently lost. **Update, MS2 (2026-08-20)**: MS2's mobile
+  top-bar changes (`.desktopOnlyNav` now `display: none` <640px, dropping the role-conditional
+  link/profile link/logout button from the mobile row entirely) substantially shrink the
+  mobile nav's content and likely improve or resolve this, but it was **not** re-verified via
+  QA in this pass — left as an open item for QA to re-check rather than claimed fixed.
 
 ## Status
 **Frontend Milestone 3 (2026-08-16, Standard booking flow) implemented.** `ProPlaceholderPage`
@@ -224,3 +310,54 @@ see "Known issues" above; not fixed by this pass.
 **MS10 — Profile UI Redesign (2026-08-19)**: `ProfilePage.tsx`/`.module.css` gained a
 `CUSTOMER`-only edit form (see "Structure" above) — no router/`App.tsx` change. Full design
 record: `docs/architecture/product-ms10-profile-redesign-design.md`.
+
+**MS1 — Visual Foundation & Motion System (2026-08-20)**: `App.tsx` gained the
+`ToastProvider`/`ToastViewport` wiring described above; `router.tsx` gained the dev-only
+`/__design` route (`DesignSystemPage.tsx`, new file, gated behind `import.meta.env.DEV`);
+`HomePage.tsx`/`.module.css` had their broken mascot reference fixed (see "Structure"
+above) — the one sanctioned product-page touch in this milestone, deliberately restrained
+(no Hero redesign, that's MS2). No other route/provider change. This is an earlier-numbered
+milestone landing after several later-numbered ones above (MS9, MS10) chronologically —
+"MS1" here refers to the frontend visual-foundation redesign's own milestone sequence
+(MS1-MS6), a separate numbering track from the feature-delivery "Frontend Milestone N"/
+product "MSN" entries elsewhere in this file; see `shared/components/README.md`'s MS1
+entry for the full list of new/upgraded primitives this unblocks.
+
+**MS2 — Home + Authentication Experience (2026-08-20,
+`docs/architecture/frontend-ms2-home-auth-design.md`)**: `HomePage.tsx`/`.module.css` got
+the full Hero redesign (see "Structure" above); `AppLayout.tsx`/`.module.css` got the
+desktop brand/logout treatment, the mobile top-bar content reduction, and a new
+`BottomNav.tsx`/`.module.css`; `ActiveOrderIndicator.module.css`/
+`BookingDraftIndicator.module.css` got small required spillover-fix tweaks (see "Structure"
+above for all of the above). `features/auth/*` got a parallel, larger redesign (progressive
+multi-stage registration wizards, a new `RegistrationWizardShell` shared component, a `phone`
+field P0 bug fix, and a Login/RegisterChoice visual pass) — see `features/auth/README.md`
+for that package's own detail, not restated here. Working tree on
+`frontend/MS1-visual-foundation`, uncommitted — not pushed/merged.
+
+**MS2 QA bugfix pass (2026-08-20)**: two real bugs QA found in the above work, fixed as part
+of this same milestone (not new scope):
+- **`prefers-reduced-motion` not respected on `HomePage.tsx`'s new `pageTransition`
+  (hero)/`mascotSlideIn` (mascot) usage.** The fix pattern this milestone's own
+  `RegistrationWizardShell` and MS1's `Modal.tsx`/`ToastViewport.tsx` appear to use — reading
+  `useReducedMotion()` and passing an instant `{ duration: 0 }` via the component's
+  `transition` prop — turned out **not to actually work** for any variant whose own `animate`
+  target embeds a `transition` (as `pageTransition`/`mascotSlideIn`/`stepTransition` all do):
+  framer-motion gives a variant's own target-embedded `transition` precedence over the
+  component-level `transition` prop, so that prop is silently ignored whenever the variant
+  defines one. Confirmed live via Playwright (`reducedMotion: 'reduce'` context, rAF-sampled
+  opacity): the un-guarded pages still ran the full ~300ms spring. The actual working
+  technique — verified by the same method to match `Modal.tsx`/`ToastViewport.tsx`'s real
+  runtime behavior — overrides the `animate` **target object** itself (not the `transition`
+  prop) when `shouldReduceMotion` is true, e.g. `animate={shouldReduceMotion ? { ...variant.animate, transition: { duration: 0 } } : 'animate'}`.
+  Applied to `HomePage.tsx` (hero + mascot). `RegistrationWizardShell.tsx` itself was **not**
+  touched (out of this bugfix's explicit scope) — it likely has the same latent issue on its
+  stage-transition `stepTransition` usage; flagged to `pronto-lead`, not silently fixed here.
+- **`NotificationBell`'s dropdown panel clipped off-screen on the mobile top bar.** Root cause
+  and fix live in `features/notifications/README.md` (the file itself is owned by that
+  package, not this one) — noted here because the regression was caused by this milestone's
+  own `AppLayout.module.css` narrowing the mobile top bar.
+
+Both verified with real Playwright runs against the dev server + a live backend/Postgres
+account (build and lint also re-run clean); see `features/auth/README.md`/
+`features/notifications/README.md` for the per-package fix detail.

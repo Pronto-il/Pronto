@@ -29,6 +29,7 @@ export interface RegisterCustomerPayload {
   fullName: string;
   email: string;
   password: string;
+  phone: string;
   address: RegisterAddressPayload;
 }
 
@@ -63,7 +64,7 @@ interface RegisterRequestData {
   fullName: string;
   email: string;
   password: string;
-  customer: { defaultAddress: RegisterAddressPayload } | null;
+  customer: { defaultAddress: RegisterAddressPayload; phone: string } | null;
   professional: { categoryId: number; serviceArea: string; basePrice: number } | null;
 }
 
@@ -111,6 +112,7 @@ export function registerCustomer(payload: RegisterCustomerPayload): Promise<Regi
         entrance: undefinedIfBlank(payload.address.entrance),
         addressNotes: undefinedIfBlank(payload.address.addressNotes),
       },
+      phone: payload.phone,
     },
     professional: null,
   };

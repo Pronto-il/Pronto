@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Button, Input } from '../../shared/components';
+import { Button, Card, Input } from '../../shared/components';
 import { useAuth } from '../../shared/hooks';
 import { ApiError } from '../../shared/api';
 import { AccountLockoutBanner } from './AccountLockoutBanner';
@@ -11,7 +11,14 @@ export interface LoginFormProps {
   initialEmail?: string;
 }
 
-/** Email + password login. No "forgot password" link — out of scope for v1.0. */
+/**
+ * Email + password login. No "forgot password" link — out of scope for v1.0.
+ *
+ * **MS2 visual redesign (design doc §4.2)**: fields now wrap in a `<Card>` for real visual
+ * hierarchy (today the form rendered bare against the page background); banners fade in via
+ * the shared `motion-list-item` CSS utility on mount. **Zero logic changes** — every state
+ * variable, validation rule, and `ApiError` code branch below is unchanged.
+ */
 export function LoginForm({ initialEmail = '' }: LoginFormProps) {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -70,39 +77,45 @@ export function LoginForm({ initialEmail = '' }: LoginFormProps) {
   }
 
   return (
-    <form className={styles.form} onSubmit={handleSubmit} noValidate>
-      {lockedRetryAfterSeconds !== null && <AccountLockoutBanner retryAfterSeconds={lockedRetryAfterSeconds} />}
-      {bannerError && (
-        <div className={styles.banner} role="alert">
-          <p>{bannerError}</p>
-          {unverifiedEmail && (
-            <Link to={`/verify?email=${encodeURIComponent(unverifiedEmail)}`} className={styles.bannerLink}>
-              לאימות כתובת האימייל
-            </Link>
-          )}
-        </div>
-      )}
-      <Input
-        label="אימייל"
-        type="email"
-        autoComplete="email"
-        value={email}
-        onChange={(event) => setEmail(event.target.value)}
-        error={fieldErrors.email}
-        required
-      />
-      <Input
-        label="סיסמה"
-        type="password"
-        autoComplete="current-password"
-        value={password}
-        onChange={(event) => setPassword(event.target.value)}
-        error={fieldErrors.password}
-        required
-      />
-      <Button type="submit" loading={isSubmitting} fullWidth>
-        התחברות
-      </Button>
-    </form>
+    <Card>
+      <form className={styles.form} onSubmit={handleSubmit} noValidate>
+        {lockedRetryAfterSeconds !== null && (
+          <div className="motion-list-item">
+            <AccountLockoutBanner retryAfterSeconds={lockedRetryAfterSeconds} />
+          </div>
+        )}
+        {bannerError && (
+          <div className={`${styles.banner} motion-list-item`} role="alert">
+            <p>{bannerError}</p>
+            {unverifiedEmail && (
+              <Link to={`/verify?email=${encodeURIComponent(unverifiedEmail)}`} className={styles.bannerLink}>
+                לאימות כתובת האימייל
+              </Link>
+            )}
+          </div>
+        )}
+        <Input
+          label="אימייל"
+          type="email"
+          autoComplete="email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          error={fieldErrors.email}
+          required
+        />
+        <Input
+          label="סיסמה"
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          error={fieldErrors.password}
+          required
+        />
+        <Button type="submit" loading={isSubmitting} fullWidth>
+          התחברות
+        </Button>
+      </form>
+    </Card>
   );
 }

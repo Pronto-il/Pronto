@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { AvailableWindow } from '../../shared/api';
+import { Skeleton } from '../../shared/components';
 import { deriveStartTimeCandidates } from '../../shared/utils/availability';
 import { formatDateLabel, formatTimeLabel, dateKey } from '../../shared/utils/formatDateTime';
 import styles from './StartTimePicker.module.css';
@@ -56,7 +57,7 @@ export function StartTimePicker({
   const activeGroup = groups.find((group) => group.key === activeDateKey);
 
   if (isLoading) {
-    return <div className={styles.skeleton} />;
+    return <Skeleton variant="rect" className={styles.skeleton} />;
   }
 
   if (groups.length === 0) {

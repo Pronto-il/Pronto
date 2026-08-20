@@ -13,7 +13,7 @@
   max-width: 1200px;
   margin-inline: auto;
   padding-inline: var(--space-6);
-  height: 64px;
+  height: 72px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -22,6 +22,7 @@
 .brand {
   display: inline-flex;
   align-items: center;
+  padding-inline-end: var(--space-4);
   text-decoration: none;
 }
 
@@ -29,14 +30,16 @@
  * Logo asset (src/assets/pronto-logo.jpg) is a 1024x1024 square dominated by
  * whitespace around the actual wordmark+mascot. Cropped via background-image
  * sizing/position rather than shipping a pre-cropped asset, so the source file
- * can be swapped without recomputing layout.
+ * can be swapped without recomputing layout. MS2 (design doc §3.1) scales the
+ * crop up proportionally (96x32 -> 112x38, ~1.167x) for stronger desktop brand
+ * presence; the mobile media query below scales it back down (~0.875x, ->84x28).
  */
 .logo {
   display: block;
-  width: 96px;
-  height: 32px;
-  background-size: 112px 112px;
-  background-position: -8px -43px;
+  width: 112px;
+  height: 38px;
+  background-size: 131px 131px;
+  background-position: -9px -50px;
   background-repeat: no-repeat;
 }
 
@@ -44,6 +47,18 @@
   display: flex;
   align-items: center;
   gap: var(--space-4);
+}
+
+/*
+ * Wraps "ההזמנות שלי"/"לוח בקרה"/"הפרופיל שלי" (design doc §3.2) — `display: contents`
+ * keeps them flex children of `.nav` on desktop (no extra box in the layout), `display: none`
+ * under 640px moves those destinations out of the mobile top bar entirely (customers reach
+ * them via `<BottomNav>`, professionals via `/pro`'s own tab bar one level down). `.logoutButton`
+ * is a sibling *after* this element, not inside it — see the post-MS2 fix note in
+ * `AppLayout.tsx`'s doc comment — so logout stays visible at every width for every role.
+ */
+.desktopOnlyNav {
+  display: contents;
 }
 
 .navLink {
@@ -77,15 +92,23 @@
   background: var(--color-primary-hover);
 }
 
+/* Icon-only, demoted logout (design doc §3.1) — a secondary utility action, not a nav
+   destination, so it drops the visible "יציאה" label; `aria-label`/`title` carry the meaning.
+   `margin-inline-start` gives it its own extra gap after the profile link on desktop, on top
+   of `.nav`'s regular `gap`; the <640px override below drops that extra margin (post-MS2 mobile
+   logout fix — on mobile it now sits directly after `NotificationBell`, not the profile link,
+   so the same "own gap" isn't warranted, and the compact top bar has less room to spare). */
 .logoutButton {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-inline-start: var(--space-3);
   background: transparent;
   border: none;
+  border-radius: 50%;
   color: var(--color-text-secondary);
-  font-size: 14px;
-  font-weight: 600;
   cursor: pointer;
 }
 
@@ -95,4 +118,41 @@
 
 .main {
   flex: 1;
+}
+
+@media (max-width: 640px) {
+  .headerInner {
+    height: 56px;
+    padding-inline: var(--space-4);
+  }
+
+  .brand {
+    padding-inline-end: var(--space-2);
+  }
+
+  .logo {
+    width: 84px;
+    height: 28px;
+    background-size: 98px 98px;
+    background-position: -7px -38px;
+  }
+
+  .desktopOnlyNav {
+    display: none;
+  }
+
+  /* Post-MS2 mobile logout fix: drop the desktop-only extra "own gap" — on mobile
+     `.logoutButton` sits directly after `NotificationBell` (not the profile link), and relies
+     on `.nav`'s regular `gap` alone so it doesn't crowd the compact top bar. */
+  .logoutButton {
+    margin-inline-start: 0;
+  }
+
+  /* Clears the fixed `<BottomNav>` (68px) so the last real content isn't hidden behind it.
+     Unconditional on mobile per design doc §3.2 — simpler than conditioning page padding on
+     auth state for a purely cosmetic few extra px on the rare unauthenticated/professional
+     mobile view. */
+  .main {
+    padding-block-end: 68px;
+  }
 }

@@ -27,9 +27,9 @@
   text-decoration: underline;
 }
 
-.resumingWrapper {
-  display: flex;
-  justify-content: center;
-  padding-block: var(--space-12);
-  color: var(--color-text-secondary);
+/* Step-machine viewport (design doc §2.2/§2.5) — `position: relative` anchor for
+   `AiAnalyzingOverlay`'s `variant="overlay"` (`position: absolute; inset: 0;`), wrapping the
+   `AnimatePresence`-driven step-to-step transition. */
+.stepViewport {
+  position: relative;
 }

@@ -1,0 +1,166 @@
+/*
+ * `Mascot` component styles. Handles: (1) explicit width/height per `size`, keyed to the
+ * shared 402:512 asset aspect ratio, to avoid layout shift; (2) the CSS-tier looping motion
+ * for `running`/`searching` (bounce + trailing 3-bar motion-lines, lifted from
+ * `HomePage.module.css`'s former `.motionLines`) and `thinking` (subtle pulse), per
+ * `shared/motion/README.md`'s CSS-vs-framer-motion split — `found`/`success`'s one-shot
+ * entrances are `framer-motion` instead (see `Mascot.tsx`).
+ *
+ * All keyframes below are automatically neutralized under reduced motion by the global
+ * `*, *::before, *::after { animation-duration: 1ms !important }` rule in
+ * `styles/motion.css` — it targets every element's `animation-duration` unconditionally, not
+ * specific class names, so no local `prefers-reduced-motion` override is needed here.
+ *
+ * RTL-aware motion-lines direction: the mascot pose visually faces/travels toward
+ * inline-start, so trailing motion lines sit at the wrapper's inline-end edge — expressed via
+ * `inset-inline-*`/`margin-inline-*` logical properties only, never physical `left`/`right`,
+ * so this is correct in the app's RTL-only context without a `[dir]` override.
+ */
+
+.wrapper {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  isolation: isolate; /* contains .motionLines' negative z-index to this box only */
+
+  width: var(--mascot-w);
+  height: var(--mascot-h);
+}
+
+/* --- Size mapping (height/width keyed to the 402:512 asset ratio) --- */
+
+.sm {
+  --mascot-w: 50px;
+  --mascot-h: 64px;
+  --mascot-scale: 0.6667;
+}
+
+.md {
+  --mascot-w: 75px;
+  --mascot-h: 96px;
+  --mascot-scale: 1;
+}
+
+.lg {
+  --mascot-w: 113px;
+  --mascot-h: 144px;
+  --mascot-scale: 1.5;
+}
+
+.xl {
+  --mascot-w: 151px;
+  --mascot-h: 192px;
+  --mascot-scale: 2;
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.animatedInner {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* --- Looping bounce (running / searching) --- */
+
+.bouncing .image,
+.bouncing .animatedInner {
+  animation: pronto-mascot-bounce 1.2s ease-in-out infinite;
+}
+
+@keyframes pronto-mascot-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(calc(var(--mascot-scale) * -4px));
+  }
+}
+
+/* --- Subtle pulse (thinking) --- */
+
+.thinking .image {
+  animation: pronto-mascot-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes pronto-mascot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.75;
+  }
+}
+
+/* --- Trailing 3-bar motion lines (running / searching only) --- */
+
+.motionLines {
+  position: absolute;
+  z-index: -1;
+
+  top: 50%;
+  inset-inline-start: 100%;
+
+  width: calc(var(--mascot-scale) * 56px);
+  height: calc(var(--mascot-scale) * 26px);
+
+  margin-inline-start: calc(var(--mascot-scale) * -6px);
+  transform: translateY(-50%);
+
+  pointer-events: none;
+}
+
+.motionLines span {
+  position: absolute;
+  inset-inline-start: 0;
+
+  height: 3px;
+
+  border-radius: 999px;
+
+  background: var(--color-primary);
+
+  opacity: 0.4;
+
+  animation: pronto-mascot-line-pulse 1.2s ease-in-out infinite;
+}
+
+.motionLines span:nth-child(1) {
+  top: 0;
+  width: calc(var(--mascot-scale) * 38px);
+  animation-delay: 0ms;
+}
+
+.motionLines span:nth-child(2) {
+  top: calc(var(--mascot-scale) * 11px);
+  width: calc(var(--mascot-scale) * 52px);
+  animation-delay: 120ms;
+}
+
+.motionLines span:nth-child(3) {
+  top: calc(var(--mascot-scale) * 22px);
+  width: calc(var(--mascot-scale) * 30px);
+  animation-delay: 240ms;
+}
+
+@keyframes pronto-mascot-line-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scaleX(0.85);
+  }
+
+  50% {
+    opacity: 0.55;
+    transform: scaleX(1);
+  }
+}

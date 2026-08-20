@@ -1,47 +1,17 @@
-.badge {
+/*
+ * Only a one-shot fade transition remains here — the badge's own size/color styling now
+ * lives entirely in `Badge.module.css` (rendered internally by `StatusBadge.tsx`).
+ */
+.fadeWrap {
   display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 28px;
-  padding-inline: var(--space-3);
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
+  animation: status-badge-fade var(--duration-quick) var(--ease-out);
 }
 
-/* PENDING — "New", neutral/blue (DESIGN_SYSTEM.md §56) */
-.pending {
-  background: var(--color-info-bg);
-  color: var(--color-info);
-}
-
-/* CONFIRMED — "Accepted", primary teal */
-.confirmed {
-  background: var(--color-primary-light);
-  color: var(--color-primary);
-}
-
-/* ON_THE_WAY — blue */
-.onTheWay {
-  background: var(--color-info-bg);
-  color: var(--color-info);
-}
-
-/* COMPLETED — green */
-.completed {
-  background: var(--color-success-bg);
-  color: var(--color-success);
-}
-
-/* CANCELLED / EXPIRED — gray/muted */
-.cancelled {
-  background: var(--color-surface-secondary);
-  color: var(--color-text-secondary);
-}
-
-/* REJECTED — a decline is a distinct, slightly stronger signal than a plain cancellation */
-.rejected {
-  background: var(--color-error-bg);
-  color: var(--color-error);
+@keyframes status-badge-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }

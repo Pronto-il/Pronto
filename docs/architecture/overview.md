@@ -210,18 +210,18 @@ changes it, per the shared project rule.
 
 | Folder | Responsibility |
 |---|---|
-| `features/auth` | Registration, verification, login screens. **Implemented, Frontend Milestone 1 (2026-08-15)** — see §6 below and `implementation-plan.md`'s Milestone 1 entry. |
-| `features/issues` | Home/New Issue screen, AI Review + service-path-selection screen. **Implemented, Frontend Milestone 2** (see `implementation-plan.md`); `NewIssuePage`/`IssueSuccessStep` gained a Frontend Milestone 3 follow-up linking into the new booking flow, and a Frontend Milestone 4 follow-up linking the SOS branch into the new SOS booking flow. |
+| `features/auth` | Registration, verification, login screens. **Implemented, Frontend Milestone 1 (2026-08-15)** — see §6 below and `implementation-plan.md`'s Milestone 1 entry. **Grew in MS2 — Home + Authentication Experience (2026-08-20, implemented and QA-verified live, zero known open bugs)**: Login/Register-Choice got a visual pass (zero logic changes); registration became progressive multi-stage wizards behind a new shared `RegistrationWizardShell` (customer 3 stages, professional 4 stages — a deliberate, approved deviation from the milestone dispatch's originally-requested 6, since no authenticated session exists during/after registration and `ProfessionalRegistrationData` has no sub-service/availability fields); a P0 bug fix added the previously entirely-missing `phone` field to customer registration end-to-end; a QA-driven bugfix round fixed `prefers-reduced-motion` not actually being respected across every new `framer-motion` usage in this package. See §6 below and `features/auth/README.md`. |
+| `features/issues` | Home/New Issue screen, AI Review + service-path-selection screen. **Implemented, Frontend Milestone 2** (see `implementation-plan.md`); `NewIssuePage`/`IssueSuccessStep` gained a Frontend Milestone 3 follow-up linking into the new booking flow, and a Frontend Milestone 4 follow-up linking the SOS branch into the new SOS booking flow. **Grew in MS3 — Issue Creation + AI Experience (2026-08-20, implemented and QA-signed-off, zero known open bugs)**: a new `AiAnalyzingOverlay` replaces the bare button spinner for both real `classifyIssue` call sites (and is unified with the old `isResuming` loading state), deliberately not a `Step`-union member (would risk losing `ClarifyQuestionsStep`'s local, non-persisted `answers` on a failed request); a new step-to-step `stepTransition` wraps the `describe`/`clarify`/`review`/`success` chain; `DescribeIssueStep`/`ClarifyQuestionsStep`/`ReviewStep`/`IssueSuccessStep` all got a visual redesign (example chips, urgency cards, progressive clarification reveal, dynamic diagnosis headline + SOS badge, mascot success pose) with zero logic changes to `classifyIssue`/`createIssue` payloads; `classification.explanation`/`.confidence` remain deliberately unrendered (real-mode `explanation` is English-only, mock-mode names the internal keyword-matching mechanism); two small opportunistic fixes (length-validation error message now states both the 10 and 2000 char bounds; the dead success-screen back button is now hidden). See §6 below and `features/issues/README.md`. |
 | `features/booking` | Standard professional list, SOS professional list, booking confirmation, tracking screen. **Standard and SOS flows both implemented** — Standard: Frontend Milestone 3 (2026-08-16), `BookingFlowPage`/`MyOrdersPage`/`OrderTrackingPage`; SOS: Frontend Milestone 4 (2026-08-17), `SosBookingFlowPage`/`SosBookingSummary`. **Extended in the MS3/MS4 product-corrections pass (2026-08-17)**: `AddressSelectionStep` (default-vs-custom address chooser), full 7-field service address, booking-draft resume. **Extended, Frontend Milestone 6 (2026-08-18)**: professional-side "mark on the way"/"mark completed" job-status progression actions on `OrderTrackingPage`. **Extended, professional weekly availability calendar feature, M5-M6 (2026-08-18)**: `OrderTrackingPage.tsx` gained issue enrichment, `order.id`/`bookedEnd` rendering, a counterparty-name bug fix, a professional-only customer-phone display, and week-context-preserving back navigation (M5); `SlotPicker.tsx` renamed `StartTimePicker.tsx` and reworked to consume derived `AVAILABLE` windows instead of the retired `availability_slots` rows, `BookingFlowPage.tsx`/`BookingSummary.tsx` send a direct `bookedStart` instead of a `slotId` (M6). See §6 below and `implementation-plan.md`'s entries. |
 | `features/professionals` | Professional card/list components shared by Standard and SOS (per PRD §7.4, SOS reuses the professional-selection component with urgent filtering rather than a fully separate screen), plus (as of Frontend Milestone 8) the standalone professional-profile detail screen and review list. **Implemented, Frontend Milestone 3 (2026-08-16)**; SOS reuse landed Frontend Milestone 4 (2026-08-17) — both flows now consume `ProfessionalCard`/`ProfessionalList` via `ProfessionalList`. **Sort-toggle reconciled in the MS3/MS4 product-corrections pass (2026-08-17)**: both flows now expose an identical 2-way `Recommended | Cheapest` chip toggle. **Grew in Frontend Milestone 8 (2026-08-18)**: `ProfessionalProfilePage.tsx`/`ReviewList.tsx` (new, `/professionals/:professionalId`), `ProfessionalCard.tsx`'s new optional `viewProfileContext` prop (primary select button unchanged). |
 | `features/favorites` | Customer's saved-favorites list — add/remove/browse. **New, Frontend Milestone 8 (2026-08-18)**: `FavoritesPage.tsx` (`/favorites`, CUSTOMER-only), `FavoriteProfessionalCard.tsx` (a deliberately lean, dedicated card, not a reuse of `ProfessionalCard` — the favorites DTO has no distance/ETA fields). |
 | `features/dashboard` | Professional dashboard — availability management, incoming requests, job status actions, business-profile self-service. **Partially implemented**, Frontend Milestone 3 (2026-08-16): incoming-request accept/reject, a read-only job list, availability-slot create/list; SOS-availability toggle (`SosAvailabilityToggle`) added Frontend Milestone 4 (2026-08-17). **Job-status progression (on-the-way/complete) is now built, Frontend Milestone 6 (2026-08-18)** — but lives on `features/booking/OrderTrackingPage.tsx`, not in this package; `MyJobsPage` here remains intentionally read-only/link-only. **Grew in Frontend Milestone 8 (2026-08-18)**: a 4th `ProDashboardLayout` tab, `/pro/profile` (`ProfileEditorPage.tsx` + `ProfessionalProfileImageField.tsx`), reading/writing `professionals/me` — distinct from the shared, read-only `app/ProfilePage.tsx` (`users/me`). **Grew in Frontend Milestone 9 (2026-08-18), mixed status at the time**: `SlotList` gained inline edit/delete for not-yet-booked slots (fully QA-verified live, after two follow-up bug fixes); `IncomingRequestCard` gained a read-only issue-photo thumbnail row that was code-correct but non-functional in-browser due to a pre-existing, cross-cutting image-auth gap — **fixed separately by backend MS9 (2026-08-18)**, see `features/dashboard/README.md` and `storage/README.md`. **Superseded at `/pro/availability`, professional weekly availability calendar feature, M3-M5 (2026-08-18)**: `WeeklyAvailabilityPage.tsx` (new) replaces `AvailabilityPage.tsx` at the same route, composing `SosAvailabilityToggle` (unchanged) + `WorkingHoursForm.tsx` (new, M3) + `WeeklyCalendarGrid.tsx` (new, M4, view-only, then interactive as of M5) + `CalendarBlockModal.tsx` (new, M5, built on the also-new shared `Modal.tsx` primitive). `AvailabilityPage.tsx`/`SlotForm.tsx`/`SlotList.tsx` are **left in the repo, unreachable from any route** (not deleted — cheap insurance, per the design's own explicit instruction) once M4 lands; the `availability_slots` endpoints they called become fully vestigial once M6 (customer-facing booking-flow rework) ships. See `features/dashboard/README.md`'s M3-M5 sections. **Grew again, MS9 — Professional Dashboard & Home (2026-08-18, QA-verified live, distinct from Frontend Milestone 9 above despite the shared number)**: `ProDashboardLayout` restructured into a right-side (RTL inline-start) sidebar at `>=640px` with a per-item `lucide-react` icon, staying a horizontal tab bar at `<640px`; a QA-driven follow-up fix scoped the `<640px` tab strip to `overflow-x: auto` to close a narrow-phone-width overflow bug this pass's own nav change introduced (a separate, unrelated, pre-existing overflow bug in `app/AppLayout.tsx`'s own header nav was also found during this QA pass but is out of scope and not fixed here). See `features/dashboard/README.md`'s MS9 section. **Grew again, MS10 — Profile UI Redesign (2026-08-19, QA-signed-off, no known defects)**: `ProfessionalProfileImageField.tsx` retired/deleted, its job taken over by the new `shared/components/ProfilePhoto.tsx`; `ProfileEditorPage.tsx` gained a responsive two-region layout (`<900px` single column, `>=900px` a `240px 1fr` photo/form grid) fixing the "large empty area on the left" root cause of the old `.card { max-width: 480px }` rule. See `features/dashboard/README.md`'s MS10 section. **Grew again, MS11 — Services & Sub-services (2026-08-19, implemented and QA-signed-off, no known defects)**: `ProfileEditorPage.tsx` gained a sub-services checklist `<fieldset>` (below `basePrice`, above the main save button), with its own independent "שמירת תחומי עיסוק" save button/state, calling the new `GET`/`PUT /api/professionals/me/sub-services` endpoints — a deliberate second save button on the page, not folded into the main form submit. See `features/dashboard/README.md`'s MS11 section. **Grew again, MS12 — Availability UX Cleanup (2026-08-19, implemented and QA-signed-off, no known defects)**: `WeeklyAvailabilityPage.tsx`'s permanently-visible working-hours summary list is removed; the "עריכת שעות עבודה" edit entry point now opens `WorkingHoursForm` inside the shared `Modal` primitive instead of expanding inline, resolving the deviation from `professional-weekly-calendar-design.md` §7.2 that the M3-M5 entries above flagged. Frontend-only, no change to `WeeklyCalendarGrid.tsx`/`WorkingHoursForm.tsx`/`Modal.tsx`. See `features/dashboard/README.md`'s MS12 section. |
-| `features/notifications` | In-app notification bell: nav badge + anchored dropdown feed, consuming the backend `notifications` package via short-polling. **Implemented, Frontend Milestone 5 (2026-08-18)** — `NotificationBell.tsx`/`notificationLabels.ts`; the status-polling primitive itself (`usePolling`/`useOrderStatus`) shipped earlier, in Frontend Milestone 3, and remains consumed directly by `features/booking`/`features/dashboard` for order tracking, separate from this module's own `useNotifications` hook. No dedicated page/route — the backend feed has no pagination. |
+| `features/notifications` | In-app notification bell: nav badge + anchored dropdown feed, consuming the backend `notifications` package via short-polling. **Implemented, Frontend Milestone 5 (2026-08-18)** — `NotificationBell.tsx`/`notificationLabels.ts`; the status-polling primitive itself (`usePolling`/`useOrderStatus`) shipped earlier, in Frontend Milestone 3, and remains consumed directly by `features/booking`/`features/dashboard` for order tracking, separate from this module's own `useNotifications` hook. No dedicated page/route — the backend feed has no pagination. **QA bugfix, MS2 — Home + Authentication Experience (2026-08-20)**: the dropdown panel clipped off-screen at MS2's new, narrower mobile top bar — fixed with a `<640px` `position: fixed`/viewport-anchored override, desktop unchanged. See §6 below and `features/notifications/README.md`. |
 | `shared/api` | Backend API client. **Grew in Frontend Milestone 3 (2026-08-16)**: `bookings.ts`, `availability.ts`, and a `getIssue` addition to `issues.ts`; grew again in Frontend Milestone 4 (2026-08-17): SOS-listing/order functions in `bookings.ts` and SOS-availability functions in `availability.ts`. **Grew in Frontend Milestone 5 (2026-08-18)**: `notifications.ts` (new), consuming the already-complete backend `notifications` package, no backend changes. **Grew in Frontend Milestone 8 (2026-08-18)**: `favorites.ts`/`professionals.ts` (new), `reviews.ts` gained `getReviews`. **Grew in Frontend Milestone 9 (2026-08-18)**: `availability.ts` gained `updateAvailabilitySlot`/`deleteAvailabilitySlot`, `users.ts` gained `deleteMe` — both fully QA-verified live. **Grew in the professional weekly availability calendar feature, M3-M6 (2026-08-18)**: `availability.ts` gained `getWorkingHours`/`updateWorkingHours`/`getAvailabilityCalendar` (M3/M4) and the block CRUD trio (M5); `httpClient.ts` gained a `patch()` method (M5, first `PATCH` caller in this codebase); `bookings.ts` gained `OrderDetailResponse.customerPhone` (M5) and, **as of M6**, lost `getProfessionalSlots`/`AvailabilitySlotItem`/`ProfessionalSlotsResponse` (removed, not deprecated) in favor of `getAvailableWindows`/`AvailableWindow`/`AvailableWindowsResponse`, with `CreateOrderRequest.slotId` replaced by `CreateOrderRequest.bookedStart`. **Grew in MS11 — Services & Sub-services (2026-08-19)**: `professionals.ts` gained `getCategoriesWithSubServices`/`getMySubServices`/`updateMySubServices` (`GET /api/categories`, `GET`/`PUT /api/professionals/me/sub-services`), consuming newly-built backend endpoints; `categories.ts`'s pre-existing static `CATEGORIES` mirror is deliberately left untouched, not migrated to the new endpoint. |
 | `shared/components` | Reusable UI components. **Grew in Frontend Milestone 3 (2026-08-16)**: `StatusBadge`. **Grew in the professional weekly availability calendar feature, M5 (2026-08-18)**: `Modal.tsx` (new) — a generic dialog/bottom-sheet primitive (desktop centered dialog vs. mobile bottom sheet, CSS-breakpoint-selected, no `variant` prop needed), first consumed by `features/dashboard/CalendarBlockModal.tsx`. **Grew in MS10 — Profile UI Redesign (2026-08-19)**: `ProfilePhoto.tsx` (new) — circular, centered profile photo/avatar, one edit-in-place affordance when `onUpload` is supplied, replacing the retired `features/dashboard/ProfessionalProfileImageField.tsx`; `ImageLightbox.tsx` (new) — a small, purpose-built "Facebook-style" click-to-enlarge viewer, deliberately not a `Modal` variant (its form-dialog-shaped API doesn't fit a chrome-free full-bleed image). **Grew in MS11 — Services & Sub-services (2026-08-19)**: `Checkbox.tsx` (new) — labeled native checkbox, the first-ever consumer of the `Checkbox` primitive `DESIGN_SYSTEM.md` §85 had listed by name but left unbuilt; first consumer: `ProfileEditorPage.tsx`'s sub-services checklist. |
 | `shared/hooks` | Reusable React hooks (e.g. status-polling hook, auth context). **Grew in Frontend Milestone 3 (2026-08-16)**: `usePolling`/`useOrderStatus`. **Grew in the MS3/MS4 product-corrections pass (2026-08-17)**: booking-draft persistence (`bookingDraftContext.ts`/`BookingDraftProvider.tsx`/`useBookingDraft.ts`). **Grew in Frontend Milestone 5 (2026-08-18)**: `useNotifications.ts` (a plain polling hook wrapping `usePolling`, not a React Context — single consumer, unlike `useActiveOrder`/`useBookingDraft`). **Grew in Frontend Milestone 8 (2026-08-18)**: `AuthProvider` gained `refreshUser()`, called after a professional edits their `fullName` via `/pro/profile` (writes to the underlying `users` row) so the top-nav's cached name doesn't go stale. **Grew in the professional weekly availability calendar feature, M6 (2026-08-18)**: `bookingDraftContext.ts`'s `BookingDraft.slotId` replaced by `bookedStart: string`, draft schema `version` bumped `1 → 2` (an old-version draft is discarded on load, not migrated). |
 | `shared/utils` | Small, pure, framework-agnostic formatting/derivation helpers shared across features (no React/JSX, no I/O) — `formatDateTime.ts` (Hebrew date/time labels, since Frontend Milestone 3, 2026-08-16). **New row in this table, professional weekly availability calendar feature, M6 (2026-08-18)** (the folder itself predates this feature but had no tracked row here or a `README.md` until this feature's closing documentation pass): gained `availability.ts` — `deriveStartTimeCandidates`, the pure derivation behind the customer booking flow's start-time chips. See `shared/utils/README.md`. |
-| `app` | Routing, layout, root configuration. **Updated, Frontend Milestone 3 (2026-08-16)**: `/pro` now renders a real professional dashboard instead of a placeholder; booking/tracking/orders routes added. **Updated, Frontend Milestone 5 (2026-08-18)**: `AppLayout.tsx` renders `<NotificationBell />` in the nav for both roles (CUSTOMER and PROFESSIONAL, unlike the CUSTOMER-only `ActiveOrderIndicator`); no router change (the bell is a dropdown, not a route). **Updated, Frontend Milestone 8 (2026-08-18)**: `router.tsx` gained `professionals/:professionalId`, `favorites`, and `pro/profile` routes. Same-day UX correction: `/favorites` is reached via `ProfilePage.tsx`'s "מועדפים" link, not an `AppLayout.tsx` nav link (favorites is a secondary customer feature, not primary nav). **Updated, Frontend Milestone 9 (2026-08-18)**: `ProfilePage.tsx` gained a two-step account-deletion confirmation, fully QA-verified live, no bugs found; no router change. **Updated, MS9 — Professional Dashboard & Home (2026-08-18, a separate, later pass from Frontend Milestone 9 above)**: `router.tsx`'s only change is `/pro` becoming a `<Navigate replace>` redirect to `/pro/availability`, with the former `/pro` content moved to `/pro/requests` — the sidebar/mobile-nav restructure itself is entirely inside `features/dashboard`. QA also surfaced a pre-existing, out-of-scope horizontal-overflow bug in this package's own `AppLayout.tsx` header nav at 320-390px widths (confirmed via `git stash` to predate this pass) — not fixed, see `app/README.md`'s "Known issues" section. **Updated, MS10 — Profile UI Redesign (2026-08-19, QA-signed-off, no known defects)**: `ProfilePage.tsx`/`.module.css` gained a `CUSTOMER`-only edit form (`fullName`/`phone`/`defaultAddress` via the new `PUT /api/users/me`) and a `ProfilePhoto` avatar/photo at the top for both roles; no router change. |
+| `app` | Routing, layout, root configuration. **Updated, Frontend Milestone 3 (2026-08-16)**: `/pro` now renders a real professional dashboard instead of a placeholder; booking/tracking/orders routes added. **Updated, Frontend Milestone 5 (2026-08-18)**: `AppLayout.tsx` renders `<NotificationBell />` in the nav for both roles (CUSTOMER and PROFESSIONAL, unlike the CUSTOMER-only `ActiveOrderIndicator`); no router change (the bell is a dropdown, not a route). **Updated, Frontend Milestone 8 (2026-08-18)**: `router.tsx` gained `professionals/:professionalId`, `favorites`, and `pro/profile` routes. Same-day UX correction: `/favorites` is reached via `ProfilePage.tsx`'s "מועדפים" link, not an `AppLayout.tsx` nav link (favorites is a secondary customer feature, not primary nav). **Updated, Frontend Milestone 9 (2026-08-18)**: `ProfilePage.tsx` gained a two-step account-deletion confirmation, fully QA-verified live, no bugs found; no router change. **Updated, MS9 — Professional Dashboard & Home (2026-08-18, a separate, later pass from Frontend Milestone 9 above)**: `router.tsx`'s only change is `/pro` becoming a `<Navigate replace>` redirect to `/pro/availability`, with the former `/pro` content moved to `/pro/requests` — the sidebar/mobile-nav restructure itself is entirely inside `features/dashboard`. QA also surfaced a pre-existing, out-of-scope horizontal-overflow bug in this package's own `AppLayout.tsx` header nav at 320-390px widths (confirmed via `git stash` to predate this pass) — not fixed, see `app/README.md`'s "Known issues" section. **Updated, MS10 — Profile UI Redesign (2026-08-19, QA-signed-off, no known defects)**: `ProfilePage.tsx`/`.module.css` gained a `CUSTOMER`-only edit form (`fullName`/`phone`/`defaultAddress` via the new `PUT /api/users/me`) and a `ProfilePhoto` avatar/photo at the top for both roles; no router change. **Updated, MS2 — Home + Authentication Experience (2026-08-20, implemented and QA-verified live, zero known open bugs)**: `HomePage.tsx`/`.module.css` got the full Hero redesign (greeting, mascot-as-layout-child CTA panel, trust-indicator row); `AppLayout.tsx`/`.module.css` got a desktop brand/logout treatment and a mobile top-bar content reduction; new `BottomNav.tsx`/`.module.css` (`CUSTOMER`-only, authenticated-only, 4 items per `DESIGN_SYSTEM.md` §50); small spillover fixes to `ActiveOrderIndicator.module.css`/`BookingDraftIndicator.module.css`. A real bug found and fixed mid-milestone: a `PROFESSIONAL` mobile session had no nav-reachable logout after the header redesign — fixed by moving the logout button outside `.desktopOnlyNav`. No router/`App.tsx` provider change. See §6 below and `app/README.md`. |
 
 ### Docs
 
@@ -1144,6 +1144,145 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
     forward-pointer note so this now-resolved deviation isn't mistaken for still-current),
     plus this entry, the `features/dashboard` row in the package table (§4 above), and
     `implementation-plan.md`'s new "MS12 — Availability UX Cleanup" entry.
+- **2026-08-20 — MS2 — Home + Authentication Experience landed, implemented and
+  QA-verified live (two real bugs found and fixed as part of the same pass, both
+  re-verified — zero known open bugs at final sign-off).** Working tree on
+  `frontend/MS1-visual-foundation`, uncommitted — not pushed/merged; that remains the
+  user's own explicit git action. Full design record:
+  `docs/architecture/frontend-ms2-home-auth-design.md`. Builds directly on **MS1 — Visual
+  Foundation & Motion System** (tokens, `Button`/`Card`/`Input`/`Modal`/`PageHeader`/
+  `Mascot`, `framer-motion` variants) — see `app/README.md`'s and
+  `shared/components/README.md`'s own MS1 entries for that milestone's detail. **Note**:
+  MS1 itself was never given its own dated entry in this section (a pre-existing gap in
+  this doc, not introduced by this pass) — flagged to `pronto-lead` rather than
+  backfilled here, since backfilling it accurately is outside this pass's scope.
+  - **Scope — three surfaces, frontend-only, no backend change**:
+    1. **Home Hero** (`app/HomePage.tsx`/`.module.css`): authenticated greeting line, the
+       CTA panel rebuilt as a real flex row composing `Mascot` as a layout child (not an
+       absolutely-positioned overlay), a new 3-item trust-indicator row
+       (`ShieldCheck`/`Tag`/`Activity`, local JSX, worded to avoid implying GPS/live
+       tracking, which remains out of scope). Deliberately does not build
+       `DESIGN_SYSTEM.md` §35's "Popular services" section (needs new product decisions,
+       out of scope) — "Active booking" is judged already served by
+       `ActiveOrderIndicator`.
+    2. **Header/nav** (`app/AppLayout.tsx`/`.module.css`, new `app/BottomNav.tsx`/
+       `.module.css`): desktop got a bigger brand and a demoted, icon-only logout button;
+       mobile got a slimmed-down top bar plus a new fixed bottom nav —
+       `CUSTOMER`-only, authenticated-only, 4 items (בית/הזמנות/מועדפים/פרופיל) per
+       `DESIGN_SYSTEM.md` §50's explicit, binding list — **not** the milestone dispatch's
+       own non-binding "Notifications" suggestion, resolved in the design doc's §3.3 in
+       favor of the design system since `NotificationBell`'s dropdown already covers that
+       capability. Small required spillover fixes to
+       `ActiveOrderIndicator.module.css` (mobile `bottom` offset raised to clear the new
+       bar) and `AppLayout.module.css`'s `.main` (mobile `padding-block-end`) and
+       `BookingDraftIndicator.module.css` (a `<360px` icon-only variant).
+       `features/dashboard/ProDashboardLayout` is untouched — out of scope, confirmed by
+       direct inspection.
+    3. **Auth screens** (`features/auth/*`): Login/Register-Choice got a visual pass with
+       zero logic changes; registration became progressive multi-stage wizards behind a
+       new shared `RegistrationWizardShell` (justified by two real, simultaneous
+       consumers). Customer: 3 stages, gained a `phone` field. Professional: **4 stages,
+       not the milestone dispatch's originally-requested 6** — a deliberate, approved
+       deviation verified directly against `AuthService.java`/
+       `ProfessionalRegistrationData` (no sub-service/availability fields exist at
+       registration time, and `register()`/`verify()` return no JWT, so there is no
+       authenticated session available at any point during or immediately after
+       registration to write such data through even if the fields existed) — see the
+       design doc §6.5-6.6 and `features/auth/README.md` for the full audit.
+  - **Real bug found and fixed mid-milestone (not a pre-existing gap, introduced by this
+    pass's own header redesign)**: a `PROFESSIONAL` mobile session initially had zero
+    nav-reachable logout after the header redesign (`BottomNav` is `CUSTOMER`-only,
+    `ProDashboardLayout`'s tab bar has no logout entry) — fixed by moving
+    `AppLayout.tsx`'s logout button to render as a sibling after `.desktopOnlyNav` closes,
+    instead of nested inside it, so it's visible at every viewport width for every
+    authenticated user regardless of role.
+  - **P0 bug fix, pre-existing, found during this pass**: `phone` was entirely missing
+    from customer registration end-to-end — `backend/.../auth/dto/
+    CustomerRegistrationData.java`'s `phone` is `@NotBlank`, but the frontend never
+    collected or sent it, so every real customer signup got a silent `400`. Fixed across
+    `shared/api/auth.ts` (`RegisterCustomerPayload`/`RegisterRequestData.customer`), the
+    new wizard's stage-1 form field, and the submit payload — see
+    `features/auth/README.md`'s "phone" section for the full three-layer fix.
+  - **Two more real bugs found by QA and fixed in the same pass, both re-verified**:
+    (a) `prefers-reduced-motion` wasn't actually respected on any of this milestone's new
+    `framer-motion` usages (`HomePage.tsx`, `LoginPage.tsx`, `RegisterChoicePage.tsx`/
+    `RoleChooser.tsx`, both registration pages, and — discovered mid-fix —
+    `RegistrationWizardShell.tsx`'s own stage-transition usage). The initially-attempted
+    fix technique (overriding the component's `transition` prop) does **not** work with
+    `framer-motion` variants whose own `animate` target embeds a `transition` — confirmed
+    live via Playwright (`reducedMotion: 'reduce'`, rAF-sampled opacity). The correct fix
+    overrides the resolved `animate`/`initial`/`exit` target objects directly, matching
+    `Modal.tsx`/`ToastViewport.tsx`'s existing (MS1) pattern — see
+    `features/auth/README.md`'s and `app/README.md`'s own MS2 QA-bugfix sections for the
+    full technical writeup. (b) `NotificationBell`'s dropdown panel clipped off-screen at
+    the new, narrower mobile top bar (this milestone's own regression, not pre-existing) —
+    fixed via a `<640px` `position: fixed` + symmetric `inset-inline` insets override,
+    anchored to the viewport instead of the bell's own wrapper — see
+    `features/notifications/README.md`.
+  - **QA**: full live Playwright verification against a real running frontend + a real
+    backend/Postgres instance, including a complete re-verification pass after all three
+    bug-fix rounds above (mobile-logout, phone, reduced-motion, notification-dropdown) —
+    zero known open bugs at final sign-off. Method consistent with every prior frontend
+    milestone in this project.
+  - **Documentation updated as part of closing this pass**: `frontend/src/app/README.md`,
+    `frontend/src/features/auth/README.md`, `frontend/src/features/notifications/
+    README.md` (all substantially kept current by the implementing agents along the way —
+    this closing pass's job was verification/gap-fill, not a first draft; no material
+    inaccuracies found in any of the three); plus this entry, the package tables in §4
+    above (`app`, `features/auth`, `features/notifications` rows), and
+    `implementation-plan.md`'s new "MS2 — Home + Authentication Experience" entry.
+- **2026-08-20 — MS3 — Issue Creation + AI Experience landed, implemented and
+  QA-signed-off, zero known open bugs.** Working tree on `frontend/MS1-visual-foundation`,
+  uncommitted — not pushed/merged; that remains the user's own explicit git action. Full
+  design record: `docs/architecture/frontend-ms3-issue-ai-design.md`. A visual/UX redesign
+  layered onto `features/issues`'s existing step-machine logic (Frontend Milestone 2 plus
+  the MS3/MS4 product-corrections booking-draft-persistence pass) — every
+  behavior/contract in that logic is preserved.
+  - **Scope, all within `frontend/src/features/issues/`**: a new `AiAnalyzingOverlay`
+    component (branded "Pronto בודק את התקלה..." state, `Mascot state="thinking"` + a
+    `role="status" aria-live="polite"` line + CSS-only pulse) replacing the bare `Button`
+    spinner at the two real `classifyIssue` call sites
+    (`DescribeIssueStep.handleSubmit`/`ClarifyQuestionsStep.handleContinue`, each gaining a
+    new `onAnalyzingChange` callback prop wired around the existing call, no other
+    reordering), and unified with the old `isResuming` plain-text resume state. Deliberately
+    **not** a `Step`-union member: `ClarifyQuestionsStep` holds its `answers` as local,
+    non-lifted state, so making `'analyzing'` a real step would force an
+    unmount/remount that silently loses in-progress answers on a failed request — the
+    chosen design (an absolutely-positioned sibling overlay over the still-mounted step)
+    avoids that risk and needs no new `updateDraft()` stage. A new `stepTransition`
+    (`shared/motion/variants.ts`'s first real consumer) now wraps the
+    `describe`/`clarify`/`review`/`success` chain in `AnimatePresence mode="wait"`, and
+    `PageHeader`'s previously-unused `steps` progress prop is now wired via a new
+    `STEP_NUMBERS` map. `DescribeIssueStep` got a composer redesign (`Card` wrapper,
+    example-prompt chips shown only while empty, two icon+title+subcopy urgency cards
+    replacing the plain toggle buttons). `ClarifyQuestionsStep`'s option buttons got larger
+    with a selection icon and `role="radiogroup"`/`role="radio"`/`aria-checked`, plus
+    per-question progressive reveal for the multi-question case. `ReviewStep`'s diagnosis
+    card got a corrected eyebrow (no professional is matched at that point yet), a dynamic
+    headline, a reassurance line, and a new SOS badge (raw `--color-sos` tokens, not
+    `Badge` — its `BadgeTone` enum has no `'sos'` value). `IssueSuccessStep` now shows
+    `Mascot state="success"` with a new headline and a `listStagger`-coordinated reveal; the
+    CTA stays a required manual action, no auto-navigation. All four step components'
+    `classifyIssue`/`createIssue` payloads, validation, and state contracts are unchanged.
+  - **Explicit, disclosed decision**: `classification.explanation`/`.confidence` remain
+    unrendered — verified directly against backend source, not a cautious default: real
+    (OpenAI) mode's `explanation` is English-only prose (contradicts Hebrew-only v1.0
+    scope); mock mode's `explanation` literally names the internal keyword-matching
+    mechanism. The reassurance line + SOS badge satisfy the "supporting explanation" ask
+    with safe, accurate content instead.
+  - **Two small, disclosed opportunistic fixes**: the length-validation error message now
+    states both bounds (10-2000 characters, previously only mentioned the minimum); the
+    success screen's previously dead, clickable-but-no-op back button is now correctly
+    hidden via `onBack={step.name === 'success' ? undefined : handleBack}`.
+  - **QA**: live Playwright testing against a real running backend (mock AI mode) and a
+    real frontend, including intercepted/mocked `classify` responses to exercise
+    `ClarifyQuestionsStep`'s `QUESTIONS` path (the mock AI classifier never naturally
+    returns that status on its own) — zero bugs found, full pass on the first run.
+  - **Documentation updated as part of closing this pass**: this entry, the
+    `features/issues` row in the package table (§4 above), and
+    `frontend/src/features/issues/README.md` (kept current by the implementing agent along
+    the way; this closing pass verified accuracy, no inaccuracies found); plus
+    `implementation-plan.md`'s new "MS3 — Issue Creation + AI Experience" entry.
 
 ## 7. Backend architecture reference (as-built)
 

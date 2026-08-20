@@ -61,6 +61,27 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
 }
 
+/*
+ * Narrow mobile top bar (same `640px` breakpoint `AppLayout.module.css`/`Modal.tsx` already
+ * key off of) — bug fix. `NotificationBell` sits mid-toolbar, not at the screen edge (after
+ * `BookingDraftIndicator`, before the logout button), so a fixed `340px` width anchored via
+ * `inset-inline-end: 0` on the bell's own (36px) wrapper regularly pushed the panel's far edge
+ * past the viewport — it was assuming desktop-level anchor room that doesn't exist here.
+ * Switching to `position: fixed` with symmetric viewport-relative insets (rather than
+ * anchoring to the wrapper at all) guarantees the panel stays fully on-screen regardless of
+ * where the bell icon ends up in the toolbar. `56px` matches `.headerInner`'s own mobile
+ * height (`AppLayout.module.css`); there's no shared header-height token in this codebase yet.
+ */
+@media (max-width: 640px) {
+  .panel {
+    position: fixed;
+    top: calc(56px + var(--space-2));
+    inset-inline: var(--space-4);
+    width: auto;
+    max-height: calc(100vh - 56px - var(--space-4) * 2);
+  }
+}
+
 .panelHeader {
   position: sticky;
   top: 0;

@@ -1,0 +1,38 @@
+/*
+ * Shimmer keyframe (`pronto-skeleton`) lives in the shared `styles/motion.css` — this file
+ * only references it by name.
+ */
+
+.pulse {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-secondary) 25%,
+    var(--color-border) 37%,
+    var(--color-surface-secondary) 63%
+  );
+  background-size: 400% 100%;
+  animation: pronto-skeleton 1.4s ease infinite;
+}
+
+.rect {
+  border-radius: var(--radius-lg);
+}
+
+.circle {
+  border-radius: 50%;
+}
+
+.textGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.text {
+  height: var(--line-height-small);
+  border-radius: var(--radius-sm);
+}
+
+.textShort {
+  width: 70%;
+}

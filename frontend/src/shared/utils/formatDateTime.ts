@@ -9,6 +9,7 @@
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('he-IL', { weekday: 'long', day: 'numeric', month: 'long' });
 const TIME_FORMATTER = new Intl.DateTimeFormat('he-IL', { hour: '2-digit', minute: '2-digit' });
+const MONTH_YEAR_FORMATTER = new Intl.DateTimeFormat('he-IL', { month: 'long', year: 'numeric' });
 
 /** e.g. "יום ראשון, 16 באוגוסט" — but Intl doesn't add the "ב" prefix, so build it manually. */
 export function formatDateLabel(isoString: string): string {
@@ -66,6 +67,12 @@ export function formatRelativeAgeLabel(isoString: string): string {
   }
   const diffYears = Math.floor(diffDays / 365);
   return diffYears === 1 ? 'שנה' : `${diffYears} שנים`;
+}
+
+/** e.g. "אוגוסט 2026" — the granularity a "member since" trust line wants (DESIGN_SYSTEM.md
+ *  §44); a to-the-day join date is both noisier and more personal than it needs to be. */
+export function formatMonthYearLabel(isoString: string): string {
+  return MONTH_YEAR_FORMATTER.format(new Date(isoString));
 }
 
 /** Grouping key (calendar day, not full timestamp) — local time, not UTC-truncated. */

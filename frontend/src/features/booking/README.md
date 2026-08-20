@@ -34,7 +34,168 @@ enrichment, the counterparty-name bug fix, `order.id`/`bookedEnd` rendering, the
 customer-phone display, and week-context-preserving back-navigation. **Professional weekly
 availability calendar feature, M6 (2026-08-18, final implementation milestone, see below)**:
 the customer-facing Standard booking flow's start-time-picking step reworked to consume
-derived `AVAILABLE` windows instead of the retired `availability_slots` rows.
+derived `AVAILABLE` windows instead of the retired `availability_slots` rows. **Frontend
+redesign MS4 — Booking & Professional Marketplace (2026-08-20, see below)**: step-transition
+motion, a shared `BookingSuccessStep` component, `Mascot state="searching"`, `PageHeader`
+progress-bar wiring, `Skeleton` loading states, `FilterChipGroup`/`EmptyState` reuse, and a
+`MyOrdersPage` Active/History sectioning change. **MS4 final corrections (2026-08-20, see
+below)**: the stale-slot booking flow, flow-specific success copy, and a visual pass over the
+slot picker and the confirmation card.
+
+**Frontend redesign MS4 — Booking & Professional Marketplace (2026-08-20):**
+
+Full design record: `docs/architecture/frontend-ms4-booking-marketplace-design.md`. This
+milestone found the booking/professional-marketplace module **already functionally
+complete** (built in Frontend Milestones 3/4/8, old numbering, well after MS1's design-token
+system landed) — the module's own audit (design doc §0/§1) confirmed token compliance and
+zero missing product functionality. The actual work was a **motion/polish/component-reuse
+consistency pass** bringing this module in line with MS1's design system (the sibling
+`features/issues` module already had these patterns; this module didn't yet), plus one real
+IA change to `MyOrdersPage`. Status: **implemented, QA-signed-off** (`pronto-qa`, 61/61
+assertions passed across 8 scope areas, zero application bugs found — see below). Working
+tree on branch `frontend/MS4-booking-marketplace`, uncommitted — not pushed/merged; that
+remains the user's own explicit git action.
+
+- **Step-transition motion (design doc §3.A1)**: `BookingFlowPage.tsx`/
+  `SosBookingFlowPage.tsx` each gained a `direction` state (`1` forward, `-1` on
+  `handleBack`), a `styles.stepViewport` wrapper, and `AnimatePresence mode="wait"
+  custom={direction}` around a `motion.div` using `shared/motion/variants.ts`'s
+  `stepTransition` — the same slide-transition pattern `features/issues/NewIssuePage.tsx`
+  already established for its own step machine. `useReducedMotion()`-neutralization is
+  copied locally per file (overriding the resolved `animate`/`exit` targets directly, since
+  each variant embeds its own spring `transition` that would otherwise win over a
+  component-level override) — the same established pattern already duplicated across
+  `NewIssuePage`/`RegistrationWizardShell`/`AiAnalyzingOverlay`, not a new violation.
+- **`Mascot state="searching"` (design doc §3.A4)**: both flow pages now render
+  `<Mascot state="searching" loop size="lg" />` alongside the existing "מחפשים בעלי מקצוע…"
+  transition text while `isLoadingProfessionals` is true, replacing what was previously bare
+  text — mirrors `AiAnalyzingOverlay.tsx`'s mascot-plus-copy pairing for the AI-thinking
+  moment in `features/issues`.
+- **`PageHeader`'s `steps` progress-bar prop wired up (design doc §3.A5)**: both flow pages
+  gained a `STEP_NUMBERS` const (mirroring `NewIssuePage.tsx`'s own) and now pass
+  `steps={{ current, total }}` (`total: 4` for Standard, `total: 3` for SOS), omitted on the
+  `'success'` step — the visual progress track was previously silently absent even though the
+  text label ("שלב 2 מתוך 4") implied one existed.
+- **New shared `BookingSuccessStep.tsx`/`.module.css` (design doc §3.A3, `features/booking/`,
+  not `shared/components` — co-located per this codebase's own "co-locate until
+  cross-feature reuse is needed" convention, exactly 2 consumers today)**: extracted from the
+  near-identical hand-rolled `successWrapper`/`successCheck`/`successTitle`/`successText`/
+  `successActions` JSX/CSS previously duplicated in both flow pages. Renders
+  `<Mascot state="success" size="xl" />` + a `listStagger`-staggered heading/text/actions
+  block, mirroring `features/issues/IssueSuccessStep.tsx`'s structure. **Prop shape (design
+  doc §4 Q2, resolved)**: plain `title: string`/`body: string`/`orderId: number` — not a
+  `variant: 'standard' | 'sos'` enum — matching `EmptyState.tsx`'s "component owns layout,
+  caller owns copy" convention. Both flow pages currently pass the same copy ("ההזמנה נשלחה" /
+  "הבקשה נשלחה ל{professionalName}. ממתינים לאישור בעל המקצוע."), so the two success screens
+  are visually/textually identical today by design — the component stays copy-agnostic;
+  SOS-specific tone, if ever wanted, is a caller-side change, not a component change (flagged
+  by QA as a non-blocking observation, not a defect). Both flow pages' `.module.css` lost the
+  now-dead `.successWrapper`/`.successCheck`/`.successTitle`/`.successText`/`.successActions`
+  rules.
+- **Shared `Skeleton` loading states (design doc §3.B)**: replaced bare `<p>טוען…</p>` text
+  with `Skeleton variant="rect"` placeholders (sized via `className` to roughly match each
+  page's real content) in `MyOrdersPage.tsx` (a 3-row list skeleton) and
+  `OrderTrackingPage.tsx` — both its top-level loading state (previously had none at all) and
+  its pre-existing inline `.skeleton` span for the category sub-loading case (swapped for the
+  shared component, for shimmer consistency — same behavior, no new logic). See
+  `features/professionals/README.md`'s MS4 section for the `ProfessionalProfilePage.tsx`
+  skeleton (that package's own file).
+- **`EmptyState` component reuse (design doc §3.C2)**: `MyOrdersPage.tsx`'s hand-rolled
+  `.empty`/`.emptyTitle` markup replaced with `<EmptyState title="..." description="..."
+  action={<Button ...>} />` — the existing "יש לי תקלה" CTA moved into `EmptyState`'s
+  `action` prop unchanged. See `features/professionals/README.md`'s MS4 section for
+  `ProfessionalList.tsx`'s analogous change (that package's own file).
+- **`AddressSelectionStep.tsx` hand-rolled chip toggle replaced with `FilterChipGroup`
+  (design doc §3.C1)**: the two-option "כתובת ברירת המחדל שלי" / "כתובת אחרת לפעם הזו" chooser
+  now reuses the shared `FilterChipGroup` component (already used by `ProfessionalList.tsx`
+  for its sort chips) instead of a hand-rolled `.chips`/`.chip`/`.chipActive` pair — gains
+  correct `role="radiogroup"`/`role="radio"` accessibility semantics the hand-rolled version
+  lacked entirely. The now-unused `.chips`/`.chip`/`.chipActive` CSS rules were removed.
+- **`MyOrdersPage.tsx` IA change — Active/History sectioning (design doc §4 Q1, resolved by
+  explicit user decision)**: previously a single flat, unsectioned, API-order list. Now a new
+  pure `bucketOrders()` function (no new endpoint, still one unfiltered `getMyOrders()` call)
+  splits the caller's orders into two client-side sections: **"פעילות וקרובות"**
+  (Active/Upcoming — every order not in a terminal status, sorted soonest-`bookedStart`-first)
+  and **"היסטוריה"** (History — `COMPLETED`/`CANCELLED`/`REJECTED`/`EXPIRED`, sorted
+  most-recently-`updatedAt`-first). Mirrors `features/dashboard/MyJobsPage.tsx`'s MS6
+  sectioning pattern, adapted to **2** sections instead of 3 (no separate "Today" bucket — a
+  customer's own order volume doesn't warrant the professional side's finer today/upcoming
+  split). Each section gets its own `EmptyState` when empty (distinct from the page-level
+  `EmptyState` shown only for the true zero-orders-ever case). Row markup (`OrderRow`) and the
+  underlying data fetch/error handling are otherwise **unchanged**.
+- **Both of QA's known limitations were then fixed** in the final-corrections pass below —
+  the identical Standard/SOS success copy, and the stale-slot `400`.
+- **Explicitly untouched, confirmed by the design doc's own audit (design doc §1/§6)**:
+  `BookingSummary.tsx`, `SosBookingSummary.tsx`, `StartTimePicker.tsx`'s core chip logic, all
+  `shared/api/**` contracts, the booking-draft persistence mechanism, the resume-hydration
+  logic in both flow pages. No backend change of any kind. `pronto-qa` ran a regression check
+  confirming zero diff on these files vs. `main`.
+- **QA**: `pronto-qa` ran live Playwright verification against a real running frontend +
+  backend, 61/61 assertions passed across 8 scope areas (both booking flows' step
+  transitions/mascot/success screens, professional list stagger, address-selection chips, all
+  4 skeleton states across `features/booking`/`features/professionals`, `MyOrdersPage`
+  grouping including empty-section and zero-order edge cases, reduced-motion behavior, and the
+  untouched-files regression check above). Zero application bugs found. `tsc -b`/`vite build`
+  and `oxlint` both clean.
+
+**Frontend redesign MS4 — final corrections before close (2026-08-20):**
+
+Requested by the user after reading the QA sign-off. Full record:
+`docs/architecture/frontend-ms4-booking-marketplace-design.md` §4b. Status: **implemented and
+verified live** — 43/43 Playwright assertions against a running frontend + backend (both
+booking flows, both stale-slot paths, the professional list/card, the slot picker, the
+confirmation, the profile page, mobile 390×844, RTL, reduced motion); `tsc -b` and `oxlint`
+clean. Still uncommitted on `frontend/MS4-booking-marketplace`.
+
+1. **Stale-slot booking flow — no more generic `400`.** The server rejects a non-future
+   `bookedStart` with an undifferentiated `400 VALIDATION_ERROR` whose only distinguishing
+   mark is a `bookedStart` entry in `details` (`BookingsService.createOrder` step 0 — there is
+   no dedicated error code, verified in the backend source). Four frontend-only layers now
+   handle it, no backend change:
+   - `shared/utils/availability.ts`'s `deriveStartTimeCandidates` takes an optional
+     `notBeforeMs` and drops non-future candidates, so an unbookable chip is never offered.
+     Its third parameter changed from `gridMinutes = 30` to an options object
+     (`{ gridMinutes, notBeforeMs }`) — no caller passed the old positional argument.
+   - `StartTimePicker` re-derives every 30s against a live clock (`CLOCK_TICK_MS`) and reports
+     an expired selection up through a new `onSelectedExpired` prop (fired once per value, ref-
+     guarded, since the parent's handler is an inline arrow). `BookingFlowPage.
+     handleSelectedStartExpired` clears the selection in place and explains why; no re-fetch,
+     because the picker's own chips are already current.
+   - `BookingSummary.handleConfirm` pre-flight-checks `bookedStart > Date.now()` — the same
+     condition the server checks, no invented lead-time rule — and routes to
+     `onTimeUnavailable` without a round trip.
+   - `BookingSummary` also recognises the 400 itself (`isStaleStartError`, matched on the
+     `bookedStart` field-error entry) for the clock-skew / expired-in-flight case, reusing the
+     existing `onTimeUnavailable` path, which already returns to the `slot` step **and**
+     re-fetches availability via `fetchWindows`.
+   The returning message renders as an info `notice` (`role="status"`, `--color-info-bg`), not
+   the red error banner — nothing went wrong from the customer's side. Its copy is distinct
+   from `BOOKING_TIME_UNAVAILABLE`'s "someone else booked it first" message. `handleSlotContinue`
+   carries the same guard for the gap between a clock tick and a click, and resume-hydration
+   passes `notBeforeMs` too, so a draft restored after its saved time has passed lands on the
+   picker rather than on a confirm step the server would reject.
+2. **Standard vs SOS success copy.** `BookingSuccessStep`'s prop shape is unchanged (still
+   plain `title`/`body`/`orderId`, still copy-agnostic — which is precisely why this was a
+   caller-side edit). `BookingFlowPage` reads the confirmed slot back
+   (`הבקשה נשלחה ל{name} ל{date} בשעה {time}. נעדכן אותך ברגע שההזמנה תאושר.`);
+   `SosBookingFlowPage`, which has no slot, speaks to the immediate wait
+   (`הבקשה הדחופה נשלחה` / `שלחנו התראה דחופה ל{name}…`). The SOS body deliberately promises
+   status updates on the order page, not live tracking — the app has a status timeline and one
+   ETA snapshot at `ON_THE_WAY`, not a live map.
+3. **Visual pass** (see `features/professionals/README.md` for that package's half):
+   - `StartTimePicker` rebuilt against DESIGN_SYSTEM.md §46-47: chips snap **up** to the
+     wall-clock grid, so the picker shows `16:30 · 17:00` instead of the `14:02 · 14:32` that
+     window-start-relative gridding produced (today's first window opens at `Instant.now()`).
+     Chips are grouped by part of day (בוקר/צהריים/ערב), the step asks its own question
+     ("מתי נוח לך?") and discloses the real visit duration from the API. Its hand-rolled empty
+     state became the shared `EmptyState`; `#ffffff` literals became `var(--color-surface)`.
+   - `BookingSummary` gained §48's missing visit-price line above the total (previously only a
+     total), a "סיכום ההזמנה" heading, and icon-led row labels — matching
+     `SosBookingSummary`'s existing breakdown treatment so the two confirmations read as one
+     family.
+   - An earlier attempt to bleed the date-chip row to the viewport edges was reverted: it lost
+     its start-side padding in RTL and left the active chip flush against the screen edge on
+     mobile. The row stays inside the page padding.
 
 **Professional weekly availability calendar — M6 (2026-08-18) — booking-flow rework:**
 

@@ -233,6 +233,10 @@ export default function ProfileEditorPage() {
         profileImageUrl: profile.profileImageUrl,
         averageRating: profile.averageRating,
         reviewCount: profile.reviewCount,
+        // Trust signals aren't editable here either, but they are part of what a customer
+        // sees — so the preview shows them rather than silently rendering a trust-less card.
+        approvalStatus: profile.approvalStatus,
+        createdAt: profile.createdAt,
       }
     : null;
 

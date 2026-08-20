@@ -79,11 +79,14 @@
   border: 1px solid var(--color-border);
 }
 
-.skeleton {
+/* Sizing only — shimmer/background/radius come from the shared `Skeleton` component. */
+.categorySkeleton {
   height: 16px;
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-secondary);
   width: 40%;
+}
+
+.loadingCard {
+  height: 480px;
 }
 
 .row {

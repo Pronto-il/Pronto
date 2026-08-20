@@ -1,7 +1,9 @@
 import { Link } from 'react-router-dom';
-import { Star, Zap } from 'lucide-react';
-import { Card, Button } from '../../shared/components';
+import { Heart, MapPin, Sparkles, Star, Zap } from 'lucide-react';
+import { Badge, Card, Button } from '../../shared/components';
+import { getCategoryNameHe } from '../../shared/api';
 import type { ProfessionalCard as ProfessionalCardData, ProfessionalSort } from '../../shared/api';
+import { formatReviewCount } from '../../shared/utils/hebrewText';
 import styles from './ProfessionalCard.module.css';
 
 /** Carried via router `state` (not a query param, see `frontend-ms8-design.md` §2.3) so the
@@ -24,6 +26,21 @@ export interface ProfessionalCardProps {
   professional: ProfessionalCardData;
   /** Which sort mode is active — only changes visual emphasis, never the card structure (DESIGN_SYSTEM.md §32/FRONTEND_AGENT.md §12). */
   sort?: ProfessionalSort;
+  /**
+   * The issue's service category, from the listing response (`ProfessionalListingResponse.
+   * categoryId`) — every professional in a listing matches the issue's category, so this is
+   * the same value for every card. Renders the profession line DESIGN_SYSTEM.md §29 places
+   * directly under the name. Optional: a card rendered without listing context (none today)
+   * simply omits the line rather than guessing.
+   */
+  categoryId?: number;
+  /**
+   * Marks this card as the listing's top recommendation — the first result while the
+   * `RECOMMENDED` sort is active, i.e. the professional the backend's own ranking put first.
+   * Renders §33's "מומלץ עבורך" badge. Never set from a client-side heuristic, and never set
+   * at all under the other sort modes (§32: sorting changes emphasis, not structure).
+   */
+  isTopRecommendation?: boolean;
   onSelect: (professional: ProfessionalCardData) => void;
   /** When provided, the identity block (photo + name) becomes a secondary link to
    *  `/professionals/:id` carrying this as router `state` — the primary `onSelect` button is
@@ -39,15 +56,33 @@ function initials(fullName: string): string {
 }
 
 /**
- * Professional profile-summary card, per DESIGN_SYSTEM.md §29-33: photo, name, rating +
- * review count (omitted entirely when `averageRating` is null — never shown as "0
- * reviews"), distance + ETA, price, single primary CTA. Reused by both the Standard and
- * SOS listings (`features/booking`'s `BookingFlowPage`/`SosBookingFlowPage`, both via
+ * Professional profile-summary card, per DESIGN_SYSTEM.md §29-33: photo, name, profession,
+ * rating + review count (an honest "עדיין אין ביקורות" when `averageRating` is null — never
+ * a fabricated "0.0" or "0 reviews"), service area + distance + ETA, price, single primary
+ * CTA.
+ *
+ * **MS4 final corrections (2026-08-20)**: the profession line (§29's hierarchy) and §33's
+ * "מומלץ עבורך" badge on the top `RECOMMENDED` result were both missing — the badge is the
+ * one element §32 names as the recommended mode's primary comparison signal, and the shared
+ * `Badge` component's `tone="primary"` had been built for it in MS1 without ever being used.
+ * No verification checkmark is rendered here despite §29's example: the listing DTO carries
+ * no approval/verification field and the listing endpoint filters only on "not deleted"
+ * (`BookingsService.isProfessionalActive`), so claiming verification on this surface would
+ * violate §44. The profile page, which does receive `approvalStatus`, shows it instead.
+ *
+ * Reused by both the Standard and SOS listings (`features/booking`'s `BookingFlowPage`/`SosBookingFlowPage`, both via
  * `ProfessionalList`) — identical card structure for both flows. `favorited` is rendered
  * read-only this pass (no toggle interaction — that needs `POST`/`DELETE /api/favorites`,
  * out of scope).
  */
-export function ProfessionalCard({ professional, sort, onSelect, viewProfileContext }: ProfessionalCardProps) {
+export function ProfessionalCard({
+  professional,
+  sort,
+  categoryId,
+  isTopRecommendation,
+  onSelect,
+  viewProfileContext,
+}: ProfessionalCardProps) {
   const {
     professionalId,
     fullName,
@@ -73,22 +108,34 @@ export function ProfessionalCard({ professional, sort, onSelect, viewProfileCont
       <div className={styles.identity}>
         <h3 className={styles.name}>
           {fullName}
-          {favorited && <span aria-hidden="true"> ♥</span>}
+          {favorited && (
+            <Heart size={15} className={styles.favoriteMark} aria-label="שמור במועדפים" fill="currentColor" />
+          )}
         </h3>
-        <p className={styles.serviceArea}>{serviceArea}</p>
-        {averageRating !== null && (
+        {categoryId !== undefined && <p className={styles.profession}>{getCategoryNameHe(categoryId)}</p>}
+        {averageRating !== null ? (
           <span className={`${styles.rating} ${sort === 'RECOMMENDED' ? styles.ratingEmphasis : ''}`}>
             <Star size={14} className={styles.ratingStar} aria-hidden="true" fill="currentColor" />
             {averageRating.toFixed(1)}
-            <span className={styles.reviewCount}>· {reviewCount} ביקורות</span>
+            <span className={styles.reviewCount}>· {formatReviewCount(reviewCount)}</span>
           </span>
+        ) : (
+          // Stated plainly rather than left blank — an absent rating row reads as a missing
+          // element, while "no reviews yet" is honest and is not a trust claim (§44).
+          <span className={styles.noRating}>עדיין אין ביקורות</span>
         )}
       </div>
     </>
   );
 
   return (
-    <Card className={styles.card}>
+    <Card className={`${styles.card} ${isTopRecommendation ? styles.cardRecommended : ''}`}>
+      {isTopRecommendation && (
+        <Badge tone="primary" size="sm" icon={<Sparkles size={14} />} className={styles.recommendedBadge}>
+          מומלץ עבורך
+        </Badge>
+      )}
+
       {viewProfileContext ? (
         <Link
           to={`/professionals/${professionalId}`}
@@ -102,11 +149,14 @@ export function ProfessionalCard({ professional, sort, onSelect, viewProfileCont
       )}
 
       <div className={styles.meta}>
-        <span className={`${styles.eta} ${sort === 'FASTEST' ? styles.etaEmphasis : ''}`}>
+        <span className={`${styles.metaItem} ${styles.eta} ${sort === 'FASTEST' ? styles.etaEmphasis : ''}`}>
           <Zap size={16} aria-hidden="true" />
           יכול להגיע תוך כ־{etaMinutes} דקות
         </span>
-        <span className={styles.distance}>{distanceKm.toFixed(1)} ק״מ ממך</span>
+        <span className={styles.metaItem}>
+          <MapPin size={15} aria-hidden="true" />
+          {serviceArea} · {distanceKm.toFixed(1)} ק״מ ממך
+        </span>
       </div>
 
       <div className={styles.bottom}>

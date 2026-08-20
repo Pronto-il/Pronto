@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { Star, Heart } from 'lucide-react';
 import { Card } from '../../shared/components';
 import type { FavoriteProfessionalSummary } from '../../shared/api';
+import { formatReviewCount } from '../../shared/utils/hebrewText';
 import styles from './FavoriteProfessionalCard.module.css';
 
 export interface FavoriteProfessionalCardProps {
@@ -49,7 +50,7 @@ export function FavoriteProfessionalCard({ favorite, onRemove, isRemoving }: Fav
             <span className={styles.rating}>
               <Star size={14} className={styles.ratingStar} aria-hidden="true" fill="currentColor" />
               {averageRating.toFixed(1)}
-              <span className={styles.reviewCount}>· {reviewCount} ביקורות</span>
+              <span className={styles.reviewCount}>· {formatReviewCount(reviewCount)}</span>
             </span>
           )}
         </div>

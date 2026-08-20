@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { PageHeader, EMPTY_ADDRESS, Button } from '../../shared/components';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import type { TargetAndTransition, Transition, Variants } from 'framer-motion';
+import { PageHeader, EMPTY_ADDRESS, Mascot } from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
 import { getSosProfessionalsForIssue, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { OrderResponse, ProfessionalCard as ProfessionalCardData, ProfessionalSort } from '../../shared/api';
 import { ProfessionalList, SOS_SORT_OPTIONS } from '../professionals';
 import { useBookingDraft } from '../../shared/hooks';
+import { stepTransition } from '../../shared/motion/variants';
 import { AddressSelectionStep, type AddressMode } from './AddressSelectionStep';
 import { SosBookingSummary } from './SosBookingSummary';
+import { BookingSuccessStep } from './BookingSuccessStep';
 import styles from './SosBookingFlowPage.module.css';
 
 type Step =
@@ -20,6 +24,14 @@ const STEP_LABELS: Partial<Record<Step['name'], string>> = {
   address: 'שלב 1 מתוך 3',
   professionals: 'שלב 2 מתוך 3',
   confirm: 'שלב 3 מתוך 3',
+};
+
+/** Feeds `PageHeader`'s `steps` progress-bar prop (design doc §3.A5) — omitted for
+ *  `'success'`, mirroring `NewIssuePage.tsx`'s `STEP_NUMBERS`/`STEP_LABELS` pairing. */
+const STEP_NUMBERS: Partial<Record<Step['name'], number>> = {
+  address: 1,
+  professionals: 2,
+  confirm: 3,
 };
 
 const LISTING_ERROR_MESSAGES: Record<string, string> = {
@@ -69,6 +81,10 @@ export default function SosBookingFlowPage() {
 
   const [step, setStep] = useState<Step>({ name: 'address' });
   const hasAttemptedResume = useRef(false);
+  /** `1` = advancing forward, `-1` = going back — drives `stepTransition`'s slide direction
+   *  (design doc §3.A1), mirroring `NewIssuePage.tsx`'s `direction` state exactly. */
+  const [direction, setDirection] = useState(1);
+  const shouldReduceMotion = useReducedMotion();
 
   const fetchProfessionals = useCallback(
     async (nextSort: ProfessionalSort, currentAddress: AddressValue) => {
@@ -170,6 +186,7 @@ export default function SosBookingFlowPage() {
     if (!validateAddress()) {
       return;
     }
+    setDirection(1);
     setStep({ name: 'professionals' });
     void fetchProfessionals(sort, address);
     updateDraft({
@@ -189,6 +206,7 @@ export default function SosBookingFlowPage() {
   }
 
   function handleSelectProfessional(professional: ProfessionalCardData) {
+    setDirection(1);
     setStep({ name: 'confirm', professional });
     updateDraft({ stage: 'BOOKING_CONFIRM', professionalId: professional.professionalId });
   }
@@ -197,6 +215,7 @@ export default function SosBookingFlowPage() {
     if (step.name !== 'confirm') {
       return;
     }
+    setDirection(-1);
     setStep({ name: 'professionals' });
     void fetchProfessionals(sort, address);
     updateDraft({ stage: 'PROFESSIONAL_SELECTION', professionalId: undefined });
@@ -206,6 +225,7 @@ export default function SosBookingFlowPage() {
     if (step.name !== 'confirm') {
       return;
     }
+    setDirection(1);
     setStep({ name: 'success', order, professionalName: step.professional.fullName });
     clearDraft();
   }
@@ -214,13 +234,34 @@ export default function SosBookingFlowPage() {
     if (step.name === 'address') {
       navigate('/');
     } else if (step.name === 'professionals') {
+      setDirection(-1);
       setStep({ name: 'address' });
       updateDraft({ stage: 'ADDRESS_SELECTION' });
     } else if (step.name === 'confirm') {
+      setDirection(-1);
       setStep({ name: 'professionals' });
       updateDraft({ stage: 'PROFESSIONAL_SELECTION', professionalId: undefined });
     }
   }
+
+  // Same neutralization pattern `NewIssuePage.tsx`/`AiAnalyzingOverlay.tsx` already apply —
+  // `stepTransition`'s `animate`/`exit` targets each carry their own embedded spring
+  // `transition`, which wins over a component-level `transition` prop. Copied locally per
+  // that established pattern rather than extracted into `shared/motion` (design doc §3.A1).
+  const stepVariants: Variants = useMemo(() => {
+    if (!shouldReduceMotion) {
+      return stepTransition;
+    }
+    const instant: Transition = { duration: 0 };
+    const animate = stepTransition.animate as TargetAndTransition;
+    const initial = stepTransition.initial as (custom: number) => TargetAndTransition;
+    const exit = stepTransition.exit as (custom: number) => TargetAndTransition;
+    return {
+      initial: (custom: number) => ({ ...initial(custom), transition: instant }),
+      animate: { ...animate, transition: instant },
+      exit: (custom: number) => ({ ...exit(custom), transition: instant }),
+    };
+  }, [shouldReduceMotion]);
 
   return (
     <div className="focused-page">
@@ -228,6 +269,7 @@ export default function SosBookingFlowPage() {
         title="בקשת SOS"
         description={STEP_LABELS[step.name]}
         onBack={step.name === 'success' ? undefined : handleBack}
+        steps={STEP_NUMBERS[step.name] !== undefined ? { current: STEP_NUMBERS[step.name]!, total: 3 } : undefined}
       />
 
       {step.name !== 'success' && (
@@ -237,68 +279,75 @@ export default function SosBookingFlowPage() {
         </div>
       )}
 
-      {step.name === 'address' && (
-        <div className={styles.step}>
-          <AddressSelectionStep
-            value={address}
-            onChange={setAddress}
-            mode={addressMode}
-            onModeChange={setAddressMode}
-            errors={addressErrors}
-            onContinue={handleAddressContinue}
-          />
-        </div>
-      )}
+      <div className={styles.stepViewport}>
+        <AnimatePresence mode="wait" custom={direction}>
+          <motion.div key={step.name} custom={direction} variants={stepVariants} initial="initial" animate="animate" exit="exit">
+            {step.name === 'address' && (
+              <div className={styles.step}>
+                <AddressSelectionStep
+                  value={address}
+                  onChange={setAddress}
+                  mode={addressMode}
+                  onModeChange={setAddressMode}
+                  errors={addressErrors}
+                  onContinue={handleAddressContinue}
+                />
+              </div>
+            )}
 
-      {step.name === 'professionals' && (
-        <div className={styles.step}>
-          {isLoadingProfessionals && <p className={styles.transitionText}>מחפשים בעלי מקצוע זמינים לעבודות דחופות…</p>}
-          {professionalsError ? (
-            <div className={styles.banner} role="alert">
-              <p>{professionalsError}</p>
-            </div>
-          ) : (
-            <ProfessionalList
-              professionals={professionals}
-              sort={sort}
-              sortOptions={SOS_SORT_OPTIONS}
-              onSortChange={handleSortChange}
-              onSelect={handleSelectProfessional}
-              isLoading={isLoadingProfessionals}
-              viewProfileContext={{ issueId, urgencyType: 'SOS' }}
-            />
-          )}
-        </div>
-      )}
+            {step.name === 'professionals' && (
+              <div className={styles.step}>
+                {isLoadingProfessionals && (
+                  <div className={styles.searchingState}>
+                    <Mascot state="searching" loop size="lg" />
+                    <p className={styles.transitionText}>מחפשים בעלי מקצוע זמינים לעבודות דחופות…</p>
+                  </div>
+                )}
+                {professionalsError ? (
+                  <div className={styles.banner} role="alert">
+                    <p>{professionalsError}</p>
+                  </div>
+                ) : (
+                  <ProfessionalList
+                    professionals={professionals}
+                    sort={sort}
+                    sortOptions={SOS_SORT_OPTIONS}
+                    onSortChange={handleSortChange}
+                    onSelect={handleSelectProfessional}
+                    categoryId={categoryId ?? undefined}
+                    isLoading={isLoadingProfessionals}
+                    viewProfileContext={{ issueId, urgencyType: 'SOS' }}
+                  />
+                )}
+              </div>
+            )}
 
-      {step.name === 'confirm' && categoryId !== null && (
-        <SosBookingSummary
-          issueId={issueId}
-          categoryId={categoryId}
-          professional={step.professional}
-          address={address}
-          onConfirmed={handleConfirmed}
-          onProfessionalUnavailable={handleProfessionalUnavailable}
-        />
-      )}
+            {step.name === 'confirm' && categoryId !== null && (
+              <SosBookingSummary
+                issueId={issueId}
+                categoryId={categoryId}
+                professional={step.professional}
+                address={address}
+                onConfirmed={handleConfirmed}
+                onProfessionalUnavailable={handleProfessionalUnavailable}
+              />
+            )}
 
-      {step.name === 'success' && (
-        <div className={styles.successWrapper}>
-          <span className={styles.successCheck} aria-hidden="true">
-            ✓
-          </span>
-          <h2 className={styles.successTitle}>ההזמנה נשלחה</h2>
-          <p className={styles.successText}>הבקשה נשלחה ל{step.professionalName}. ממתינים לאישור בעל המקצוע.</p>
-          <div className={styles.successActions}>
-            <Button onClick={() => navigate(`/orders/${step.order.id}`)} fullWidth>
-              צפייה בהזמנה
-            </Button>
-            <Button variant="secondary" onClick={() => navigate('/')} fullWidth>
-              חזרה לדף הבית
-            </Button>
-          </div>
-        </div>
-      )}
+            {/* SOS-specific copy (MS4 final corrections, item 2) — the shared component stays
+                copy-agnostic. An SOS request has no scheduled slot to repeat back; what the
+                customer is waiting on is an immediate answer, so the copy says that instead. */}
+            {step.name === 'success' && (
+              <BookingSuccessStep
+                title="הבקשה הדחופה נשלחה"
+                // No "live tracking" promise here — the app shows a status timeline and, once
+                // the professional is on the way, a single ETA snapshot; not a live map.
+                body={`שלחנו התראה דחופה ל${step.professionalName}. ברגע שהבקשה תאושר נעדכן אותך, ואפשר לעקוב אחרי הסטטוס בדף ההזמנה.`}
+                orderId={step.order.id}
+              />
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

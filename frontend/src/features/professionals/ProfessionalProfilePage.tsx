@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Heart } from 'lucide-react';
-import { PageHeader, Card, Button } from '../../shared/components';
+import { PageHeader, Card, Button, Skeleton } from '../../shared/components';
 import { useAuth, useBookingDraft } from '../../shared/hooks';
 import {
   getProfessionalProfile,
@@ -141,7 +141,12 @@ export default function ProfessionalProfilePage() {
     <div className="focused-page">
       <PageHeader title="פרופיל בעל מקצוע" onBack={() => navigate(-1)} />
 
-      {isLoading && <p>טוען…</p>}
+      {isLoading && (
+        <div className={styles.loadingIdentity}>
+          <Skeleton variant="circle" className={styles.loadingAvatar} />
+          <Skeleton variant="text" lines={2} className={styles.loadingLines} />
+        </div>
+      )}
 
       {!isLoading && notFound && (
         <Card className={styles.notice}>
@@ -169,7 +174,9 @@ export default function ProfessionalProfilePage() {
                 aria-pressed={isFavorited}
               >
                 <Heart size={18} aria-hidden="true" fill={isFavorited ? 'currentColor' : 'none'} />
-                <span>{isFavorited ? 'הוסר ממועדפים' : 'הוספה למועדפים'}</span>
+                {/* Was "הוסר ממועדפים" — past-tense passive ("was removed"), which reads as a
+                    status message rather than the action the button performs. */}
+                <span>{isFavorited ? 'הסרה ממועדפים' : 'הוספה למועדפים'}</span>
               </button>
               {favoriteError && (
                 <p className={styles.favoriteError} role="alert">

@@ -1,13 +1,42 @@
 .wrapper {
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
+  gap: var(--space-5);
+}
+
+.intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.question {
+  font-size: 20px;
+  line-height: 26px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.durationNote {
+  font-size: 14px;
+  color: var(--color-text-secondary);
 }
 
 .dateRow {
   display: flex;
   gap: var(--space-2);
   overflow-x: auto;
+  /* Stays inside the page's own padding — an earlier attempt to bleed this row to the
+     viewport edges (negative inline margin + matching padding) lost its start-side padding
+     in RTL, leaving the active chip flush against the screen edge on mobile. */
+  padding-block-end: var(--space-1);
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+}
+
+.dateRow::-webkit-scrollbar {
+  display: none;
 }
 
 .dateChip {
@@ -21,12 +50,41 @@
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
+  scroll-snap-align: start;
+  transition: border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+
+.dateChip:hover {
+  border-color: var(--color-border-strong);
 }
 
 .dateChipActive {
   background: var(--color-primary);
   border-color: var(--color-primary);
-  color: #ffffff;
+  color: var(--color-surface);
+}
+
+.dateChipActive:hover {
+  border-color: var(--color-primary);
+}
+
+.periods {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.period {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.periodLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
 }
 
 .timeGrid {
@@ -43,7 +101,10 @@
   color: var(--color-text-primary);
   font-size: 15px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
 }
 
 .timeChip:hover {
@@ -53,23 +114,8 @@
 .timeChipSelected {
   background: var(--color-primary);
   border-color: var(--color-primary);
-  color: #ffffff;
-}
-
-.empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  padding-block: var(--space-12) var(--space-8);
-  color: var(--color-text-secondary);
-}
-
-.emptyTitle {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--color-text-primary);
-  margin-block-end: var(--space-2);
+  color: var(--color-surface);
+  box-shadow: 0 0 0 4px var(--color-focus-ring-subtle);
 }
 
 /* Sizing only — shimmer/background/radius come from the shared `Skeleton` component. */

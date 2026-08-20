@@ -21,6 +21,16 @@
   color: var(--color-text-secondary);
 }
 
+.summarySkeleton {
+  height: 84px;
+}
+
+.starsSkeleton {
+  height: 40px;
+  width: 220px;
+  margin-inline: auto;
+}
+
 .stars {
   display: flex;
   justify-content: center;

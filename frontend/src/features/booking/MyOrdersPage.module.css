@@ -1,3 +1,20 @@
+/* MS4 design doc §4 Q1 — Active/Upcoming + History sectioning. `.sectionTitle` mirrors
+ * `features/dashboard/MyJobsPage.module.css`'s own `.sectionTitle` styling for visual
+ * consistency across the app (CSS Modules are per-file scoped, so the rule is duplicated
+ * here rather than cross-imported). */
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.sectionTitle {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-block-end: var(--space-4);
+}
+
 .list {
   display: flex;
   flex-direction: column;
@@ -41,25 +58,9 @@
   color: var(--color-text-secondary);
 }
 
-.empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  padding-block: var(--space-16) var(--space-8);
-  color: var(--color-text-secondary);
-}
-
-.emptyTitle {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--color-text-primary);
-  margin-block-end: var(--space-2);
-}
-
-.emptyText {
-  margin-block-end: var(--space-6);
-  max-width: 320px;
+/* Sizing only — shimmer/background/radius come from the shared `Skeleton` component. */
+.skeletonRow {
+  height: 76px;
 }
 
 .banner {

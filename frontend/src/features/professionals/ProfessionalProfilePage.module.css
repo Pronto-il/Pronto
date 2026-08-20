@@ -1,3 +1,20 @@
+.loadingIdentity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding-block: var(--space-8);
+}
+
+.loadingAvatar {
+  width: 96px;
+  height: 96px;
+}
+
+.loadingLines {
+  width: 60%;
+}
+
 .notice {
   display: flex;
   flex-direction: column;

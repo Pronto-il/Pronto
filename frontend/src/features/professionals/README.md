@@ -18,7 +18,10 @@ Frontend Milestone 8) the standalone professional-profile detail screen and its 
 Implemented, Frontend Milestone 3 (2026-08-16); sort-toggle behavior corrected in the
 MS3/MS4 product-corrections pass (2026-08-17, see below). Consumed by both
 `features/booking/BookingFlowPage` (`GET /api/bookings/professionals`) and
-`SosBookingFlowPage` (`GET /api/bookings/sos-professionals`).
+`SosBookingFlowPage` (`GET /api/bookings/sos-professionals`). **Frontend redesign MS4 —
+Booking & Professional Marketplace (2026-08-20, see below)**: `ProfessionalList` gained
+`listStagger` entrance motion and `EmptyState` reuse; `ProfessionalProfilePage` gained a
+`Skeleton` loading state.
 
 - `ProfessionalCard` renders identity (photo with an initials fallback avatar, name,
   service area), rating + review count (omitted entirely when `averageRating` is `null` —
@@ -113,6 +116,101 @@ Full design record: `docs/architecture/frontend-ms8-design.md` §2.3/§4.1.
 - **`shared/api` additions consumed here**: `professionals.ts` (new —
   `getProfessionalProfile`), `favorites.ts` (new — `addFavorite`/`removeFavorite`),
   `reviews.ts`'s new `getReviews`. See `shared/api/README.md`.
+
+## Frontend redesign MS4 — Booking & Professional Marketplace (2026-08-20)
+
+Full design record: `docs/architecture/frontend-ms4-booking-marketplace-design.md`. Status:
+**implemented, QA-signed-off** (`pronto-qa`, 61/61 assertions passed, zero application bugs
+found — see `features/booking/README.md`'s MS4 section for the full QA record covering both
+packages). Working tree on branch `frontend/MS4-booking-marketplace`, uncommitted — not
+pushed/merged; that remains the user's own explicit git action. This milestone's audit found
+this package already token-compliant and functionally complete (design doc §1) — the actual
+work in this package was two consistency/polish items, both scoped to
+`ProfessionalList.tsx`/`.module.css` only:
+
+- **`listStagger` entrance animation (design doc §3.A2)**: `ProfessionalList`'s result `.list`
+  now wraps in a `motion.div` using `shared/motion/variants.ts`'s `listStagger` as the
+  container variant, with each `ProfessionalCard` wrapped in a small item-level `motion.div`
+  reusing `pageTransition`'s existing fade/rise shape (no new named variant needed) — the
+  first real consumer of the `listStagger` "list entrance beyond the simple CSS case" use case
+  that variant's own doc comment named. Respects `variants.ts`'s documented ~8-item
+  stagger-cap guideline (`STAGGER_CAP = 8`): only the first 8 cards get the per-item motion
+  wrapper, the rest render without it. Gated on `useReducedMotion()` the same way
+  `IssueSuccessStep.tsx`/this milestone's new `BookingSuccessStep.tsx` already are (the
+  `animate` target is overridden directly, not the component-level `transition` prop, since
+  each variant embeds its own spring transition).
+- **`EmptyState` component reuse (design doc §3.C2)**: the hand-rolled `.empty`/`.emptyTitle`
+  zero-results markup was replaced with `<EmptyState title="לא נמצאו בעלי מקצוע פנויים"
+  description="אפשר לנסות שוב מאוחר יותר." />` — same component `MyOrdersPage.tsx`
+  (`features/booking`) was also switched to this milestone, see that package's own README.
+- **Not touched in this package this milestone**: `ProfessionalCard.tsx`,
+  `ProfessionalProfileDisplay.tsx`, `ReviewList.tsx` — confirmed already token-compliant and
+  DESIGN_SYSTEM-matching by the design doc's own file-by-file audit (§1), no rebuild needed.
+  `ProfessionalProfilePage.tsx`/`.module.css` did change this milestone, but only for its own
+  loading-state skeleton (below) — its favorite-toggle/review-fetch/select-CTA logic is
+  unchanged.
+- **`ProfessionalProfilePage.tsx`'s `Skeleton` loading state (design doc §3.B)**: the bare
+  `<p>טוען…</p>` identity/info/bio loading state was replaced with a small avatar
+  (`Skeleton variant="circle"`) + two text-line placeholders (`Skeleton variant="text"
+  lines={2}`), sized to roughly match the real identity block. The same `shared/components`
+  `Skeleton` primitive already used elsewhere in this app (`ProfessionalList.tsx`,
+  `StartTimePicker.tsx` in `features/booking`) — no new component.
+- **`AddressSelectionStep.tsx`'s chip-toggle → `FilterChipGroup` swap (design doc §3.C1)** and
+  the `MyOrdersPage.tsx` Active/History sectioning IA change both live in `features/booking`,
+  not here — documented in that package's own README MS4 section, since neither touches this
+  package's files.
+
+## MS4 final corrections — visual pass (2026-08-20)
+
+Full record: `docs/architecture/frontend-ms4-booking-marketplace-design.md` §4b F3. The MS4
+audit had cleared this package on token compliance, which was correct as far as it went — a
+live look at the rendered screens found hierarchy/trust gaps a stylesheet reading cannot see.
+Verified live (43/43 Playwright assertions, desktop + mobile 390×844 + RTL + reduced motion).
+
+- **`ProfessionalCard` — §29 hierarchy.** The profession line was missing (`serviceArea` sat
+  in its place). The card now takes an optional `categoryId` (passed down by
+  `ProfessionalList` from the listing response — every professional in a listing matches the
+  issue's category) and renders `getCategoryNameHe(categoryId)` directly under the name;
+  `serviceArea` moved into the meta strip next to the distance, where the other location
+  signal already lives. ETA + service area + distance now sit on a tinted strip so they scan
+  as facts about the visit rather than more body copy. The favourite marker became a real
+  `Heart` icon with an accessible label instead of a bare `♥` character.
+- **`ProfessionalCard` — §33's recommended badge.** It did not exist anywhere in the app, even
+  though MS1 had built `Badge`'s `tone="primary"` specifically for it (that component's own doc
+  comment names §33). The card now takes `isTopRecommendation`; `ProfessionalList` sets it for
+  `index === 0` **only while the `RECOMMENDED` sort is active** — the backend's own top-ranked
+  result, never a client-side score — and the card gets the badge plus a tinted ring. §32 holds:
+  emphasis changes with the sort, structure does not. This supersedes the MS4 design doc §1
+  table's claim that omitting the badge was correct: there is no `recommended` *field* to
+  fabricate, but the `RECOMMENDED` *sort order* is real backend output.
+- **`ProfessionalCard` — honest empty rating.** An unrated professional previously rendered
+  nothing where the rating goes, leaving a hole in the hierarchy; it now says
+  `עדיין אין ביקורות`, which is a statement of fact, not a trust claim (§44).
+- **`ProfessionalProfileDisplay` — §43/§44 trust.** The page carried no trust signal beyond an
+  optional rating. It now renders a `בעל מקצוע מאומת` badge gated on
+  `approvalStatus === 'APPROVED'` and a §43-style stats strip (average rating / review count /
+  "בפרונטו מאז" month-year), built strictly from fields `ProfessionalProfileResponse` actually
+  returns. No ETA stat (needs a customer address this page doesn't have) and no completed-jobs
+  stat (no endpoint exposes one) — those two of §43's three stats are honestly absent rather
+  than faked. An unrated professional's stat shows `—`, never `0.0`. Both new fields are
+  **optional** in the props type, so `features/dashboard`'s `ProfileEditorPage` preview keeps
+  compiling; that preview now passes them through too, so a professional sees what customers
+  see. Note the badge currently renders for every professional, because `Professional`'s
+  entity sets `approvalStatus = 'APPROVED'` on creation (v1.0 has no approval workflow) — it is
+  backend-truthful today and will discriminate on its own if an approval workflow ever lands.
+  The **listing card deliberately shows no verification mark**: its DTO has no such field and
+  the listing filters only on "not deleted" (`BookingsService.isProfessionalActive`), so a
+  checkmark there would be an unsupported claim (§44).
+- **`ProfessionalProfilePage` copy bug.** The favourite button's active label read
+  `הוסר ממועדפים` — past-tense passive ("was removed"), i.e. a status message where the button's
+  own action belongs. Now `הסרה ממועדפים`.
+- **`ReviewList` empty state** moved from a bare `<p>` to the shared `EmptyState`.
+- **Hebrew plural.** `{n} ביקורות` renders as the ungrammatical `1 ביקורות` at exactly one
+  review. A shared `formatReviewCount` (`shared/utils/hebrewText.ts`) returns `ביקורת אחת`
+  instead — the same class of fix `formatRelativeAgeLabel` already carries for `1 חודשים`.
+  Applied to `ProfessionalCard`, `ProfessionalProfileDisplay`, and
+  `features/favorites`'s `FavoriteProfessionalCard` (same §31 format, same bug — fixed there
+  too rather than left inconsistent).
 
 ## MS6 — Professional Command Center (2026-08-20): `ProfessionalProfileDisplay` extraction
 

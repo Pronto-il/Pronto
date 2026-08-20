@@ -17,6 +17,26 @@
   margin: 0;
 }
 
+.intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-block-end: var(--space-4);
+}
+
+.question {
+  font-size: 20px;
+  line-height: 26px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.introNote {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
 .card {
   margin-block-end: var(--space-6);
   display: flex;
@@ -43,6 +63,9 @@
 }
 
 .rowLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: 13px;
   color: var(--color-text-secondary);
 }
@@ -57,6 +80,16 @@
   border: none;
   border-top: 1px solid var(--color-border);
   margin: 0;
+}
+
+/* Same treatment as `SosBookingSummary.module.css`'s breakdown rows, so the Standard and SOS
+   confirmation screens read as one family (§48/§49). */
+.priceRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  color: var(--color-text-secondary);
 }
 
 .totalRow {

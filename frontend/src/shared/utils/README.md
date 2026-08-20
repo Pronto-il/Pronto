@@ -33,11 +33,25 @@ file until that happens, per this codebase's existing convention.
     month/year boundary produced grammatically incorrect Hebrew (`"1 חודשים"`/`"1 שנים"`) —
     corrected to the no-numeral forms `"חודש"`/`"שנה"`, matching this file's existing
     no-numeral `"היום"`/`"אתמול"` convention.
+  - `formatMonthYearLabel(isoString)` — **added MS4 final corrections (2026-08-20)**, e.g.
+    `"אוגוסט 2026"`, for `features/professionals`'s profile "בפרונטו מאז" trust stat
+    (DESIGN_SYSTEM.md §43/§44). Month granularity on purpose — a to-the-day join date is
+    noisier and more personal than the signal needs.
   - `dateKey(isoString)` — a local-time (not UTC-truncated) calendar-day grouping key,
     consumed by `StartTimePicker`'s date-chip-row grouping logic.
+- `hebrewText.ts` — **new, MS4 final corrections (2026-08-20)**.
+  `formatReviewCount(count): string` — DESIGN_SYSTEM.md §31's review-count fragment with the
+  singular spelled out (`"ביקורת אחת"`, not the ungrammatical `"1 ביקורות"`); same class of fix
+  as `formatRelativeAgeLabel`'s `"1 חודשים"` → `"חודש"` boundary. Consumers:
+  `features/professionals`'s `ProfessionalCard`/`ProfessionalProfileDisplay` and
+  `features/favorites`'s `FavoriteProfessionalCard` — three call sites of the same string,
+  which is what earned it a place in this folder per the "at least one other consumer" rule
+  above.
 - `availability.ts` — **new, professional weekly availability calendar feature, M6
-  (2026-08-18)**. `deriveStartTimeCandidates(windows, defaultDurationMinutes, gridMinutes =
-  30): string[]` — the pure derivation behind the customer-facing booking flow's
+  (2026-08-18)**; signature and grid behaviour revised in **MS4 final corrections
+  (2026-08-20)**, see the note at the end of this entry.
+  `deriveStartTimeCandidates(windows, defaultDurationMinutes, options?): string[]` — the pure
+  derivation behind the customer-facing booking flow's
   start-time-picking step (see `docs/architecture/professional-weekly-calendar-design.md`
   §9.2.3/§7.6). Given a professional's derived `AVAILABLE` windows (`GET
   .../professionals/{id}/available-windows?issueId=`, `shared/api/bookings.ts`'s
@@ -46,10 +60,28 @@ file until that happens, per this codebase's existing convention.
   instant that still leaves a full job before the window closes) — mirrors this same
   feature's already-established 30-minute grid convention
   (`features/dashboard/WeeklyCalendarGrid.tsx`'s gridlines), not a new number invented for
-  this sub-feature. "Grid-aligned" is relative to each window's own `startAt` (itself an
-  exact, non-rounded boundary), not snapped to absolute clock times. Pure, no I/O, no
-  component/JSX coupling. Sole consumer: `features/booking/StartTimePicker.tsx` (renamed
-  from `SlotPicker.tsx` this same milestone).
+  this sub-feature. Pure, no I/O, no component/JSX coupling. Consumers:
+  `features/booking/StartTimePicker.tsx` (renamed from `SlotPicker.tsx` this same milestone)
+  and `BookingFlowPage`'s draft resume-hydration.
+
+  **Revised in MS4 final corrections (2026-08-20)**, both changes driven by a live look at the
+  rendered picker:
+  1. "Grid-aligned" now means snapped to the **local wall clock** (`:00`/`:30`), not to each
+     window's own `startAt`. Today's first window opens at `Instant.now()`
+     (`BookingsService.getAvailableWindows`), so the old rule really did produce
+     `14:02 · 14:32 · 15:02` on screen — DESIGN_SYSTEM.md §46's own example is whole clock
+     times. The first candidate per window rounds **up** (never down — that would offer a time
+     before the professional is free), costing at most one sub-grid chip per window.
+     Alignment is computed on wall-clock minutes, not epoch arithmetic, so it holds in a
+     half-hour-offset timezone; a window spanning a DST transition would drift after the jump,
+     which is documented in the function and left uncorrected (windows are bounded by a
+     working day).
+  2. The third parameter changed from positional `gridMinutes = 30` to an options object
+     `{ gridMinutes?, notBeforeMs? }`. `notBeforeMs` drops candidates at or before that
+     instant — the server rejects a non-future `bookedStart` outright, so such a chip is
+     unbookable. It is never defaulted to `Date.now()` internally: the function stays pure and
+     callers stay explicit about which clock they mean. No caller had passed the old positional
+     `gridMinutes`, so nothing broke.
 
 ## Testing note (applies to every function in this folder)
 No frontend unit-test runner is configured anywhere in this codebase (checked repeatedly

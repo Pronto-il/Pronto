@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { PageHeader, EMPTY_ADDRESS, Button } from '../../shared/components';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import type { TargetAndTransition, Transition, Variants } from 'framer-motion';
+import { Info } from 'lucide-react';
+import { PageHeader, EMPTY_ADDRESS, Button, Mascot } from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
 import { getProfessionalsForIssue, getAvailableWindows, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type {
@@ -10,11 +13,14 @@ import type {
   ProfessionalSort,
 } from '../../shared/api';
 import { deriveStartTimeCandidates } from '../../shared/utils/availability';
+import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
 import { ProfessionalList, STANDARD_SORT_OPTIONS } from '../professionals';
 import { useBookingDraft } from '../../shared/hooks';
+import { stepTransition } from '../../shared/motion/variants';
 import { AddressSelectionStep, type AddressMode } from './AddressSelectionStep';
 import { StartTimePicker } from './StartTimePicker';
 import { BookingSummary } from './BookingSummary';
+import { BookingSuccessStep } from './BookingSuccessStep';
 import styles from './BookingFlowPage.module.css';
 
 type Step =
@@ -29,6 +35,15 @@ const STEP_LABELS: Partial<Record<Step['name'], string>> = {
   professionals: 'שלב 2 מתוך 4',
   slot: 'שלב 3 מתוך 4',
   confirm: 'שלב 4 מתוך 4',
+};
+
+/** Feeds `PageHeader`'s `steps` progress-bar prop (design doc §3.A5) — omitted for
+ *  `'success'`, mirroring `NewIssuePage.tsx`'s `STEP_NUMBERS`/`STEP_LABELS` pairing. */
+const STEP_NUMBERS: Partial<Record<Step['name'], number>> = {
+  address: 1,
+  professionals: 2,
+  slot: 3,
+  confirm: 4,
 };
 
 const LISTING_ERROR_MESSAGES: Record<string, string> = {
@@ -87,16 +102,23 @@ export default function BookingFlowPage() {
   const [selectedStart, setSelectedStart] = useState<string | null>(null);
   const [isLoadingSlots, setIsLoadingSlots] = useState(false);
   const [slotsError, setSlotsError] = useState<string | null>(null);
-  /** Set by `handleTimeUnavailable` when order-creation 409s with `BOOKING_TIME_UNAVAILABLE`
-   *  (raced by another customer booking the same window) — owned here, not by `BookingSummary`,
-   *  because that component unmounts as part of the same transition that sends the customer
-   *  back to the `slot` step, so a banner set on its own local state would never paint.
-   *  Kept distinct from `slotsError` (a `getAvailableWindows` fetch failure) since
-   *  `fetchWindows`'s `setSlotsError(null)` runs synchronously in the same tick as this is set. */
+  /** Set by `handleTimeUnavailable` when the chosen start time can no longer be booked —
+   *  either order-creation 409'd with `BOOKING_TIME_UNAVAILABLE` (raced by another customer)
+   *  or the time slipped into the past (MS4 final corrections, item 1). Owned here, not by
+   *  `BookingSummary`, because that component unmounts as part of the same transition that
+   *  sends the customer back to the `slot` step, so a message set on its own local state would
+   *  never paint. Rendered as a `notice`, not an error banner: nothing went wrong, the
+   *  customer is simply being handed a refreshed list. Kept distinct from `slotsError` (a
+   *  `getAvailableWindows` fetch failure) since `fetchWindows`'s `setSlotsError(null)` runs
+   *  synchronously in the same tick as this is set. */
   const [timeUnavailableError, setTimeUnavailableError] = useState<string | null>(null);
 
   const [step, setStep] = useState<Step>({ name: 'address' });
   const hasAttemptedResume = useRef(false);
+  /** `1` = advancing forward, `-1` = going back — drives `stepTransition`'s slide direction
+   *  (design doc §3.A1), mirroring `NewIssuePage.tsx`'s `direction` state exactly. */
+  const [direction, setDirection] = useState(1);
+  const shouldReduceMotion = useReducedMotion();
 
   const fetchProfessionals = useCallback(
     async (nextSort: ProfessionalSort, currentAddress: AddressValue) => {
@@ -182,7 +204,12 @@ export default function BookingFlowPage() {
         setIsLoadingSlots(false);
 
         if (draft.stage === 'BOOKING_CONFIRM' && draft.bookedStart !== undefined) {
-          const candidates = deriveStartTimeCandidates(windowsResult.windows, windowsResult.defaultDurationMinutes);
+          // Same `notBeforeMs` filter `StartTimePicker` applies, so a draft resumed after the
+          // saved start time has passed falls back to the picker instead of restoring a
+          // confirm step the server would reject (MS4 final corrections, item 1).
+          const candidates = deriveStartTimeCandidates(windowsResult.windows, windowsResult.defaultDurationMinutes, {
+            notBeforeMs: Date.now(),
+          });
           if (candidates.includes(draft.bookedStart)) {
             setSelectedStart(draft.bookedStart);
             setStep({ name: 'confirm', professional, bookedStart: draft.bookedStart });
@@ -216,6 +243,7 @@ export default function BookingFlowPage() {
     if (!validateAddress()) {
       return;
     }
+    setDirection(1);
     setStep({ name: 'professionals' });
     void fetchProfessionals(sort, address);
     updateDraft({
@@ -250,6 +278,7 @@ export default function BookingFlowPage() {
   }
 
   function handleSelectProfessional(professional: ProfessionalCardData) {
+    setDirection(1);
     setStep({ name: 'slot', professional });
     setTimeUnavailableError(null);
     void fetchWindows(professional);
@@ -260,20 +289,39 @@ export default function BookingFlowPage() {
     if (step.name !== 'slot' || !selectedStart) {
       return;
     }
+    // Belt-and-braces against the same staleness `BookingSummary` guards at submit time: the
+    // chip may have expired between the last `StartTimePicker` clock tick and this click.
+    if (new Date(selectedStart).getTime() <= Date.now()) {
+      handleSelectedStartExpired();
+      return;
+    }
+    setDirection(1);
     setStep({ name: 'confirm', professional: step.professional, bookedStart: selectedStart });
     setTimeUnavailableError(null);
     updateDraft({ stage: 'BOOKING_CONFIRM', bookedStart: selectedStart });
   }
 
-  /** Order creation 409'd with `BOOKING_TIME_UNAVAILABLE` — another customer booked the same
-   *  window first. `message` (rendered on the `slot` step below, once `StartTimePicker` is
-   *  back on screen) is passed in by `BookingSummary` rather than looked up here, since it
-   *  already owns the `ORDER_ERROR_MESSAGES` copy for that error code. */
+  /** `StartTimePicker`'s live clock retired the selected chip while the customer was still on
+   *  the `slot` step (MS4 final corrections, item 1). No re-fetch here: the picker re-derives
+   *  its own chips from the windows already in state, so the list on screen is current — only
+   *  the now-dangling selection needs clearing, plus an explanation for why the chip vanished. */
+  function handleSelectedStartExpired() {
+    setSelectedStart(null);
+    setTimeUnavailableError('הזמן שבחרת כבר עבר. אפשר לבחור מועד אחר מהרשימה המעודכנת.');
+  }
+
+  /** The chosen start time can no longer be booked: order creation either 409'd with
+   *  `BOOKING_TIME_UNAVAILABLE` (another customer took the same window first) or was rejected
+   *  as non-future. Either way the customer goes back to a freshly-fetched picker. `message`
+   *  (rendered on the `slot` step below, once `StartTimePicker` is back on screen) is passed in
+   *  by `BookingSummary` rather than looked up here, since it already owns the copy for both
+   *  cases and they read differently. */
   function handleTimeUnavailable(message: string) {
     if (step.name !== 'confirm') {
       return;
     }
     const { professional } = step;
+    setDirection(-1);
     setStep({ name: 'slot', professional });
     setTimeUnavailableError(message);
     void fetchWindows(professional);
@@ -284,6 +332,7 @@ export default function BookingFlowPage() {
     if (step.name !== 'confirm') {
       return;
     }
+    setDirection(1);
     setStep({ name: 'success', order, professionalName: step.professional.fullName });
     clearDraft();
   }
@@ -292,18 +341,40 @@ export default function BookingFlowPage() {
     if (step.name === 'address') {
       navigate('/');
     } else if (step.name === 'professionals') {
+      setDirection(-1);
       setStep({ name: 'address' });
       updateDraft({ stage: 'ADDRESS_SELECTION' });
     } else if (step.name === 'slot') {
+      setDirection(-1);
       setStep({ name: 'professionals' });
       setTimeUnavailableError(null);
       updateDraft({ stage: 'PROFESSIONAL_SELECTION', professionalId: undefined });
     } else if (step.name === 'confirm') {
+      setDirection(-1);
       setStep({ name: 'slot', professional: step.professional });
       setTimeUnavailableError(null);
       updateDraft({ stage: 'SLOT_SELECTION', bookedStart: undefined });
     }
   }
+
+  // Same neutralization pattern `NewIssuePage.tsx`/`AiAnalyzingOverlay.tsx` already apply —
+  // `stepTransition`'s `animate`/`exit` targets each carry their own embedded spring
+  // `transition`, which wins over a component-level `transition` prop. Copied locally per
+  // that established pattern rather than extracted into `shared/motion` (design doc §3.A1).
+  const stepVariants: Variants = useMemo(() => {
+    if (!shouldReduceMotion) {
+      return stepTransition;
+    }
+    const instant: Transition = { duration: 0 };
+    const animate = stepTransition.animate as TargetAndTransition;
+    const initial = stepTransition.initial as (custom: number) => TargetAndTransition;
+    const exit = stepTransition.exit as (custom: number) => TargetAndTransition;
+    return {
+      initial: (custom: number) => ({ ...initial(custom), transition: instant }),
+      animate: { ...animate, transition: instant },
+      exit: (custom: number) => ({ ...exit(custom), transition: instant }),
+    };
+  }, [shouldReduceMotion]);
 
   return (
     <div className="focused-page">
@@ -311,105 +382,113 @@ export default function BookingFlowPage() {
         title="בחירת בעל מקצוע"
         description={STEP_LABELS[step.name]}
         onBack={step.name === 'success' ? undefined : handleBack}
+        steps={STEP_NUMBERS[step.name] !== undefined ? { current: STEP_NUMBERS[step.name]!, total: 4 } : undefined}
       />
 
-      {step.name === 'address' && (
-        <div className={styles.step}>
-          <AddressSelectionStep
-            value={address}
-            onChange={setAddress}
-            mode={addressMode}
-            onModeChange={setAddressMode}
-            errors={addressErrors}
-            onContinue={handleAddressContinue}
-          />
-        </div>
-      )}
+      <div className={styles.stepViewport}>
+        <AnimatePresence mode="wait" custom={direction}>
+          <motion.div key={step.name} custom={direction} variants={stepVariants} initial="initial" animate="animate" exit="exit">
+            {step.name === 'address' && (
+              <div className={styles.step}>
+                <AddressSelectionStep
+                  value={address}
+                  onChange={setAddress}
+                  mode={addressMode}
+                  onModeChange={setAddressMode}
+                  errors={addressErrors}
+                  onContinue={handleAddressContinue}
+                />
+              </div>
+            )}
 
-      {step.name === 'professionals' && (
-        <div className={styles.step}>
-          {isLoadingProfessionals && <p className={styles.transitionText}>מחפשים בעלי מקצוע זמינים באזור שלך…</p>}
-          {professionalsError ? (
-            <div className={styles.banner} role="alert">
-              <p>{professionalsError}</p>
-            </div>
-          ) : (
-            <ProfessionalList
-              professionals={professionals}
-              sort={sort}
-              sortOptions={STANDARD_SORT_OPTIONS}
-              onSortChange={handleSortChange}
-              onSelect={handleSelectProfessional}
-              isLoading={isLoadingProfessionals}
-              viewProfileContext={{ issueId, urgencyType: 'STANDARD' }}
-            />
-          )}
-        </div>
-      )}
+            {step.name === 'professionals' && (
+              <div className={styles.step}>
+                {isLoadingProfessionals && (
+                  <div className={styles.searchingState}>
+                    <Mascot state="searching" loop size="lg" />
+                    <p className={styles.transitionText}>מחפשים בעלי מקצוע זמינים באזור שלך…</p>
+                  </div>
+                )}
+                {professionalsError ? (
+                  <div className={styles.banner} role="alert">
+                    <p>{professionalsError}</p>
+                  </div>
+                ) : (
+                  <ProfessionalList
+                    professionals={professionals}
+                    sort={sort}
+                    sortOptions={STANDARD_SORT_OPTIONS}
+                    onSortChange={handleSortChange}
+                    onSelect={handleSelectProfessional}
+                    categoryId={categoryId ?? undefined}
+                    isLoading={isLoadingProfessionals}
+                    viewProfileContext={{ issueId, urgencyType: 'STANDARD' }}
+                  />
+                )}
+              </div>
+            )}
 
-      {step.name === 'slot' && (
-        <div className={styles.step}>
-          {timeUnavailableError && (
-            <div className={styles.banner} role="alert">
-              <p>{timeUnavailableError}</p>
-            </div>
-          )}
-          {slotsError ? (
-            <div className={styles.banner} role="alert">
-              <p>{slotsError}</p>
-            </div>
-          ) : (
-            <>
-              <StartTimePicker
-                windows={windows}
+            {step.name === 'slot' && (
+              <div className={styles.step}>
+                {timeUnavailableError && (
+                  <div className={styles.notice} role="status">
+                    <Info size={18} aria-hidden="true" className={styles.noticeIcon} />
+                    <p>{timeUnavailableError}</p>
+                  </div>
+                )}
+                {slotsError ? (
+                  <div className={styles.banner} role="alert">
+                    <p>{slotsError}</p>
+                  </div>
+                ) : (
+                  <>
+                    <StartTimePicker
+                      windows={windows}
+                      defaultDurationMinutes={defaultDurationMinutes}
+                      selectedStart={selectedStart}
+                      onSelect={(value) => {
+                        setSelectedStart(value);
+                        setTimeUnavailableError(null);
+                      }}
+                      onSelectedExpired={handleSelectedStartExpired}
+                      isLoading={isLoadingSlots}
+                    />
+                    {windows.length > 0 && (
+                      <Button onClick={handleSlotContinue} disabled={!selectedStart} fullWidth>
+                        המשך
+                      </Button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {step.name === 'confirm' && categoryId !== null && (
+              <BookingSummary
+                issueId={issueId}
+                categoryId={categoryId}
+                professional={step.professional}
+                bookedStart={step.bookedStart}
                 defaultDurationMinutes={defaultDurationMinutes}
-                selectedStart={selectedStart}
-                onSelect={(value) => {
-                  setSelectedStart(value);
-                  setTimeUnavailableError(null);
-                }}
-                isLoading={isLoadingSlots}
+                address={address}
+                onConfirmed={handleConfirmed}
+                onTimeUnavailable={handleTimeUnavailable}
               />
-              {windows.length > 0 && (
-                <Button onClick={handleSlotContinue} disabled={!selectedStart} fullWidth>
-                  המשך
-                </Button>
-              )}
-            </>
-          )}
-        </div>
-      )}
+            )}
 
-      {step.name === 'confirm' && categoryId !== null && (
-        <BookingSummary
-          issueId={issueId}
-          categoryId={categoryId}
-          professional={step.professional}
-          bookedStart={step.bookedStart}
-          defaultDurationMinutes={defaultDurationMinutes}
-          address={address}
-          onConfirmed={handleConfirmed}
-          onTimeUnavailable={handleTimeUnavailable}
-        />
-      )}
-
-      {step.name === 'success' && (
-        <div className={styles.successWrapper}>
-          <span className={styles.successCheck} aria-hidden="true">
-            ✓
-          </span>
-          <h2 className={styles.successTitle}>ההזמנה נשלחה</h2>
-          <p className={styles.successText}>הבקשה נשלחה ל{step.professionalName}. ממתינים לאישור בעל המקצוע.</p>
-          <div className={styles.successActions}>
-            <Button onClick={() => navigate(`/orders/${step.order.id}`)} fullWidth>
-              צפייה בהזמנה
-            </Button>
-            <Button variant="secondary" onClick={() => navigate('/')} fullWidth>
-              חזרה לדף הבית
-            </Button>
-          </div>
-        </div>
-      )}
+            {/* Flow-specific copy (MS4 final corrections, item 2) — the shared component stays
+                copy-agnostic; a Standard booking's whole point is the scheduled slot, so the
+                confirmed date/time is repeated back here. `SosBookingFlowPage` passes its own. */}
+            {step.name === 'success' && (
+              <BookingSuccessStep
+                title="ההזמנה נשלחה"
+                body={`הבקשה נשלחה ל${step.professionalName} ל${formatDateLabel(step.order.bookedStart)} בשעה ${formatTimeLabel(step.order.bookedStart)}. נעדכן אותך ברגע שההזמנה תאושר.`}
+                orderId={step.order.id}
+              />
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

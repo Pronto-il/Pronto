@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useLocation, Link } from 'react-router-dom';
-import { PageHeader, Card, Button, StatusBadge } from '../../shared/components';
+import { PageHeader, Card, Button, StatusBadge, Skeleton } from '../../shared/components';
 import { useAuth, useOrderStatus, useEtaCountdown } from '../../shared/hooks';
 import { cancelOrder, markOnTheWay, completeOrder, getIssue, getCategoryNameHe, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { OrderStatus, IssueDetailResponse } from '../../shared/api';
@@ -158,7 +158,7 @@ export default function OrderTrackingPage() {
     <div className="focused-page">
       <PageHeader title="מעקב הזמנה" onBack={() => navigate(backPath)} />
 
-      {isLoading && !order && <p>טוען…</p>}
+      {isLoading && !order && <Skeleton variant="rect" className={styles.loadingCard} />}
 
       {!order && !isLoading && error && (
         <div className={styles.banner} role="alert">
@@ -190,7 +190,7 @@ export default function OrderTrackingPage() {
               {issue ? (
                 <span className={styles.category}>{getCategoryNameHe(issue.categoryId)}</span>
               ) : (
-                <span className={styles.skeleton} />
+                <Skeleton variant="rect" radius="var(--radius-sm)" className={styles.categorySkeleton} />
               )}
               {issue?.urgencyType === 'SOS' && <span className={styles.sosTag}>SOS</span>}
             </div>

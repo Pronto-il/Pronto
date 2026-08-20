@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Star } from 'lucide-react';
-import { PageHeader, Card, Button, Textarea } from '../../shared/components';
+import { PageHeader, Card, Button, Textarea, Skeleton } from '../../shared/components';
 import { useActiveOrder } from '../../shared/hooks';
 import { getOrder, createReview, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { OrderDetailResponse } from '../../shared/api';
@@ -105,7 +105,12 @@ export default function CompletionReviewPage() {
     <div className="focused-page">
       <PageHeader title="השאירו ביקורת" onBack={() => navigate('/orders')} />
 
-      {isLoading && <p>טוען…</p>}
+      {isLoading && (
+        <div className={styles.wrapper}>
+          <Skeleton variant="rect" className={styles.summarySkeleton} />
+          <Skeleton variant="rect" className={styles.starsSkeleton} />
+        </div>
+      )}
 
       {!isLoading && loadError && (
         <div className={styles.banner} role="alert">

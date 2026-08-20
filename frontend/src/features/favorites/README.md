@@ -63,3 +63,11 @@ consistently on both sides of the API boundary.
 ## Status
 Implemented, Frontend Milestone 8 (2026-08-18). QA-passed (live API round-trip + code
 review); see `docs/architecture/implementation-plan.md`'s "Frontend Milestone 8" entry.
+
+**One-line change in the MS4 final-corrections pass (2026-08-20)**: `FavoriteProfessionalCard`
+renders its review count through the new shared `formatReviewCount`
+(`shared/utils/hebrewText.ts`), so a professional with a single review reads `ביקורת אחת`
+rather than the ungrammatical `1 ביקורות`. This package was otherwise untouched — the fix
+landed here because it renders the same DESIGN_SYSTEM.md §31 fragment as
+`features/professionals`' cards, and leaving one of the three call sites inconsistent would
+have been worse than the small cross-package edit.

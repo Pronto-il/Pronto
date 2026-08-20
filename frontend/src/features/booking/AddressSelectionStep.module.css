@@ -4,31 +4,6 @@
   gap: var(--space-4);
 }
 
-.chips {
-  display: flex;
-  gap: var(--space-2);
-  overflow-x: auto;
-}
-
-.chip {
-  flex-shrink: 0;
-  height: 36px;
-  padding-inline: var(--space-4);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  border: 1px solid var(--color-border);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.chipActive {
-  background: var(--color-dark);
-  color: #ffffff;
-  border-color: var(--color-dark);
-}
-
 .readonlyCard {
   display: flex;
   flex-direction: column;

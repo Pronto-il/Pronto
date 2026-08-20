@@ -1,3 +1,7 @@
+.stepViewport {
+  position: relative;
+}
+
 .step {
   display: flex;
   flex-direction: column;
@@ -46,48 +50,10 @@
   text-align: center;
 }
 
-.successWrapper {
+.searchingState {
   display: flex;
   flex-direction: column;
   align-items: center;
-  text-align: center;
-  padding-block: var(--space-16) var(--space-8);
-}
-
-.successCheck {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: var(--color-success-bg);
-  color: var(--color-success);
-  font-size: 28px;
-  font-weight: 700;
-  margin-block-end: var(--space-6);
-}
-
-.successTitle {
-  font-size: 24px;
-  line-height: 32px;
-  font-weight: 700;
-  color: var(--color-text-primary);
-  margin-block-end: var(--space-2);
-}
-
-.successText {
-  font-size: 16px;
-  line-height: 24px;
-  color: var(--color-text-secondary);
-  margin-block-end: var(--space-8);
-  max-width: 360px;
-}
-
-.successActions {
-  display: flex;
-  flex-direction: column;
   gap: var(--space-3);
-  width: 100%;
-  max-width: 360px;
+  padding-block: var(--space-6);
 }

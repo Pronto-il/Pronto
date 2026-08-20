@@ -1,5 +1,5 @@
-import { AddressFormFields, Button, Card } from '../../shared/components';
-import type { AddressValue } from '../../shared/components';
+import { AddressFormFields, Button, Card, FilterChipGroup } from '../../shared/components';
+import type { AddressValue, FilterChipOption } from '../../shared/components';
 import { useAuth } from '../../shared/hooks';
 import type { UserMeDefaultAddress } from '../../shared/api';
 import styles from './AddressSelectionStep.module.css';
@@ -16,6 +16,11 @@ export interface AddressSelectionStepProps {
   errors?: Partial<Record<keyof AddressValue, string>>;
   onContinue: () => void;
 }
+
+const ADDRESS_MODE_OPTIONS: FilterChipOption<AddressMode>[] = [
+  { value: 'DEFAULT', label: 'כתובת ברירת המחדל שלי' },
+  { value: 'CUSTOM', label: 'כתובת אחרת לפעם הזו' },
+];
 
 function toAddressValue(defaultAddress: UserMeDefaultAddress): AddressValue {
   return {
@@ -61,22 +66,12 @@ export function AddressSelectionStep({
   return (
     <div className={styles.wrapper}>
       {defaultAddress && (
-        <div className={styles.chips}>
-          <button
-            type="button"
-            className={`${styles.chip} ${effectiveMode === 'DEFAULT' ? styles.chipActive : ''}`}
-            onClick={() => handleModeChange('DEFAULT')}
-          >
-            כתובת ברירת המחדל שלי
-          </button>
-          <button
-            type="button"
-            className={`${styles.chip} ${effectiveMode === 'CUSTOM' ? styles.chipActive : ''}`}
-            onClick={() => handleModeChange('CUSTOM')}
-          >
-            כתובת אחרת לפעם הזו
-          </button>
-        </div>
+        <FilterChipGroup
+          options={ADDRESS_MODE_OPTIONS}
+          value={effectiveMode}
+          onChange={handleModeChange}
+          aria-label="מקור הכתובת"
+        />
       )}
 
       {effectiveMode === 'DEFAULT' && defaultAddress ? (

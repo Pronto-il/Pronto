@@ -1,4 +1,5 @@
-import { Star } from 'lucide-react';
+import { MessageSquare, Star } from 'lucide-react';
+import { EmptyState } from '../../shared/components';
 import type { ReviewResponse } from '../../shared/api';
 import { formatRelativeAgeLabel } from '../../shared/utils/formatDateTime';
 import styles from './ProfessionalProfilePage.module.css';
@@ -38,7 +39,13 @@ export function ReviewList({ reviews, isLoading, error }: ReviewListProps) {
   }
 
   if (reviews.length === 0) {
-    return <p className={styles.emptyReviews}>אין עדיין ביקורות על בעל המקצוע הזה.</p>;
+    return (
+      <EmptyState
+        icon={<MessageSquare size={40} strokeWidth={1.5} aria-hidden="true" />}
+        title="עדיין אין ביקורות"
+        description="בעל המקצוע הזה עדיין לא קיבל ביקורות מלקוחות בפרונטו."
+      />
+    );
   }
 
   return (

@@ -2334,6 +2334,130 @@ passes on every changed file across all six milestones.
   agent as part of the same pass — this closing pass verified accuracy rather than writing
   from scratch; no inaccuracies found).
 
+## MS4 — Booking & Professional Marketplace
+
+- **Status: implemented, QA-signed-off (`pronto-qa`, 61/61 assertions passed across 8 scope
+  areas, zero application bugs found).** Working tree on branch
+  `frontend/MS4-booking-marketplace`, uncommitted — not pushed/merged; that remains the
+  user's own explicit git action. Full design record:
+  `docs/architecture/frontend-ms4-booking-marketplace-design.md`. Unlike MS1-MS3 (built from
+  a fresh dispatch) and much like MS6, this milestone's own audit found the
+  booking/professional-marketplace module (`features/booking`, `features/professionals`)
+  **already functionally complete** — built in Frontend Milestones 3/4/8 (old numbering),
+  after MS1's design-token system landed, and already token-compliant (design doc §0/§1). The
+  actual work was a **motion/polish/component-reuse consistency pass** bringing this module in
+  line with the sibling `features/issues` module's MS3 patterns, plus one real
+  information-architecture change to `MyOrdersPage`.
+- **Scope actually built** (frontend-only, no backend change of any kind):
+  1. **Step-transition motion**: `BookingFlowPage.tsx`/`SosBookingFlowPage.tsx` each gained a
+     `direction` state + `AnimatePresence mode="wait"` + `stepTransition` around a
+     `styles.stepViewport` wrapper — the same pattern `NewIssuePage.tsx` (MS3) already
+     established for its own step machine.
+  2. **`listStagger` entrance animation** on `ProfessionalList.tsx`'s result list — the first
+     8 cards get a staggered per-item fade/rise, the rest render without it (per
+     `shared/motion/variants.ts`'s own documented stagger-cap guideline).
+  3. **New shared `BookingSuccessStep.tsx`/`.module.css`** (`features/booking/`), extracted
+     from duplicated hand-rolled success JSX/CSS previously in both flow pages — uses
+     `Mascot state="success"` + `listStagger`, mirroring `features/issues/
+     IssueSuccessStep.tsx`'s structure. Takes plain `title`/`body` string props (design doc §4
+     Q2, resolved — matches `EmptyState.tsx`'s "component owns layout, caller owns copy"
+     convention, not a `variant` enum).
+  4. **`Mascot state="searching"`** added to the professional-search loading moment in both
+     flow pages, replacing bare loading text.
+  5. **`PageHeader`'s existing `steps` progress-indicator prop wired up** in both flow pages —
+     was previously unused there despite already existing on the component.
+  6. **Shared `Skeleton` component loading states** added to `MyOrdersPage.tsx`,
+     `OrderTrackingPage.tsx` (top-level and category sub-loading case, replacing an
+     inconsistent inline skeleton), `ProfessionalProfilePage.tsx`, `CompletionReviewPage.tsx`.
+  7. **`AddressSelectionStep.tsx`'s hand-rolled chip toggle replaced with the shared
+     `FilterChipGroup` component** — gains correct `role="radiogroup"`/`role="radio"`
+     accessibility semantics the hand-rolled version lacked.
+  8. **`EmptyState` component reuse** in `ProfessionalList.tsx` and `MyOrdersPage.tsx`,
+     replacing hand-rolled empty markup.
+  9. **`MyOrdersPage.tsx` IA change (design doc §4 Q1, resolved by explicit user decision)**: a
+     new client-side `bucketOrders()` function splits the customer's orders into "פעילות
+     וקרובות" (Active/Upcoming — everything not in a terminal status) and "היסטוריה" (History
+     — `COMPLETED`/`CANCELLED`/`REJECTED`/`EXPIRED`), mirroring
+     `features/dashboard/MyJobsPage.tsx`'s MS6 sectioning pattern (adapted to 2 sections
+     instead of 3), with a per-section `EmptyState`; row markup and the underlying data fetch
+     are unchanged.
+- **Explicitly untouched, confirmed by the design doc's own file-by-file audit**:
+  `ProfessionalCard.tsx`, `ProfessionalProfileDisplay.tsx`, `ReviewList.tsx`,
+  `BookingSummary.tsx`, `SosBookingSummary.tsx`, `StartTimePicker.tsx`'s core chip logic, all
+  `shared/api/**` contracts, booking-draft persistence, resume-hydration logic,
+  `app/router.tsx` — no backend change of any kind. `pronto-qa` ran a regression check
+  confirming zero diff on these files vs. `main`.
+- **QA**: `pronto-qa` ran live Playwright verification against a real running frontend +
+  backend — 61/61 assertions passed across 8 scope areas (both booking flows' step
+  transitions/mascot/success screens, professional list stagger, address-selection chips, all
+  4 skeleton states, `MyOrdersPage` grouping including empty-section and zero-order edge
+  cases, reduced-motion behavior, and the untouched-files regression check above). Zero
+  application bugs found. `tsc -b`/`vite build` and `oxlint` both clean. Two minor,
+  non-blocking observations noted (not defects, no fix required): (a) `BookingSuccessStep`'s
+  copy is currently identical between the Standard and SOS success screens — accepted per the
+  resolved plain-props decision, the component stays copy-agnostic by design; (b) a
+  **pre-existing** (not introduced by this milestone) UX gap where booking the soonest
+  available slot and then dawdling before confirming can surface a generic `400` error
+  instead of routing the customer back to slot selection — flagged for awareness, no fix
+  attempted.
+- **Documentation updated as part of closing this pass**: this entry,
+  `docs/architecture/frontend-ms4-booking-marketplace-design.md` §4 (resolution notes for
+  both open questions, appended without rewriting the original questions — matching the MS6
+  design doc's own "resolved" annotation pattern), `overview.md`'s new MS4 changelog bullet
+  and the `features/booking`/`features/professionals` package-table (§4) rows,
+  `frontend/src/features/booking/README.md` (new MS4 section), and
+  `frontend/src/features/professionals/README.md` (new MS4 section).
+- **Final corrections before close (2026-08-20, requested by the user after reading the QA
+  sign-off above).** Full record: design doc §4b; per-package detail in the two feature
+  READMEs. Verified live — **43/43 Playwright assertions** across both booking flows, both
+  stale-slot paths, the professional list/card, the slot picker, the confirmation card, the
+  profile page, mobile 390×844, RTL, and reduced motion; `tsc -b` and `oxlint` clean. Both of
+  QA's "non-blocking observations" above are now **fixed**, and the visual pass revised two
+  conclusions this milestone's own audit had reached:
+  1. **Stale-slot flow (was observation (b))**: root-caused in the backend — a non-future
+     `bookedStart` returns a plain `400 VALIDATION_ERROR` with a `bookedStart` field error and
+     **no dedicated error code**, so the frontend's code-keyed lookup fell through to the
+     generic message. Fixed frontend-only in four layers (candidate filtering via a new
+     `notBeforeMs` option on `deriveStartTimeCandidates`; a 30s live-clock re-derive in
+     `StartTimePicker` with an `onSelectedExpired` callback; a pre-flight guard in
+     `BookingSummary`; and field-error recognition of the 400 itself), all routing into the
+     existing "back to the picker + re-fetch availability" path, with the message rendered as
+     an info notice rather than an error banner.
+  2. **Standard vs SOS success copy (was observation (a))**: caller-side only —
+     `BookingSuccessStep`'s copy-agnostic `title`/`body` prop shape is unchanged, which is
+     what made this a two-line edit. Standard reads the confirmed date/time back; SOS speaks
+     to the immediate wait.
+  3. **Visual pass against the design goals** (as opposed to the functional QA above), which
+     found real gaps a token/CSS audit cannot see: §29's profession line and §33's
+     "מומלץ עבורך" badge were both absent from `ProfessionalCard` (the badge's `Badge`
+     `tone="primary"` had been built for it in MS1 and never used); §46's clock-aligned times
+     — the picker really showed `14:02 · 14:32` because candidates were gridded from each
+     window's own `startAt`; §48's visit-price line was missing from `BookingSummary`; and the
+     profile page carried no §43/§44 trust signal despite the DTO returning `approvalStatus`
+     and `createdAt`. Also fixed: `1 ביקורות` → `ביקורת אחת` (new shared `formatReviewCount`,
+     three call sites), the favourite button's past-tense `הוסר ממועדפים` label, and empty
+     rating/review states that rendered nothing where a fact belongs.
+  This supersedes the "Explicitly untouched" list above for `ProfessionalCard.tsx`,
+  `ProfessionalProfileDisplay.tsx`, `ReviewList.tsx`, `BookingSummary.tsx`, and
+  `StartTimePicker.tsx` — all five changed in this pass. `SosBookingSummary.tsx`,
+  `shared/api/**`, booking-draft persistence, and `app/router.tsx` remain untouched, and there
+  is still **no backend change of any kind**.
+  **Carried forward to MS5, not fixed here**: on mobile the global `ActiveOrderIndicator` FAB
+  overlaps the left edge of the step CTA and of the profile page's favourite button — a
+  pre-existing global overlay whose own milestone (MS5, Active Order & Customer Experience) is
+  the right place to resolve it.
+- **Documentation gap discovered, flagged, not silently fixed as part of this pass**: unlike
+  MS1-MS3, the earlier **MS6 — Professional Command Center** redesign milestone (implemented
+  2026-08-20, per `frontend/src/features/dashboard/README.md`'s and
+  `frontend/src/features/professionals/README.md`'s own MS6 sections and
+  `docs/architecture/frontend-ms6-professional-command-center-design.md`) was never given its
+  own entry in this file or in `overview.md` (no changelog bullet, no package-table-row
+  mention). This MS4 entry's own "matching the format of the existing MS1-MS3/MS6 redesign
+  entries" instruction assumed an MS6 entry existed here to match against; it does not. Not
+  backfilled as part of this pass (out of this task's scope, and reconstructing it accurately
+  belongs to whoever closed MS6) — flagged to `pronto-lead` per this agent's standing
+  responsibility to surface drifted/missing documentation.
+
 ## Cross-cutting rules for every milestone
 
 - Planning docs (`overview.md`, this file) are updated if a milestone's actual

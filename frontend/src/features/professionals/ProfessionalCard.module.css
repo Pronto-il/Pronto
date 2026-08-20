@@ -5,6 +5,17 @@
   padding: var(--space-6);
 }
 
+/* §32: the recommended mode's top result is lifted by emphasis only — a tinted ring and the
+   §33 badge. The card's structure/spacing is identical to every other card. */
+.cardRecommended {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+.recommendedBadge {
+  align-self: flex-start;
+}
+
 .top {
   display: flex;
   align-items: center;
@@ -50,6 +61,9 @@
 }
 
 .name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: 18px;
   line-height: 24px;
   font-weight: 700;
@@ -57,7 +71,14 @@
   margin: 0;
 }
 
-.serviceArea {
+.favoriteMark {
+  flex-shrink: 0;
+  color: var(--color-sos);
+}
+
+/* §29 places the profession directly under the name — service area moved down to the meta
+   strip, where it sits with the other location signal (distance). */
+.profession {
   font-size: 14px;
   color: var(--color-text-secondary);
   margin-block-start: var(--space-1);
@@ -86,17 +107,33 @@
   font-weight: 400;
 }
 
-.meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  flex-wrap: wrap;
+.noRating {
+  display: inline-block;
+  margin-block-start: var(--space-2);
+  font-size: 13px;
+  color: var(--color-text-muted);
 }
 
-.eta {
+/* One scannable strip of comparison signals (§32), on its own tinted surface so ETA and
+   distance read as facts about the visit rather than as more body copy. */
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-secondary);
+}
+
+.metaItem {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.eta {
   font-size: 14px;
   font-weight: 600;
   color: var(--color-text-primary);
@@ -104,11 +141,6 @@
 
 .etaEmphasis {
   color: var(--color-primary);
-}
-
-.distance {
-  font-size: 13px;
-  color: var(--color-text-secondary);
 }
 
 .bottom {

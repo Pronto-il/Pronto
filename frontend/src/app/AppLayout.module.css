@@ -155,4 +155,13 @@
   .main {
     padding-block-end: 68px;
   }
+
+  /* The floating `<ActiveOrderIndicator>` sits above the BottomNav on the inline-end side and
+     would otherwise overlap the last element on screen — most visibly a full-width step CTA in
+     the booking flow, or the profile page's favourite button (MS5 design doc §3.G). Extra
+     clearance only while the indicator is actually mounted: unlike the BottomNav above, this
+     is ~80px of dead space, too much to reserve unconditionally on every mobile page. */
+  :global(body.has-active-order-indicator) .main {
+    padding-block-end: calc(68px + 64px + var(--space-4));
+  }
 }

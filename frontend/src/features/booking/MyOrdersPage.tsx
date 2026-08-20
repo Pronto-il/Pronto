@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { PageHeader, StatusBadge, Button, EmptyState, Skeleton } from '../../shared/components';
+import { useEtaCountdown } from '../../shared/hooks';
 import { getMyOrders, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { OrderSummary, OrderStatus } from '../../shared/api';
 import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
@@ -47,6 +48,13 @@ function bucketOrders(orders: OrderSummary[]): OrderSections {
 }
 
 function OrderRow({ order }: { order: OrderSummary }) {
+  // MS5 §3.H: the one figure a customer scanning this list actually wants is how far away a
+  // professional already on the way is. `expectedArrivalAt` is already on `OrderSummary`, so
+  // this needs no extra request — same hook the tracking screen and the floating indicator use.
+  const { remainingMinutes, isArriving } = useEtaCountdown(
+    order.orderStatus === 'ON_THE_WAY' ? order.expectedArrivalAt : null,
+  );
+
   return (
     <Link to={`/orders/${order.id}`} className={styles.row}>
       <div className={styles.rowMain}>
@@ -55,7 +63,12 @@ function OrderRow({ order }: { order: OrderSummary }) {
         </span>
         <span className={styles.rowPrice}>₪{order.finalPrice}</span>
       </div>
-      <StatusBadge status={order.orderStatus} />
+      <div className={styles.rowSide}>
+        <StatusBadge status={order.orderStatus} />
+        {remainingMinutes !== null && (
+          <span className={styles.rowEta}>{isArriving ? 'מגיע/ה עכשיו' : `בעוד ${remainingMinutes} דק׳`}</span>
+        )}
+      </div>
     </Link>
   );
 }

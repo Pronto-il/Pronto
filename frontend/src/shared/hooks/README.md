@@ -39,6 +39,15 @@ Reusable React hooks shared across features.
   no-op while `enabled` is `false`. Backing implementation for `useOrderStatus` and any
   other future polling need, per `docs/architecture/overview.md` §3.3 (short-polling, not
   WebSocket).
+  **Bug fixed in frontend redesign MS5 (2026-08-20), found live during that milestone's QA**:
+  the in-flight guard also swallowed an explicit `refetch()`, not just an overlapping *tick*.
+  Those are different things — a `refetch()` follows a user action that has just changed the
+  data server-side (cancel an order, mark on the way, mark completed), so dropping it left the
+  screen showing the state the user had just changed until the next tick, up to `intervalMs`
+  later. Reproduced on `OrderTrackingPage`: confirming a cancellation kept the pre-cancel
+  status on screen for ~4s. An explicit refetch is now **queued** and runs as soon as the
+  in-flight request settles; overlapping polls are still skipped exactly as before. Affects
+  every `refetch()` caller, i.e. all three order-status actions.
 - `useOrderStatus.ts` — order-tracking-screen polling wrapper around `usePolling`, built
   on `shared/api/bookings.ts`'s `getOrder` (`GET /api/bookings/orders/{orderId}`). Stops
   polling once the last-observed `orderStatus` reaches a terminal state (`COMPLETED`/

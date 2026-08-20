@@ -2458,6 +2458,72 @@ passes on every changed file across all six milestones.
   belongs to whoever closed MS6) — flagged to `pronto-lead` per this agent's standing
   responsibility to surface drifted/missing documentation.
 
+## MS5 — Active Order & Customer Experience
+
+- **Status: implemented, verified live (47/47 Playwright assertions), 2026-08-20.** Working
+  tree on `main`, uncommitted at time of writing — push/merge remains the user's own explicit
+  git action. Full design record:
+  `docs/architecture/frontend-ms5-active-order-design.md` (audit §§0-3 as first written,
+  resolutions in §4, build record in §7).
+- **Why this one was different from MS4/MS6**: both of those found their module already built
+  and needed a consistency pass. Here the data plumbing was sound — `usePolling`/
+  `useOrderStatus`, the persisted `expectedArrivalAt`, `useEtaCountdown`, role-gated actions,
+  the floating indicator's priority algorithm — but **the screen DESIGN_SYSTEM.md §79 describes
+  did not exist**. `OrderTrackingPage` rendered one identical card for all seven `OrderStatus`
+  values; the status was a pale 28px badge in that card's corner, and the loudest element on
+  the page was a full-width red cancel button.
+- **Built** (frontend-only, no backend change):
+  1. **`OrderStatusHero.tsx`/`.module.css` (new)** — per-status headline + `Mascot` +, while
+     `ON_THE_WAY`, the ETA as a 34px figure (§76: the most important number on that screen).
+     `Mascot state="running"` ("Pronto is coming to you") existed for this moment and had never
+     been used. Copy avoids gendered verb forms — the product records no gender for
+     professionals.
+  2. **`OrderProgressStepper.tsx`/`.module.css` (new)** — `נשלחה → אושרה → בדרך → הושלמה` from
+     `orderStatus` alone. Timestamp-free by necessity *and* by honesty: `orders` persists no
+     per-status transition times, so no stage claims "אושר ב-14:12". Absent entirely for
+     terminal-negative statuses; fully checked, with no "current" stage, once `COMPLETED`.
+  3. **Cancel behind a confirmation** — previously one click, irreversible, and the visually
+     loudest thing on screen. Now a `Modal` explaining what cancelling does, with the trigger
+     demoted from `destructive` to `ghost`.
+  4. **Terminal states got next steps**, split by what the backend actually does (read from
+     `BookingsService`, not assumed): `CANCELLED`/`REJECTED` re-book the same issue, since both
+     paths call `releaseSlotAndReopenIssue`; `EXPIRED` opens a new request, since
+     `expireIfBooked` expires the issue too.
+  5. **Review CTA promoted** from a bare text link at the page bottom into the completed hero.
+  6. **`CompletionReviewPage`** — question heading, a named rating scale doubling as each star's
+     accessible name, and a §78 calm-success submitted state on the `Mascot state="success"`
+     pattern. Fetch/acknowledge/submit logic untouched.
+  7. **`MyOrdersPage`** — live ETA on `ON_THE_WAY` rows from `OrderSummary.expectedArrivalAt`.
+  8. **Mobile FAB clearance** — `ActiveOrderIndicator` toggles a body class while mounted, and
+     `AppLayout` reserves ~80px of mobile scroll clearance only while it is there. Closes the
+     overlap MS4 flagged and deferred here.
+- **Resolved decisions**:
+  - **Phone asymmetry is a product rule, not a gap (design doc §4 Q1, explicit user decision)**:
+    the customer never receives the professional's phone number — describing the issue inside
+    Pronto is the flow, and a phone number invites bypassing it — while the professional does
+    receive the customer's for an assigned order (already true in code). No professional-phone
+    registration field, DB column, migration or `professionalPhone` DTO field was added. The
+    design doc's original framing of this as a gap was wrong and is corrected in place.
+  - **Customer viewer only (§4 Q2)**: the professional's view of `/orders/:orderId` is
+    unchanged — MS6 owns the professional surfaces.
+- **Bug found while verifying, fixed**: `shared/hooks/usePolling.ts` silently dropped an
+  explicit `refetch()` whenever a poll tick happened to be in flight — its in-flight guard did
+  not distinguish "skip an overlapping poll" from "the user just changed this data". Reproduced
+  live: confirming a cancellation left the pre-cancel status on screen for ~4s. Explicit
+  refetches are now queued and run as soon as the in-flight request settles; this also covers
+  the professional's `יציאה לדרך`/`סיום העבודה` actions.
+- **QA**: one order seeded in every customer-visible status (`PENDING`/`CONFIRMED`/
+  `ON_THE_WAY`/`COMPLETED`/`CANCELLED`/`REJECTED`), each checked for the right hero headline,
+  the right stepper shape/current stage, and the absence of any phone-shaped string on the
+  customer's screen; plus the cancel dialog (dismiss leaves the order alone, confirm actually
+  cancels and the hero switches), the professional's unchanged view, the review screen
+  end-to-end, mobile 390×844 overflow + FAB clearance, RTL, and reduced motion. `tsc -b` and
+  `oxlint` clean. **`EXPIRED` is not covered live** — only a scheduled sweep produces it, so it
+  cannot be forced from a harness; code-reviewed only, recorded rather than counted as passing.
+- **Documentation updated**: this entry, `overview.md`'s changelog + `features/booking`
+  package-table row, `frontend/src/features/booking/README.md`,
+  `frontend/src/shared/hooks/README.md` (the `usePolling` fix), and the design doc's §4/§7.
+
 ## Cross-cutting rules for every milestone
 
 - Planning docs (`overview.md`, this file) are updated if a milestone's actual

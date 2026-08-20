@@ -197,6 +197,64 @@ clean. Still uncommitted on `frontend/MS4-booking-marketplace`.
      its start-side padding in RTL and left the active chip flush against the screen edge on
      mobile. The row stays inside the page padding.
 
+**Frontend redesign MS5 — Active Order & Customer Experience (2026-08-20):**
+
+Full design record: `docs/architecture/frontend-ms5-active-order-design.md`. Status:
+**implemented, verified live** — 47/47 Playwright assertions with one order seeded in every
+customer-visible status (`PENDING`/`CONFIRMED`/`ON_THE_WAY`/`COMPLETED`/`CANCELLED`/
+`REJECTED`), plus the professional's view, the review screen, mobile 390×844, RTL and reduced
+motion. `tsc -b`/`oxlint` clean.
+
+Unlike MS4 and MS6, this milestone was a real build rather than a polish pass: the data
+plumbing (polling, the persisted `expectedArrivalAt`, `useEtaCountdown`, role-gated actions)
+was already sound, but the screen DESIGN_SYSTEM.md §79 describes did not exist —
+`OrderTrackingPage` rendered an identical card for all seven statuses, with the status itself
+as a pale badge in the card's corner and a full-width red cancel button as the loudest element
+on screen.
+
+- **`OrderStatusHero.tsx`/`.module.css` (new)**: §79's status-led screen, **customer viewer
+  only** (design doc §4 Q2 — the professional keeps MS6's surfaces). A headline per status, a
+  `Mascot` (`thinking`/`found`/`running`/`success`/`idle`), and — while `ON_THE_WAY` — the ETA
+  as a 34px figure, the largest number on the page per §76. `Mascot state="running"`'s own doc
+  comment ("Pronto is coming to you") had been written for this exact moment and was unused
+  until now. Copy deliberately avoids gendered verb forms ("ההזמנה אושרה", not "אישר/ה"), since
+  the product records no gender for professionals.
+- **`OrderProgressStepper.tsx`/`.module.css` (new)**: `נשלחה → אושרה → בדרך → הושלמה`, derived
+  from `orderStatus` alone. **Carries no timestamps** — `orders` persists no per-status
+  transition times, so a stage is done/current/upcoming and never claims "אושר ב-14:12".
+  Renders nothing at all for `CANCELLED`/`REJECTED`/`EXPIRED` (an order that ended early has no
+  honest position on this track), and shows a fully-checked track with no "current" stage once
+  `COMPLETED`.
+- **`OrderTrackingPage`**: composes hero + stepper above the now-secondary details card for the
+  customer. **Cancel is no longer a one-click irreversible action** — it opens a `Modal`
+  confirmation explaining what cancelling does, and its trigger dropped from a full-width
+  `destructive` button to a `ghost` one (§3.C: destructive-but-rare should not outrank the
+  status). The review CTA moved out of a bare text link at the bottom of the page into the
+  completed hero as a primary `Button`. Terminal states gained next-step CTAs, split by what
+  the backend actually does (design doc §4 Q3, read from `BookingsService` rather than assumed):
+  `CANCELLED`/`REJECTED` re-book the same issue (both paths call `releaseSlotAndReopenIssue`,
+  so it is `OPEN` again), while `EXPIRED` opens a new request (`expireIfBooked` expires the
+  issue too). The professional's view — details card, `יציאה לדרך`/`סיום העבודה`, and the
+  customer-phone row — is unchanged.
+- **`CompletionReviewPage`**: a real question heading, a named rating scale (`לא טוב`…`מצוין`),
+  which also serves as each star's accessible name instead of "3 כוכבים", and a §78 calm-success
+  submitted state on the `Mascot state="success"` pattern. Its fetch/acknowledge/submit logic is
+  untouched.
+- **`MyOrdersPage`**: a live ETA on an `ON_THE_WAY` row, from `OrderSummary.expectedArrivalAt`
+  (already on the DTO — no extra request, same `useEtaCountdown` the other two surfaces use).
+- **Customer/professional phone asymmetry (design doc §4 Q1, explicit user decision)**: the
+  customer is **never** shown the professional's phone number — describing the issue inside
+  Pronto is the product flow, and a phone number invites bypassing it. The professional keeps
+  seeing the customer's phone for an order assigned to them. No professional-phone field,
+  column, migration or DTO change was added, and the QA run asserts no phone-shaped string
+  appears on the customer's screen in any status.
+- **Bug found while verifying (`shared/hooks/usePolling.ts`)**: an explicit `refetch()` was
+  silently dropped whenever a poll tick was in flight, so confirming a cancellation left the
+  pre-cancel status on screen for up to 4s. See `shared/hooks/README.md`.
+- **Not covered live**: `EXPIRED`. It is produced by a scheduled sweep over stale `PENDING`
+  orders, not by any API call, so it cannot be forced from a test harness — its hero variant is
+  code-reviewed only, recorded here rather than counted as passing.
+
 **Professional weekly availability calendar — M6 (2026-08-18) — booking-flow rework:**
 
 Full design record: `docs/architecture/professional-weekly-calendar-design.md` §9.2.3/§7.6/§10

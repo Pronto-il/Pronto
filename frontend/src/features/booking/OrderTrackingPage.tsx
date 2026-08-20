@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams, useLocation, Link } from 'react-router-dom';
-import { PageHeader, Card, Button, StatusBadge, Skeleton } from '../../shared/components';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { PageHeader, Card, Button, StatusBadge, Skeleton, Modal } from '../../shared/components';
+import { OrderStatusHero } from './OrderStatusHero';
+import { OrderProgressStepper } from './OrderProgressStepper';
 import { useAuth, useOrderStatus, useEtaCountdown } from '../../shared/hooks';
 import { cancelOrder, markOnTheWay, completeOrder, getIssue, getCategoryNameHe, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { OrderStatus, IssueDetailResponse } from '../../shared/api';
@@ -57,6 +59,8 @@ export default function OrderTrackingPage() {
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [statusActionError, setStatusActionError] = useState<string | null>(null);
+  /** MS5 §3.C — cancelling is irreversible and was previously a one-click action. */
+  const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState(false);
 
   const { remainingMinutes, isArriving } = useEtaCountdown(
     order?.orderStatus === 'ON_THE_WAY' ? order.expectedArrivalAt : null,
@@ -100,6 +104,9 @@ export default function OrderTrackingPage() {
       }
     } finally {
       setIsCancelling(false);
+      // Closed on both paths: the error banner lives on the page, not in the dialog, so
+      // leaving the dialog up on failure would hide the explanation behind it.
+      setIsCancelConfirmOpen(false);
     }
   }
 
@@ -154,6 +161,60 @@ export default function OrderTrackingPage() {
   const isProfessionalViewer = user?.role === 'PROFESSIONAL';
   const counterpartyName = order ? (isProfessionalViewer ? order.customerName : order.professionalName) : '';
 
+  // MS5 (design doc §4 Q2): the §79 status-led treatment is the customer's screen only. The
+  // professional keeps the details-card view MS6's surfaces already hand off to, including
+  // its customer-phone row — which §4 Q1 confirms is deliberately one-directional.
+  const showCustomerHero = !isProfessionalViewer && order !== undefined && order !== null;
+  const bookedLabel = order
+    ? `${formatDateLabel(order.bookedStart)} בשעה ${formatTimeLabel(order.bookedStart)}`
+    : '';
+
+  /**
+   * Terminal-state next step (§3.D). `cancel`/`reject` both run `releaseSlotAndReopenIssue`
+   * server-side, so the original issue is `OPEN` again and can be re-booked; an expired order
+   * also expires its issue (`expireIfBooked`), so that one can only start over. Verified in
+   * `BookingsService`, not assumed — a CTA into a dead issue would be worse than none.
+   */
+  function renderTerminalAction() {
+    if (!order || isProfessionalViewer) {
+      return undefined;
+    }
+    if (order.orderStatus === 'CANCELLED' || order.orderStatus === 'REJECTED') {
+      const path = issue?.urgencyType === 'SOS'
+        ? `/issues/${order.issueId}/sos-booking`
+        : `/issues/${order.issueId}/booking`;
+      return (
+        <Button onClick={() => navigate(path)} fullWidth>
+          בחירת בעל מקצוע אחר
+        </Button>
+      );
+    }
+    if (order.orderStatus === 'EXPIRED') {
+      return (
+        <Button onClick={() => navigate('/issues/new')} fullWidth>
+          פתיחת בקשה חדשה
+        </Button>
+      );
+    }
+    return undefined;
+  }
+
+  function renderHeroAction() {
+    if (canReview) {
+      return (
+        <>
+          <Button onClick={() => navigate(`/orders/${orderId}/review`)} fullWidth>
+            השארת ביקורת
+          </Button>
+          <Button variant="ghost" onClick={() => navigate('/orders')} fullWidth>
+            לא עכשיו
+          </Button>
+        </>
+      );
+    }
+    return renderTerminalAction();
+  }
+
   return (
     <div className="focused-page">
       <PageHeader title="מעקב הזמנה" onBack={() => navigate(backPath)} />
@@ -168,6 +229,20 @@ export default function OrderTrackingPage() {
 
       {order && (
         <div className={styles.wrapper}>
+          {showCustomerHero && (
+            <>
+              <OrderStatusHero
+                status={order.orderStatus}
+                professionalName={order.professionalName}
+                remainingMinutes={remainingMinutes}
+                isArriving={isArriving}
+                bookedLabel={bookedLabel}
+                action={renderHeroAction()}
+              />
+              <OrderProgressStepper status={order.orderStatus} />
+            </>
+          )}
+
           <Card className={styles.statusCard}>
             <div className={styles.statusRow}>
               <div>
@@ -177,7 +252,9 @@ export default function OrderTrackingPage() {
               <StatusBadge status={order.orderStatus} />
             </div>
 
-            {order.orderStatus === 'ON_THE_WAY' && remainingMinutes !== null && (
+            {/* The customer's ETA now leads the hero above; the professional's view keeps the
+                inline row, since that view is unchanged this milestone (§4 Q2). */}
+            {isProfessionalViewer && order.orderStatus === 'ON_THE_WAY' && remainingMinutes !== null && (
               <div className={styles.row}>
                 <span className={styles.rowLabel}>זמן הגעה משוער</span>
                 <span className={styles.rowValue}>{isArriving ? 'מגיע/ה עכשיו' : `כ־${remainingMinutes} דקות`}</span>
@@ -255,8 +332,11 @@ export default function OrderTrackingPage() {
             </div>
           )}
 
+          {/* Demoted from a full-width destructive button (§3.C): cancelling is rare and
+              irreversible, and it should not be the loudest thing on a screen whose subject
+              is the status. The confirm dialog's own action stays destructive-styled. */}
           {canCancel && (
-            <Button variant="destructive" onClick={handleCancel} loading={isCancelling} fullWidth>
+            <Button variant="ghost" onClick={() => setIsCancelConfirmOpen(true)} fullWidth>
               ביטול ההזמנה
             </Button>
           )}
@@ -273,13 +353,33 @@ export default function OrderTrackingPage() {
             </Button>
           )}
 
-          {canReview && (
-            <Link to={`/orders/${orderId}/review`} className={styles.reviewLink}>
-              השאירו ביקורת
-            </Link>
-          )}
+          {/* The review CTA moved into the completed hero (§3.E) — it used to be a plain text
+              link at the bottom of the page, below the fold on mobile, for the one action the
+              product most wants at that moment. */}
         </div>
       )}
+
+      <Modal
+        isOpen={isCancelConfirmOpen}
+        onClose={() => setIsCancelConfirmOpen(false)}
+        title="לבטל את ההזמנה?"
+        size="normal"
+        footer={
+          <div className={styles.confirmActions}>
+            <Button variant="destructive" onClick={handleCancel} loading={isCancelling} fullWidth>
+              ביטול ההזמנה
+            </Button>
+            <Button variant="secondary" onClick={() => setIsCancelConfirmOpen(false)} fullWidth>
+              חזרה
+            </Button>
+          </div>
+        }
+      >
+        <p className={styles.confirmText}>
+          הפעולה הזו סופית. המועד שנשמר עבורך ישוחרר, והתקלה שלך תחזור להיות פתוחה כדי שאפשר יהיה
+          לבחור בעל מקצוע אחר.
+        </p>
+      </Modal>
     </div>
   );
 }

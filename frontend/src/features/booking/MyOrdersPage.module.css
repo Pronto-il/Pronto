@@ -71,3 +71,18 @@
   font-size: 14px;
   line-height: 20px;
 }
+
+.rowSide {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+/* Live ETA for an order already on the way (MS5 §3.H). */
+.rowEta {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-primary);
+  font-variant-numeric: tabular-nums;
+}

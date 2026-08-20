@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Clock, Truck, Star } from 'lucide-react';
@@ -16,10 +17,26 @@ import styles from './ActiveOrderIndicator.module.css';
  * the persisted `expectedArrivalAt` timestamp — this component only maps `selection.state`
  * to an icon/label/click-through route.
  */
+/** Toggled on `<body>` while the indicator is on screen, so `AppLayout.module.css` can add
+ *  just enough mobile scroll clearance for it — see that file's `:global(body.…)` rule.
+ *  A body class rather than page padding, because the indicator is a sibling of `<main>` and
+ *  every screen with a bottom CTA (booking steps, the profile's favourite button) is affected
+ *  (MS5 design doc §3.G). */
+const BODY_CLASS = 'has-active-order-indicator';
+
 export function ActiveOrderIndicator() {
   const navigate = useNavigate();
   const { selection } = useActiveOrder();
   const { remainingMinutes, isArriving } = useEtaCountdown(selection?.order.expectedArrivalAt ?? null);
+
+  const isVisible = Boolean(selection);
+  useEffect(() => {
+    if (!isVisible) {
+      return;
+    }
+    document.body.classList.add(BODY_CLASS);
+    return () => document.body.classList.remove(BODY_CLASS);
+  }, [isVisible]);
 
   if (!selection) {
     return null;

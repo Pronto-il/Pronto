@@ -1,0 +1,156 @@
+import type { ReactNode } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import type { TargetAndTransition } from 'framer-motion';
+import { Mascot } from '../../shared/components';
+import type { MascotState } from '../../shared/components';
+import type { OrderStatus } from '../../shared/api';
+import { listStagger, pageTransition } from '../../shared/motion/variants';
+import styles from './OrderStatusHero.module.css';
+
+export interface OrderStatusHeroProps {
+  status: OrderStatus;
+  /** The professional's name — the customer's counterparty on this order. */
+  professionalName: string;
+  /** Live countdown from `useEtaCountdown`, already computed by the page. `null` unless the
+   *  order is `ON_THE_WAY` with a persisted `expectedArrivalAt`. */
+  remainingMinutes: number | null;
+  /** `useEtaCountdown`'s "the window has effectively elapsed" flag. */
+  isArriving: boolean;
+  /** Booked date/time, pre-formatted by the caller (this component does no formatting). */
+  bookedLabel: string;
+  /** Rendered under the copy — the status-appropriate call to action, owned by the page. */
+  action?: ReactNode;
+}
+
+interface HeroContent {
+  headline: string;
+  support?: string;
+  mascot: MascotState;
+  tone: 'neutral' | 'positive' | 'ended';
+}
+
+/**
+ * DESIGN_SYSTEM.md §79's Active Job Screen, for the **customer** viewer only (design doc
+ * §4 Q2 — the professional keeps MS6's own surfaces). §79's rule is that "the status should
+ * become the main visual element"; before MS5 the status was a 28px badge in the corner of a
+ * details card that rendered identically for all seven `OrderStatus` values, while the
+ * loudest element on screen was the red cancel button.
+ *
+ * Everything here is derived from `orderStatus` plus values the page already has — no new
+ * fetch, no new field, and no per-status timestamps (the `orders` table doesn't persist any,
+ * so this deliberately says "בדרך אליך" and never "יצא לדרך ב-14:12").
+ *
+ * Copy avoids gendered verb forms for the professional (whose gender the product never
+ * records) — "ההזמנה אושרה", not "אישר/ה".
+ */
+export function OrderStatusHero({
+  status,
+  professionalName,
+  remainingMinutes,
+  isArriving,
+  bookedLabel,
+  action,
+}: OrderStatusHeroProps) {
+  const shouldReduceMotion = useReducedMotion();
+  // Same neutralization pattern `IssueSuccessStep`/`BookingSuccessStep` already use for this
+  // variant pair: override the resolved `animate` target, since each variant embeds its own
+  // spring transition that would otherwise win over a component-level `transition` prop.
+  const containerAnimate = shouldReduceMotion
+    ? { transition: { staggerChildren: 0, delayChildren: 0 } }
+    : 'animate';
+  const itemAnimate = shouldReduceMotion
+    ? { ...(pageTransition.animate as TargetAndTransition), transition: { duration: 0 } }
+    : 'animate';
+
+  const content = describe(status, professionalName, bookedLabel);
+  const showEta = status === 'ON_THE_WAY' && remainingMinutes !== null;
+
+  return (
+    <div className={`${styles.hero} ${styles[content.tone]}`}>
+      <Mascot state={content.mascot} size="lg" className={styles.mascot} />
+
+      <motion.div className={styles.body} variants={listStagger} initial="initial" animate={containerAnimate}>
+        <motion.h2 className={styles.headline} variants={pageTransition} animate={itemAnimate}>
+          {content.headline}
+        </motion.h2>
+
+        {showEta ? (
+          // §76/§79: while the professional is on the way this is the single most important
+          // number on the screen, so it gets the §75 "important figure" weight.
+          <motion.div className={styles.eta} variants={pageTransition} animate={itemAnimate}>
+            <span className={styles.etaLabel}>הגעה משוערת</span>
+            <span className={styles.etaValue} aria-live="polite">
+              {isArriving ? 'מגיע/ה עכשיו' : `${remainingMinutes} דקות`}
+            </span>
+          </motion.div>
+        ) : (
+          content.support && (
+            <motion.p className={styles.support} variants={pageTransition} animate={itemAnimate}>
+              {content.support}
+            </motion.p>
+          )
+        )}
+
+        {action && (
+          <motion.div className={styles.action} variants={pageTransition} animate={itemAnimate}>
+            {action}
+          </motion.div>
+        )}
+      </motion.div>
+    </div>
+  );
+}
+
+function describe(status: OrderStatus, professionalName: string, bookedLabel: string): HeroContent {
+  switch (status) {
+    case 'PENDING':
+      return {
+        headline: `ממתינים לאישור של ${professionalName}`,
+        support: `שמרנו לך את המועד ${bookedLabel}. נעדכן אותך ברגע שתתקבל תשובה.`,
+        mascot: 'thinking',
+        tone: 'neutral',
+      };
+    case 'CONFIRMED':
+      return {
+        headline: 'ההזמנה אושרה',
+        support: `ההגעה מתוכננת ל${bookedLabel}.`,
+        mascot: 'found',
+        tone: 'positive',
+      };
+    case 'ON_THE_WAY':
+      return {
+        headline: `${professionalName} בדרך אליך`,
+        mascot: 'running',
+        tone: 'positive',
+      };
+    case 'COMPLETED':
+      return {
+        headline: 'העבודה הושלמה',
+        support: `תודה שהזמנת דרך פרונטו. איך היה השירות של ${professionalName}?`,
+        mascot: 'success',
+        tone: 'positive',
+      };
+    case 'CANCELLED':
+      return {
+        headline: 'ההזמנה בוטלה',
+        support: 'התקלה שלך עדיין פתוחה — אפשר לבחור בעל מקצוע אחר מתי שנוח.',
+        mascot: 'idle',
+        tone: 'ended',
+      };
+    case 'REJECTED':
+      return {
+        headline: 'הבקשה לא אושרה',
+        support: `${professionalName} לא זמינים לעבודה הזו. התקלה שלך עדיין פתוחה, ויש עוד בעלי מקצוע זמינים באזור.`,
+        mascot: 'idle',
+        tone: 'ended',
+      };
+    case 'EXPIRED':
+    default:
+      return {
+        headline: 'הבקשה פגה',
+        support: 'לא התקבלה תשובה בזמן, אז סגרנו את הבקשה. אפשר לפתוח בקשה חדשה בכל רגע.',
+        mascot: 'idle',
+        tone: 'ended',
+      };
+  }
+}

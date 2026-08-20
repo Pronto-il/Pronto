@@ -1,14 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Star } from 'lucide-react';
-import { PageHeader, Card, Button, Textarea, Skeleton } from '../../shared/components';
+import { PageHeader, Card, Button, Textarea, Skeleton, Mascot } from '../../shared/components';
 import { useActiveOrder } from '../../shared/hooks';
 import { getOrder, createReview, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { OrderDetailResponse } from '../../shared/api';
+import { formatDateLabel } from '../../shared/utils/formatDateTime';
 import styles from './CompletionReviewPage.module.css';
 
 const SUBMIT_ERROR_MESSAGES: Record<string, string> = {
   REVIEW_ORDER_NOT_COMPLETED: 'לא ניתן להשאיר ביקורת על הזמנה שטרם הושלמה.',
+};
+
+/** Doubles as each star's accessible name and as the visible label under the row — a bare
+ *  "3 כוכבים" says nothing about what three stars means. */
+const RATING_LABELS: Record<number, string> = {
+  1: 'לא טוב',
+  2: 'בסדר',
+  3: 'טוב',
+  4: 'טוב מאוד',
+  5: 'מצוין',
 };
 
 /**
@@ -124,41 +135,60 @@ export default function CompletionReviewPage() {
         </Card>
       )}
 
+      {/* §78's "calm success state" — the same `Mascot state="success"` + `listStagger`
+          pattern `IssueSuccessStep`/`BookingSuccessStep` established, instead of the single
+          line of text in a card this screen used to end on. */}
       {showDone && (
-        <Card className={styles.notice}>
-          <p>{submitted ? 'תודה! הביקורת שלכם נשלחה בהצלחה.' : 'כבר השארתם ביקורת על ההזמנה הזו.'}</p>
-          <Button onClick={() => navigate('/orders')}>חזרה להזמנות שלי</Button>
-        </Card>
+        <div className={styles.doneWrapper}>
+          <Mascot state="success" size="xl" />
+          <h2 className={styles.doneTitle}>{submitted ? 'תודה על הביקורת' : 'כבר השארת ביקורת'}</h2>
+          <p className={styles.doneText}>
+            {submitted
+              ? 'הביקורת שלך עוזרת ללקוחות הבאים לבחור נכון, ולבעלי המקצוע הטובים לקבל יותר עבודה.'
+              : 'כבר קיבלנו ממך ביקורת על ההזמנה הזו, אז אין צורך לדרג שוב.'}
+          </p>
+          <Button onClick={() => navigate('/orders')} fullWidth>
+            חזרה להזמנות שלי
+          </Button>
+        </div>
       )}
 
       {showForm && order && (
         <div className={styles.wrapper}>
-          <Card className={styles.summaryCard}>
-            <p className={styles.professionalName}>{order.professionalName}</p>
-            <p className={styles.hint}>איך היה השירות?</p>
-          </Card>
+          <div className={styles.intro}>
+            <h2 className={styles.question}>איך היה השירות?</h2>
+            <p className={styles.hint}>
+              {order.professionalName} · {formatDateLabel(order.bookedStart)}
+            </p>
+          </div>
 
-          <div className={styles.stars} role="radiogroup" aria-label="דירוג">
-            {[1, 2, 3, 4, 5].map((value) => (
-              <button
-                key={value}
-                type="button"
-                className={styles.starButton}
-                style={{ color: (hoverRating || rating) >= value ? 'var(--color-warning)' : undefined }}
-                aria-label={`${value} כוכבים`}
-                aria-pressed={rating === value}
-                onMouseEnter={() => setHoverRating(value)}
-                onMouseLeave={() => setHoverRating(0)}
-                onClick={() => setRating(value)}
-              >
-                <Star
-                  size={32}
-                  className={styles.star}
-                  fill={(hoverRating || rating) >= value ? 'currentColor' : 'none'}
-                  aria-hidden="true"
-                />
-              </button>
-            ))}
+          <div className={styles.ratingBlock}>
+            <div className={styles.stars} role="radiogroup" aria-label="דירוג">
+              {[1, 2, 3, 4, 5].map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={styles.starButton}
+                  style={{ color: (hoverRating || rating) >= value ? 'var(--color-warning)' : undefined }}
+                  aria-label={RATING_LABELS[value]}
+                  aria-pressed={rating === value}
+                  onMouseEnter={() => setHoverRating(value)}
+                  onMouseLeave={() => setHoverRating(0)}
+                  onClick={() => setRating(value)}
+                >
+                  <Star
+                    size={36}
+                    className={styles.star}
+                    fill={(hoverRating || rating) >= value ? 'currentColor' : 'none'}
+                    aria-hidden="true"
+                  />
+                </button>
+              ))}
+            </div>
+            {/* Names the scale as it's used, so five identical stars aren't the only feedback
+                the customer gets for what they just picked. Reserves its own line either way,
+                so choosing a rating doesn't shift the form below it. */}
+            <p className={styles.ratingLabel}>{RATING_LABELS[hoverRating || rating] ?? ' '}</p>
           </div>
 
           <Textarea

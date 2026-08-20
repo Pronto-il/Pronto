@@ -4,21 +4,61 @@
   gap: var(--space-6);
 }
 
-.summaryCard {
+.intro {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
 }
 
-.professionalName {
-  font-size: 20px;
+.question {
+  font-size: 22px;
+  line-height: 28px;
   font-weight: 700;
   color: var(--color-text-primary);
+  margin: 0;
 }
 
 .hint {
   font-size: 14px;
   color: var(--color-text-secondary);
+}
+
+.ratingBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ratingLabel {
+  min-height: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.doneWrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  text-align: center;
+  padding-block: var(--space-8);
+}
+
+.doneTitle {
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.doneText {
+  font-size: 15px;
+  line-height: 22px;
+  color: var(--color-text-secondary);
+  max-width: 34ch;
 }
 
 .summarySkeleton {

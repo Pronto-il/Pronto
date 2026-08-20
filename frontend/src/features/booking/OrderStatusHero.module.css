@@ -1,0 +1,81 @@
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-8) var(--space-6);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  text-align: center;
+}
+
+/* Tone shifts the surface only — the structure is identical for every status, so the screen
+   doesn't reshuffle under the customer as an order progresses. */
+.positive {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.ended {
+  background: var(--color-surface-secondary);
+}
+
+.mascot {
+  flex-shrink: 0;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.headline {
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+  text-wrap: balance;
+}
+
+.support {
+  font-size: 15px;
+  line-height: 22px;
+  color: var(--color-text-secondary);
+  max-width: 34ch;
+}
+
+/* §75/§76/§79: the ETA is the most important figure on this screen while the professional is
+   on the way, so it carries more weight than any price on the page. */
+.eta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.etaLabel {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.etaValue {
+  font-size: 34px;
+  line-height: 40px;
+  font-weight: 700;
+  color: var(--color-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.action {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+  max-width: 320px;
+  margin-block-start: var(--space-2);
+}

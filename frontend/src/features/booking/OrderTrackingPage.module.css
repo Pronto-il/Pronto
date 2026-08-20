@@ -143,19 +143,15 @@
   margin: 0;
 }
 
-.reviewLink {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 48px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-primary);
-  color: var(--color-primary);
-  text-decoration: none;
+/* Cancel-confirmation dialog (MS5 §3.C). */
+.confirmText {
   font-size: 15px;
-  font-weight: 600;
+  line-height: 22px;
+  color: var(--color-text-secondary);
 }
 
-.reviewLink:hover {
-  background: var(--color-primary-light);
+.confirmActions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }

@@ -1283,6 +1283,40 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
     `frontend/src/features/issues/README.md` (kept current by the implementing agent along
     the way; this closing pass verified accuracy, no inaccuracies found); plus
     `implementation-plan.md`'s new "MS3 — Issue Creation + AI Experience" entry.
+- **2026-08-20 — Service address moved ahead of the profession roulette.** The matching route
+  `/issues/:issueId/matching` is now two phases — address, then wheel — so the listing is
+  preloaded against the address the customer actually chose (service-area relevance, distance,
+  ETA and sorting all depend on it). Reuses `features/booking`'s `AddressSelectionStep`; a
+  one-off address never touches the profile's saved default. Both phases persist into the same
+  booking draft, so a refresh resumes into the animation and the booking flow never re-asks.
+  Same pass: the wheel's figures lost their card containers, the wheel scales up per breakpoint
+  (360/500/620px), and the landed result is held ~1s longer before the automatic hand-off.
+  Verified live: 23/23 assertions on the address path (including "profile default unchanged"
+  and "Tel Aviv returns 14 professionals, Beer Sheva 0") plus 27/27 on the roulette suite.
+- **2026-08-20 — Profession roulette replaces the issue flow's intermediate CTA screen
+  (27/27 Playwright assertions).** Branch `main`, uncommitted at time of writing. The issue flow
+  used to end on `IssueSuccessStep` ("הבנתי. עכשיו נמצא לך מישהו" + a "בחירת בעל מקצוע" button),
+  which made the customer click again for results they had already asked for. That component is
+  **deleted**; the flow is now `issue confirmed → /issues/:issueId/matching → professionals list`
+  with no click in between.
+  - **New**: `features/issues/ProfessionMatchPage.tsx` (route `/issues/:issueId/matching`),
+    `features/issues/ProfessionRoulette.tsx` (the wheel), and
+    `shared/components/ProfessionIllustration.tsx` (the single category-id → drawing map over
+    `assets/rollete-animation-images/`, whose files were renamed to the profession each depicts).
+  - **Deterministic, not random**: the landing angle is computed from the issue's own category's
+    fixed position on the wheel (`360 * SPINS - targetIndex * segmentAngle`). The wheel is a
+    readout of the AI classification, not a second matching decision.
+  - **Preloading**: `prefetchProfessionalListing` (new, in `shared/api/bookings.ts`) fires the
+    listing request while the wheel turns; the booking flow adopts that in-flight promise, so the
+    listing is requested exactly once across both screens. The hand-off also writes the existing
+    booking draft forward to `PROFESSIONAL_SELECTION` with the saved default address, so the
+    booking flow's own resume-hydration opens on the professionals step rather than the address
+    step. A customer with no saved address still lands on the address step — the listing endpoint
+    requires one.
+  - **Known gap, reported rather than papered over**: category 6 (`carpentry`) has no
+    illustration among the seven supplied for eight categories. It renders the shared `Mascot`
+    fallback and logs a one-time dev warning naming the missing mapping, instead of borrowing
+    another profession's drawing.
 - **2026-08-20 — MS5 — Active Order & Customer Experience landed, implemented and verified
   live (47/47 Playwright assertions).** Branch `main`, uncommitted at time of writing. Full
   design record: `docs/architecture/frontend-ms5-active-order-design.md`. Unlike MS4/MS6 this

@@ -131,3 +131,72 @@ the full design record.
   plus per-question progressive reveal when `questions.length > 1`) — none of these touch
   `handleSubmit`/`handleContinue`'s validation, `classifyIssue` payload, `answers`/
   `allAnswered` state, or the `onClassified`/error-banner logic.
+
+## Profession roulette — replaces the old success step (2026-08-20)
+
+The issue flow used to end on `IssueSuccessStep` ("הבנתי. עכשיו נמצא לך מישהו" + a
+"בחירת בעל מקצוע" button + "חזרה לדף הבית"). That screen asked the customer to click again for
+results they had already asked for, so **it has been deleted**, not hidden: the flow is now
+
+```text
+issue confirmed -> /issues/:issueId/matching -> professionals list
+                   (1. service address, 2. roulette)
+```
+
+**Address before the wheel (2026-08-20 adjustment).** `/issues/:issueId/matching` is a
+two-phase screen: the customer picks the service address first, and only then does the wheel
+start. The wheel is a promise about *results*, and results depend on where the professional
+has to travel — the listing endpoint derives service-area relevance, distance and ETA from the
+service address, so animating a match before knowing it would mean preloading against the
+wrong location or not preloading at all. The address step is `features/booking`'s own
+`AddressSelectionStep`, imported rather than reimplemented, so both entry points into the
+booking flow ask in exactly one way — including its guarantee that choosing a one-off address
+never writes back to the profile's saved default (there is no endpoint that could).
+
+Both phases persist into the same booking draft the booking flow reads, so a refresh mid-spin
+resumes into the animation rather than re-asking, and the flow that follows never asks again —
+its own address step stays one explicit "back" away for a customer who wants to change it.
+
+- **`ProfessionMatchPage.tsx`/`.module.css`** — the transition screen, at its own route rather
+  than as a step inside `NewIssuePage`, so a refresh or a shared link re-derives the category
+  from the issue instead of losing it with component state. `NewIssuePage.handleConfirmed`
+  navigates here with `replace: true` (the back button must not return to a review step for an
+  issue that already exists), passing `categoryId`/`urgencyType` in router state so the common
+  path costs no extra request; on a refresh or direct visit it falls back to `getIssue`.
+- **`ProfessionRoulette.tsx`/`.module.css`** — the wheel. **Deterministic**: the landing angle is
+  `360 * SPINS - targetIndex * segmentAngle`, computed from the issue's own category's fixed
+  position, so the same issue always lands identically. Nothing random is drawn anywhere.
+- **Illustrations** come from `shared/components/ProfessionIllustration.tsx`, the single
+  category-id → drawing map. Category 6 (`carpentry`) has **no** illustration in
+  `assets/rollete-animation-images/` — seven drawings were supplied for eight categories — so it
+  renders the shared `Mascot` fallback and logs a one-time dev warning naming the gap, rather
+  than borrowing another profession's drawing.
+- **Preloading**: while the wheel turns, `prefetchProfessionalListing` fires the exact request
+  *for the address the customer just chose* — default or one-off —
+  the booking flow is about to make; that flow adopts the in-flight promise instead of issuing
+  its own (verified live: one listing request across both screens). If the list is ready when
+  the wheel stops, the success state holds for `SUCCESS_HOLD_MS` and the screen leaves; if not,
+  the landed profession stays visible under a subtle loading line until it is, capped by
+  `MAX_PRELOAD_WAIT_MS` so it can never hang.
+- **Landing on the list, not the address step**: the hand-off writes the existing booking draft
+  forward to `PROFESSIONAL_SELECTION` with the customer's saved default address, which the
+  booking flow's own resume-hydration already knows how to open on. A customer with no saved
+  address lands on the address step as before — the listing endpoint requires an address, so
+  there is nothing to skip.
+- **Reduced motion / degenerate wheel**: no turns at all — a 320ms move straight to the
+  answer. Same for a wheel with fewer than two faces.
+- **StrictMode**: navigation is ref-guarded, so a double-invoked effect or a remount cannot
+  navigate twice.
+
+### UI/timing corrections (2026-08-20)
+
+- **Standalone figures, no cards.** The faces were rounded surfaces with a border and a tinted
+  active state. The illustrations now sit directly on the page around the ring; depth comes
+  from opacity and scale alone, and the landed profession is lifted by a drop-shadow that
+  follows the figure's own silhouette rather than a rectangle behind it.
+- **Responsive sizing, not one size.** `--wheel-size` is `min(84vw, 360px)` on mobile, `500px`
+  from 768px, and `620px` from 1200px — bounded by `.focused-page`'s 680px content column, so
+  the wheel owns the screen on a desktop instead of floating in it.
+- **Longer result hold.** `SUCCESS_HOLD_MS` 900ms → 1900ms. At the old length the result
+  flashed past before it could be read, which defeats the point of the animation. Still no
+  extra click; the screen leaves on its own.

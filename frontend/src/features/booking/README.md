@@ -563,7 +563,8 @@ with every prior frontend milestone in this project.
   call) — bounces the customer back to a re-fetched professional list, mirroring
   `BookingSummary`'s `SLOT_UNAVAILABLE` handling — and `409 ISSUE_NOT_BOOKABLE`, to
   specific Hebrew messages.
-- `features/issues/IssueSuccessStep.tsx`'s SOS branch now routes into
+- `features/issues/IssueSuccessStep.tsx` (since deleted — replaced by the profession-roulette
+  transition, see that package's README) routed its SOS branch into
   `/issues/${issueId}/sos-booking` (previously a stub with "not available yet" copy).
 
 **Post-QA fixes (2026-08-17):**

@@ -1,0 +1,125 @@
+/* Wheel geometry is driven by two custom properties so the faces, the hub and the pointer all
+   scale from one number. `--wheel-radius` is the distance from centre to a face's centre. */
+.stage {
+  /* Mobile first: compact but readable. Scaled up per breakpoint below — the wheel is the
+     subject of this screen, so on a desktop it should own the space rather than float in it. */
+  --wheel-size: min(84vw, 360px);
+  --face-size: calc(var(--wheel-size) * 0.23);
+  /* A rotating square's bounding box grows to 1.41x its side, so the constraint that matters
+     is the *content* extent, not the box: keep every face's far corner inside the stage at any
+     angle. `0.71` is half a square's diagonal (√2/2) and the 8px covers the settled face's
+     1.12 scale-up. Sized from the face's diagonal rather than its width, the wheel can never
+     push the page into a horizontal scroll mid-spin — which it did before this was corrected. */
+  --wheel-radius: calc(var(--wheel-size) / 2 - var(--face-size) * 0.71 - 8px);
+
+  position: relative;
+  inline-size: var(--wheel-size);
+  block-size: var(--wheel-size);
+  margin-inline: auto;
+  display: grid;
+  place-items: center;
+  /* The wheel is a self-contained visual: nothing inside it may extend the page's scrollable
+     width. Without this, the browser grew the document by a few px at some rotation angles
+     mid-spin — enough to trigger a horizontal scroll (and, on a real phone, a zoom-out) for
+     motion the customer can't scroll to anyway. `clip` (not `hidden`) adds no scroll
+     container; the margin keeps the pointer, which sits just above the stage, visible. */
+  overflow: clip;
+  overflow-clip-margin: 10px;
+}
+
+/* Tablet */
+@media (min-width: 768px) {
+  .stage {
+    --wheel-size: 500px;
+  }
+}
+
+/* Desktop — bounded by `.focused-page`'s 680px content column, not by the viewport. */
+@media (min-width: 1200px) {
+  .stage {
+    --wheel-size: 620px;
+  }
+}
+
+/* A single quiet marker, not a casino ticker: a small caret sitting just above the wheel's
+   top edge, aligned to the centre of whichever face lands there. */
+.pointer {
+  position: absolute;
+  inset-block-start: -2px;
+  /* Physical `left`, not `inset-inline-start`, everywhere in this wheel's geometry: the
+     rotation maths below is physical, and a logical inset flips which edge is the anchor under
+     RTL — which silently pushed the whole wheel a face-width off centre from the ring. */
+  left: 50%;
+  translate: -50% 0;
+  z-index: 2;
+  inline-size: 0;
+  block-size: 0;
+  border-inline: 9px solid transparent;
+  border-block-start: 12px solid var(--color-primary);
+  filter: drop-shadow(0 1px 2px rgba(15, 118, 110, 0.35));
+}
+
+/* A zero-size pivot at the stage's centre. Its children (the faces) are placed around it, so
+   its bounding box is exactly the content extent `--wheel-radius` already constrains — no
+   rotated-square growth, at any angle. */
+.wheel {
+  position: absolute;
+  inset-block-start: 50%;
+  left: 50%;
+  inline-size: 0;
+  block-size: 0;
+  will-change: transform;
+}
+
+/* The ring the faces sit on. Deliberately one continuous hairline circle rather than pie
+   segments — segments read as a prize wheel, a ring reads as a dial. */
+.track {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: radial-gradient(circle at 50% 42%, var(--color-surface) 0%, rgba(255, 255, 255, 0) 72%);
+}
+
+.slot {
+  position: absolute;
+  inset-block-start: 0;
+  left: 0;
+  inline-size: var(--face-size);
+  block-size: var(--face-size);
+  /* `translate` runs before the element's own `transform`, so the slot is first centred on the
+     pivot and only then rotated out to its place on the ring. */
+  translate: -50% -50%;
+}
+
+.face {
+  display: grid;
+  place-items: center;
+  inline-size: 100%;
+  block-size: 100%;
+  /* No card, tile or box: the figures stand directly on the page, arranged around the ring.
+     Depth comes from opacity and scale alone. */
+  opacity: 0.42;
+  transition-property: transform, opacity, filter;
+  will-change: transform;
+}
+
+/* The landed profession, once the wheel has stopped. Lifted by presence rather than by a
+   container — a glow that follows the figure's own silhouette, not a rectangle behind it. */
+.faceActive {
+  opacity: 1;
+  scale: 1.22;
+  filter: drop-shadow(0 6px 14px rgba(15, 118, 110, 0.28));
+}
+
+.illustration {
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .face,
+  .faceActive {
+    transition-duration: 1ms !important;
+  }
+}

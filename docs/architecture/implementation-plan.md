@@ -2524,6 +2524,56 @@ passes on every changed file across all six milestones.
   package-table row, `frontend/src/features/booking/README.md`,
   `frontend/src/shared/hooks/README.md` (the `usePolling` fix), and the design doc's §4/§7.
 
+## Profession roulette — issue → matching → professionals
+
+- **Flow adjusted 2026-08-20 (same day): the service address is collected *before* the wheel.**
+  `/issues/:issueId/matching` became a two-phase screen (address → roulette) rather than
+  starting the animation straight after classification. The reason is not cosmetic: the listing
+  endpoint takes the service address and derives service-area relevance, distance and ETA from
+  it, so preloading before the address is known means preloading against the wrong location.
+  The address step is `features/booking`'s `AddressSelectionStep`, imported rather than
+  reimplemented. A one-off address never writes back to the profile default. Both phases write
+  the same booking draft, so refresh resumes into the animation and the booking flow never
+  re-asks — its own address step remains one explicit "back" away.
+- **UI/timing corrections the same day**: figures are standalone (no card containers), the wheel
+  scales 360/500/620px across mobile/tablet/desktop rather than one fixed size, and the landed
+  result is held ~1s longer (900ms → 1900ms) before the automatic hand-off.
+
+- **Status: implemented, verified live (27/27 Playwright assertions), 2026-08-20.** Working tree
+  on `main`, uncommitted. Replaces the intermediate CTA screen at the end of the issue flow.
+- **What was removed**: `features/issues/IssueSuccessStep.tsx`/`.module.css`, deleted outright
+  (not hidden behind a flag or left unrouted), along with `NewIssuePage`'s `'success'` step and
+  the `step.name !== 'success'` special cases its back button and header carried. Nothing else
+  consumed it.
+- **What replaced it**: a dedicated route, `/issues/:issueId/matching`. A route rather than a
+  step so a refresh re-derives the category from the issue rather than losing it with component
+  state — one of the brief's explicit edge cases.
+- **Determinism**: the wheel's final angle is `360 * SPINS - targetIndex * segmentAngle`, where
+  `targetIndex` is the issue's own classified category's fixed position. No random draw exists in
+  the component. Verified across four categories driven through the real UI (plumbing,
+  locksmith, AC, carpentry), each landing on its own profession.
+- **Preloading without duplication**: a single-entry, path-keyed, single-use, TTL-bounded
+  prefetch cache in `shared/api/bookings.ts`. Asserted live: exactly one
+  `/api/bookings/professionals` request across the roulette and the listing screen (and one
+  `/api/bookings/sos-professionals` on the SOS path).
+- **Two real bugs found and fixed during verification, both by measuring rather than assuming**:
+  1. *Mobile horizontal scroll mid-spin.* A rotating square reports a bounding box up to 1.41x
+     its side, so the wheel widened the document at some angles and the mobile browser zoomed
+     out to compensate. Fixed by rotating a zero-size pivot instead of a full-size square (the
+     ring is static scenery and never needed to rotate), sizing the radius from the faces'
+     diagonal rather than their width, and clipping the stage as a backstop. Re-probed at ten
+     points through the spin: zero overshoot.
+  2. *The wheel sat a face-width off-centre under RTL.* The geometry used logical inset
+     properties (`inset-inline-start`), which flip which edge is the anchor — but the rotation
+     maths is physical. Switched to physical `left` throughout the wheel's geometry.
+- **Known gap**: category 6 (`carpentry`) has no illustration; it renders the `Mascot` fallback
+  and reports the missing mapping once per session in dev. Seven drawings were supplied for
+  eight categories — this is a missing asset, not a mapping mistake.
+- **Documentation updated**: this entry, `overview.md`'s changelog,
+  `frontend/src/features/issues/README.md`, `frontend/src/shared/components/README.md` (the
+  full category → illustration table), and `frontend/src/shared/api/README.md` (the prefetch
+  cache's semantics).
+
 ## Cross-cutting rules for every milestone
 
 - Planning docs (`overview.md`, this file) are updated if a milestone's actual

@@ -1,0 +1,9 @@
+.illustration {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: contain;
+  /* The source drawings are transparent PNGs with generous internal padding — no background,
+     no border, so they sit on whatever surface the consumer provides. */
+  user-select: none;
+}

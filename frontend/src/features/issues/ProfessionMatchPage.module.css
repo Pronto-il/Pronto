@@ -1,0 +1,106 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-block-size: 70vh;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.eyebrow {
+  font-size: 20px;
+  line-height: 26px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  text-align: center;
+  text-wrap: balance;
+}
+
+@media (min-width: 768px) {
+  .eyebrow {
+    font-size: 24px;
+    line-height: 30px;
+  }
+}
+
+.caption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: 56px;
+}
+
+.profession {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.pending {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+/* Deliberately quiet: the landed profession stays the subject, this only says "still working". */
+.dots {
+  inline-size: 8px;
+  block-size: 8px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Holds the wheel's footprint while the issue resolves, so nothing jumps when it appears. */
+.wheelPlaceholder {
+  inline-size: min(78vw, 340px);
+  block-size: min(78vw, 340px);
+  border-radius: 50%;
+  background: var(--color-surface-secondary);
+}
+
+@media (min-width: 768px) {
+  .wheelPlaceholder {
+    inline-size: 400px;
+    block-size: 400px;
+  }
+}
+
+.banner {
+  padding: var(--space-4);
+  margin-block-end: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.banner p {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dots {
+    animation: none;
+    opacity: 0.6;
+  }
+}

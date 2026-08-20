@@ -31,8 +31,8 @@ export type { DocumentUploadFieldProps } from './DocumentUploadField';
 export { AddressFormFields } from './AddressFormFields';
 export type { AddressFormFieldsProps } from './AddressFormFields';
 
-export { EMPTY_ADDRESS } from './addressTypes';
-export type { AddressValue } from './addressTypes';
+export { EMPTY_ADDRESS, toAddressValue } from './addressTypes';
+export type { AddressValue, SavedDefaultAddress } from './addressTypes';
 
 export { StatusBadge } from './StatusBadge';
 export type { StatusBadgeProps } from './StatusBadge';
@@ -62,6 +62,8 @@ export { EmptyState } from './EmptyState';
 export type { EmptyStateProps, EmptyStateTone } from './EmptyState';
 
 export { Mascot } from './Mascot';
+export { ProfessionIllustration, hasProfessionIllustration } from './ProfessionIllustration';
+export type { ProfessionIllustrationProps } from './ProfessionIllustration';
 export type { MascotProps, MascotState, MascotSize } from './Mascot';
 
 export { ToastViewport } from './ToastViewport';

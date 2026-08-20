@@ -17,15 +17,13 @@ import { stepTransition } from '../../shared/motion/variants';
 import { DescribeIssueStep } from './DescribeIssueStep';
 import { ClarifyQuestionsStep } from './ClarifyQuestionsStep';
 import { ReviewStep } from './ReviewStep';
-import { IssueSuccessStep } from './IssueSuccessStep';
 import { AiAnalyzingOverlay } from './AiAnalyzingOverlay';
 import styles from './NewIssuePage.module.css';
 
 type Step =
   | { name: 'describe' }
   | { name: 'clarify'; classification: ClassifyIssueResponse }
-  | { name: 'review'; classification: ClassifyIssueResponse }
-  | { name: 'success'; issue: IssueResponse };
+  | { name: 'review'; classification: ClassifyIssueResponse };
 
 const STEP_LABELS: Partial<Record<Step['name'], string>> = {
   describe: 'שלב 1 מתוך 3',
@@ -33,8 +31,9 @@ const STEP_LABELS: Partial<Record<Step['name'], string>> = {
   review: 'שלב 3 מתוך 3',
 };
 
-/** Feeds `PageHeader`'s `steps` progress-bar prop (design doc §7.1) — omitted for `'success'`,
- *  same as `STEP_LABELS` already omits a `'success'` key (arrival, not an in-progress step). */
+/** Feeds `PageHeader`'s `steps` progress-bar prop (design doc §7.1). Every step in this
+ *  machine is an in-progress step now: a confirmed issue leaves this page immediately for the
+ *  profession-matching screen, so there is no arrival step here to omit. */
 const STEP_NUMBERS: Partial<Record<Step['name'], number>> = {
   describe: 1,
   clarify: 2,
@@ -206,7 +205,7 @@ export default function NewIssuePage() {
   function handleBack() {
     if (step.name === 'describe') {
       navigate('/');
-    } else if (step.name !== 'success') {
+    } else {
       setDirection(-1);
       setStep({ name: 'describe' });
       updateDraft({ stage: 'ISSUE_DESCRIBE', urgencyType, description, photos: toDraftPhotos(photos) });
@@ -214,8 +213,6 @@ export default function NewIssuePage() {
   }
 
   function handleConfirmed(issue: IssueResponse) {
-    setDirection(1);
-    setStep({ name: 'success', issue });
     // Issue creation is explicitly NOT a clear-trigger (§4.5.1) — the draft moves forward into
     // the booking flow instead of being discarded.
     updateDraft({
@@ -223,6 +220,16 @@ export default function NewIssuePage() {
       issueId: issue.id,
       categoryId: issue.categoryId,
       urgencyType: issue.urgencyType,
+    });
+
+    // Straight to the profession-matching screen — no intermediate "we'll find you someone"
+    // step, and no second button between the customer and their results. `replace` so the back
+    // button doesn't return to a review step for an issue that is already created. The
+    // category/urgency ride along so the common path needs no extra fetch; the matching screen
+    // re-derives them from the issue itself on refresh.
+    navigate(`/issues/${issue.id}/matching`, {
+      replace: true,
+      state: { categoryId: issue.categoryId, urgencyType: issue.urgencyType },
     });
   }
 
@@ -252,7 +259,7 @@ export default function NewIssuePage() {
       <PageHeader
         title="יש לי תקלה"
         description={STEP_LABELS[step.name]}
-        onBack={step.name === 'success' ? undefined : handleBack}
+        onBack={handleBack}
         steps={stepNumber !== undefined ? { current: stepNumber, total: 3 } : undefined}
       />
 
@@ -322,9 +329,6 @@ export default function NewIssuePage() {
                   urgencyType={urgencyType}
                   onConfirmed={handleConfirmed}
                 />
-              )}
-              {step.name === 'success' && (
-                <IssueSuccessStep issueId={step.issue.id} urgencyType={step.issue.urgencyType} />
               )}
             </motion.div>
           </AnimatePresence>

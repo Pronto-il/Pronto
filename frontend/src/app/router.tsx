@@ -10,7 +10,7 @@ import {
   VerifyPage,
   LoginPage,
 } from '../features/auth';
-import { NewIssuePage } from '../features/issues';
+import { NewIssuePage, ProfessionMatchPage } from '../features/issues';
 import {
   BookingFlowPage,
   SosBookingFlowPage,
@@ -96,6 +96,7 @@ export const router = createBrowserRouter([
         element: <RequireAuth role="CUSTOMER" />,
         children: [
           { path: 'issues/new', element: <NewIssuePage /> },
+          { path: 'issues/:issueId/matching', element: <ProfessionMatchPage /> },
           { path: 'issues/:issueId/booking', element: <BookingFlowPage /> },
           { path: 'issues/:issueId/sos-booking', element: <SosBookingFlowPage /> },
           { path: 'orders', element: <MyOrdersPage /> },

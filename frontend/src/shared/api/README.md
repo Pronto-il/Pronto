@@ -296,3 +296,17 @@ consuming newly-built backend endpoints (`GET /api/categories`,
 verified directly against the real backend DTOs. `categories.ts` itself is unchanged, by
 deliberate design-doc decision (see above). Full design record:
 `docs/architecture/product-ms11-sub-services-design.md`.
+
+## `prefetchProfessionalListing` (2026-08-20)
+
+A single-entry prefetch cache in `bookings.ts`, added for the profession-matching transition:
+that screen starts the professional-listing request while its animation plays, and the booking
+flow it hands off to adopts the in-flight promise instead of issuing the same request again.
+
+Deliberately minimal — this codebase has no query-cache library and this was not the place to
+introduce one. The entry is **keyed on the exact request path** (so a different issue, address
+or sort never reads another request's result), **single-use** (`takePrefetched` removes it, so
+changing the sort on the listing screen re-hits the network exactly as before), **TTL-bounded**
+at 30s (a customer who lingers can never be served a stale list), and **rejection-safe** (a
+failed prefetch drops out of the cache so the real caller retries and owns its own error
+state). `getProfessionalsForIssue`/`getSosProfessionalsForIssue` consult it; nothing else does.

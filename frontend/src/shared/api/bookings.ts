@@ -55,6 +55,86 @@ export interface ProfessionalListingResponse {
 }
 
 /**
+ * Single-entry prefetch cache for the two professional-listing endpoints, added for the
+ * profession-matching transition (`features/issues/ProfessionMatchPage`): that screen fires
+ * the listing request while its animation plays, and the booking flow it hands off to then
+ * asks for the same list a moment later. Without this the customer pays for the request
+ * twice; with it, the second call adopts the in-flight promise.
+ *
+ * Deliberately minimal — this codebase has no query-cache library, and this is not the place
+ * to introduce one:
+ * - **Keyed on the exact request path**, so a different issue, address or sort never reads
+ *   another request's result.
+ * - **Single-use** — `takePrefetched` removes the entry, so changing the sort on the listing
+ *   screen re-hits the network as it always did.
+ * - **Short TTL** — an entry older than `PREFETCH_TTL_MS` is discarded rather than served, so
+ *   a customer who lingers can never be shown a stale list.
+ * - **Rejection-safe** — a failed prefetch is dropped from the cache, letting the real caller
+ *   retry against the network and surface its own error state.
+ */
+const PREFETCH_TTL_MS = 30_000;
+
+interface PrefetchEntry {
+  path: string;
+  storedAt: number;
+  promise: Promise<ProfessionalListingResponse>;
+}
+
+let prefetchEntry: PrefetchEntry | null = null;
+
+function takePrefetched(path: string): Promise<ProfessionalListingResponse> | null {
+  const entry = prefetchEntry;
+  if (!entry || entry.path !== path) {
+    return null;
+  }
+  prefetchEntry = null;
+  if (Date.now() - entry.storedAt > PREFETCH_TTL_MS) {
+    return null;
+  }
+  return entry.promise;
+}
+
+/**
+ * Starts a professional-listing request now so a screen mounting shortly afterwards can adopt
+ * it instead of issuing its own. Returns the same promise, so the caller can also await it to
+ * decide when it is safe to navigate. Safe to call repeatedly for the same params — a second
+ * call for a path already prefetched returns the in-flight promise rather than a new request.
+ */
+export function prefetchProfessionalListing(
+  issueId: number,
+  location: ServiceLocation,
+  urgencyType: 'STANDARD' | 'SOS',
+  sort?: ProfessionalSort,
+): Promise<ProfessionalListingResponse> {
+  const params = new URLSearchParams();
+  params.set('issueId', String(issueId));
+  params.set('city', location.city);
+  params.set('street', location.street);
+  params.set('houseNumber', location.houseNumber);
+  if (location.apartment) {
+    params.set('apartment', location.apartment);
+  }
+  if (sort) {
+    params.set('sort', sort);
+  }
+  const endpoint = urgencyType === 'SOS' ? 'sos-professionals' : 'professionals';
+  const path = `/api/bookings/${endpoint}?${params.toString()}`;
+
+  if (prefetchEntry && prefetchEntry.path === path && Date.now() - prefetchEntry.storedAt <= PREFETCH_TTL_MS) {
+    return prefetchEntry.promise;
+  }
+
+  const promise = httpClient.get<ProfessionalListingResponse>(path);
+  prefetchEntry = { path, storedAt: Date.now(), promise };
+  promise.catch(() => {
+    if (prefetchEntry?.promise === promise) {
+      prefetchEntry = null;
+    }
+  });
+  return promise;
+}
+
+/**
  * `GET /api/bookings/professionals?issueId=&city=&street=&houseNumber=&apartment=&sort=`
  * `city`/`street`/`houseNumber` are REQUIRED query params as of Milestone 8 (400
  * VALIDATION_ERROR, one FieldError per missing field) — NOT optional despite what
@@ -76,7 +156,8 @@ export function getProfessionalsForIssue(
   if (sort) {
     params.set('sort', sort);
   }
-  return httpClient.get<ProfessionalListingResponse>(`/api/bookings/professionals?${params.toString()}`);
+  const path = `/api/bookings/professionals?${params.toString()}`;
+  return takePrefetched(path) ?? httpClient.get<ProfessionalListingResponse>(path);
 }
 
 /**
@@ -248,7 +329,8 @@ export function getSosProfessionalsForIssue(
   if (sort) {
     params.set('sort', sort);
   }
-  return httpClient.get<ProfessionalListingResponse>(`/api/bookings/sos-professionals?${params.toString()}`);
+  const path = `/api/bookings/sos-professionals?${params.toString()}`;
+  return takePrefetched(path) ?? httpClient.get<ProfessionalListingResponse>(path);
 }
 
 /**

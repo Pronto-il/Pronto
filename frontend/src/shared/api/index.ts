@@ -40,6 +40,7 @@ export type {
 
 export {
   getProfessionalsForIssue,
+  prefetchProfessionalListing,
   getAvailableWindows,
   createOrder,
   acceptOrder,

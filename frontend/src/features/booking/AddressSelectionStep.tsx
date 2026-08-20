@@ -1,7 +1,6 @@
-import { AddressFormFields, Button, Card, FilterChipGroup } from '../../shared/components';
+import { AddressFormFields, Button, Card, FilterChipGroup, toAddressValue } from '../../shared/components';
 import type { AddressValue, FilterChipOption } from '../../shared/components';
 import { useAuth } from '../../shared/hooks';
-import type { UserMeDefaultAddress } from '../../shared/api';
 import styles from './AddressSelectionStep.module.css';
 
 export type AddressMode = 'DEFAULT' | 'CUSTOM';
@@ -21,18 +20,6 @@ const ADDRESS_MODE_OPTIONS: FilterChipOption<AddressMode>[] = [
   { value: 'DEFAULT', label: 'כתובת ברירת המחדל שלי' },
   { value: 'CUSTOM', label: 'כתובת אחרת לפעם הזו' },
 ];
-
-function toAddressValue(defaultAddress: UserMeDefaultAddress): AddressValue {
-  return {
-    city: defaultAddress.city,
-    street: defaultAddress.street,
-    houseNumber: defaultAddress.houseNumber,
-    apartment: defaultAddress.apartment ?? '',
-    floor: defaultAddress.floor ?? '',
-    entrance: defaultAddress.entrance ?? '',
-    addressNotes: defaultAddress.addressNotes ?? '',
-  };
-}
 
 /**
  * Booking-flow address step (design doc §2.7): a two-option chooser between the customer's

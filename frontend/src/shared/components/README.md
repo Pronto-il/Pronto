@@ -225,3 +225,28 @@ see `app/README.md`'s MS1 entry. No product page beyond that one was redesigned;
 foundation-only — a dev-only `/__design` showcase route (`app/DesignSystemPage.tsx`,
 gated behind `import.meta.env.DEV`) demonstrates every new/upgraded primitive from this
 milestone; see `app/README.md`'s MS1 entry for that route's own detail.
+
+## `ProfessionIllustration` (2026-08-20)
+
+The one place that knows which drawing represents which profession — a `Record<categoryId,
+asset>` over `assets/rollete-animation-images/`, whose files were renamed from their generator
+names (`ChatGPT Image Aug 20, 2026, 10_03_49 PM (1).png` …) to the profession each depicts, so
+the mapping can be checked by reading it. Consumers pass a `categoryId`; no screen does
+filename matching.
+
+| Category | Illustration |
+|---|---|
+| 1 אינסטלציה | `plumbing.png` — sink trap, wrench |
+| 2 חשמל | `electrical.png` — wall outlet, screwdriver |
+| 3 מיזוג אוויר | `ac-hvac.png` — split unit, manifold gauges, stepladder |
+| 4 תיקון מוצרי חשמל | `appliance-repair.png` — wall-mounted boiler |
+| 5 מנעולן | `locksmith.png` — door lock, keyring |
+| 6 נגרות | **none supplied** — renders the `Mascot` fallback |
+| 7 צביעה | `painting.png` — roller, paint can |
+| 8 הנדימן כללי | `general-handyman.png` — full kit, on the move |
+
+Category 6 is deliberately absent from the map rather than pointed at a loosely-related
+drawing: showing a plumber for a carpenter would be a quieter bug than a missing image, not a
+smaller one. The component renders `Mascot state="idle"` and emits one dev-only console warning
+per unmapped id, so the gap is reported instead of swallowed. Adding a carpentry drawing to the
+folder and one line to the map completes it.

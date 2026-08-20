@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Heart, Star } from 'lucide-react';
+import { Heart } from 'lucide-react';
 import { PageHeader, Card, Button } from '../../shared/components';
 import { useAuth, useBookingDraft } from '../../shared/hooks';
 import {
@@ -10,10 +10,10 @@ import {
   removeFavorite,
   ApiError,
   GENERIC_ERROR_MESSAGE,
-  getCategoryNameHe,
 } from '../../shared/api';
 import type { ProfessionalProfileResponse, ReviewResponse } from '../../shared/api';
 import { ReviewList } from './ReviewList';
+import { ProfessionalProfileDisplay } from './ProfessionalProfileDisplay';
 import type { ProfessionalDetailLocationState } from './ProfessionalCard';
 import styles from './ProfessionalProfilePage.module.css';
 
@@ -30,6 +30,12 @@ import styles from './ProfessionalProfilePage.module.css';
  * `/favorites` (which passes no state) all correctly degrade to a view-only page. Clicking
  * it writes into each flow's own pre-existing draft/resume mechanism (unmodified) and
  * navigates back into that flow; it never re-implements booking/SOS selection itself.
+ *
+ * **MS6 Professional Command Center**: the identity/info/bio block is now
+ * `ProfessionalProfileDisplay` (design doc §7.1), extracted so `ProfileEditorPage.tsx` can
+ * reuse it for a live unsaved-edits preview. The favorite button/error, reviews section, and
+ * select-CTA stay inline here (live-page-only concerns) — zero change to this page's own
+ * data-fetching, favorite-toggle, or select-CTA logic.
  */
 export default function ProfessionalProfilePage() {
   const { professionalId: professionalIdParam } = useParams<{ professionalId: string }>();
@@ -151,25 +157,10 @@ export default function ProfessionalProfilePage() {
 
       {!isLoading && professional && (
         <>
-          <div className={styles.identityBlock}>
-            {professional.profileImageUrl ? (
-              <img src={professional.profileImageUrl} alt="" className={styles.photo} />
-            ) : (
-              <span className={styles.photoFallback} aria-hidden="true">
-                {professional.fullName.trim().charAt(0)}
-              </span>
-            )}
-            <h1 className={styles.name}>{professional.fullName}</h1>
-            <p className={styles.category}>{getCategoryNameHe(professional.categoryId)}</p>
-            {professional.averageRating !== null && (
-              <span className={styles.rating}>
-                <Star size={16} className={styles.ratingStar} aria-hidden="true" fill="currentColor" />
-                {professional.averageRating.toFixed(1)}
-                <span className={styles.reviewCount}>· {professional.reviewCount} ביקורות</span>
-              </span>
-            )}
+          <ProfessionalProfileDisplay professional={professional} />
 
-            {user?.role === 'CUSTOMER' && (
+          {user?.role === 'CUSTOMER' && (
+            <div className={styles.favoriteButtonWrapper}>
               <button
                 type="button"
                 className={`${styles.favoriteButton} ${isFavorited ? styles.favoriteButtonActive : ''}`}
@@ -180,36 +171,12 @@ export default function ProfessionalProfilePage() {
                 <Heart size={18} aria-hidden="true" fill={isFavorited ? 'currentColor' : 'none'} />
                 <span>{isFavorited ? 'הוסר ממועדפים' : 'הוספה למועדפים'}</span>
               </button>
-            )}
-            {favoriteError && (
-              <p className={styles.favoriteError} role="alert">
-                {favoriteError}
-              </p>
-            )}
-          </div>
-
-          <Card className={styles.infoCard}>
-            <div className={styles.row}>
-              <span className={styles.rowLabel}>אזור שירות</span>
-              <span className={styles.rowValue}>{professional.serviceArea}</span>
+              {favoriteError && (
+                <p className={styles.favoriteError} role="alert">
+                  {favoriteError}
+                </p>
+              )}
             </div>
-            {professional.city && (
-              <div className={styles.row}>
-                <span className={styles.rowLabel}>עיר</span>
-                <span className={styles.rowValue}>{professional.city}</span>
-              </div>
-            )}
-            <div className={styles.row}>
-              <span className={styles.rowLabel}>מחיר ביקור</span>
-              <span className={styles.rowValue}>₪{professional.basePrice}</span>
-            </div>
-          </Card>
-
-          {professional.bio && (
-            <Card className={styles.infoCard}>
-              <p className={styles.bioTitle}>קצת עליי</p>
-              <p className={styles.bioText}>{professional.bio}</p>
-            </Card>
           )}
 
           <section className={styles.reviewsSection}>

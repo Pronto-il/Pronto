@@ -1,0 +1,99 @@
+.identityBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+  padding-block: var(--space-6);
+}
+
+.photo {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--color-surface-secondary);
+}
+
+.photoFallback {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: 32px;
+  font-weight: 700;
+}
+
+.name {
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.category {
+  font-size: 15px;
+  color: var(--color-text-secondary);
+}
+
+.rating {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.ratingStar {
+  color: var(--color-warning);
+}
+
+.reviewCount {
+  color: var(--color-text-secondary);
+  font-weight: 400;
+}
+
+.infoCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  margin-block-end: var(--space-4);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.rowLabel {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.rowValue {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.bioTitle {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.bioText {
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+}

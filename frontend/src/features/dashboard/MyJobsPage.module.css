@@ -1,3 +1,20 @@
+/* MS6 Professional Command Center design doc §5 — Today/Upcoming/History sectioning.
+ * `.sectionTitle` mirrors `WeeklyAvailabilityPage.module.css`'s own `.sectionTitle` styling
+ * for visual consistency across the dashboard (CSS Modules are per-file scoped, so the rule
+ * is duplicated here rather than cross-imported). */
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.sectionTitle {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-block-end: var(--space-4);
+}
+
 .list {
   display: flex;
   flex-direction: column;

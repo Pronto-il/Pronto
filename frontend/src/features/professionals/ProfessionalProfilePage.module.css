@@ -19,72 +19,27 @@
   margin: 0;
 }
 
-.identityBlock {
+/*
+ * MS6 Professional Command Center: the identity block itself (photo/name/category/rating) now
+ * lives in `ProfessionalProfileDisplay.module.css` — this wrapper reproduces the same
+ * centered, gapped layout the favorite button previously got "for free" by being nested
+ * inside that block, now that it's composed as a sibling below it instead (design doc §7.1:
+ * the favorite button stays a live-page-only concern, not extracted into the shared
+ * component).
+ */
+.favoriteButtonWrapper {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-2);
+  padding-block-end: var(--space-6);
   text-align: center;
-  padding-block: var(--space-6);
-}
-
-.photo {
-  width: 96px;
-  height: 96px;
-  border-radius: 50%;
-  object-fit: cover;
-  background: var(--color-surface-secondary);
-}
-
-.photoFallback {
-  width: 96px;
-  height: 96px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--color-primary-light);
-  color: var(--color-primary);
-  font-size: 32px;
-  font-weight: 700;
-}
-
-.name {
-  font-size: 22px;
-  line-height: 28px;
-  font-weight: 700;
-  color: var(--color-text-primary);
-  margin: 0;
-}
-
-.category {
-  font-size: 15px;
-  color: var(--color-text-secondary);
-}
-
-.rating {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-
-.ratingStar {
-  color: var(--color-warning);
-}
-
-.reviewCount {
-  color: var(--color-text-secondary);
-  font-weight: 400;
 }
 
 .favoriteButton {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  margin-block-start: var(--space-2);
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
@@ -108,45 +63,6 @@
 .favoriteError {
   color: var(--color-error);
   font-size: 13px;
-}
-
-.infoCard {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-6);
-  margin-block-end: var(--space-4);
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.rowLabel {
-  font-size: 14px;
-  color: var(--color-text-secondary);
-}
-
-.rowValue {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-
-.bioTitle {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--color-text-primary);
-}
-
-.bioText {
-  font-size: 14px;
-  line-height: 22px;
-  color: var(--color-text-secondary);
-  white-space: pre-wrap;
 }
 
 .reviewsSection {

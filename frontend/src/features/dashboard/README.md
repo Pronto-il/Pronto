@@ -631,3 +631,135 @@ Frontend-only, confined to `WeeklyAvailabilityPage.tsx`/`.module.css`; `WeeklyCa
 - AVAILABLE/BLOCKED/BOOKED visual states in `WeeklyCalendarGrid` were confirmed already meeting
   the "distinct fill + icon/label, not color-only" bar per the design doc's own review — not
   touched by this pass.
+
+## MS6 — Professional Command Center (2026-08-20)
+
+Full design record: `docs/architecture/frontend-ms6-professional-command-center-design.md`.
+The dispatch's original premise (a sidebar/calendar/photo-widget rebuild) turned out to be
+stale — all three were already built (MS9-MS12) and already token-compliant, confirmed by
+direct code review before this pass started (design doc §0/§2). What this milestone actually
+built: a command-center summary banner, a pending-request sidebar badge, a new-request-card
+entrance animation, `MyJobsPage` sectioning, a live profile-editor preview, and a role-aware
+logo link (the last one documented in `app/README.md`, not here).
+`WeeklyCalendarGrid.tsx`/`.module.css`, `CalendarBlockModal.tsx`, `WorkingHoursForm.tsx`, and
+`shared/components/Modal.tsx` are **untouched** by this pass, per the design doc's explicit
+confirmation that they're feature-complete.
+
+- **`shared/hooks/PendingRequestsProvider.tsx` + `pendingRequestsContext.ts` + `usePendingRequests.ts`**
+  (new) — a `PendingRequestsContext` mirroring `ActiveOrderProvider.tsx`/`activeOrderContext.ts`'s
+  shape exactly: `usePolling(() => getMyOrders('PENDING'))` (25s interval, matching
+  `WeeklyCalendarGrid`'s own `CALENDAR_POLL_INTERVAL_MS` cadence — a count badge doesn't need
+  `IncomingRequestsPage`'s own 5s live-action cadence), exposing `{ count, refetch }`.
+  Deliberately scoped narrower than `ActiveOrderProvider`: mounted inside
+  `ProDashboardLayout.tsx` (wrapping the sidebar nav + `<Outlet />`), not in `App.tsx` — this
+  data has no reason to poll outside the `/pro/*` subtree. `IncomingRequestsPage`'s own
+  independent 5s poll of the same endpoint is left completely untouched; the resulting
+  redundancy while `/pro/requests` is the active tab is an accepted, minor N+1-style tradeoff
+  at MVP scale, consistent with this codebase's existing precedent (e.g. that same page's own
+  per-issue N+1 fetch).
+- **`ProDashboardLayout.tsx`/`.module.css`** — now mounts `PendingRequestsProvider` and adds a
+  pending-count `Badge` (`tone="primary"`, only rendered when `count > 0`) to the "בקשות
+  חדשות" `NavLink`, pushed to the tab's far (inline-end) edge via `margin-inline-start: auto`
+  on `.tabBadge` so it's visible whether the nav renders as the mobile top-tab-bar or the
+  desktop sidebar. Resolves the fast-follow MS9 itself flagged as unbuilt (design doc §1.3):
+  making the calendar the landing screen had moved "בקשות חדשות" one click further from first
+  paint, in tension with `DESIGN_SYSTEM.md` §23/`FRONTEND_AGENT.md` §37's "new requests must
+  be immediately visible" guidance.
+- **`CommandCenterBanner.tsx` + `.module.css`** (new) — a single restrained `Card` (not a grid
+  of stat tiles, per `DESIGN_SYSTEM.md` §92) composed at the top of `WeeklyAvailabilityPage`,
+  above the existing `SosAvailabilityToggle` section: a time-of-day greeting + first name
+  (`useAuth().user.fullName`, same pattern `HomePage.tsx` already uses), three `Badge`s
+  (pending-request count — consumes `PendingRequestsContext`, clickable through to
+  `/pro/requests`; today's job count; SOS state), and an optional "העבודה הבאה" line. Today's
+  job count/next-appointment come from a new, narrow, single-day
+  `GET /api/availability/calendar?from=&to=` fetch — **does not** touch `WeeklyCalendarGrid`'s
+  own week-range poll, a completely separate `usePolling` call scoped to this component only.
+  SOS state comes from its own read-only `GET /api/availability/sos-availability` call rather
+  than lifting state out of `SosAvailabilityToggle`. A lightweight command-center banner
+  composed above the existing calendar was chosen over a third distinct `/pro` landing page
+  (design doc §3.1) — the calendar stays `/pro`'s landing content, a professional's one mental
+  model ("`/pro` opens my calendar") is preserved. Earnings are deliberately omitted — no
+  backend field/endpoint returns an earnings aggregate anywhere (design doc §3.4), flagged as
+  a future `GET /api/professionals/me/stats`-style candidate, not built speculatively. Motion:
+  CSS-only mount transition (reuses the existing global `motion-list-item` utility class from
+  `styles/motion.css` rather than a bespoke keyframe) — a static, once-per-mount informational
+  card is the CSS tier per `shared/motion/README.md`, not the `framer-motion` tier.
+- **`WeeklyAvailabilityPage.tsx`** — renders `<CommandCenterBanner />` first, above the
+  existing SOS-toggle/working-hours/calendar content. No other change to this page's own
+  state/logic.
+- **`IncomingRequestCard.tsx`/`.module.css`** — gained a new `isNew: boolean` prop. When
+  `true`, the card plays a one-shot `framer-motion` entrance (reuses `toastTransition`'s mount
+  shape — opacity/y/scale spring — rather than a bespoke variant), respecting
+  `useReducedMotion()`. Already-seen cards render with no animation — no persistent pulse/glow,
+  per `DESIGN_SYSTEM.md` §91. No field/layout change; distance/ETA/customer-area remain
+  correctly absent (confirmed still not backed by any real endpoint — design doc §4.2, and see
+  the flagged backend-follow-up note below).
+- **`IncomingRequestsPage.tsx`** — tracks previously-seen order ids across poll ticks
+  (`seenOrderIdsRef`, a plain `Set<number>` diffed on every successful poll) purely to compute
+  `isNew` for the entrance animation; the request list is now wrapped in `AnimatePresence`
+  (`initial={false}`, so the first page-load batch doesn't all animate in at once — only
+  genuinely new arrivals during an active session do). **`handleAccept`/`handleReject` and the
+  polling call itself are byte-for-byte unchanged.**
+- **`MyJobsPage.tsx`/`.module.css`** — the previously-flat, unsegmented order list is now
+  client-side bucketed into three sections (`bucketOrders`, pure function, no new endpoint —
+  still one unfiltered `getMyOrders()` call): **היום** (bookedStart today, non-terminal status,
+  `ON_THE_WAY`/`CONFIRMED` sorted before a same-day `PENDING`), **עבודות עתידיות** (bookedStart
+  a future date, non-terminal status, soonest-first), and **היסטוריה** (`COMPLETED`/
+  `CANCELLED`/`REJECTED`/`EXPIRED` regardless of date, plus any past-dated non-terminal order
+  as a catch-all — every order lands in exactly one section — sorted most-recently-`updatedAt`
+  first). **Resolved product decision (design doc §5.2)**: a literal "Completed" section would
+  only include `orderStatus === 'COMPLETED'`, but `CANCELLED`/`REJECTED`/`EXPIRED` orders were
+  already visible on this unfiltered page before this milestone — dropping them would silently
+  remove existing functionality (`FRONTEND_AGENT.md` §52), so all four terminal statuses fold
+  into the one third section instead (each row still carries its own accurate `StatusBadge`).
+  Each section gets its own heading and its own `EmptyState` when empty (a professional with
+  jobs today but none upcoming still sees the right message in the right place) — the
+  page-level empty state is kept only for the true zero-orders-ever case. No new actions: every
+  row is still link-only (`/orders/:id`), on-the-way/complete stay on `OrderTrackingPage`.
+- **`features/professionals/ProfessionalProfileDisplay.tsx` + `.module.css`** (new) — see
+  `features/professionals/README.md`'s own MS6 entry for the full record (this component lives
+  in that package, not here, since `ProfessionalProfilePage.tsx` is its primary/original
+  consumer). `ProfileEditorPage.tsx`/`.module.css` (this package) is its second consumer, for
+  the live unsaved-edits preview described next.
+- **`ProfileEditorPage.tsx`/`.module.css`** — gained a live preview column. A same-shaped
+  `ProfessionalProfileDisplayProps['professional']` object is assembled **per render, directly
+  from local form state** (`fullName`/`serviceArea`/`city`/`bio`, `basePrice` parsed from its
+  text input) plus the already-loaded, non-editable `profile.categoryId`/`profileImageUrl`/
+  `averageRating`/`reviewCount` — no new API call, this is what makes the preview update live
+  as the professional types (a newly-uploaded photo already flows in automatically via the
+  existing `handlePhotoUpload` → `setProfile` call). Layout (lead-approved recommended option,
+  design doc §7.2): MS10's `240px 1fr` two-column grid extends to
+  `240px 1fr minmax(280px, 340px)` (photo | form | preview) at `>=900px`, preview column
+  `position: sticky` so it stays visible while the (typically taller) form scrolls; below
+  `900px`, the preview is a normal stacked section below the form in DOM order (no sticky,
+  matching MS10's existing single-column mobile/tablet fallback). Verified correct under
+  `dir="rtl"`: DOM order photo → form → preview places them right-to-left as intended (photo
+  at the physical right/inline-start, preview at the physical left/inline-end), not mirrored.
+- **`app/AppLayout.tsx`** — see `app/README.md`'s own MS6 entry (role-aware brand-logo link).
+
+**Flagged, not resolved by this pass — known QA finding, duplicate `<h1>` on `/pro/profile`**:
+`ProfessionalProfileDisplay` (see `features/professionals/README.md`'s own MS6 entry) renders
+its own `<h1>{professional.fullName}</h1>`. Embedding it a second time here, as the live
+preview, means `/pro/profile` now has 3 `<h1>` elements total (`ProDashboardLayout`'s shell
+title, this page's own `PageHeader` title, and the previewed name). Not functional/blocking —
+a minor document-outline/a11y cleanliness nit, recorded in `features/professionals/README.md`
+for the full detail and a suggested fast-follow (a heading-level prop on the shared
+component).
+
+**Flagged, not built this pass (design doc §4.2)**: the incoming-request card's customer
+area/city was confirmed absent from `OrderSummary` (the list endpoint `IncomingRequestsPage`
+already fetches) — it exists on `OrderDetailResponse` but reaching it from the card would
+require a third per-order `GET` on top of the existing per-issue N+1. **Decision: do not
+pursue the `serviceCity`-on-`OrderSummary` backend addition as part of this frontend-only
+milestone** — the card continues to omit customer area/city rather than fake it or add a
+third fetch to work around the gap. Flagged here for visibility, not silently left as an
+unresolved "maybe."
+
+**Build/lint verification**: `tsc -b` and `vite build` both clean, zero new errors. `oxlint`
+clean — the only warnings present are pre-existing (`qa-tmp-*` scratch Playwright scripts, one
+pre-existing `ProfessionalList.tsx` fast-refresh warning), none introduced by this pass. No
+browser-automation tool was available in this environment (consistent with every prior
+frontend milestone) — verification beyond build/lint was a full manual code review against
+the design doc, confirming §10's preserved-behavior list (accept/reject logic, booking-conflict
+logic, job-status-transition logic, `WeeklyCalendarGrid`'s own polling/click-routing) holds
+unchanged in every file this pass touched.

@@ -113,3 +113,60 @@ Full design record: `docs/architecture/frontend-ms8-design.md` §2.3/§4.1.
 - **`shared/api` additions consumed here**: `professionals.ts` (new —
   `getProfessionalProfile`), `favorites.ts` (new — `addFavorite`/`removeFavorite`),
   `reviews.ts`'s new `getReviews`. See `shared/api/README.md`.
+
+## MS6 — Professional Command Center (2026-08-20): `ProfessionalProfileDisplay` extraction
+
+Full design record:
+`docs/architecture/frontend-ms6-professional-command-center-design.md` §7.1/§7.2.
+
+- **`ProfessionalProfileDisplay.tsx` + `.module.css`** (new) — the identity block (photo,
+  name, category, rating row) + info card (service area/city/price) + bio card, extracted
+  from `ProfessionalProfilePage.tsx`'s previously-inline JSX — the part that's genuinely
+  duplicative between "the real public page" and "a live preview of unsaved edits"
+  (`features/dashboard/ProfileEditorPage.tsx`, this component's second consumer). Co-located
+  next to `ProfessionalProfilePage.tsx`, mirroring `ReviewList.tsx`'s own "co-locate until
+  there's a second consumer" precedent already established in this exact module.
+  ```ts
+  export interface ProfessionalProfileDisplayProps {
+    professional: Pick<
+      ProfessionalProfileResponse,
+      'fullName' | 'categoryId' | 'serviceArea' | 'city' | 'bio' | 'basePrice' |
+      'profileImageUrl' | 'averageRating' | 'reviewCount'
+    >;
+  }
+  ```
+  **Not** extracted: the favorite button, the reviews section, or the "select professional"
+  CTA — those are live-page-only concerns (an unsaved draft has no favorite state, no review
+  history of its own, and nothing to "select") and stay inline in
+  `ProfessionalProfilePage.tsx`, composed around this component.
+- **`ProfessionalProfilePage.tsx`/`.module.css`** — now renders
+  `<ProfessionalProfileDisplay professional={professional} />` in place of the extracted JSX.
+  The favorite button, previously nested inside the identity block, is now a sibling below it
+  (`.favoriteButtonWrapper`, a new small wrapper rule reproducing the same centered/gapped
+  layout it previously got "for free" from being nested inside `.identityBlock`) — zero change
+  to the favorite-toggle logic itself, or to the review-fetching/select-CTA logic. The moved
+  CSS rules (`.identityBlock`/`.photo`/`.photoFallback`/`.name`/`.category`/`.rating`/
+  `.ratingStar`/`.reviewCount`/`.infoCard`/`.row`/`.rowLabel`/`.rowValue`/`.bioTitle`/
+  `.bioText`) now live in `ProfessionalProfileDisplay.module.css` instead.
+- **`index.ts`** — now also exports `ProfessionalProfileDisplay`/
+  `ProfessionalProfileDisplayProps`, consumed cross-feature by
+  `features/dashboard/ProfileEditorPage.tsx` — see that package's README for the live-preview
+  layout (a 3-column sticky grid at `>=900px`) built around this component.
+
+**Known, flagged-but-not-resolved-by-this-pass QA finding: duplicate `<h1>` on `/pro/profile`.**
+`ProfessionalProfileDisplay` renders its own `<h1>{professional.fullName}</h1>` (identity
+block). `ProfessionalProfilePage` (its original consumer) already carries a pre-existing,
+unrelated instance of the same "two `<h1>`s per page" pattern — its own `PageHeader` title
+("פרופיל בעל מקצוע") plus the identity block's name-`<h1>` — dating from before MS6 (this
+extraction moved that pre-existing pair into a separate component without changing the count
+on this page). What MS6 newly introduces is a **third** consumer of the same name-`<h1>`:
+`ProfileEditorPage.tsx` embeds `ProfessionalProfileDisplay` as its live-preview column, and
+since that page is itself nested inside `ProDashboardLayout`'s own `PageHeader`-titled shell,
+`/pro/profile` ends up with **three** `<h1>` elements on the page at once:
+`ProDashboardLayout`'s dashboard-shell title ("לוח בקרה לבעלי מקצוע"), `ProfileEditorPage`'s
+own title ("פרופיל עסקי"), and the previewed professional's name inside
+`ProfessionalProfileDisplay`. Not a functional bug — QA found no visual/interaction defect —
+but a document-outline/accessibility cleanliness nit (multiple `<h1>`s per page is invalid
+HTML-outline practice), worth a fast-follow, e.g. giving `ProfessionalProfileDisplay` a
+heading-level prop (`h1`/non-heading `<p>`, chosen by the consumer) so only one real
+page-level `<h1>` exists at a time. Flagged, not fixed, by MS6.

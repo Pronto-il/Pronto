@@ -29,6 +29,10 @@ export type { UseEtaCountdownResult } from './useEtaCountdown';
 export { useNotifications } from './useNotifications';
 export type { UseNotificationsResult } from './useNotifications';
 
+export { PendingRequestsProvider } from './PendingRequestsProvider';
+export { usePendingRequests } from './usePendingRequests';
+export type { PendingRequestsContextValue } from './pendingRequestsContext';
+
 export { ToastProvider } from './ToastProvider';
 export { useToast } from './useToast';
 export type { ToastTone, ToastOptions, ToastItem, ToastContextValue } from './toastContext';

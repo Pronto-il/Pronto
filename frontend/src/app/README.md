@@ -211,6 +211,12 @@ feature modules together into the single-page app described in
   state is local to their own pages, not app-wide. Full detail:
   `docs/architecture/frontend-ms8-design.md` and `features/favorites/README.md`/
   `features/professionals/README.md`/`features/dashboard/README.md`.
+- `AppLayout.tsx` — **MS6 Professional Command Center (2026-08-20)**: the brand logo `Link` is
+  now role-aware — `<Link to={user?.role === 'PROFESSIONAL' ? '/pro' : '/'}>` — matching the
+  existing "לוח בקרה" nav link right next to it, which already targets `/pro` for the same
+  reason. `CUSTOMER`/logged-out still go to `/`. One-line change, no other `AppLayout`/router
+  change from this milestone (its other work is entirely inside `features/dashboard`/
+  `features/professionals` — see those packages' READMEs).
 
 ## Known issues
 - **`AppLayout.tsx`'s global header nav causes page-level horizontal overflow at narrow

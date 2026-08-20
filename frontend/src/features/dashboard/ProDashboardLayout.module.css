@@ -44,6 +44,14 @@
   display: none;
 }
 
+/* MS6 Professional Command Center design doc §1.3 — pending-request-count badge on "בקשות
+ * חדשות". Pushed to the far (inline-end) side of the tab row at every breakpoint, since new
+ * requests must stay immediately visible whether the nav renders as a mobile top tab bar or a
+ * desktop sidebar (`FRONTEND_AGENT.md` §37). */
+.tabBadge {
+  margin-inline-start: auto;
+}
+
 @media (max-width: 639.98px) {
   .tabs {
     /* Text-only labels already fit comfortably at >=390px, but at the tightest

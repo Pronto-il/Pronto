@@ -14,6 +14,8 @@ import {
   getCategoryNameHe,
 } from '../../shared/api';
 import type { ProfessionalProfileResponse, CategoryWithSubServicesResponse } from '../../shared/api';
+import { ProfessionalProfileDisplay } from '../professionals';
+import type { ProfessionalProfileDisplayProps } from '../professionals';
 import styles from './ProfileEditorPage.module.css';
 
 /**
@@ -50,6 +52,17 @@ import styles from './ProfileEditorPage.module.css';
  * main form's `handleSubmit` (design §6 item 4, lead-approved: two backend endpoints, two
  * independent saves, not one atomic action). The checklist's checkbox items use the new
  * `shared/components/Checkbox` primitive (this feature's first consumer).
+ *
+ * **MS6 Professional Command Center — live preview (design doc §7.1/§7.2)**: a third column
+ * renders `ProfessionalProfileDisplay` (`features/professionals`, shared with the real public
+ * profile page) fed a same-shaped object assembled **per render, from local form state**
+ * (`fullName`/`serviceArea`/`city`/`bio`, `basePrice` parsed from its text input) plus the
+ * already-loaded, non-editable `profile.categoryId`/`profileImageUrl`/`averageRating`/
+ * `reviewCount` — no new API call, this is what makes the preview update live as the
+ * professional types. Layout extends MS10's `240px 1fr` two-column grid to
+ * `240px 1fr minmax(280px, 340px)` (photo | form | preview) at `>=900px`, preview column
+ * `position: sticky`; below `900px` the preview stacks below the form (no sticky) — the
+ * lead-approved recommended option (design doc §7.2).
  */
 export default function ProfileEditorPage() {
   const { refreshUser } = useAuth();
@@ -205,6 +218,24 @@ export default function ProfileEditorPage() {
     }
   }
 
+  // §7.1: a same-shaped object recomputed every render from local form state — no new API
+  // call, this is what makes the preview column update live as the professional types.
+  // `profile.categoryId`/`profileImageUrl`/`averageRating`/`reviewCount` aren't edited on this
+  // page, so they're read straight from the last-fetched `profile` object.
+  const previewProfessional: ProfessionalProfileDisplayProps['professional'] | null = profile
+    ? {
+        fullName,
+        categoryId: profile.categoryId,
+        serviceArea,
+        city,
+        bio: bio.trim() ? bio : null,
+        basePrice: Number.isNaN(Number(basePrice)) ? 0 : Number(basePrice),
+        profileImageUrl: profile.profileImageUrl,
+        averageRating: profile.averageRating,
+        reviewCount: profile.reviewCount,
+      }
+    : null;
+
   return (
     <div>
       <PageHeader title="פרופיל עסקי" description="הפרטים האלה מוצגים ללקוחות בתהליך ההזמנה." />
@@ -329,6 +360,15 @@ export default function ProfileEditorPage() {
               שמירת שינויים
             </Button>
           </form>
+
+          {previewProfessional && (
+            <div className={styles.previewColumn}>
+              <p className={styles.previewLabel}>תצוגה מקדימה</p>
+              <Card className={styles.previewCard}>
+                <ProfessionalProfileDisplay professional={previewProfessional} />
+              </Card>
+            </div>
+          )}
         </Card>
       )}
     </div>

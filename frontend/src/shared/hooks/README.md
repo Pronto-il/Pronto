@@ -178,6 +178,20 @@ Reusable React hooks shared across features.
   is the only current caller, for demonstration) — this is plumbing for MS2+ features (e.g.
   booking-flow success/error feedback) to consume.
 
+- `pendingRequestsContext.ts` / `PendingRequestsProvider.tsx` / `usePendingRequests.ts` —
+  **new, MS6 Professional Command Center (2026-08-20).** Same structural triad as
+  `activeOrderContext.ts`/`ActiveOrderProvider.tsx`/`useActiveOrder.ts` (context + non-component
+  values kept separate for the Fast-Refresh lint reason noted above), but deliberately scoped
+  narrower: mounted inside `features/dashboard/ProDashboardLayout.tsx` (wrapping the sidebar
+  nav + `<Outlet />`), not in `App.tsx`. Polls `GET /api/bookings/orders/me?status=PENDING`
+  (`getMyOrders('PENDING')`) via `usePolling` at a 25s interval (matching
+  `WeeklyCalendarGrid.tsx`'s own `CALENDAR_POLL_INTERVAL_MS` cadence — a count badge doesn't
+  need `IncomingRequestsPage`'s own 5s live-action cadence), exposing `{ count, refetch }`. No
+  selection-algorithm helpers (unlike `activeOrderContext.ts`) — this context only ever needs a
+  raw pending-order count. Consumed by both `ProDashboardLayout`'s sidebar badge and
+  `features/dashboard/CommandCenterBanner.tsx` — see `features/dashboard/README.md`'s MS6
+  section for the full record.
+
 ## Status
 `AuthProvider`/`useAuth` implemented in **Milestone 1 — Auth & user management**
 (`docs/architecture/implementation-plan.md`). `usePolling`/`useOrderStatus` shipped in
@@ -239,3 +253,9 @@ into `App.tsx` near the other providers, paired with `shared/components/ToastVie
 for rendering (see `app/README.md`'s MS1 entry for exact nesting). No other hook in this
 package changed for MS1 — the milestone's `Card`/`Button`/`Modal`/etc. work lives entirely
 in `shared/components/`.
+
+**MS6 — Professional Command Center (2026-08-20)**: `pendingRequestsContext.ts`/
+`PendingRequestsProvider.tsx`/`usePendingRequests.ts` are new (see "Structure" above), mounted
+in `features/dashboard/ProDashboardLayout.tsx`, not `App.tsx` — deliberately scoped to the
+`/pro/*` subtree only, unlike every other provider in this file. Full design record:
+`docs/architecture/frontend-ms6-professional-command-center-design.md` §3.3.

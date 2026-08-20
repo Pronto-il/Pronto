@@ -6,6 +6,7 @@ import type { WorkingHoursItem } from '../../shared/api';
 import { SosAvailabilityToggle } from './SosAvailabilityToggle';
 import { WorkingHoursForm } from './WorkingHoursForm';
 import { WeeklyCalendarGrid } from './WeeklyCalendarGrid';
+import { CommandCenterBanner } from './CommandCenterBanner';
 import styles from './WeeklyAvailabilityPage.module.css';
 
 /** A configured week has exactly 7 entries (`PUT` always writes the full week transactionally,
@@ -35,6 +36,11 @@ function isSetupComplete(workingHours: WorkingHoursItem[]): boolean {
  * The later-edit entry point opening in a `Modal` matches §7.2's original intent exactly
  * (previously a temporary inline-expansion stand-in before `Modal.tsx` existed; MS12 replaced
  * it with the real modal, same pattern `CalendarBlockModal.tsx` already established).
+ *
+ * **MS6 Professional Command Center**: renders `CommandCenterBanner` first, above the
+ * `SosAvailabilityToggle` section — a lightweight greeting/summary composed at the top of this
+ * existing page rather than a new distinct `/pro` route (design doc §3.1). No other change to
+ * this page's own state/logic.
  */
 export default function WeeklyAvailabilityPage() {
   const [workingHours, setWorkingHours] = useState<WorkingHoursItem[] | null>(null);
@@ -63,6 +69,8 @@ export default function WeeklyAvailabilityPage() {
 
   return (
     <div className={styles.wrapper}>
+      <CommandCenterBanner />
+
       <div>
         <p className={styles.sectionTitle}>עבודות דחופות (SOS)</p>
         <SosAvailabilityToggle />

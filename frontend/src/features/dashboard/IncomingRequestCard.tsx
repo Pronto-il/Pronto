@@ -1,7 +1,10 @@
+import { motion, useReducedMotion } from 'framer-motion';
+import type { TargetAndTransition } from 'framer-motion';
 import { Card, Button } from '../../shared/components';
 import { getCategoryNameHe } from '../../shared/api';
 import type { IssueDetailResponse, OrderSummary } from '../../shared/api';
 import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
+import { toastTransition } from '../../shared/motion/variants';
 import styles from './IncomingRequestCard.module.css';
 
 export interface IncomingRequestCardProps {
@@ -14,6 +17,13 @@ export interface IncomingRequestCardProps {
   isRejecting: boolean;
   onAccept: (orderId: number) => void;
   onReject: (orderId: number) => void;
+  /**
+   * MS6 Professional Command Center design doc §4.3: `true` when this order id wasn't present
+   * in the previous poll tick's result — plays a one-shot entrance animation. `false` for
+   * every already-seen card, which mounts with no animation (no persistent pulse/glow on
+   * existing cards, per `DESIGN_SYSTEM.md` §91).
+   */
+  isNew: boolean;
 }
 
 /**
@@ -23,6 +33,12 @@ export interface IncomingRequestCardProps {
  * as of Frontend Milestone 4 (the customer-facing SOS booking flow) — the `sosTag` below
  * already renders per DESIGN_SYSTEM.md §55, and `order.bookedEnd == null` (SOS orders have
  * no scheduled end time) is already handled gracefully in the time row.
+ *
+ * **MS6**: a newly-appeared card (`isNew`, computed by `IncomingRequestsPage` via order-id
+ * diffing across poll ticks) gets a one-shot `framer-motion` entrance, reusing
+ * `toastTransition`'s mount shape (opacity/y/scale spring) — the "meaningful product motion"
+ * tier per `shared/motion/README.md`, since a new order arriving is a real state change, not a
+ * hover/press micro-interaction (design doc §4.3). Already-seen cards render with no animation.
  */
 export function IncomingRequestCard({
   order,
@@ -31,50 +47,58 @@ export function IncomingRequestCard({
   isRejecting,
   onAccept,
   onReject,
+  isNew,
 }: IncomingRequestCardProps) {
   const isProcessing = isAccepting || isRejecting;
 
+  const shouldReduceMotion = useReducedMotion();
+  const cardAnimate = shouldReduceMotion
+    ? { ...(toastTransition.animate as TargetAndTransition), transition: { duration: 0 } }
+    : 'animate';
+
   return (
-    <Card className={styles.card}>
-      <div className={styles.headerRow}>
-        {issue ? (
-          <span className={styles.category}>{getCategoryNameHe(issue.categoryId)}</span>
-        ) : (
-          <span className={styles.skeleton} />
-        )}
-        {issue?.urgencyType === 'SOS' && <span className={styles.sosTag}>SOS</span>}
-      </div>
-
-      {issue && <p className={styles.description}>“{issue.description}”</p>}
-
-      {issue && issue.images.length > 0 && (
-        <div className={styles.photoRow}>
-          {issue.images.map((image) => (
-            <div key={image.id} className={styles.photoThumbWrapper}>
-              <img src={image.imageUrl} alt="" className={styles.photoThumb} />
-            </div>
-          ))}
+    <motion.div variants={toastTransition} initial={isNew ? 'initial' : false} animate={cardAnimate}>
+      <Card className={styles.card}>
+        <div className={styles.headerRow}>
+          {issue ? (
+            <span className={styles.category}>{getCategoryNameHe(issue.categoryId)}</span>
+          ) : (
+            <span className={styles.skeleton} />
+          )}
+          {issue?.urgencyType === 'SOS' && <span className={styles.sosTag}>SOS</span>}
         </div>
-      )}
 
-      <div className={styles.timeRow}>
-        <span className={styles.timeDate}>{formatDateLabel(order.bookedStart)}</span>
-        <span className={styles.timeRange}>
-          {formatTimeLabel(order.bookedStart)}
-          {order.bookedEnd ? `–${formatTimeLabel(order.bookedEnd)}` : ''}
-        </span>
-      </div>
+        {issue && <p className={styles.description}>“{issue.description}”</p>}
 
-      <p className={styles.priceRow}>₪{order.finalPrice}</p>
+        {issue && issue.images.length > 0 && (
+          <div className={styles.photoRow}>
+            {issue.images.map((image) => (
+              <div key={image.id} className={styles.photoThumbWrapper}>
+                <img src={image.imageUrl} alt="" className={styles.photoThumb} />
+              </div>
+            ))}
+          </div>
+        )}
 
-      <div className={styles.actions}>
-        <Button variant="secondary" onClick={() => onReject(order.id)} disabled={isProcessing} loading={isRejecting}>
-          דחייה
-        </Button>
-        <Button onClick={() => onAccept(order.id)} disabled={isProcessing} loading={isAccepting}>
-          אישור
-        </Button>
-      </div>
-    </Card>
+        <div className={styles.timeRow}>
+          <span className={styles.timeDate}>{formatDateLabel(order.bookedStart)}</span>
+          <span className={styles.timeRange}>
+            {formatTimeLabel(order.bookedStart)}
+            {order.bookedEnd ? `–${formatTimeLabel(order.bookedEnd)}` : ''}
+          </span>
+        </div>
+
+        <p className={styles.priceRow}>₪{order.finalPrice}</p>
+
+        <div className={styles.actions}>
+          <Button variant="secondary" onClick={() => onReject(order.id)} disabled={isProcessing} loading={isRejecting}>
+            דחייה
+          </Button>
+          <Button onClick={() => onAccept(order.id)} disabled={isProcessing} loading={isAccepting}>
+            אישור
+          </Button>
+        </div>
+      </Card>
+    </motion.div>
   );
 }

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence } from 'framer-motion';
 import { usePolling } from '../../shared/hooks';
 import { getMyOrders, getIssue, acceptOrder, rejectOrder, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { IssueDetailResponse, MyOrdersResponse } from '../../shared/api';
@@ -12,6 +13,11 @@ import styles from './IncomingRequestsPage.module.css';
  * order, a follow-up `GET /api/issues/{issueId}` resolves category/description — an
  * accepted N+1 pattern at MVP scale (no batch endpoint exists), cached per issue id so a
  * later poll tick doesn't re-fetch issues already resolved.
+ *
+ * **MS6 Professional Command Center (design doc §4.3)**: tracks which order ids have already
+ * been seen across poll ticks (`seenOrderIdsRef`) so a newly-appended order can play a
+ * one-shot entrance animation on `IncomingRequestCard` (`isNew`) — accept/reject/polling logic
+ * itself is otherwise completely unchanged.
  */
 export default function IncomingRequestsPage() {
   const { data, error, isLoading, refetch } = usePolling<MyOrdersResponse>(() => getMyOrders('PENDING'), {
@@ -22,6 +28,27 @@ export default function IncomingRequestsPage() {
   const [issuesById, setIssuesById] = useState<Record<number, IssueDetailResponse>>({});
   const [processing, setProcessing] = useState<{ orderId: number; action: 'accept' | 'reject' } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // §4.3: order-id diff across poll ticks, purely for the entrance-animation decision — never
+  // read by accept/reject/polling logic.
+  const seenOrderIdsRef = useRef<Set<number>>(new Set());
+  const [newOrderIds, setNewOrderIds] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+    const currentIds = new Set(orders.map((order) => order.id));
+    const newlyAppeared = new Set<number>();
+    for (const id of currentIds) {
+      if (!seenOrderIdsRef.current.has(id)) {
+        newlyAppeared.add(id);
+      }
+    }
+    setNewOrderIds(newlyAppeared);
+    seenOrderIdsRef.current = currentIds;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   useEffect(() => {
     const missingIds = Array.from(new Set(orders.map((order) => order.issueId))).filter(
@@ -100,17 +127,20 @@ export default function IncomingRequestsPage() {
 
       {orders.length > 0 && (
         <div className={styles.list}>
-          {orders.map((order) => (
-            <IncomingRequestCard
-              key={order.id}
-              order={order}
-              issue={issuesById[order.issueId]}
-              isAccepting={processing?.orderId === order.id && processing.action === 'accept'}
-              isRejecting={processing?.orderId === order.id && processing.action === 'reject'}
-              onAccept={handleAccept}
-              onReject={handleReject}
-            />
-          ))}
+          <AnimatePresence initial={false}>
+            {orders.map((order) => (
+              <IncomingRequestCard
+                key={order.id}
+                order={order}
+                issue={issuesById[order.issueId]}
+                isAccepting={processing?.orderId === order.id && processing.action === 'accept'}
+                isRejecting={processing?.orderId === order.id && processing.action === 'reject'}
+                onAccept={handleAccept}
+                onReject={handleReject}
+                isNew={newOrderIds.has(order.id)}
+              />
+            ))}
+          </AnimatePresence>
         </div>
       )}
     </div>

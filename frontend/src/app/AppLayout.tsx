@@ -45,6 +45,12 @@ import styles from './AppLayout.module.css';
  * all. Moving the button outside `.desktopOnlyNav` doesn't change desktop layout, since
  * `display: contents` never introduced a box for it to begin with — the button was always a
  * flex child of `.nav` directly, regardless of which element's JSX it's nested under.
+ *
+ * **MS6 Professional Command Center (design doc §8)**: the brand logo `Link` is now
+ * role-aware — a `PROFESSIONAL` clicking the logo goes to `/pro` (which redirects to
+ * `/pro/availability`, their dashboard home), matching the existing "לוח בקרה" nav link right
+ * next to it, which already targets `/pro` for exactly this reason. `CUSTOMER`/logged-out
+ * stay `/`.
  */
 export default function AppLayout() {
   const { user, logout } = useAuth();
@@ -53,7 +59,7 @@ export default function AppLayout() {
     <div className={styles.shell}>
       <header className={styles.header}>
         <div className={styles.headerInner}>
-          <Link to="/" className={styles.brand} aria-label="Pronto">
+          <Link to={user?.role === 'PROFESSIONAL' ? '/pro' : '/'} className={styles.brand} aria-label="Pronto">
             <span className={styles.logo} style={{ backgroundImage: `url(${logoUrl})` }} />
           </Link>
           <nav className={styles.nav}>

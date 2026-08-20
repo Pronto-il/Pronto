@@ -1,0 +1,29 @@
+.banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.greeting {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.badgeRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.badgeLink {
+  text-decoration: none;
+}
+
+.nextAppointment {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  margin: 0;
+}

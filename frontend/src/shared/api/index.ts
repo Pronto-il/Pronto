@@ -52,8 +52,6 @@ export {
   completeOrder,
   getOrder,
   getMyOrders,
-  getSosProfessionalsForIssue,
-  createSosOrder,
 } from './bookings';
 export type {
   OrderStatus,
@@ -69,7 +67,6 @@ export type {
   OrderDetailResponse,
   OrderSummary,
   MyOrdersResponse,
-  CreateSosOrderRequest,
 } from './bookings';
 
 export {

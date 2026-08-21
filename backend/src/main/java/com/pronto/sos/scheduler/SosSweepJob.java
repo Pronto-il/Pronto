@@ -49,7 +49,20 @@ public class SosSweepJob {
         try {
             // 1. Individually overdue offers. Done first so that step 2's "did anyone accept?"
             //    check does not count an offer that has already lapsed.
-            int expiredOffers = sosService.expireOverdueOffers();
+            //
+            //    One transaction per offer, driven from here rather than looped inside the
+            //    service, and that placement is load-bearing twice over: a self-invoked
+            //    @Transactional method would not go through the proxy (so each offer would
+            //    silently share one transaction, and one bad row would roll back the batch),
+            //    and the realtime layer's AFTER_COMMIT listener only fires per committed
+            //    transaction -- so a shared transaction would also delay every professional's
+            //    push until the last offer in the sweep had been processed.
+            int expiredOffers = 0;
+            for (Long offerId : sosService.findOverdueOfferIds()) {
+                if (sosService.expireOffer(offerId)) {
+                    expiredOffers++;
+                }
+            }
 
             // 2. Requests past their matching or selection deadline. sweepOne re-derives which
             //    of the two applies rather than trusting the query that produced the id.

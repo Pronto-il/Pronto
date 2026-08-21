@@ -65,7 +65,8 @@ in place rather than restating it in full.
   insert rather than relying on the DB column's `DEFAULT 0` alone) and both components are
   persisted alongside `final_price` for display (`OrderResponse`/`OrderDetailResponse`'s new
   fields) — unchanged by M2.
-- `GET /api/bookings/sos-professionals?issueId=` — **new, Milestone 4.** SOS-path sibling
+- `GET /api/bookings/sos-professionals?issueId=` — **REMOVED.** Pronto SOS (`/api/sos/**`) is the product's only SOS flow; this endpoint and its `ProfessionalListingRepository.listSosAvailableByCategory` query no longer exist. The Milestone 4 description below is kept as history.
+  <br>_(historical)_ SOS-path sibling
   of the Standard listing above: filtered by the issue's category **and** currently
   `sos_availability.is_available = true` (join added to `ProfessionalListingRepository`),
   same soft-delete exclusion and `base_price ASC` default ordering. Requires `urgencyType =
@@ -83,7 +84,8 @@ in place rather than restating it in full.
   MS3/MS4 product-corrections pass briefly had this endpoint defaulting to `FASTEST`; that was
   reconciled back to `CHEAPEST` before the corrections branch was finalized — see
   `docs/architecture/ms3-ms4-corrections-design.md` §3.)
-- `POST /api/bookings/sos-orders` — **new, Milestone 4.** Creates an SOS order: no slot
+- `POST /api/bookings/sos-orders` — **REMOVED**, together with `CreateSosOrderRequest`, `BookingsService.createSosOrder` and `ErrorCode.SOS_PROFESSIONAL_UNAVAILABLE`. The Milestone 4 description below is kept as history.
+  <br>_(historical)_ Creates an SOS order: no slot
   selection at all (`CreateSosOrderRequest` has one fewer field than `CreateOrderRequest`).
   Same issue-ownership/`urgencyType = SOS`/bookable checks, then a **plain read-check** (not
   an atomic claim, unlike the Standard slot claim) of the professional's `sos_availability`
@@ -402,7 +404,8 @@ deviation:
   `urgencyType != STANDARD`) and `listSosProfessionals`/`createSosOrder` (SOS,
   `urgencyType != SOS`), consistent with the contract doc's framing of this as one symmetric
   fix (§3.10) rather than two unrelated additions.
-- **`issues.status` transitions to `EXPIRED` unconditionally when `expireIfPending`'s guarded
+- **(Superseded 2026-08-21 — the issue is now reopened, not expired; see the Status
+  section.)** **`issues.status` transitions to `EXPIRED` unconditionally when `expireIfPending`'s guarded
   `UPDATE` succeeds** — not a runtime branch on "did the customer already rebook," per
   `api-contract-notifications.md` §4.5's reasoning: the single-active-order-per-issue
   invariant (§3.3) guarantees an issue can only be `BOOKED` while *this* order is still
@@ -613,12 +616,25 @@ rebooked via any existing endpoint, since `createOrder`/`createSosOrder` both re
 **unaffected by Milestone 6**: `on-the-way`/`complete` only ever read/write orders that are
 already `CONFIRMED`/`ON_THE_WAY` (never `OPEN`/`EXPIRED` issues), so neither new endpoint
 added, removed, or narrowed this gap in any way (contract doc §9 verifies this explicitly,
-not just asserts it). **Resolved, Milestone 7 (2026-08-15)**: the user has ruled this is
+not just asserts it). **Resolved, Milestone 7 (2026-08-15)**: the user ruled this
 intentional, permanent design — `EXPIRED` stays a final `issues.status` state forever, no
 reopen endpoint, no relaxed booking guard on `createOrder`/`createSosOrder`; a customer who
 wants service again creates a new issue. See `docs/architecture/data-model.md` §4,
 `docs/architecture/api-contract-notifications.md` §7, and
-`docs/architecture/hardening-plan.md` §4.1 for the full resolution record. **Slot
+`docs/architecture/hardening-plan.md` §4.1 for that resolution record.
+
+  **Reversed by explicit product decision, SOS final-readiness pass (2026-08-21.)** The
+  Milestone 7 ruling made an unanswered order cost the customer everything they had already
+  provided — description, photos, AI classification, address — because a *professional* failed
+  to respond in fifteen minutes. `expireIfPending` now calls `IssueRepository.reopenIfBooked`
+  (`BOOKED -> OPEN`) instead of the old `expireIfBooked` (`BOOKED -> EXPIRED`), so an expired
+  order behaves exactly like a rejected or cancelled one: the order stays `EXPIRED` in history,
+  its issue becomes bookable again, and the customer picks a different professional for the
+  *same* issue (`/issues/{issueId}/booking`, reached from the tracking screen's
+  "בחירת בעל מקצוע אחר" action). `IssueStatus.EXPIRED` is now written by no code path at all
+  and is retained only so rows predating this change still map. The single-active-order
+  invariant is untouched: `bookIfOpen` remains the only way out of `OPEN`, and only one caller
+  can win it. **Slot
 edit/delete was explicitly considered for Milestone 6 and explicitly declined at the
 time** — a judgment call, not a silently-skipped gap (contract doc §8.2's original
 reasoning). **That call was reversed in Milestone 7 (2026-08-15) by explicit user product

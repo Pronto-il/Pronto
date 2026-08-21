@@ -55,7 +55,17 @@ public class SosResponseAssembler {
         this.storageService = storageService;
     }
 
-    public SosRequestResponse toRequestResponse(SosRequest request) {
+    /**
+     * The canonical SOS request shape, redacted for the caller looking at it.
+     *
+     * <p><b>{@code access} has no default on purpose.</b> Every call site must state whose view
+     * it is building — see {@link SosAddressAccess} for why a silently-full default was the bug
+     * this signature exists to prevent. Under {@link SosAddressAccess#CITY_ONLY} the exact
+     * location fields come back {@code null} rather than being omitted from a different DTO:
+     * one shape means the frontend renders one component either way, and a null street is an
+     * honest "you may not see this" rather than a second contract to keep in sync.
+     */
+    public SosRequestResponse toRequestResponse(SosRequest request, SosAddressAccess access) {
         List<SosOffer> offers = sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(request.getId());
         int accepted = (int) offers.stream()
                 .filter(o -> o.getStatus() == SosOfferStatus.ACCEPTED || o.getStatus() == SosOfferStatus.SELECTED)
@@ -63,13 +73,23 @@ public class SosResponseAssembler {
         String selectedName = request.getSelectedProfessionalId() == null
                 ? null
                 : resolveProfessionalName(request.getSelectedProfessionalId());
+        boolean exact = access == SosAddressAccess.FULL;
 
         return new SosRequestResponse(request.getId(), request.getIssueId(), request.getCustomerId(),
                 request.getCategoryId(), request.getSubServiceId(), request.getIssueSummary(), request.getUrgency(),
-                request.getStatus(), request.getServiceCity(), request.getServiceStreet(),
-                request.getServiceHouseNumber(), request.getServiceApartment(), request.getServiceFloor(),
-                request.getServiceEntrance(), request.getServiceAddressNotes(), request.getLatitude(),
-                request.getLongitude(), request.getSelectedProfessionalId(), selectedName,
+                request.getStatus(),
+                // City is never redacted -- it is what a professional needs to judge whether the
+                // job is reachable at all, and it is already on their offer card.
+                request.getServiceCity(),
+                exact ? request.getServiceStreet() : null,
+                exact ? request.getServiceHouseNumber() : null,
+                exact ? request.getServiceApartment() : null,
+                exact ? request.getServiceFloor() : null,
+                exact ? request.getServiceEntrance() : null,
+                exact ? request.getServiceAddressNotes() : null,
+                exact ? request.getLatitude() : null,
+                exact ? request.getLongitude() : null,
+                request.getSelectedProfessionalId(), selectedName,
                 request.getSelectedOfferId(), request.getOrderId(), request.getCancelledBy(), offers.size(),
                 accepted, request.getMatchingExpiresAt(), request.getSelectionExpiresAt(), request.getCreatedAt(),
                 request.getUpdatedAt(), request.getMatchedAt(), request.getCandidatesReadyAt(),

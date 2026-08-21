@@ -171,13 +171,18 @@ export default function ProfessionMatchPage() {
   const preloadRef = useRef<Promise<unknown> | null>(null);
   const [isListingReady, setIsListingReady] = useState(false);
   useEffect(() => {
-    if (phase !== 'matching' || !resolved || !isKnownCategory || preloadRef.current) {
+    // Skipped for an SOS issue: Pronto SOS dispatches on the customer's behalf and never
+    // renders this listing, so warming it would be a wasted request against an endpoint the
+    // SOS route does not use.
+    if (phase !== 'matching' || !resolved || !isKnownCategory || preloadRef.current
+        || resolved.urgencyType === 'SOS') {
+      setIsListingReady(true);
       return;
     }
     // The address the customer just chose — default or one-off — is what the listing is warmed
     // with, so service-area relevance, distance and ETA are computed for the place the
     // professional actually has to reach.
-    preloadRef.current = prefetchProfessionalListing(issueId, address, resolved.urgencyType, RESUME_SORT)
+    preloadRef.current = prefetchProfessionalListing(issueId, address, RESUME_SORT)
       .catch(() => undefined)
       // Ready either way — a failed prefetch shouldn't hold the customer on this screen; the
       // listing screen owns that error.

@@ -1,5 +1,6 @@
 package com.pronto.sos.config;
 
+import jakarta.annotation.PostConstruct;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
@@ -87,6 +88,18 @@ public class SosProperties {
     private int selectionWindowSeconds = 120;
 
     /**
+     * How long the selected professional has to confirm before the request expires.
+     *
+     * <p>Deliberately generous relative to the other windows, and for a different reason than
+     * they are: the professional has already said they are available, so this is about them
+     * still being reachable — and a customer left staring at "waiting for confirmation" is the
+     * worst state in the flow. Was a hardcoded {@code Duration} constant on
+     * {@code SosService} until it joined its peers here; every other SOS deadline was already
+     * tunable per environment and there was no reason this one should not be.
+     */
+    private int confirmationGraceSeconds = 180;
+
+    /**
      * Only professionals whose approximated distance is at or under this are eligible.
      * Compared against {@code matching.EtaResult#distanceKm}, whose v1 implementation is a
      * coarse same-city/different-city approximation — so in practice this currently behaves as
@@ -94,6 +107,65 @@ public class SosProperties {
      * boolean, so swapping in real geocoding later needs no config or API change.
      */
     private BigDecimal maxDispatchRadiusKm = new BigDecimal("40.0");
+
+    /**
+     * Fail-fast startup validation for every value above, following
+     * {@code auth.security.JwtSecretStartupGuard}'s {@code @PostConstruct} precedent (and its
+     * reasoning: {@code @PostConstruct} runs strictly before the web server binds a port, so a
+     * misconfiguration can never serve a single request).
+     *
+     * <p>Worth having because these are deadlines and money. A {@code SOS_SELECTION_WINDOW_SECONDS=0}
+     * typo would not fail anywhere obvious — it would silently expire every SOS request the
+     * instant its selection window opened, which reads as "no professional ever answers" rather
+     * than as a config error. Likewise a negative commission rate would quietly pay professionals
+     * more than the customer was charged. Both are caught here instead.
+     *
+     * <p>Deliberately hand-written rather than Bean Validation annotations plus
+     * {@code @Validated}: this codebase has no {@code @ConfigurationProperties} validation
+     * anywhere to be consistent with, the cross-field rule below (offer TTL vs matching window)
+     * is not expressible as a field annotation anyway, and the messages here can say what to do
+     * about it.
+     */
+    @PostConstruct
+    void validate() {
+        requirePositive("offer-ttl-seconds", offerTtlSeconds);
+        requirePositive("matching-window-seconds", matchingWindowSeconds);
+        requirePositive("selection-window-seconds", selectionWindowSeconds);
+        requirePositive("confirmation-grace-seconds", confirmationGraceSeconds);
+        requirePositive("candidate-pool-size", candidatePoolSize);
+        requirePositive("emergency-candidate-pool-size", emergencyCandidatePoolSize);
+        requirePositive("target-candidate-count", targetCandidateCount);
+
+        if (commissionRate == null || commissionRate.signum() < 0 || commissionRate.compareTo(BigDecimal.ONE) > 0) {
+            throw new IllegalStateException("Refusing to start: pronto.sos.commission-rate must be a fraction "
+                    + "between 0 and 1 (0.10 = 10%), but was " + commissionRate + ".");
+        }
+        if (visitSurcharge == null || visitSurcharge.signum() < 0) {
+            throw new IllegalStateException("Refusing to start: pronto.sos.visit-surcharge must not be negative, "
+                    + "but was " + visitSurcharge + ".");
+        }
+        if (maxDispatchRadiusKm != null && maxDispatchRadiusKm.signum() <= 0) {
+            throw new IllegalStateException("Refusing to start: pronto.sos.max-dispatch-radius-km must be positive "
+                    + "when set (omit it entirely to disable the radius filter), but was "
+                    + maxDispatchRadiusKm + ".");
+        }
+        // Not an error -- a deployment may legitimately want every offer to stay answerable for
+        // the whole response window -- but an offer TTL *longer* than the window it lives inside
+        // means the extra seconds can never be used, which is almost always a typo.
+        if (offerTtlSeconds > matchingWindowSeconds) {
+            throw new IllegalStateException("Refusing to start: pronto.sos.offer-ttl-seconds ("
+                    + offerTtlSeconds + ") exceeds pronto.sos.matching-window-seconds ("
+                    + matchingWindowSeconds + "), so an offer would outlive the response window it "
+                    + "belongs to. Lower the TTL or raise the window.");
+        }
+    }
+
+    private static void requirePositive(String property, int value) {
+        if (value <= 0) {
+            throw new IllegalStateException("Refusing to start: pronto.sos." + property
+                    + " must be greater than zero, but was " + value + ".");
+        }
+    }
 
     public BigDecimal getCommissionRate() {
         return commissionRate;
@@ -157,6 +229,14 @@ public class SosProperties {
 
     public void setSelectionWindowSeconds(int selectionWindowSeconds) {
         this.selectionWindowSeconds = selectionWindowSeconds;
+    }
+
+    public int getConfirmationGraceSeconds() {
+        return confirmationGraceSeconds;
+    }
+
+    public void setConfirmationGraceSeconds(int confirmationGraceSeconds) {
+        this.confirmationGraceSeconds = confirmationGraceSeconds;
     }
 
     public BigDecimal getMaxDispatchRadiusKm() {

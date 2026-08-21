@@ -9,16 +9,26 @@ ranks eligible professionals, dispatches offers to a bounded pool, collects acce
 presents up to three candidates with roughly two minutes to choose. Selection atomically creates
 an `orders` row, after which the job runs confirm → on the way → arrived → completed.
 
-### Relationship to the pre-existing SOS booking path
+### Pronto SOS is the only SOS flow
 
-This is **not** a replacement for `GET /api/bookings/sos-professionals` +
-`POST /api/bookings/sos-orders` (Milestone 4), which is *browse-and-pick*: there the customer
-reads a list and names a professional themselves. Both paths coexist and this package changes
-nothing about that one. They share:
+The Milestone 4 *browse-and-pick* path (`GET /api/bookings/sos-professionals` +
+`POST /api/bookings/sos-orders`), where the customer read a list and named a professional
+themselves, **has been removed**. It is not deprecated-but-available; the routes, the service
+methods, the DTO and the frontend that called them are gone.
+
+Two live SOS systems was not a neutral cost. They had different pricing (only this one takes
+commission), different eligibility rules, and a real collision: both required the anchoring issue
+to be `OPEN`, so one problem could carry a Pronto SOS dispatch and a browse-and-pick order at the
+same time, with the loser's expiry reverting an issue the winner had legitimately booked.
+`sos.SingleSosFlowTest` pins the removal so the routes cannot quietly come back.
+
+What that path *shared* stayed, because this package depends on all of it:
 
 - `sos_availability` — the professional's live SOS on/off toggle (owned by `availability`)
 - `matching.DistanceEtaStrategy` — distance/ETA approximation
-- `orders` — an SOS job becomes a real order at selection time
+- `orders` — an SOS job becomes a real order at selection time, including its
+  `base_price_snapshot`/`sos_surcharge` columns
+- `notifications`, `reviews` aggregates, and the `issues` state transitions
 
 ## Responsibilities
 
@@ -154,7 +164,19 @@ and never rewrites the economics of one already in flight.
 | `offer-ttl-seconds` | 120 | One professional's window to answer one offer. |
 | `matching-window-seconds` | 150 | Overall professional-response window. |
 | `selection-window-seconds` | 120 | The customer's ~2 minutes to choose. |
-| (constant) `CONFIRMATION_GRACE` | 3 min | Selected professional's window to confirm. |
+| `confirmation-grace-seconds` | 180 | Selected professional's window to confirm. |
+
+Every one of these is `pronto.sos.*` configuration. `confirmation-grace-seconds` was a hardcoded
+`Duration` constant on `SosService` until the final-readiness pass; it is the same 3 minutes it
+always was, now tunable per environment like its peers.
+
+`SosProperties.validate()` is a `@PostConstruct` fail-fast guard over all of them (the
+`JwtSecretStartupGuard` precedent — it runs before the web server binds a port). It rejects
+non-positive timings and pool sizes, a commission rate outside `[0,1]`, a negative surcharge, a
+non-positive radius, and an `offer-ttl-seconds` longer than the `matching-window-seconds` it lives
+inside. These are deadlines and money, and every way of getting them wrong is silent: a
+`selection-window-seconds` of `0` does not throw anywhere, it just expires every request the
+instant its window opens, which reads as "no professional ever answers".
 
 **The backend is the source of truth.** Two mechanisms, and the distinction matters:
 
@@ -170,7 +192,7 @@ A frontend timer is presentation only and is never trusted.
 
 | Risk | Protection |
 |---|---|
-| Double SOS activation for one issue | `ux_sos_requests_issue` + pre-check |
+| Two SOS attempts running at once for one issue | `ux_sos_requests_active_issue` (partial unique index, V36) + `existsActiveByIssueId` pre-check |
 | Customer selects twice | `selectProfessional` guards on status **and** `selected_professional_id IS NULL`, atomically |
 | Selection after the deadline | `selection_expires_at > :now` **inside** the guarded UPDATE — the DB decides, not an application clock read |
 | Accepting an expired offer | `expires_at > :now` inside `SosOfferRepository.accept` |
@@ -182,13 +204,77 @@ A frontend timer is presentation only and is never trusted.
 Selection is one transaction: order insert, request mutation, offer statuses, issue transition,
 events and notifications all commit together or not at all.
 
-## Realtime — deliberately not implemented
+## Retry — an SOS request is an attempt, not the problem
+
+The `issues` row is the customer's actual problem: category, description, photos, AI brief,
+address. An `sos_requests` row is **one attempt to find somebody for it**. Many attempts per
+problem, one at a time:
+
+```
+issue 42 ──► sos_requests #7  EXPIRED    (nobody answered in the response window)
+issue 42 ──► sos_requests #9  FAILED     (nobody eligible in that category/area)
+issue 42 ──► sos_requests #14 CANCELLED  (customer changed their mind)
+issue 42 ──► sos_requests #21 MATCHING   ◄── allowed; nothing is re-described, re-uploaded
+                                             or re-classified
+```
+
+V34 originally enforced `ux_sos_requests_issue UNIQUE (issue_id)`, which was right about
+double-activation but enforced it *forever*: one unanswered SOS permanently burned its issue, and
+the customer's only route back was to report the same problem again — in an emergency. **V36
+replaces it** with
+
+```sql
+CREATE UNIQUE INDEX ux_sos_requests_active_issue ON sos_requests (issue_id)
+    WHERE status NOT IN ('COMPLETED', 'CANCELLED', 'EXPIRED', 'FAILED');
+```
+
+The excluded set is exactly `SosRequestStatus.isTerminal()`. Three definitions state this one
+rule — that index, `SosRequestRepository.existsActiveByIssueId`, and `isTerminal()` — and
+`SosSchemaConstraintTest` asserts they agree, because drift between them is invisible until it
+either blocks every retry or permits two concurrent dispatch waves.
+
+No history is deleted. Every attempt stays queryable
+(`SosRequestRepository.findByIssueIdOrderByCreatedAtDesc`).
+
+Retry works after all three terminal failures because each leaves the issue bookable: `EXPIRED`
+and `CANCELLED` run `IssueRepository.revertToOpen`, and `FAILED` never booked the issue at all.
+
+## Address privacy — availability is not assignment
+
+Offers fan out to up to 15 professionals. **None of them gets the customer's street address until
+the customer actually picks one** — including a professional who has already responded
+"I'm available and can come".
+
+| Who | Sees |
+|---|---|
+| The customer | The exact address, always. |
+| A professional with an `OFFERED`/`VIEWED` offer | City only. |
+| A professional with an **`ACCEPTED`** offer (available) | City only. **This is the case that matters.** |
+| The **selected** professional | The exact address, from the moment of selection. |
+| Anyone else | `403`. |
+
+Redacted means `null` for `serviceStreet`, `serviceHouseNumber`, `serviceApartment`,
+`serviceFloor`, `serviceEntrance`, `serviceAddressNotes`, `latitude` and `longitude`. City
+survives because it is what makes an offer decidable at all, and it is already on the offer card.
+`serviceAddressNotes` matters as much as the street: it is free text and in practice holds gate
+codes.
+
+Mechanically this is `SosService.authorizeRead` returning a `SosAddressAccess`, which
+`SosResponseAssembler.toRequestResponse` requires as an argument — there is **no default
+overload**, so a new call site cannot forget to decide. The relationship is read off
+`sos_requests.selected_professional_id`, never off the offer's own status.
+
+This closed a real gap. The realtime offer payload and `SosOfferResponse` had always been
+city-only, but `GET /api/sos/requests/{id}` assembled one shape for everybody and handed the full
+address to any offer holder. A privacy rule honoured in two places out of three is not a privacy
+rule.
+
+## Realtime
 
 `SosEventService` writes an `sos_events` row **and** publishes a `SosDomainEvent` for every
-transition, in the same transaction. Nothing consumes the published event today — that is the
-point. The next phase adds a `@TransactionalEventListener` that forwards to WebSocket
-subscribers, and because every transition already publishes, that listener is purely additive:
-no business logic moves, no service signature changes.
+transition, in the same transaction. `sos.realtime.SosRealtimePublisher` consumes those after
+commit and forwards them to WebSocket subscribers — see the *Realtime delivery* section at the
+bottom of this file for the full routing matrix, and `realtime/README.md` for the transport.
 
 ## Key classes
 
@@ -210,6 +296,11 @@ no business logic moves, no service signature changes.
 `notifications.related_sos_request_id` and 12 new message types
 (`V35__alter_notifications_add_sos.sql`).
 
+| Migration | Change |
+|---|---|
+| `V36__replace_sos_request_issue_uniqueness.sql` | Drops `ux_sos_requests_issue`; adds the partial `ux_sos_requests_active_issue` and `idx_sos_requests_issue_created`. See *Retry* above. |
+| `V37__alter_sos_events_add_offer_expired.sql` | Adds `OFFER_EXPIRED` to `ck_sos_events_type`, exempts it from `ux_sos_events_singleton` (it is per-offer, so it repeats within a request), and indexes `sos_events.sos_offer_id`. |
+
 ## Cross-package dependencies
 
 `sos → issues` (the anchoring issue), `sos → bookings` (creates/advances the `orders` row),
@@ -225,12 +316,22 @@ no business logic moves, no service signature changes.
   They exist so real geocoding can be swapped in with no migration or API change.
 - **`sub_service_id` is always null** — nothing in the current issue flow settles a sub-service.
   The column and FK exist for when it does.
-- **`visit-surcharge` duplicates `BookingsService.SOS_SURCHARGE_AMOUNT`** (both 50.00).
-  Consolidating the browse-and-pick path onto this property is a flagged follow-up, deliberately
-  not done here since that path is out of scope.
 - **Dispatch is single-wave.** `SosDispatchService.dispatch` already excludes
   already-offered professionals and continues the rank sequence, so a radius/pool expansion
-  strategy is a matter of calling it again — but nothing calls it a second time yet.
+  strategy is a matter of calling it again — but nothing calls it a second time yet. There is no
+  radius expansion and no re-dispatch: if the response window closes with nobody available, the
+  request expires, and the customer's recourse is a fresh attempt (see *Retry*).
+- **`SOS_NO_PROFESSIONALS_AVAILABLE` is never thrown.** "Nobody eligible" is not an error the
+  activating customer sees — `POST /api/sos/requests` returns `201` with terminal `FAILED`, which
+  the client reads off `status` and hears as realtime `SOS_FAILED`.
+- **Email copy is order-shaped.** `notifications.scheduler.EmailDispatchJob` builds every subject
+  from `related_order_id`, so an SOS notification's email currently reads
+  `"Pronto — Order #null"`. Harmless today (`pronto.email.mode=log`, `LoggingEmailSender` is the
+  only implementation) and untouched here, but it must be fixed before real email is switched on.
+
+`BookingsService.SOS_SURCHARGE_AMOUNT` used to duplicate `visit-surcharge`; it went with the
+browse-and-pick flow, so `pronto.sos.visit-surcharge` is now the only SOS surcharge in the
+codebase.
 
 ---
 
@@ -303,6 +404,7 @@ atomic selection UPDATE. Any client timer is presentation only.
 | `MATCHING_STARTED` | `MATCHING_STARTED` | — | — | — |
 | `OFFERS_SENT` | `OFFERS_SENT` (count only) | `SOS_OFFER_RECEIVED` (own offer only) | n/a | n/a |
 | `OFFER_VIEWED` | — | — | — | — |
+| `OFFER_EXPIRED` | **—** | `SOS_OFFER_EXPIRED` (that professional only) | n/a | n/a |
 | `PROFESSIONAL_RESPONDED` (offer `ACCEPTED`) | `PROFESSIONAL_AVAILABLE` + count | `OFFER_RESPONSE_RECORDED` (self-ack) | n/a | — |
 | `PROFESSIONAL_RESPONDED` (offer `REJECTED`) | — | `OFFER_RESPONSE_RECORDED` (self-ack) | n/a | — |
 | `PROFESSIONAL_RESPONDED` (offer `SELECTED`) | `ETA_UPDATED` | n/a | `OFFER_RESPONSE_RECORDED` | — |
@@ -323,7 +425,42 @@ well (they opted out).
 
 **Privacy:** the offer payload carries `serviceCity` but never street, house number, apartment,
 customer name or phone. Those become reachable through REST only once a professional is selected
-and an order exists.
+— see *Address privacy* above, which is now enforced on `GET /api/sos/requests/{id}` too rather
+than only on the realtime and offer payloads.
+
+## Individual offer expiry
+
+An offer that nobody answers lapses at its own `expires_at`. This used to be a single bulk
+`UPDATE` across every overdue offer that wrote nothing else: no event, no realtime, no
+notification. The professional's inbox kept rendering a card that could no longer be accepted
+until they tapped it and got a `410`.
+
+Now `SosSweepJob` walks `SosService.findOverdueOfferIds()` and calls `SosService.expireOffer(id)`
+per offer, each in its own transaction:
+
+1. `SosOfferRepository.expireOfferIfOpen` — guarded `OFFERED|VIEWED -> EXPIRED`
+2. an `OFFER_EXPIRED` `sos_events` row, actor `SYSTEM`, naming the professional and the offer
+3. a persisted `SOS_OFFER_EXPIRED` notification to that professional
+4. realtime `SOS_OFFER_EXPIRED` to that professional, carrying `offerId`, `requestStatus` and
+   `expiredAt`
+
+**Idempotent**: everything after step 1 is gated on it having affected a row. Two overlapping
+sweeps, or a sweep racing a professional's `accept`, yield exactly one winner — the loser writes
+nothing, so there is no duplicate event and no duplicate notification.
+
+**One transaction per offer, driven from the job rather than looped inside the service**, for two
+independent reasons: a self-invoked `@Transactional` method would not go through the Spring proxy
+(so every offer would share one transaction and one bad row would roll back the batch), and the
+`AFTER_COMMIT` listener fires per committed transaction (so a shared one would hold back every
+professional's push until the last offer was processed).
+
+**The customer is told nothing.** "Professional X did not respond" is not actionable, names a
+stranger's business decision, and reframes the most ordinary outcome in a fan-out of eight as a
+failure. Their dispatch view stays aggregate: how many are available, and when they can choose.
+The only expiry a customer hears about is their whole request's, which arrives as `EXPIRED`.
+
+`SOS_OFFER_EXPIRED` is deliberately distinct from `EXPIRED`: one professional's window closing is
+survivable — the request may still be very much alive with other candidates.
 
 ## After-commit guarantee
 

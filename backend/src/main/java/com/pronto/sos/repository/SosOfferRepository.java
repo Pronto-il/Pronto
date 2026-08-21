@@ -146,12 +146,32 @@ public interface SosOfferRepository extends JpaRepository<SosOffer, Long> {
         expireUnansweredOffers(sosRequestId, now);
     }
 
-    /** Individual offer expiry, for the sweep. Only touches still-open offers. */
+    /**
+     * The sweep's driving query for individual offer expiry: still-open offers whose own
+     * {@code expiresAt} has passed. Ids only, so each can then be expired in its own transaction
+     * and produce its own history row and realtime message.
+     *
+     * <p>Replaced a single bulk {@code UPDATE} that closed them all at once. The bulk statement
+     * was cheaper and completely silent — it could not name which offers it had closed, so
+     * nothing downstream could tell the affected professionals. Backed by
+     * {@code idx_sos_offers_expires_at}, which is already partial on exactly these two statuses.
+     */
+    @Query("SELECT o.id FROM SosOffer o WHERE o.expiresAt <= :now AND o.status IN ("
+            + "com.pronto.sos.entity.SosOfferStatus.OFFERED, com.pronto.sos.entity.SosOfferStatus.VIEWED)")
+    List<Long> findOverdueOpenOfferIds(@Param("now") Instant now);
+
+    /**
+     * {@code OFFERED|VIEWED -> EXPIRED} for one offer. <b>This guard is what makes expiry
+     * idempotent</b>: two sweep passes overlapping, or a sweep racing a professional's accept,
+     * produce exactly one winner with 1 affected row. Every caller treats {@code 0} as "somebody
+     * else already closed this" and writes no event, so an offer can never produce two
+     * {@code OFFER_EXPIRED} rows or two notifications.
+     */
     @Modifying(clearAutomatically = true)
     @Query("UPDATE SosOffer o SET o.status = com.pronto.sos.entity.SosOfferStatus.EXPIRED, o.updatedAt = :now "
-            + "WHERE o.expiresAt <= :now AND o.status IN ("
+            + "WHERE o.id = :id AND o.status IN ("
             + "com.pronto.sos.entity.SosOfferStatus.OFFERED, com.pronto.sos.entity.SosOfferStatus.VIEWED)")
-    int expireOverdueOffers(@Param("now") Instant now);
+    int expireOfferIfOpen(@Param("id") Long id, @Param("now") Instant now);
 
     // ---- ranking inputs (see SosMatchingService) ----
 

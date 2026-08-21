@@ -171,33 +171,42 @@ export default function OrderTrackingPage() {
     : '';
 
   /**
-   * Terminal-state next step (§3.D). `cancel`/`reject` both run `releaseSlotAndReopenIssue`
-   * server-side, so the original issue is `OPEN` again and can be re-booked; an expired order
-   * also expires its issue (`expireIfBooked`), so that one can only start over. Verified in
-   * `BookingsService`, not assumed — a CTA into a dead issue would be worse than none.
+   * Terminal-state next step (§3.D).
+   *
+   * <p>`CANCELLED`, `REJECTED` and — as of the SOS final-readiness pass — `EXPIRED` all now lead
+   * to the same place: back into professional selection **for the same issue**. All three run a
+   * server-side transition that returns `issues.status` to `OPEN` (`revertToOpen` for the first
+   * two, `reopenIfBooked` for expiry), so the issue is genuinely bookable again. Verified in
+   * `BookingsService`/`IssueRepository`, not assumed — a CTA into a dead issue would be worse
+   * than none.
+   *
+   * <p>`EXPIRED` used to send the customer to `/issues/new`, which threw away a description,
+   * photos and an AI classification they had already provided and made them redo all of it
+   * because a professional failed to answer in time. `order.issueId` is on the DTO already, so
+   * the recovery target is a plain URL that survives a refresh — no router state, no re-created
+   * issue, no second trip through classification.
+   *
+   * <p>The SOS branch points at `ProntoSosEntryPage` (the placeholder for the upcoming Pronto SOS
+   * frontend). Only reachable for historical SOS orders: the legacy flow that created them is
+   * gone, so no new order can arrive here that way.
    */
   function renderTerminalAction() {
     if (!order || isProfessionalViewer) {
       return undefined;
     }
-    if (order.orderStatus === 'CANCELLED' || order.orderStatus === 'REJECTED') {
-      const path = issue?.urgencyType === 'SOS'
-        ? `/issues/${order.issueId}/sos-booking`
-        : `/issues/${order.issueId}/booking`;
-      return (
-        <Button onClick={() => navigate(path)} fullWidth>
-          בחירת בעל מקצוע אחר
-        </Button>
-      );
+    const isRecoverable =
+      order.orderStatus === 'CANCELLED' || order.orderStatus === 'REJECTED' || order.orderStatus === 'EXPIRED';
+    if (!isRecoverable) {
+      return undefined;
     }
-    if (order.orderStatus === 'EXPIRED') {
-      return (
-        <Button onClick={() => navigate('/issues/new')} fullWidth>
-          פתיחת בקשה חדשה
-        </Button>
-      );
-    }
-    return undefined;
+    const path = issue?.urgencyType === 'SOS'
+      ? `/issues/${order.issueId}/sos-booking`
+      : `/issues/${order.issueId}/booking`;
+    return (
+      <Button onClick={() => navigate(path)} fullWidth>
+        בחירת בעל מקצוע אחר
+      </Button>
+    );
   }
 
   function renderHeroAction() {

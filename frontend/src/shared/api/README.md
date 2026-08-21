@@ -1,5 +1,12 @@
 # shared/api
 
+> **SOS (2026-08-21).** `getSosProfessionalsForIssue`, `createSosOrder` and the
+> `CreateSosOrderRequest` type were removed with the legacy browse-and-pick SOS endpoints.
+> `prefetchProfessionalListing` lost its `urgencyType` parameter for the same reason — there
+> is only one professional-listing endpoint now. No client for `/api/sos/**` exists yet; it
+> arrives with the Pronto SOS frontend task.
+
+
 ## Purpose
 Backend API client — the single place that knows how to talk to the Spring Boot REST
 API described in `docs/architecture/overview.md` §3.2.

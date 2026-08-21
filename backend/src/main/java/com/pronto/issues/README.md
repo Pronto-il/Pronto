@@ -171,7 +171,7 @@ Full design record: `docs/architecture/backend-ms9-presigned-image-urls-design.m
 | `entity.Issue` | JPA entity for `issues`. `customerId`/`categoryId` are plain FK columns, not associations — same convention as `professionals.entity.Professional`. Always starts `status = OPEN`. |
 | `entity.IssueImage` | JPA entity for `issue_images`. **As of backend MS9**: `imageKey` (renamed from `imageUrl`) is the raw storage key the image was uploaded to — never a resolved URL, resolved fresh to a presigned URL only at read time (see "Image URLs (backend MS9)" below). The underlying object is never moved/renamed on confirmation. |
 | `entity.IssueUrgencyType` / `entity.IssueStatus` | Enums mirroring the `issues` table's `CHECK` constraints. |
-| `repository.IssueRepository` | `JpaRepository`, plus (since Milestone 3) `bookIfOpen`/`revertToOpen` — the atomic `UPDATE ... WHERE <status guard>` transitions `bookings.service.BookingsService` uses for the booking flow (`docs/architecture/api-contract-bookings.md` §3.2/§3.3) — and (since Milestone 5) `expireIfBooked`, the same guarded-`UPDATE` shape targeting `EXPIRED` instead of `OPEN`, called by `bookings.service.BookingsService.expireIfPending` as part of the `PENDING`-order timeout sweep (`docs/architecture/api-contract-notifications.md` §4.5). |
+| `repository.IssueRepository` | `JpaRepository`, plus (since Milestone 3) `bookIfOpen`/`revertToOpen` — the atomic `UPDATE ... WHERE <status guard>` transitions `bookings.service.BookingsService` uses for the booking flow (`docs/architecture/api-contract-bookings.md` §3.2/§3.3) — and (since Milestone 5) `reopenIfBooked`, the same guarded-`UPDATE` shape called by `bookings.service.BookingsService.expireIfPending` as part of the `PENDING`-order timeout sweep (`docs/architecture/api-contract-notifications.md` §4.5). It targeted `EXPIRED` until 2026-08-21 and now targets `OPEN`: an order nobody answered must not cost the customer the issue they already described, so it becomes bookable again instead of dying with the order. |
 | `repository.IssueImageRepository` | `JpaRepository`, plus `findByIssueId` (used by `GET /api/issues/{id}`). |
 | `dto.ClassifyRequest` / `dto.ClassifyResponse` | `POST /api/issues/classify` wire shapes. `ClassifyRequest.clarificationAnswers` (optional, max 3) is the second-call shape of the clarification extension. |
 | `dto.ClarificationAnswerRequest` | One `{question, answer}` entry inside `ClassifyRequest.clarificationAnswers`. |
@@ -207,7 +207,9 @@ Full design record: `docs/architecture/backend-ms9-presigned-image-urls-design.m
   mutually dependent, a deliberate, documented exception, not an oversight. Since Milestone
   5, `bookings.service.BookingsService.expireIfPending` (invoked by
   `notifications.scheduler.OrderExpirySweepJob`'s `@Scheduled` sweep) also calls
-  `IssueRepository.expireIfBooked` directly, the same `bookings → issues` relationship as
+  `IssueRepository.reopenIfBooked` directly (called `expireIfBooked` until 2026-08-21, when an
+  expiring order stopped expiring its issue and started reopening it), the same
+  `bookings → issues` relationship as
   `bookIfOpen`/`revertToOpen`, not a new dependency edge.
 
 ## Data model
@@ -268,7 +270,9 @@ Post-Milestone-2 bug fix (QA-reported): the role-check-ordering bug described ab
 professional token + malformed body now correctly `403`s on both `/api/issues/classify`
 and `POST /api/issues` instead of `400`.
 
-**Milestone 5 addition**: `IssueRepository.expireIfBooked` added, alongside the existing
+**Milestone 5 addition**: `IssueRepository.expireIfBooked` added (renamed to
+`reopenIfBooked` on 2026-08-21, and repointed at `OPEN` — see the note in the key-classes
+table above), alongside the existing
 `bookIfOpen`/`revertToOpen`, for the new `PENDING`-order timeout expiry sweep. This package's
 role is limited to owning that one guarded-transition method; the sweep itself (scheduling,
 candidate-finding, notification dispatch) lives in `bookings`/`notifications` — see

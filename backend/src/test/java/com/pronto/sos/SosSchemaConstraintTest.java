@@ -40,6 +40,15 @@ class SosSchemaConstraintTest {
 
     private static final String SOS_MIGRATION = "db/migration/V34__create_sos.sql";
     private static final String NOTIFICATIONS_MIGRATION = "db/migration/V35__alter_notifications_add_sos.sql";
+    private static final String RETRY_MIGRATION = "db/migration/V36__replace_sos_request_issue_uniqueness.sql";
+    /**
+     * V37 drops and recreates {@code ck_sos_events_type} and {@code ux_sos_events_singleton}, so
+     * for those two the <em>latest</em> migration is the live definition and V34's is history.
+     * Asserting against V34 for them would pass while the database said something else entirely
+     * — which is precisely the class of bug this test exists to catch, pointed the wrong way.
+     */
+    private static final String OFFER_EXPIRY_MIGRATION =
+            "db/migration/V37__alter_sos_events_add_offer_expired.sql";
 
     private static String migration(String path) {
         try (InputStream in = SosSchemaConstraintTest.class.getClassLoader().getResourceAsStream(path)) {
@@ -96,10 +105,23 @@ class SosSchemaConstraintTest {
                 .isEqualTo(names(SosOfferStatus.values()));
     }
 
+    /** Read from V37, which redefines this constraint. See {@link #OFFER_EXPIRY_MIGRATION}. */
     @Test
     void sosEventTypeMatchesItsCheckConstraint() {
-        assertThat(checkConstraintValues(migration(SOS_MIGRATION), "ck_sos_events_type"))
+        assertThat(checkConstraintValues(migration(OFFER_EXPIRY_MIGRATION), "ck_sos_events_type"))
                 .isEqualTo(names(SosEventType.values()));
+    }
+
+    /**
+     * V37 rewrites {@code ck_sos_events_type} wholesale, so — exactly like V35 and the
+     * notifications constraint — it must reproduce every pre-existing event type as well as the
+     * new one. Dropping one on the way past would only surface as a constraint violation on a
+     * live SOS request.
+     */
+    @Test
+    void theRewrittenEventTypeConstraintKeepsEveryOriginalType() {
+        assertThat(checkConstraintValues(migration(OFFER_EXPIRY_MIGRATION), "ck_sos_events_type"))
+                .containsAll(checkConstraintValues(migration(SOS_MIGRATION), "ck_sos_events_type"));
     }
 
     @Test
@@ -148,15 +170,56 @@ class SosSchemaConstraintTest {
      */
     @Test
     void onlyGenuinelyRepeatableEventsAreExemptFromTheSingletonIndex() {
-        Matcher index = Pattern.compile("ux_sos_events_singleton.*?NOT IN\\s*\\((.*?)\\)", Pattern.DOTALL)
-                .matcher(migration(SOS_MIGRATION));
+        // V37's definition, not V34's -- it drops and recreates the index to add OFFER_EXPIRED.
+        Matcher index = Pattern.compile("CREATE UNIQUE INDEX ux_sos_events_singleton.*?NOT IN\\s*\\((.*?)\\)",
+                        Pattern.DOTALL)
+                .matcher(migration(OFFER_EXPIRY_MIGRATION));
         assertThat(index.find()).isTrue();
 
         Set<String> exempt = Pattern.compile("'([A-Z_]+)'").matcher(index.group(1))
                 .results().map(r -> r.group(1)).collect(Collectors.toSet());
 
+        // Exactly the three per-offer events. One too many silently disables the guard for that
+        // type; one too few makes a normal second occurrence throw on a live request.
         assertThat(exempt).containsExactlyInAnyOrder(
                 SosEventType.PROFESSIONAL_RESPONDED.name(),
-                SosEventType.OFFER_VIEWED.name());
+                SosEventType.OFFER_VIEWED.name(),
+                SosEventType.OFFER_EXPIRED.name());
+    }
+
+    /**
+     * The retry invariant, asserted against the migration rather than trusted: V36's partial
+     * unique index must exclude exactly {@link SosRequestStatus#isTerminal()}'s set.
+     *
+     * <p>Both directions are bugs. Exclude one status too few (forget {@code FAILED}, say) and a
+     * customer whose SOS found nobody can never retry on that issue — the exact dead end V36
+     * exists to remove. Exclude one too many (add {@code WAITING_FOR_CUSTOMER_SELECTION}, say)
+     * and two live dispatch waves can run for one problem, double-offering the same
+     * professionals.
+     */
+    @Test
+    void theActiveSosUniquenessIndexExcludesExactlyTheTerminalStatuses() {
+        Matcher index = Pattern.compile("ux_sos_requests_active_issue.*?NOT IN\\s*\\((.*?)\\)", Pattern.DOTALL)
+                .matcher(migration(RETRY_MIGRATION));
+        assertThat(index.find())
+                .as("V36 must create the ux_sos_requests_active_issue partial unique index")
+                .isTrue();
+
+        Set<String> excluded = Pattern.compile("'([A-Z_]+)'").matcher(index.group(1))
+                .results().map(r -> r.group(1)).collect(Collectors.toSet());
+
+        Set<String> terminal = Arrays.stream(SosRequestStatus.values())
+                .filter(SosRequestStatus::isTerminal)
+                .map(Enum::name)
+                .collect(Collectors.toSet());
+
+        assertThat(excluded).isEqualTo(terminal);
+    }
+
+    /** The permanent one-per-issue rule must actually be dropped, not merely shadowed. */
+    @Test
+    void thePermanentIssueUniquenessConstraintIsDropped() {
+        assertThat(migration(RETRY_MIGRATION))
+                .contains("DROP CONSTRAINT ux_sos_requests_issue");
     }
 }

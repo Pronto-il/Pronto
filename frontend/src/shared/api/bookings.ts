@@ -103,7 +103,6 @@ function takePrefetched(path: string): Promise<ProfessionalListingResponse> | nu
 export function prefetchProfessionalListing(
   issueId: number,
   location: ServiceLocation,
-  urgencyType: 'STANDARD' | 'SOS',
   sort?: ProfessionalSort,
 ): Promise<ProfessionalListingResponse> {
   const params = new URLSearchParams();
@@ -117,8 +116,7 @@ export function prefetchProfessionalListing(
   if (sort) {
     params.set('sort', sort);
   }
-  const endpoint = urgencyType === 'SOS' ? 'sos-professionals' : 'professionals';
-  const path = `/api/bookings/${endpoint}?${params.toString()}`;
+  const path = `/api/bookings/professionals?${params.toString()}`;
 
   if (prefetchEntry && prefetchEntry.path === path && Date.now() - prefetchEntry.storedAt <= PREFETCH_TTL_MS) {
     return prefetchEntry.promise;
@@ -301,65 +299,6 @@ export interface OrderDetailResponse extends OrderResponse {
 /** `GET /api/bookings/orders/{orderId}` — either party (ownership checked server-side). */
 export function getOrder(orderId: number): Promise<OrderDetailResponse> {
   return httpClient.get<OrderDetailResponse>(`/api/bookings/orders/${orderId}`);
-}
-
-/**
- * `GET /api/bookings/sos-professionals?issueId=&city=&street=&houseNumber=&apartment=&sort=`
- * (`BookingsController.listSosProfessionals`, CUSTOMER only). Same required query params as
- * `getProfessionalsForIssue` above, and an identical response shape
- * (`ProfessionalListingResponse`/`ProfessionalCard`, reused verbatim — not redeclared) — the
- * only difference is the professionals returned are filtered to those currently
- * SOS-available. An empty `professionals[]` is a valid, expected response (no professional
- * currently SOS-available), not an error. `409 ISSUE_URGENCY_MISMATCH` if the issue's
- * `urgencyType != 'SOS'`; `409 ISSUE_NOT_BOOKABLE` if `issue.status != 'OPEN'`.
- */
-export function getSosProfessionalsForIssue(
-  issueId: number,
-  location: ServiceLocation,
-  sort?: ProfessionalSort,
-): Promise<ProfessionalListingResponse> {
-  const params = new URLSearchParams();
-  params.set('issueId', String(issueId));
-  params.set('city', location.city);
-  params.set('street', location.street);
-  params.set('houseNumber', location.houseNumber);
-  if (location.apartment) {
-    params.set('apartment', location.apartment);
-  }
-  if (sort) {
-    params.set('sort', sort);
-  }
-  const path = `/api/bookings/sos-professionals?${params.toString()}`;
-  return takePrefetched(path) ?? httpClient.get<ProfessionalListingResponse>(path);
-}
-
-/**
- * `CreateSosOrderRequest.java` — no `slotId` (SOS has no slot selection; the order's
- * `bookedStart` is set to `now()` server-side, `bookedEnd` stays `null`).
- */
-export interface CreateSosOrderRequest {
-  issueId: number;
-  professionalId: number;
-  serviceCity: string;
-  serviceStreet: string;
-  serviceHouseNumber: string;
-  serviceApartment?: string;
-  serviceFloor?: string;
-  serviceEntrance?: string;
-  serviceAddressNotes?: string;
-}
-
-/**
- * `POST /api/bookings/sos-orders` — CUSTOMER only. Response is the same `OrderResponse`
- * record used by `createOrder`. `sosSurcharge` is a flat, backend-hardcoded placeholder
- * (`BookingsService.SOS_SURCHARGE_AMOUNT`, currently `50.00`) baked into the returned
- * `finalPrice` — the authoritative value only exists after this call succeeds, there is no
- * endpoint exposing it ahead of order creation. Errors: `409 ISSUE_URGENCY_MISMATCH`,
- * `409 ISSUE_NOT_BOOKABLE`, `409 SOS_PROFESSIONAL_UNAVAILABLE` (the professional toggled off
- * between listing and this call), `400 CATEGORY_MISMATCH`, `400 VALIDATION_ERROR`.
- */
-export function createSosOrder(payload: CreateSosOrderRequest): Promise<OrderResponse> {
-  return httpClient.post<OrderResponse>('/api/bookings/sos-orders', payload);
 }
 
 export interface OrderSummary {

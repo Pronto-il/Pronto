@@ -13,7 +13,7 @@ import {
 import { NewIssuePage, ProfessionMatchPage } from '../features/issues';
 import {
   BookingFlowPage,
-  SosBookingFlowPage,
+  ProntoSosEntryPage,
   MyOrdersPage,
   OrderTrackingPage,
   CompletionReviewPage,
@@ -98,7 +98,7 @@ export const router = createBrowserRouter([
           { path: 'issues/new', element: <NewIssuePage /> },
           { path: 'issues/:issueId/matching', element: <ProfessionMatchPage /> },
           { path: 'issues/:issueId/booking', element: <BookingFlowPage /> },
-          { path: 'issues/:issueId/sos-booking', element: <SosBookingFlowPage /> },
+          { path: 'issues/:issueId/sos-booking', element: <ProntoSosEntryPage /> },
           { path: 'orders', element: <MyOrdersPage /> },
           { path: 'orders/:orderId/review', element: <CompletionReviewPage /> },
           { path: 'favorites', element: <FavoritesPage /> },

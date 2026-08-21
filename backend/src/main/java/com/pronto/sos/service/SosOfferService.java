@@ -269,7 +269,7 @@ public class SosOfferService {
                 NotificationMessageType.SOS_PROFESSIONAL_CONFIRMED);
 
         log.info("sos.confirmed sosRequestId={} professionalId={}", sosRequestId, professionalId);
-        return assembler.toRequestResponse(sosService.reload(sosRequestId));
+        return assembler.toRequestResponse(sosService.reload(sosRequestId), SosAddressAccess.FULL);
     }
 
     /** {@code POST /api/sos/requests/{id}/on-the-way}. Mirrors the transition onto the order. */
@@ -296,7 +296,7 @@ public class SosOfferService {
                 "Professional is on the way");
         notificationService.recordSosNotification(sosRequestId, request.getCustomerId(),
                 NotificationMessageType.SOS_ON_THE_WAY);
-        return assembler.toRequestResponse(sosService.reload(sosRequestId));
+        return assembler.toRequestResponse(sosService.reload(sosRequestId), SosAddressAccess.FULL);
     }
 
     /**
@@ -321,7 +321,7 @@ public class SosOfferService {
                 "Professional arrived on site");
         notificationService.recordSosNotification(sosRequestId, request.getCustomerId(),
                 NotificationMessageType.SOS_ARRIVED);
-        return assembler.toRequestResponse(sosService.reload(sosRequestId));
+        return assembler.toRequestResponse(sosService.reload(sosRequestId), SosAddressAccess.FULL);
     }
 
     /**
@@ -352,7 +352,7 @@ public class SosOfferService {
 
         log.info("sos.completed sosRequestId={} professionalId={} orderId={}",
                 sosRequestId, professionalId, request.getOrderId());
-        return assembler.toRequestResponse(sosService.reload(sosRequestId));
+        return assembler.toRequestResponse(sosService.reload(sosRequestId), SosAddressAccess.FULL);
     }
 
     // ------------------------------------------------------------------

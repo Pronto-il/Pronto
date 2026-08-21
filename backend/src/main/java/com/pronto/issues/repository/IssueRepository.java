@@ -38,21 +38,37 @@ public interface IssueRepository extends JpaRepository<Issue, Long> {
 
     /**
      * §4.5 of {@code api-contract-notifications.md} — used by {@code
-     * BookingsService.expireIfPending}. Guarded on {@code BOOKED} (the only state an order's
-     * issue can be in while that order is still {@code PENDING}, per the single-active-order
-     * invariant, §3.3 of {@code api-contract-bookings.md}) rather than unconditional like
-     * {@link #revertToOpen}.
+     * BookingsService.expireIfPending} when a {@code PENDING} order times out.
+     *
+     * <p><b>Reopens the issue rather than expiring it, and that change is the point of this
+     * method.</b> It previously wrote {@code IssueStatus.EXPIRED}, which was a dead end: the
+     * customer had described the problem, uploaded photos and been through AI classification,
+     * and then a professional simply failed to answer in time — after which the only route
+     * forward was to throw all of that away and report the same problem again from scratch. An
+     * order expiring says something about the professional who ignored it; it says nothing about
+     * whether the customer still has a leaking pipe.
+     *
+     * <p>So an expired order now behaves exactly like a rejected or cancelled one: the order
+     * itself stays {@code EXPIRED} in history, and its issue returns to {@code OPEN} so another
+     * professional can be booked against it. The single-active-order invariant (§3.3) is
+     * untouched — {@link #bookIfOpen} is still the only way out of {@code OPEN}, and still only
+     * one caller can win it.
+     *
+     * <p>Guarded on {@code BOOKED} (the only state an order's issue can be in while that order is
+     * still {@code PENDING}, per §3.3) rather than unconditional like {@link #revertToOpen}: this
+     * runs from a background sweep with no HTTP caller to report a conflict to, so it should
+     * touch nothing it did not expect to find.
      */
     @Modifying(clearAutomatically = true)
-    @Query("UPDATE Issue i SET i.status = com.pronto.issues.entity.IssueStatus.EXPIRED, i.updatedAt = :now "
+    @Query("UPDATE Issue i SET i.status = com.pronto.issues.entity.IssueStatus.OPEN, i.updatedAt = :now "
             + "WHERE i.id = :issueId AND i.status = com.pronto.issues.entity.IssueStatus.BOOKED")
-    int expireIfBooked(@Param("issueId") Long issueId, @Param("now") Instant now);
+    int reopenIfBooked(@Param("issueId") Long issueId, @Param("now") Instant now);
 
     /**
      * §2.17 step 5 of {@code api-contract-bookings.md} (Milestone 6) — used by
-     * {@code BookingsService.complete}. Mirrors {@link #expireIfBooked}'s exact shape, guarded
+     * {@code BookingsService.complete}. Mirrors {@link #reopenIfBooked}'s exact shape, guarded
      * on {@code BOOKED} rather than unconditional like {@link #revertToOpen}. Not branched
-     * on/checked for a {@code 0}-row result by its caller, exactly like {@link #expireIfBooked}
+     * on/checked for a {@code 0}-row result by its caller, exactly like {@link #reopenIfBooked}
      * isn't — the single-active-order-per-issue invariant (§3.3) guarantees this always
      * succeeds when reached (§2.17's own reasoning).
      */

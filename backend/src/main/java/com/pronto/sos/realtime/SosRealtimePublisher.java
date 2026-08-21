@@ -134,6 +134,8 @@ public class SosRealtimePublisher {
             // Telemetry only. Nobody needs to be woken up because a professional opened a card.
             case OFFER_VIEWED -> { }
 
+            case OFFER_EXPIRED -> publishOfferExpired(request, event);
+
             case PROFESSIONAL_RESPONDED -> publishProfessionalResponded(request, event);
 
             case CANDIDATES_READY -> toCustomer(request, event, SosRealtimeEventType.CANDIDATES_UPDATED,
@@ -199,6 +201,27 @@ public class SosRealtimePublisher {
             delivery.sendToUser(userIds.get(offer.getProfessionalId()),
                     message(event, SosRealtimeEventType.SOS_OFFER_RECEIVED, request, offerPayload(request, offer)));
         }
+    }
+
+    /**
+     * One professional's offer lapsed unanswered. <b>Exactly one recipient: that professional.</b>
+     *
+     * <p>The customer is told nothing, deliberately. "Professional X did not respond" is not
+     * something they can act on, it names a stranger's business decision, and it reframes an
+     * entirely normal outcome — most offers in a fan-out of 8 go unanswered — as a failure. Their
+     * dispatch view stays aggregate: how many are available, and when they can choose. The only
+     * expiry a customer ever hears about is their whole request's, which arrives as
+     * {@link SosRealtimeEventType#EXPIRED} from a different branch.
+     */
+    private void publishOfferExpired(SosRequest request, SosEvent event) {
+        if (event.getSosOfferId() == null || event.getProfessionalId() == null) {
+            return;
+        }
+        delivery.sendToUser(professionalUserId(event.getProfessionalId()),
+                message(event, SosRealtimeEventType.SOS_OFFER_EXPIRED, request,
+                        data("offerId", event.getSosOfferId(),
+                                "requestStatus", request.getStatus().name(),
+                                "expiredAt", event.getCreatedAt())));
     }
 
     /**

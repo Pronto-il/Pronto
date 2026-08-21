@@ -66,6 +66,17 @@ public enum SosRealtimeEventType {
      */
     OFFER_RESPONSE_RECORDED,
 
+    /**
+     * "Your window on this one closed." Sent to the professional the lapsed offer belonged to,
+     * and to nobody else.
+     *
+     * <p>Distinct from {@link #EXPIRED}, which means the whole request is over. This one is
+     * survivable: the request may still be very much alive, with other professionals available
+     * and the customer about to choose between them. It exists so an inbox can retire a dead card
+     * on its own rather than leaving it up until the professional taps it and gets a {@code 410}.
+     */
+    SOS_OFFER_EXPIRED,
+
     /** "The customer chose you. This job is yours." Sent to the selected professional only. */
     SOS_SELECTED,
 

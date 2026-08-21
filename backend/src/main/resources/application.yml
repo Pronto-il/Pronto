@@ -172,6 +172,12 @@ pronto:
     # The product's "approximately 2 minutes" for the customer to choose. The backend is the
     # source of truth for this deadline; any frontend timer is presentation only.
     selection-window-seconds: ${SOS_SELECTION_WINDOW_SECONDS:120}
+    # How long the selected professional has to confirm before the request expires. Deliberately
+    # more generous than the windows above: they already said they were available, so this is
+    # about them still being reachable, and "waiting for confirmation" is the worst screen a
+    # customer with a burst pipe can be left on. Was hardcoded on SosService until the SOS
+    # final-readiness pass; every other SOS deadline was already tunable per environment.
+    confirmation-grace-seconds: ${SOS_CONFIRMATION_GRACE_SECONDS:180}
     # Geographic eligibility cap, compared against matching.EtaResult#distanceKm. That v1
     # figure is a coarse same-city/different-city approximation, so today this behaves as a
     # same-city preference rather than a true radius; kept as km so real geocoding can be

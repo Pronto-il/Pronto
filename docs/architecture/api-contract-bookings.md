@@ -1135,6 +1135,14 @@ response — not an error.
 
 ### 2.12 `GET /api/bookings/sos-professionals?issueId={id}` — new, Milestone 4
 
+> **REMOVED (product decision, 2026-08-21).** This endpoint no longer exists. The
+> browse-and-pick SOS flow it belonged to was retired in favour of **Pronto SOS**
+> (`/api/sos/**`, see `backend/src/main/java/com/pronto/sos/README.md`), which is now the
+> product's only SOS behaviour: the platform matches and dispatches, professionals respond
+> that they are available, and the customer chooses among those who did. The specification
+> below is retained as a historical record of what was built in Milestone 4.
+
+
 Auth required: **yes**. Role: **CUSTOMER**.
 
 Professional listing for an SOS booking, filtered by the issue's category **and** currently
@@ -1202,6 +1210,14 @@ response is, by construction, currently SOS-available, so such a flag would be r
 ---
 
 ### 2.13 `POST /api/bookings/sos-orders` — new, Milestone 4
+
+> **REMOVED (product decision, 2026-08-21).** This endpoint no longer exists. The
+> browse-and-pick SOS flow it belonged to was retired in favour of **Pronto SOS**
+> (`/api/sos/**`, see `backend/src/main/java/com/pronto/sos/README.md`), which is now the
+> product's only SOS behaviour: the platform matches and dispatches, professionals respond
+> that they are available, and the customer chooses among those who did. The specification
+> below is retained as a historical record of what was built in Milestone 4.
+
 
 Auth required: **yes**. Role: **CUSTOMER**.
 
@@ -1306,6 +1322,12 @@ against the real code, §0.1 above).
 ---
 
 ### 2.14 `PUT /api/availability/sos-availability` — new, Milestone 4, `availability` package
+
+> **Still live.** The professional's SOS on/off toggle survived the removal of the
+> browse-and-pick flow: `sos_availability` is a hard eligibility filter in Pronto SOS
+> matching (`SosCandidateRepository.findEligible`), so this endpoint is now more
+> load-bearing than it was, not less.
+
 
 Auth required: **yes**. Role: **PROFESSIONAL**.
 

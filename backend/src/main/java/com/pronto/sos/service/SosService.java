@@ -64,14 +64,6 @@ public class SosService {
 
     private static final Logger log = LoggerFactory.getLogger(SosService.class);
 
-    /**
-     * How long a selected professional has to confirm before the request expires. Distinct from
-     * the offer TTL — they already said yes, so this is about them still being reachable, and a
-     * customer left staring at "waiting for confirmation" is the worst state in the flow.
-     * Deliberately generous relative to the other windows.
-     */
-    private static final Duration CONFIRMATION_GRACE = Duration.ofMinutes(3);
-
     private final SosRequestRepository sosRequestRepository;
     private final SosOfferRepository sosOfferRepository;
     private final IssueRepository issueRepository;
@@ -131,6 +123,29 @@ public class SosService {
      * <p>The issue is <b>not</b> transitioned to {@code BOOKED} here. It becomes booked at
      * selection, when a real order exists — a dispatch that fails to find anyone must leave the
      * issue open so the customer can fall back to the standard booking flow.
+     *
+     * <h2>Retry</h2>
+     *
+     * An SOS request is <b>an attempt to find someone, not the problem itself</b>. The problem is
+     * the {@code issues} row, and it keeps its category, description, photos, AI brief and
+     * address across as many attempts as it takes. So this method deliberately permits a second,
+     * third or fourth SOS request on the same issue once the previous attempt has finished:
+     *
+     * <pre>
+     *   issue 42 -> SOS #1 EXPIRED   (nobody answered)
+     *   issue 42 -> SOS #2 FAILED    (nobody eligible at that hour)
+     *   issue 42 -> SOS #3 MATCHING  <- allowed; the customer re-describes nothing
+     * </pre>
+     *
+     * What is refused is a <em>concurrent</em> attempt: at most one non-terminal
+     * {@code sos_requests} row may exist per issue at a time, or one problem would fan out two
+     * competing dispatch waves and two sets of offers to the same professionals. That invariant
+     * is enforced by {@code ux_sos_requests_active_issue} in the database, not by this
+     * pre-check — see {@code V36__replace_sos_request_issue_uniqueness.sql}.
+     *
+     * <p>Retry works for all three terminal failures because each leaves the issue bookable:
+     * {@code EXPIRED} and {@code CANCELLED} run {@code IssueRepository.revertToOpen}, and
+     * {@code FAILED} never booked the issue in the first place.
      */
     @Transactional
     public SosRequestResponse create(Long callerId, CreateSosRequestRequest request) {
@@ -148,11 +163,13 @@ public class SosService {
             throw new ApiException(ErrorCode.ISSUE_NOT_BOOKABLE,
                     "Issue " + issue.getId() + " is not open.");
         }
-        // Fast, friendly pre-check. ux_sos_requests_issue below is the authoritative guard
-        // against two concurrent activations for the same issue.
-        if (sosRequestRepository.existsByIssueId(issue.getId())) {
+        // Fast, friendly pre-check. ux_sos_requests_active_issue (V36) is the authoritative
+        // guard against two concurrent activations for the same issue. Note "active", not
+        // "any": a previous attempt that expired, failed or was cancelled must not block a
+        // retry -- see this method's Javadoc.
+        if (sosRequestRepository.existsActiveByIssueId(issue.getId())) {
             throw new ApiException(ErrorCode.SOS_REQUEST_ALREADY_EXISTS,
-                    "An SOS request already exists for issue " + issue.getId() + ".");
+                    "An SOS request is already in progress for issue " + issue.getId() + ".");
         }
 
         SosUrgency urgency = request.urgency() == null ? SosUrgency.URGENT : request.urgency();
@@ -163,10 +180,11 @@ public class SosService {
         try {
             sosRequest = sosRequestRepository.saveAndFlush(sosRequest);
         } catch (DataIntegrityViolationException e) {
-            // ux_sos_requests_issue -- a double-tapped SOS button, where both requests passed the
-            // pre-check above before either committed.
+            // ux_sos_requests_active_issue -- a double-tapped SOS button, or two retries racing
+            // each other, where both passed the pre-check above before either committed. The
+            // partial unique index is what actually decides which one wins.
             throw new ApiException(ErrorCode.SOS_REQUEST_ALREADY_EXISTS,
-                    "An SOS request already exists for issue " + issue.getId() + ".");
+                    "An SOS request is already in progress for issue " + issue.getId() + ".");
         }
 
         sosEventService.recordCustomer(sosRequest.getId(), callerId, SosEventType.SOS_CREATED, null,
@@ -190,7 +208,7 @@ public class SosService {
         log.info("sos.created sosRequestId={} issueId={} customerId={} urgency={} offersDispatched={}",
                 sosRequest.getId(), issue.getId(), callerId, urgency, dispatched);
 
-        return assembler.toRequestResponse(reload(sosRequest.getId()));
+        return assembler.toRequestResponse(reload(sosRequest.getId()), SosAddressAccess.FULL);
     }
 
     // ------------------------------------------------------------------
@@ -201,12 +219,17 @@ public class SosService {
      * {@code GET /api/sos/requests/{id}}. Readable by the owning customer, and by any
      * professional who was sent an offer on it — a professional deciding whether to accept
      * needs to see the job, and one who was selected needs to track it.
+     *
+     * <p><b>Readable is not the same as fully readable.</b> {@link #authorizeRead} returns how
+     * much of the address the caller has earned: the customer and the selected professional get
+     * the exact location, everybody else gets the city and nothing more. See
+     * {@link SosAddressAccess}.
      */
     @Transactional
     public SosRequestResponse getRequest(Long callerId, String callerRole, Long sosRequestId) {
         SosRequest request = loadRequest(sosRequestId);
-        authorizeRead(callerId, callerRole, request);
-        return assembler.toRequestResponse(enforceDeadlines(request));
+        SosAddressAccess access = authorizeRead(callerId, callerRole, request);
+        return assembler.toRequestResponse(enforceDeadlines(request), access);
     }
 
     /**
@@ -224,7 +247,13 @@ public class SosService {
                 ? sosRequestRepository.findBySelectedProfessionalIdOrderByCreatedAtDesc(
                         resolveProfessionalId(callerId))
                 : sosRequestRepository.findByCustomerIdOrderByCreatedAtDesc(callerId);
-        return new SosRequestsListResponse(requests.stream().map(assembler::toRequestResponse).toList());
+        // FULL for both roles, and safe for both: a customer only ever sees their own rows, and
+        // the professional query is filtered on selected_professional_id -- so a professional
+        // reaches this list only for jobs they were actually chosen for. An offered-but-not-
+        // selected professional's requests are not in it at all.
+        return new SosRequestsListResponse(requests.stream()
+                .map(request -> assembler.toRequestResponse(request, SosAddressAccess.FULL))
+                .toList());
     }
 
     /** {@code GET /api/sos/requests/{id}/events} — the timeline both parties see. */
@@ -353,8 +382,10 @@ public class SosService {
         // same orders/reviews/history machinery every other booking uses rather than in a
         // parallel one. Created PENDING: the professional's confirmation is what accepts it,
         // mirroring the standard order flow's PENDING -> CONFIRMED accept step.
-        // bookedStart = now (SOS has no scheduled time), bookedEnd/slotId = null -- the same
-        // shape BookingsService.createSosOrder already writes for the browse-and-pick path.
+        // bookedStart = now (SOS has no scheduled time), bookedEnd/slotId = null: an SOS job
+        // never consumes an availability window. This is now the only writer of an order with
+        // that shape -- BookingsService.createSosOrder wrote the same one until the
+        // browse-and-pick flow was removed.
         BigDecimal visitFee = offer.getVisitFee();
         BigDecimal finalPrice = (visitFee == null ? BigDecimal.ZERO : visitFee).add(offer.getSosFee());
         Order order = orderRepository.saveAndFlush(new Order(current.getIssueId(), callerId,
@@ -401,7 +432,7 @@ public class SosService {
 
         log.info("sos.selected sosRequestId={} offerId={} professionalId={} orderId={}",
                 sosRequestId, offerId, professional.getId(), order.getId());
-        return assembler.toRequestResponse(reload(sosRequestId));
+        return assembler.toRequestResponse(reload(sosRequestId), SosAddressAccess.FULL);
     }
 
     // ------------------------------------------------------------------
@@ -443,7 +474,7 @@ public class SosService {
         notifyCounterparty(current, actor, NotificationMessageType.SOS_CANCELLED);
 
         log.info("sos.cancelled sosRequestId={} by={} fromStatus={}", sosRequestId, actor, expected);
-        return assembler.toRequestResponse(reload(sosRequestId));
+        return assembler.toRequestResponse(reload(sosRequestId), SosAddressAccess.FULL);
     }
 
     // ------------------------------------------------------------------
@@ -570,12 +601,13 @@ public class SosService {
     }
 
     /**
-     * Sweep input: requests whose selected professional never confirmed. See
-     * {@link #CONFIRMATION_GRACE}.
+     * Sweep input: requests whose selected professional never confirmed within
+     * {@code pronto.sos.confirmation-grace-seconds}.
      */
     @Transactional(readOnly = true)
     public List<Long> findUnconfirmedSelectionIds() {
-        return sosRequestRepository.findUnconfirmedSelectionIds(Instant.now().minus(CONFIRMATION_GRACE));
+        Instant cutoff = Instant.now().minus(Duration.ofSeconds(properties.getConfirmationGraceSeconds()));
+        return sosRequestRepository.findUnconfirmedSelectionIds(cutoff);
     }
 
     /**
@@ -599,10 +631,62 @@ public class SosService {
                 "The selected professional did not confirm in time.");
     }
 
-    /** Sweep action: close individually-overdue offers. Returns the number closed. */
+    /** Sweep input: offers past their own {@code expiresAt} that nobody has answered. */
+    @Transactional(readOnly = true)
+    public List<Long> findOverdueOfferIds() {
+        return sosOfferRepository.findOverdueOpenOfferIds(Instant.now());
+    }
+
+    /**
+     * Sweep action for one lapsed offer: close it, and <b>tell the professional it was sent to</b>.
+     *
+     * <p>This used to be a single bulk {@code UPDATE} across every overdue offer, which closed
+     * them correctly and silently. Silently was the problem — the professional's inbox kept
+     * rendering a card that could no longer be accepted until they tapped it and got a
+     * {@code 410}. Now each offer gets the same treatment every other SOS transition gets: a
+     * guarded status change, an {@code sos_events} row, and (via the realtime layer, after
+     * commit) a push to exactly one recipient.
+     *
+     * <p><b>Idempotent by construction.</b> Everything below is gated on
+     * {@code expireOfferIfOpen} returning 1 row. Two overlapping sweeps, or a sweep racing a
+     * professional's {@code accept}, produce exactly one winner — the loser returns here having
+     * written nothing at all, so there is no second event and no duplicate notification.
+     *
+     * <p><b>Deliberately nothing for the customer.</b> "Professional X did not respond" is not
+     * information a customer with a burst pipe can act on, and it reframes a normal, expected
+     * outcome as a failure. Their view of dispatch stays aggregate — how many are available, and
+     * when they can choose. {@code SosRealtimePublisher} enforces that; see its
+     * {@code OFFER_EXPIRED} branch.
+     *
+     * @return {@code true} if this call is the one that expired the offer
+     */
     @Transactional
-    public int expireOverdueOffers() {
-        return sosOfferRepository.expireOverdueOffers(Instant.now());
+    public boolean expireOffer(Long offerId) {
+        Instant now = Instant.now();
+        if (sosOfferRepository.expireOfferIfOpen(offerId, now) == 0) {
+            return false;
+        }
+        SosOffer offer = sosOfferRepository.findById(offerId).orElse(null);
+        if (offer == null) {
+            return false;
+        }
+
+        SosRequest request = sosRequestRepository.findById(offer.getSosRequestId()).orElse(null);
+        SosRequestStatus requestStatus = request == null ? null : request.getStatus();
+        // actorType SYSTEM, not PROFESSIONAL: nobody did anything -- a clock ran out. The
+        // professional and offer ids still ride along, because they are what makes this row
+        // addressable to one recipient rather than to the whole request.
+        sosEventService.record(offer.getSosRequestId(), SosEventType.OFFER_EXPIRED, SosActorType.SYSTEM, null,
+                offer.getProfessionalId(), offerId, requestStatus, null,
+                "Offer expired without a response");
+
+        professionalRepository.findById(offer.getProfessionalId()).ifPresent(professional ->
+                notificationService.recordSosNotification(offer.getSosRequestId(), professional.getUserId(),
+                        NotificationMessageType.SOS_OFFER_EXPIRED));
+
+        log.info("sos.offer.expired sosRequestId={} offerId={} professionalId={}",
+                offer.getSosRequestId(), offerId, offer.getProfessionalId());
+        return true;
     }
 
     // ------------------------------------------------------------------
@@ -623,16 +707,29 @@ public class SosService {
      * A customer may read their own request; a professional may read one they were offered.
      * Deliberately broader than the write rules — visibility of a job you were asked about is
      * not the same authority as the right to change it.
+     *
+     * @return how much of the service address this caller may see. The customer always gets
+     *         {@link SosAddressAccess#FULL}; a professional gets it only once
+     *         {@code selected_professional_id} is them. An offered professional — including one
+     *         who has already responded {@code ACCEPTED} — gets
+     *         {@link SosAddressAccess#CITY_ONLY}, because being available is not being chosen.
+     * @throws com.pronto.common.exception.ApiException {@code 403} if the caller is neither the
+     *         customer nor a professional holding an offer on this request
      */
-    private void authorizeRead(Long callerId, String callerRole, SosRequest request) {
+    private SosAddressAccess authorizeRead(Long callerId, String callerRole, SosRequest request) {
         if (request.getCustomerId().equals(callerId)) {
-            return;
+            return SosAddressAccess.FULL;
         }
         if (UserRole.PROFESSIONAL.name().equals(callerRole)) {
             Optional<Professional> professional = professionalRepository.findByUserId(callerId);
             if (professional.isPresent() && sosOfferRepository
                     .findBySosRequestIdAndProfessionalId(request.getId(), professional.get().getId()).isPresent()) {
-                return;
+                // Read off the request rather than off the offer's status: selection is what
+                // grants the address, and sos_requests.selected_professional_id is the single
+                // field that records it.
+                return professional.get().getId().equals(request.getSelectedProfessionalId())
+                        ? SosAddressAccess.FULL
+                        : SosAddressAccess.CITY_ONLY;
             }
         }
         throw forbidden();

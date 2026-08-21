@@ -2,14 +2,11 @@ package com.pronto.bookings.service;
 
 import com.pronto.availability.dto.CalendarSegment;
 import com.pronto.availability.dto.SegmentType;
-import com.pronto.availability.entity.SosAvailability;
 import com.pronto.availability.repository.AvailabilitySlotRepository;
-import com.pronto.availability.repository.SosAvailabilityRepository;
 import com.pronto.availability.service.AvailabilityDerivationService;
 import com.pronto.bookings.dto.AvailableWindow;
 import com.pronto.bookings.dto.AvailableWindowsResponse;
 import com.pronto.bookings.dto.CreateOrderRequest;
-import com.pronto.bookings.dto.CreateSosOrderRequest;
 import com.pronto.bookings.dto.OrderDetailResponse;
 import com.pronto.bookings.dto.OrderResponse;
 import com.pronto.bookings.dto.OrderSummaryResponse;
@@ -70,21 +67,12 @@ public class BookingsService {
     private static final Duration SOS_PENDING_TIMEOUT = Duration.ofMinutes(5);
 
     /**
-     * Flat SOS surcharge added on top of a professional's {@code basePrice} for an SOS order.
-     * A placeholder/approximation business figure (not sourced from any pricing model) —
-     * always {@code 0.00} for Standard orders. See approved reviews/favorites/matching design
-     * §7.
-     */
-    private static final BigDecimal SOS_SURCHARGE_AMOUNT = new BigDecimal("50.00");
-
-    /**
      * §9.2.1 of the professional weekly availability calendar design — the fixed default job
      * duration used to derive a Standard order's {@code bookedEnd} server-side from the
      * customer-chosen {@code bookedStart}.
      *
      * <p><b>Explicitly flagged as a placeholder business figure, not a sourced product
-     * requirement</b> — same treatment as {@link #SOS_SURCHARGE_AMOUNT} above, for an
-     * analogous made-up-for-MVP figure. 60 minutes is a genuine product decision made in the
+     * requirement</b> — an analogous made-up-for-MVP figure. 60 minutes is a genuine product decision made in the
      * calendar design document itself (design §9.2.1), with no PRD/poster/OnePage backing —
      * every architecture doc was grepped for "hour"/"minute"/"duration" during that design
      * pass and turned up no pre-existing job-duration convention anywhere in this codebase.
@@ -119,7 +107,6 @@ public class BookingsService {
     private final ProfessionalRepository professionalRepository;
     private final ProfessionalListingRepository professionalListingRepository;
     private final AvailabilitySlotRepository availabilitySlotRepository;
-    private final SosAvailabilityRepository sosAvailabilityRepository;
     private final OrderRepository orderRepository;
     private final UserRepository userRepository;
     private final NotificationService notificationService;
@@ -131,7 +118,6 @@ public class BookingsService {
                             ProfessionalRepository professionalRepository,
                             ProfessionalListingRepository professionalListingRepository,
                             AvailabilitySlotRepository availabilitySlotRepository,
-                            SosAvailabilityRepository sosAvailabilityRepository,
                             OrderRepository orderRepository,
                             UserRepository userRepository,
                             NotificationService notificationService,
@@ -142,7 +128,6 @@ public class BookingsService {
         this.professionalRepository = professionalRepository;
         this.professionalListingRepository = professionalListingRepository;
         this.availabilitySlotRepository = availabilitySlotRepository;
-        this.sosAvailabilityRepository = sosAvailabilityRepository;
         this.orderRepository = orderRepository;
         this.userRepository = userRepository;
         this.notificationService = notificationService;
@@ -346,86 +331,6 @@ public class BookingsService {
         return null;
     }
 
-    /** §2.12, extended with the service-location/sort matching design. */
-    @Transactional(readOnly = true)
-    public ProfessionalListingResponse listSosProfessionals(Long callerId, Long issueId, ServiceLocation location,
-                                                              String sortParam) {
-        Issue issue = loadIssue(issueId);
-        if (!issue.getCustomerId().equals(callerId)) {
-            throw forbidden();
-        }
-        if (issue.getUrgencyType() != IssueUrgencyType.SOS) {
-            throw urgencyMismatch(issue.getId());
-        }
-        if (issue.getStatus() != IssueStatus.OPEN) {
-            throw notBookable(issue.getId());
-        }
-        List<ProfessionalCard> professionals =
-                professionalListingRepository.listSosAvailableByCategory(issue.getCategoryId(), callerId);
-        professionals = enrichAndSort(callerId, professionals, location, parseSort(sortParam, ProfessionalSort.CHEAPEST));
-        return new ProfessionalListingResponse(issue.getId(), issue.getCategoryId(), professionals);
-    }
-
-    /** §2.13, extended with the service-address snapshot and SOS surcharge. */
-    @Transactional
-    public OrderResponse createSosOrder(Long callerId, CreateSosOrderRequest request) {
-        Issue issue = issueRepository.findById(request.issueId())
-                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND,
-                        "Issue " + request.issueId() + " not found."));
-        if (!issue.getCustomerId().equals(callerId)) {
-            throw forbidden();
-        }
-        if (issue.getUrgencyType() != IssueUrgencyType.SOS) {
-            throw urgencyMismatch(issue.getId());
-        }
-        if (issue.getStatus() != IssueStatus.OPEN) {
-            throw notBookable(issue.getId());
-        }
-
-        Professional professional = professionalRepository.findById(request.professionalId()).orElse(null);
-        if (professional == null || !isProfessionalActive(professional)) {
-            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
-                    List.of(new FieldError("professionalId", "must reference an existing, active professional")));
-        }
-        if (!professional.getCategoryId().equals(issue.getCategoryId())) {
-            throw categoryMismatch();
-        }
-
-        // Step 9: plain read-check of the professional's SOS availability -- not an atomic
-        // claim (§2.13's "why a plain read-check" note; sos_availability is a live signal,
-        // not a single-consumer resource like an availability_slots row).
-        boolean available = sosAvailabilityRepository.findById(professional.getId())
-                .map(SosAvailability::isAvailable)
-                .orElse(false);
-        if (!available) {
-            throw sosProfessionalUnavailable(professional.getId());
-        }
-
-        Instant now = Instant.now();
-
-        // Step 10: atomically transition the issue -- same bookIfOpen mechanism as §2.4 step 10.
-        int booked = issueRepository.bookIfOpen(issue.getId(), now);
-        if (booked == 0) {
-            throw notBookable(issue.getId());
-        }
-
-        // Step 11: insert the order. bookedStart = now (request time), bookedEnd = null,
-        // slotId = null -- SOS never consumes an availability_slots row. sosSurcharge is
-        // always SOS_SURCHARGE_AMOUNT for an SOS order.
-        BigDecimal basePriceSnapshot = professional.getBasePrice();
-        BigDecimal sosSurcharge = SOS_SURCHARGE_AMOUNT;
-        BigDecimal finalPrice = basePriceSnapshot == null ? null : basePriceSnapshot.add(sosSurcharge);
-        Order order = new Order(issue.getId(), callerId, professional.getId(), now, null, finalPrice, null,
-                request.serviceCity(), request.serviceStreet(), request.serviceHouseNumber(),
-                request.serviceApartment(), request.serviceFloor(), request.serviceEntrance(),
-                request.serviceAddressNotes(), basePriceSnapshot, sosSurcharge);
-        order = orderRepository.save(order);
-
-        notificationService.recordOrderNotification(order.getId(), professional.getUserId(),
-                NotificationMessageType.ORDER_CREATED);
-        return toOrderResponse(order);
-    }
-
     /** §2.5. */
     @Transactional
     public OrderResponse accept(Long callerId, Long orderId) {
@@ -543,7 +448,7 @@ public class BookingsService {
             throw orderNotOnTheWay(orderId);
         }
         // §3.3's single-active-order invariant guarantees this always affects 1 row when
-        // reached -- not branched on/checked, same as expireIfPending's call to expireIfBooked.
+        // reached -- not branched on/checked, same as expireIfPending's call to reopenIfBooked.
         issueRepository.completeIfBooked(order.getIssueId(), now);
         notificationService.recordOrderNotification(orderId, order.getCustomerId(),
                 NotificationMessageType.ORDER_COMPLETED);
@@ -620,6 +525,13 @@ public class BookingsService {
      * affected rows just means another caller already moved the order out of {@code PENDING},
      * treated as a normal, silent outcome (no {@link ApiException}, no HTTP caller to report a
      * {@code 409} to).
+     *
+     * <p><b>The issue is reopened, not expired.</b> Everything the customer already gave us —
+     * description, photos, AI classification, category, sub-service, address — belongs to the
+     * {@code issues} row and is left completely untouched; only the order is terminal. The
+     * customer's recovery is therefore "pick a different professional for the same problem"
+     * ({@code /issues/{issueId}/booking}), not "start over". See
+     * {@code IssueRepository.reopenIfBooked}.
      */
     @Transactional
     public Optional<OrderResponse> expireIfPending(Long orderId) {
@@ -630,7 +542,7 @@ public class BookingsService {
         }
         Order order = loadOrder(orderId);
         // §3.3's single-active-order invariant guarantees this always affects 1 row when reached.
-        issueRepository.expireIfBooked(order.getIssueId(), now);
+        issueRepository.reopenIfBooked(order.getIssueId(), now);
         // Same §3.4 slot-release mechanism reject/cancel already use; safe no-op for SOS orders.
         availabilitySlotRepository.releaseSlot(order.getSlotId(), now);
         notificationService.recordOrderNotification(orderId, order.getCustomerId(), NotificationMessageType.ORDER_EXPIRED);
@@ -802,11 +714,6 @@ public class BookingsService {
     private ApiException urgencyMismatch(Long issueId) {
         return new ApiException(ErrorCode.ISSUE_URGENCY_MISMATCH,
                 "Issue " + issueId + "'s urgency type does not match this booking path.");
-    }
-
-    private ApiException sosProfessionalUnavailable(Long professionalId) {
-        return new ApiException(ErrorCode.SOS_PROFESSIONAL_UNAVAILABLE,
-                "Professional " + professionalId + " is not currently available for SOS work.");
     }
 
     private ApiException categoryMismatch() {

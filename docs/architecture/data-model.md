@@ -797,15 +797,18 @@ task brief's instruction not to silently pick an interpretation.
      completion does **not** expire via this mechanism; that alternative was explicitly
      considered and not chosen. Enforcing this requires a background sweep — see the
      implementation-dependency note below.
-   - **`issues.status = 'EXPIRED'`**: an issue transitions to `EXPIRED` when its
-     most-recent/active order transitions to `orders.order_status = 'EXPIRED'` **and** the
-     customer has not created a replacement order for the same issue. Concretely: on an
-     order's `PENDING → EXPIRED` transition, set `issues.status = 'EXPIRED'` unless/until
-     the customer rebooks (in which case the normal `OPEN`/`BOOKED` lifecycle applies to
-     the new order, exactly as with any other reject-and-rebook case per §3.4.9/§3.5.6).
-     This mirrors the existing `CANCELLED`-vs-`OPEN` split: order-level expiry is a single
-     order's terminal state; issue-level expiry is what the issue becomes if the customer
-     doesn't act on that expiry by rebooking.
+   - **`issues.status = 'EXPIRED'` — SUPERSEDED (product decision, 2026-08-21).** No code
+     path writes this value any more. On an order's `PENDING → EXPIRED` transition the issue
+     is returned to **`OPEN`** (`IssueRepository.reopenIfBooked`), so the customer picks a
+     different professional for the *same* issue rather than losing the description, photos
+     and AI classification they already provided because a professional failed to answer.
+     Order-level expiry stays exactly as specified above and remains in history; issue-level
+     expiry no longer exists. The enum value is retained only so rows written before this
+     change still map. The single-active-order invariant is unaffected — `bookIfOpen`
+     remains the only `OPEN → BOOKED` transition and only one caller can win it.
+
+     _(Original ruling, kept for the record: an issue transitioned to `EXPIRED` when its
+     most-recent/active order expired and the customer had not rebooked.)_
 
    **Timeout duration — flagged recommendation, needs sign-off, not decided.** No source
    document specifies a duration; the user specified the trigger condition (PENDING +

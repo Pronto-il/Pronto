@@ -2,11 +2,9 @@ package com.pronto.bookings.service;
 
 import com.pronto.availability.dto.CalendarSegment;
 import com.pronto.availability.repository.AvailabilitySlotRepository;
-import com.pronto.availability.repository.SosAvailabilityRepository;
 import com.pronto.availability.service.AvailabilityDerivationService;
 import com.pronto.bookings.dto.AvailableWindowsResponse;
 import com.pronto.bookings.dto.CreateOrderRequest;
-import com.pronto.bookings.dto.CreateSosOrderRequest;
 import com.pronto.bookings.dto.OrderDetailResponse;
 import com.pronto.bookings.dto.OrderResponse;
 import com.pronto.bookings.dto.ProfessionalCard;
@@ -24,6 +22,7 @@ import com.pronto.issues.repository.IssueRepository;
 import com.pronto.matching.DistanceEtaStrategy;
 import com.pronto.matching.EtaResult;
 import com.pronto.matching.ServiceLocation;
+import com.pronto.notifications.entity.NotificationMessageType;
 import com.pronto.notifications.service.NotificationService;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRepository;
@@ -72,7 +71,6 @@ class BookingsServiceTest {
     private ProfessionalRepository professionalRepository;
     private ProfessionalListingRepository professionalListingRepository;
     private AvailabilitySlotRepository availabilitySlotRepository;
-    private SosAvailabilityRepository sosAvailabilityRepository;
     private OrderRepository orderRepository;
     private UserRepository userRepository;
     private NotificationService notificationService;
@@ -87,7 +85,6 @@ class BookingsServiceTest {
         professionalRepository = Mockito.mock(ProfessionalRepository.class);
         professionalListingRepository = Mockito.mock(ProfessionalListingRepository.class);
         availabilitySlotRepository = Mockito.mock(AvailabilitySlotRepository.class);
-        sosAvailabilityRepository = Mockito.mock(SosAvailabilityRepository.class);
         orderRepository = Mockito.mock(OrderRepository.class);
         userRepository = Mockito.mock(UserRepository.class);
         notificationService = Mockito.mock(NotificationService.class);
@@ -95,7 +92,7 @@ class BookingsServiceTest {
         storageService = Mockito.mock(StorageService.class);
         availabilityDerivationService = Mockito.mock(AvailabilityDerivationService.class);
         bookingsService = new BookingsService(issueRepository, professionalRepository, professionalListingRepository,
-                availabilitySlotRepository, sosAvailabilityRepository, orderRepository, userRepository,
+                availabilitySlotRepository, orderRepository, userRepository,
                 notificationService, distanceEtaStrategy, storageService, availabilityDerivationService);
     }
 
@@ -415,30 +412,6 @@ class BookingsServiceTest {
         assertThat(response.customerPhone()).isEqualTo("0501234567");
     }
 
-    @Test
-    void createSosOrder_hasSurchargeAndFinalPriceIncludesIt() {
-        Issue issue = openIssue(IssueUrgencyType.SOS);
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
-        Professional professional = activeProfessional();
-        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
-        when(userRepository.findById(99L)).thenReturn(Optional.of(activeUser(99L)));
-        com.pronto.availability.entity.SosAvailability sosAvailability =
-                new com.pronto.availability.entity.SosAvailability(PROFESSIONAL_ID);
-        setField(sosAvailability, "isAvailable", true);
-        when(sosAvailabilityRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(sosAvailability));
-        when(issueRepository.bookIfOpen(eq(ISSUE_ID), any())).thenReturn(1);
-        when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        CreateSosOrderRequest request = new CreateSosOrderRequest(ISSUE_ID, PROFESSIONAL_ID,
-                "Haifa", "Ben Gurion", "5", "3B", null, null, null);
-        OrderResponse response = bookingsService.createSosOrder(CUSTOMER_ID, request);
-
-        assertThat(response.sosSurcharge()).isEqualByComparingTo("50.00");
-        assertThat(response.basePriceSnapshot()).isEqualByComparingTo("100.00");
-        assertThat(response.finalPrice()).isEqualByComparingTo("150.00");
-        assertThat(response.serviceApartment()).isEqualTo("3B");
-    }
-
     // ---- service-address snapshot independence ----
 
     @Test
@@ -596,5 +569,110 @@ class BookingsServiceTest {
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.FORBIDDEN));
 
         verify(orderRepository, never()).onTheWayIfConfirmed(anyLong(), any(), any());
+    }
+
+    // ------------------------------------------------------------------
+    // Expired-order recovery: the issue survives, the order does not
+    // ------------------------------------------------------------------
+
+    /**
+     * <b>The behaviour change this section exists for.</b> An order timing out used to expire its
+     * issue too ({@code IssueStatus.EXPIRED}), which threw away a description, photos, an AI
+     * classification and an address the customer had already provided — all because a
+     * professional failed to answer within 15 minutes. The customer's only route forward was to
+     * report the same problem from scratch.
+     *
+     * <p>Now the issue is reopened, so the customer can pick a different professional for the
+     * same problem. The expired order stays exactly where it is, in history.
+     */
+    @Test
+    void expireIfPending_reopensTheIssueSoItCanBeBookedAgain() {
+        Order order = pendingOrder();
+        when(orderRepository.expireIfPending(eq(ORDER_ID), any())).thenReturn(1);
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+
+        Optional<OrderResponse> response = bookingsService.expireIfPending(ORDER_ID);
+
+        assertThat(response).isPresent();
+        verify(issueRepository).reopenIfBooked(eq(ISSUE_ID), any());
+        // The order itself is untouched beyond its own status transition -- nothing deletes or
+        // rewrites it, and the customer can still open it from their history.
+        assertThat(response.get().issueId()).isEqualTo(ISSUE_ID);
+    }
+
+    /**
+     * {@code issueId} on the response is what the frontend's "בחירת בעל מקצוע אחר" action
+     * navigates by ({@code /issues/{issueId}/booking}), so it being present is a contract, not an
+     * incidental field.
+     */
+    @Test
+    void expireIfPending_responseCarriesTheIssueIdTheRecoveryFlowNavigatesBy() {
+        Order order = pendingOrder();
+        when(orderRepository.expireIfPending(eq(ORDER_ID), any())).thenReturn(1);
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+
+        OrderResponse response = bookingsService.expireIfPending(ORDER_ID).orElseThrow();
+
+        assertThat(response.issueId()).isEqualTo(ISSUE_ID);
+        assertThat(response.id()).isEqualTo(ORDER_ID);
+    }
+
+    /** The customer is still told, exactly as before — only the issue's fate changed. */
+    @Test
+    void expireIfPending_stillNotifiesTheCustomer() {
+        when(orderRepository.expireIfPending(eq(ORDER_ID), any())).thenReturn(1);
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(pendingOrder()));
+
+        bookingsService.expireIfPending(ORDER_ID);
+
+        verify(notificationService).recordOrderNotification(ORDER_ID, CUSTOMER_ID,
+                NotificationMessageType.ORDER_EXPIRED);
+    }
+
+    /**
+     * Losing the race (somebody accepted or cancelled first) must touch nothing at all — in
+     * particular it must not reopen an issue that now has a live confirmed order on it.
+     */
+    @Test
+    void expireIfPending_losingTheRaceLeavesTheIssueAlone() {
+        when(orderRepository.expireIfPending(eq(ORDER_ID), any())).thenReturn(0);
+
+        assertThat(bookingsService.expireIfPending(ORDER_ID)).isEmpty();
+
+        verify(issueRepository, never()).reopenIfBooked(anyLong(), any());
+        verify(notificationService, never()).recordOrderNotification(anyLong(), anyLong(), any());
+    }
+
+    /**
+     * The invariant that must survive the change: reopening restores bookability, it does not
+     * hand out a second concurrent order. {@code bookIfOpen} is still the only way out of
+     * {@code OPEN}, and a caller that loses it gets nothing.
+     */
+    @Test
+    void afterReopening_aSecondConcurrentOrderIsStillBlockedByBookIfOpen() {
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(activeProfessional()));
+        when(userRepository.findById(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(activeUser(PROFESSIONAL_USER_ID)));
+        stubFullyAvailable();
+        // Somebody else won the OPEN -> BOOKED transition in between.
+        when(issueRepository.bookIfOpen(eq(ISSUE_ID), any())).thenReturn(0);
+
+        CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID,
+                Instant.now().plus(1, ChronoUnit.DAYS), "Tel Aviv", "Herzl", "10", null, null, null, null);
+        assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.ISSUE_NOT_BOOKABLE));
+
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    private Order pendingOrder() {
+        Order order = new Order(ISSUE_ID, CUSTOMER_ID, PROFESSIONAL_ID, Instant.now(), null,
+                new BigDecimal("100.00"), null, "Tel Aviv", "Herzl", "10", null, null, null, null,
+                new BigDecimal("100.00"), BigDecimal.ZERO);
+        setField(order, "id", ORDER_ID);
+        setField(order, "orderStatus", OrderStatus.PENDING);
+        return order;
     }
 }

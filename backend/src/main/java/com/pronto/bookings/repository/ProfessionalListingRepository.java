@@ -54,25 +54,4 @@ public interface ProfessionalListingRepository extends Repository<Professional, 
             + "ORDER BY p.basePrice ASC")
     List<ProfessionalCard> listByCategory(@Param("categoryId") Long categoryId, @Param("customerId") Long customerId);
 
-    /**
-     * §2.12 step 7: {@code professionals} joined to {@code users} (same soft-delete exclusion
-     * as {@link #listByCategory}) and joined to {@code sos_availability} where
-     * {@code category_id = issue.categoryId} and {@code sos_availability.is_available = true}.
-     * A professional with no {@code sos_availability} row at all is excluded by the join (in
-     * practice shouldn't occur — every professional gets one at registration time). Ordered by
-     * {@code base_price ASC}, same judgment call as {@link #listByCategory}, made
-     * independently (§7 of the contract doc).
-     */
-    @Query("SELECT new com.pronto.bookings.dto.ProfessionalCard(p.id, u.fullName, p.serviceArea, "
-            + "p.basePrice, p.reliabilityScore, p.city, p.profileImageKey, "
-            + "(SELECT AVG(r.rating) FROM com.pronto.reviews.entity.Review r WHERE r.professionalId = p.id), "
-            + "(SELECT COUNT(r) FROM com.pronto.reviews.entity.Review r WHERE r.professionalId = p.id), "
-            + "(SELECT COUNT(f) FROM com.pronto.favorites.entity.Favorite f "
-            + "WHERE f.customerId = :customerId AND f.professionalId = p.id)) "
-            + "FROM Professional p, com.pronto.users.entity.User u, com.pronto.availability.entity.SosAvailability s "
-            + "WHERE p.userId = u.id AND p.id = s.professionalId AND p.categoryId = :categoryId "
-            + "AND u.deletedAt IS NULL AND s.isAvailable = true "
-            + "ORDER BY p.basePrice ASC")
-    List<ProfessionalCard> listSosAvailableByCategory(@Param("categoryId") Long categoryId,
-                                                        @Param("customerId") Long customerId);
 }

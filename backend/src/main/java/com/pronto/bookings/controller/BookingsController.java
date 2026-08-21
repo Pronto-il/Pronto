@@ -2,7 +2,6 @@ package com.pronto.bookings.controller;
 
 import com.pronto.bookings.dto.AvailableWindowsResponse;
 import com.pronto.bookings.dto.CreateOrderRequest;
-import com.pronto.bookings.dto.CreateSosOrderRequest;
 import com.pronto.bookings.dto.OrderDetailResponse;
 import com.pronto.bookings.dto.OrderResponse;
 import com.pronto.bookings.dto.OrdersListResponse;
@@ -85,27 +84,6 @@ public class BookingsController {
     public ResponseEntity<OrderResponse> createOrder(@AuthenticationPrincipal AuthenticatedUser principal,
                                                        @Valid @RequestBody CreateOrderRequest request) {
         OrderResponse response = bookingsService.createOrder(principal.id(), request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
-    }
-
-    @GetMapping("/sos-professionals")
-    public ResponseEntity<ProfessionalListingResponse> listSosProfessionals(
-            @AuthenticationPrincipal AuthenticatedUser principal,
-            @RequestParam(name = "issueId", required = false) String issueIdRaw,
-            @RequestParam(name = "city", required = false) String city,
-            @RequestParam(name = "street", required = false) String street,
-            @RequestParam(name = "houseNumber", required = false) String houseNumber,
-            @RequestParam(name = "apartment", required = false) String apartment,
-            @RequestParam(name = "sort", required = false) String sort) {
-        Long issueId = parseQueryId(issueIdRaw, "issueId");
-        ServiceLocation location = parseServiceLocation(city, street, houseNumber, apartment);
-        return ResponseEntity.ok(bookingsService.listSosProfessionals(principal.id(), issueId, location, sort));
-    }
-
-    @PostMapping("/sos-orders")
-    public ResponseEntity<OrderResponse> createSosOrder(@AuthenticationPrincipal AuthenticatedUser principal,
-                                                          @Valid @RequestBody CreateSosOrderRequest request) {
-        OrderResponse response = bookingsService.createSosOrder(principal.id(), request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 

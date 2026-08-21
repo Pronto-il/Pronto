@@ -146,9 +146,12 @@ function describe(status: OrderStatus, professionalName: string, bookedLabel: st
       };
     case 'EXPIRED':
     default:
+      // Reworded alongside the backend change that reopens the issue on expiry instead of
+      // expiring it: "אפשר לפתוח בקשה חדשה" described a dead end that no longer exists, and
+      // would now actively mislead — the customer's issue is intact and immediately re-bookable.
       return {
         headline: 'הבקשה פגה',
-        support: 'לא התקבלה תשובה בזמן, אז סגרנו את הבקשה. אפשר לפתוח בקשה חדשה בכל רגע.',
+        support: `${professionalName} לא הגיבו בזמן, אז סגרנו את הבקשה. התקלה שלך עדיין פתוחה — אפשר לבחור בעל מקצוע אחר.`,
         mascot: 'idle',
         tone: 'ended',
       };

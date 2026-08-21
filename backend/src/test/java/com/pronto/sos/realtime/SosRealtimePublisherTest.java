@@ -536,6 +536,74 @@ class SosRealtimePublisherTest {
     }
 
     // ------------------------------------------------------------------
+    // Individual offer expiry
+    // ------------------------------------------------------------------
+
+    /**
+     * One professional's window closed. Exactly one recipient — and, critically, <b>not the
+     * customer</b>. "Professional X did not respond" is not actionable, names a stranger's
+     * business decision, and reframes the most ordinary outcome in a fan-out of eight as a
+     * failure. The customer's dispatch view stays aggregate.
+     */
+    @Test
+    void anExpiredOfferIsAnnouncedOnlyToItsOwnProfessional() {
+        request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
+        offer(201L, PRO_A, SosOfferStatus.EXPIRED);
+        offer(202L, PRO_B, SosOfferStatus.ACCEPTED);
+
+        publisher.publish(stubEvent(SosEventType.OFFER_EXPIRED, 201L, PRO_A));
+
+        assertThat(captureSends()).containsExactly(
+                Map.entry(PRO_A_USER, SosRealtimeEventType.SOS_OFFER_EXPIRED));
+    }
+
+    /**
+     * A lapsed offer must not be confused with a terminated request: the other professionals are
+     * still in the running and the customer may be about to choose between them.
+     */
+    @Test
+    void anExpiredOfferDoesNotLookLikeTheWholeRequestExpiring() {
+        request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
+        offer(201L, PRO_A, SosOfferStatus.EXPIRED);
+        offer(202L, PRO_B, SosOfferStatus.ACCEPTED);
+
+        publisher.publish(stubEvent(SosEventType.OFFER_EXPIRED, 201L, PRO_A));
+
+        assertThat(captureSends())
+                .extracting(Map.Entry::getValue)
+                .doesNotContain(SosRealtimeEventType.EXPIRED, SosRealtimeEventType.SOS_FAILED);
+        verify(delivery, never()).sendToUser(eq(PRO_B_USER), any());
+        verify(delivery, never()).sendToUser(eq(CUSTOMER_USER_ID), any());
+    }
+
+    /** The payload the professional's inbox needs to retire the card without a refetch. */
+    @Test
+    void theExpiredOfferPayloadIdentifiesTheOffer() {
+        request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
+        offer(201L, PRO_A, SosOfferStatus.EXPIRED);
+
+        publisher.publish(stubEvent(SosEventType.OFFER_EXPIRED, 201L, PRO_A));
+
+        ArgumentCaptor<SosRealtimeMessage> message = ArgumentCaptor.forClass(SosRealtimeMessage.class);
+        verify(delivery).sendToUser(eq(PRO_A_USER), message.capture());
+        assertThat(message.getValue().sosRequestId()).isEqualTo(REQUEST_ID);
+        assertThat(message.getValue().data())
+                .containsEntry("offerId", 201L)
+                .containsEntry("requestStatus", SosRequestStatus.WAITING_FOR_PROFESSIONALS.name())
+                .containsKey("expiredAt");
+    }
+
+    /** A malformed event (no offer named) must not fan out to anyone rather than guessing. */
+    @Test
+    void anOfferExpiryEventWithoutAnOfferIdPublishesNothing() {
+        request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
+
+        publisher.publish(stubEvent(SosEventType.OFFER_EXPIRED, null, PRO_A));
+
+        verify(delivery, never()).sendToUser(any(), any());
+    }
+
+    // ------------------------------------------------------------------
     // 11. Publishing happens after commit
     // ------------------------------------------------------------------
 

@@ -1,5 +1,21 @@
 # features/booking
 
+> **SOS status (2026-08-21).** The legacy browse-and-pick SOS flow — `SosBookingFlowPage`,
+> `SosBookingSummary` and the `getSosProfessionalsForIssue`/`createSosOrder` API calls behind them
+> — has been **deleted** along with its backend endpoints. Pronto SOS (`/api/sos/**`) is the only
+> SOS flow now, and its customer UI has **not been built yet**.
+>
+> `/issues/:issueId/sos-booking` currently renders `ProntoSosEntryPage`, a placeholder that makes
+> no API calls. **That component is the single hand-off point for the upcoming Pronto SOS frontend
+> task**; the two places that route to it are `features/issues/ProfessionMatchPage` and
+> `shared/hooks/bookingDraftContext.resolveDraftRoute`.
+>
+> Also changed: an `EXPIRED` order's tracking screen now offers "בחירת בעל מקצוע אחר" into
+> `/issues/{issueId}/booking` (the same issue, no re-classification) instead of sending the
+> customer to `/issues/new`. Every reference to the deleted SOS pages below this line is
+> historical.
+
+
 ## Purpose
 The Standard and SOS booking flows: choosing a professional, confirming a booking, and
 tracking its status.

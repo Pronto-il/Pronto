@@ -43,8 +43,18 @@ public enum ErrorCode {
 
     // Milestone 4 additions (SOS booking flow). See
     // docs/architecture/api-contract-bookings.md §2 "Milestone 4 additions".
+    //
+    // SOS_PROFESSIONAL_UNAVAILABLE was removed here along with the browse-and-pick SOS flow:
+    // it meant "the professional you picked toggled their SOS availability off between the
+    // listing and your order", which is only expressible in a flow where the customer picks a
+    // professional by name. Pronto SOS has no such moment -- availability is an eligibility
+    // filter at dispatch, and the customer only ever chooses from professionals who have
+    // actively said yes to this specific job. Deleted rather than kept vestigial (unlike
+    // BOOKING_TIME_UNAVAILABLE below) because the endpoint that raised it no longer exists.
+    //
+    // ISSUE_URGENCY_MISMATCH is NOT legacy -- sos.service.SosService still raises it when an
+    // SOS request is activated on a STANDARD issue, and BookingsService raises it in reverse.
     ISSUE_URGENCY_MISMATCH(HttpStatus.CONFLICT),
-    SOS_PROFESSIONAL_UNAVAILABLE(HttpStatus.CONFLICT),
 
     // Milestone 6 additions (job-status progression). See
     // docs/architecture/api-contract-bookings.md §2 "Milestone 6 additions".
@@ -79,12 +89,23 @@ public enum ErrorCode {
     // path once no caller can supply a slotId anymore.
     BOOKING_TIME_UNAVAILABLE(HttpStatus.CONFLICT),
 
-    // Pronto SOS (broadcast-and-choose urgent dispatch). See the sos package README.
-    /** An SOS request already exists for this issue ({@code ux_sos_requests_issue}). */
+    // Pronto SOS (broadcast-and-choose urgent dispatch) — the only SOS flow. See the sos README.
+    /**
+     * An SOS attempt is <b>already in progress</b> for this issue
+     * ({@code ux_sos_requests_active_issue}, V36). Deliberately not "an SOS request has ever
+     * existed": a previous attempt that expired, failed or was cancelled is history and must not
+     * block a retry on the same issue.
+     */
     SOS_REQUEST_ALREADY_EXISTS(HttpStatus.CONFLICT),
     /** The requested operation is not legal from the request's current status. */
     SOS_INVALID_STATE(HttpStatus.CONFLICT),
-    /** Matching found nobody eligible — terminal {@code FAILED}. */
+    /**
+     * Vestigial, like {@link #BOOKING_TIME_UNAVAILABLE} above — never returned by any code path.
+     * "Nobody eligible" is not an error the activating customer sees: the request is created
+     * successfully and lands in terminal {@code FAILED}, which the client reads off
+     * {@code status} (and hears about as realtime {@code SOS_FAILED}). Kept because a future
+     * synchronous variant of matching would want exactly this code.
+     */
     SOS_NO_PROFESSIONALS_AVAILABLE(HttpStatus.CONFLICT),
     /** The offer is no longer open (already responded to, expired, or superseded). */
     SOS_OFFER_NOT_OPEN(HttpStatus.CONFLICT),

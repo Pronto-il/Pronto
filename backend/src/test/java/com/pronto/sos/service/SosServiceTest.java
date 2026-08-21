@@ -88,15 +88,24 @@ class SosServiceTest {
                 professionalRepository, sosDispatchService, sosEventService, assembler, notificationService,
                 properties);
 
-        when(assembler.toRequestResponse(any())).thenAnswer(inv -> stubResponse(inv.getArgument(0)));
+        when(assembler.toRequestResponse(any(), any()))
+                .thenAnswer(inv -> stubResponse(inv.getArgument(0), inv.getArgument(1)));
     }
 
     // ---- fixtures ----
 
-    private static SosRequestResponse stubResponse(SosRequest request) {
+    /**
+     * Mirrors the real assembler closely enough to be worth asserting on: it echoes back the
+     * {@link SosAddressAccess} it was handed via the street/lat fields, so a test can tell a
+     * redacted response from a full one without standing up the real assembler.
+     */
+    private static SosRequestResponse stubResponse(SosRequest request, SosAddressAccess access) {
+        boolean exact = access == SosAddressAccess.FULL;
         return new SosRequestResponse(request.getId(), request.getIssueId(), request.getCustomerId(),
                 request.getCategoryId(), null, null, request.getUrgency(), request.getStatus(),
-                null, null, null, null, null, null, null, null, null,
+                request.getServiceCity(),
+                exact ? request.getServiceStreet() : null, null, null, null, null, null,
+                exact ? request.getLatitude() : null, null,
                 request.getSelectedProfessionalId(), null, request.getSelectedOfferId(), request.getOrderId(),
                 request.getCancelledBy(), 0, 0, request.getMatchingExpiresAt(), request.getSelectionExpiresAt(),
                 null, null, null, null, null, null, null, null);
@@ -156,7 +165,7 @@ class SosServiceTest {
     void createStartsMatchingAndDispatches() {
         when(issueRepository.findById(ISSUE_ID))
                 .thenReturn(Optional.of(issue(IssueUrgencyType.SOS, com.pronto.issues.entity.IssueStatus.OPEN)));
-        when(sosRequestRepository.existsByIssueId(ISSUE_ID)).thenReturn(false);
+        when(sosRequestRepository.existsActiveByIssueId(ISSUE_ID)).thenReturn(false);
         when(sosRequestRepository.saveAndFlush(any(SosRequest.class)))
                 .thenAnswer(inv -> {
                     SosRequest saved = inv.getArgument(0);
@@ -228,12 +237,12 @@ class SosServiceTest {
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.ISSUE_NOT_BOOKABLE));
     }
 
-    /** One SOS request per issue — no double-activation. */
+    /** One <em>active</em> SOS request per issue — no double-activation. */
     @Test
     void createRejectsASecondSosRequestForTheSameIssue() {
         when(issueRepository.findById(ISSUE_ID))
                 .thenReturn(Optional.of(issue(IssueUrgencyType.SOS, com.pronto.issues.entity.IssueStatus.OPEN)));
-        when(sosRequestRepository.existsByIssueId(ISSUE_ID)).thenReturn(true);
+        when(sosRequestRepository.existsActiveByIssueId(ISSUE_ID)).thenReturn(true);
 
         assertThatThrownBy(() -> service.create(CUSTOMER_ID, createRequest()))
                 .isInstanceOf(ApiException.class)
@@ -246,9 +255,9 @@ class SosServiceTest {
     void createMapsTheUniqueConstraintViolationToAConflict() {
         when(issueRepository.findById(ISSUE_ID))
                 .thenReturn(Optional.of(issue(IssueUrgencyType.SOS, com.pronto.issues.entity.IssueStatus.OPEN)));
-        when(sosRequestRepository.existsByIssueId(ISSUE_ID)).thenReturn(false);
+        when(sosRequestRepository.existsActiveByIssueId(ISSUE_ID)).thenReturn(false);
         when(sosRequestRepository.saveAndFlush(any(SosRequest.class)))
-                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("ux_sos_requests_issue"));
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("ux_sos_requests_active_issue"));
 
         assertThatThrownBy(() -> service.create(CUSTOMER_ID, createRequest()))
                 .isInstanceOf(ApiException.class)
@@ -632,6 +641,211 @@ class SosServiceTest {
                 .thenReturn(Optional.of(offer(SosOfferStatus.OFFERED)));
 
         assertThat(service.getRequest(PROFESSIONAL_USER_ID, UserRole.PROFESSIONAL.name(), REQUEST_ID)).isNotNull();
+    }
+
+    // ------------------------------------------------------------------
+    // Address privacy — availability is not assignment
+    // ------------------------------------------------------------------
+    //
+    // The assembler is mocked here, so what these assert is the *decision*: which
+    // SosAddressAccess SosService hands it. The redaction that decision drives is asserted
+    // directly against the real assembler in SosResponseAssemblerTest. Together they cover
+    // "the right call is made" and "the call does the right thing".
+
+    /** The customer owns the problem and the address. They always see it in full. */
+    @Test
+    void theCustomerSeesTheExactAddress() {
+        when(sosRequestRepository.findById(REQUEST_ID))
+                .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION)));
+
+        service.getRequest(CUSTOMER_ID, UserRole.CUSTOMER.name(), REQUEST_ID);
+
+        verify(assembler).toRequestResponse(any(SosRequest.class), eq(SosAddressAccess.FULL));
+    }
+
+    /**
+     * Offers fan out to up to 15 professionals. None of them has any business holding a
+     * stranger's street address on the strength of having been asked.
+     */
+    @Test
+    void anOfferedProfessionalDoesNotSeeTheExactAddress() {
+        assertOfferHolderIsRedacted(SosOfferStatus.OFFERED);
+    }
+
+    /** Opening the card is not a relationship either. */
+    @Test
+    void aProfessionalWhoOnlyViewedTheOfferDoesNotSeeTheExactAddress() {
+        assertOfferHolderIsRedacted(SosOfferStatus.VIEWED);
+    }
+
+    /**
+     * <b>The load-bearing case.</b> {@code ACCEPTED} means "I am available and can come" — it is
+     * not an award, and the customer may still choose one of the other candidates. Until they
+     * choose, an available professional gets exactly what an unanswered one gets.
+     */
+    @Test
+    void anAvailableAcceptedProfessionalStillDoesNotSeeTheExactAddress() {
+        assertOfferHolderIsRedacted(SosOfferStatus.ACCEPTED);
+    }
+
+    private void assertOfferHolderIsRedacted(SosOfferStatus offerStatus) {
+        // selected_professional_id is null: nobody has been chosen yet.
+        when(sosRequestRepository.findById(REQUEST_ID))
+                .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION)));
+        when(professionalRepository.findByUserId(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(professional()));
+        when(sosOfferRepository.findBySosRequestIdAndProfessionalId(REQUEST_ID, PROFESSIONAL_ID))
+                .thenReturn(Optional.of(offer(offerStatus)));
+
+        service.getRequest(PROFESSIONAL_USER_ID, UserRole.PROFESSIONAL.name(), REQUEST_ID);
+
+        verify(assembler).toRequestResponse(any(SosRequest.class), eq(SosAddressAccess.CITY_ONLY));
+    }
+
+    /** Selection is what grants the address — and it grants it immediately, before confirmation. */
+    @Test
+    void theSelectedProfessionalSeesTheExactAddress() {
+        SosRequest selected = request(SosRequestStatus.PROFESSIONAL_SELECTED);
+        setField(selected, "selectedProfessionalId", PROFESSIONAL_ID);
+        when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(selected));
+        when(professionalRepository.findByUserId(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(professional()));
+        when(sosOfferRepository.findBySosRequestIdAndProfessionalId(REQUEST_ID, PROFESSIONAL_ID))
+                .thenReturn(Optional.of(offer(SosOfferStatus.SELECTED)));
+
+        service.getRequest(PROFESSIONAL_USER_ID, UserRole.PROFESSIONAL.name(), REQUEST_ID);
+
+        verify(assembler).toRequestResponse(any(SosRequest.class), eq(SosAddressAccess.FULL));
+    }
+
+    /**
+     * A losing candidate on a decided request loses the address along with the job — the check is
+     * against {@code selected_professional_id}, so it flips for everyone at the same instant.
+     */
+    @Test
+    void aLosingCandidateOnADecidedRequestIsStillRedacted() {
+        SosRequest selected = request(SosRequestStatus.PROFESSIONAL_SELECTED);
+        setField(selected, "selectedProfessionalId", 999L);
+        when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(selected));
+        when(professionalRepository.findByUserId(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(professional()));
+        when(sosOfferRepository.findBySosRequestIdAndProfessionalId(REQUEST_ID, PROFESSIONAL_ID))
+                .thenReturn(Optional.of(offer(SosOfferStatus.NOT_SELECTED)));
+
+        service.getRequest(PROFESSIONAL_USER_ID, UserRole.PROFESSIONAL.name(), REQUEST_ID);
+
+        verify(assembler).toRequestResponse(any(SosRequest.class), eq(SosAddressAccess.CITY_ONLY));
+    }
+
+    // ------------------------------------------------------------------
+    // Retry — an SOS request is an attempt, not the problem
+    // ------------------------------------------------------------------
+
+    @Test
+    void retryIsAllowedAfterAPreviousAttemptExpired() {
+        assertRetryAllowed();
+    }
+
+    @Test
+    void retryIsAllowedAfterAPreviousAttemptFailed() {
+        assertRetryAllowed();
+    }
+
+    @Test
+    void retryIsAllowedAfterAPreviousAttemptWasCancelled() {
+        assertRetryAllowed();
+    }
+
+    /**
+     * All three terminal cases are the same call from this service's point of view — what differs
+     * is only which status the previous row holds, and {@code existsActiveByIssueId} answers
+     * {@code false} for every one of them. That the query's terminal set is exactly the right one
+     * is asserted in {@code SosSchemaConstraintTest} against V36's index, which is where the two
+     * definitions could actually drift apart.
+     */
+    private void assertRetryAllowed() {
+        when(issueRepository.findById(ISSUE_ID))
+                .thenReturn(Optional.of(issue(IssueUrgencyType.SOS, com.pronto.issues.entity.IssueStatus.OPEN)));
+        when(sosRequestRepository.existsActiveByIssueId(ISSUE_ID)).thenReturn(false);
+        when(sosRequestRepository.saveAndFlush(any(SosRequest.class))).thenAnswer(inv -> {
+            SosRequest saved = inv.getArgument(0);
+            setField(saved, "id", REQUEST_ID);
+            return saved;
+        });
+        when(sosRequestRepository.startMatching(eq(REQUEST_ID), any(), any())).thenReturn(1);
+        when(sosRequestRepository.findById(REQUEST_ID))
+                .thenReturn(Optional.of(request(SosRequestStatus.MATCHING)));
+
+        SosRequestResponse response = service.create(CUSTOMER_ID, createRequest());
+
+        assertThat(response.id()).isEqualTo(REQUEST_ID);
+        // The same issue, reused: no second issue is created and nothing on it is rewritten.
+        assertThat(response.issueId()).isEqualTo(ISSUE_ID);
+        verify(sosDispatchService).dispatch(any(SosRequest.class));
+        verify(issueRepository, never()).save(any(Issue.class));
+    }
+
+    /** ...but only one attempt may be in flight. This is the case the retry change must not open up. */
+    @Test
+    void retryIsRefusedWhileThepreviousAttemptIsStillActive() {
+        when(issueRepository.findById(ISSUE_ID))
+                .thenReturn(Optional.of(issue(IssueUrgencyType.SOS, com.pronto.issues.entity.IssueStatus.OPEN)));
+        when(sosRequestRepository.existsActiveByIssueId(ISSUE_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.create(CUSTOMER_ID, createRequest()))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode())
+                        .isEqualTo(ErrorCode.SOS_REQUEST_ALREADY_EXISTS));
+        verify(sosRequestRepository, never()).saveAndFlush(any(SosRequest.class));
+    }
+
+    // ------------------------------------------------------------------
+    // Individual offer expiry
+    // ------------------------------------------------------------------
+
+    /** {@code OFFERED -> EXPIRED}: history row, notification, and nothing for the customer. */
+    @Test
+    void expiringAnOfferedOfferRecordsAnEventAndNotifiesOnlyThatProfessional() {
+        assertOfferExpiryIsRecorded(SosOfferStatus.OFFERED);
+    }
+
+    /** {@code VIEWED -> EXPIRED}: opening the card does not exempt it from the deadline. */
+    @Test
+    void expiringAViewedOfferRecordsAnEventAndNotifiesOnlyThatProfessional() {
+        assertOfferExpiryIsRecorded(SosOfferStatus.VIEWED);
+    }
+
+    private void assertOfferExpiryIsRecorded(SosOfferStatus from) {
+        SosOffer expiring = offer(from);
+        when(sosOfferRepository.expireOfferIfOpen(eq(OFFER_ID), any())).thenReturn(1);
+        when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(expiring));
+        when(sosRequestRepository.findById(REQUEST_ID))
+                .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional()));
+
+        assertThat(service.expireOffer(OFFER_ID)).isTrue();
+
+        verify(sosEventService).record(eq(REQUEST_ID), eq(SosEventType.OFFER_EXPIRED), eq(SosActorType.SYSTEM),
+                eq(null), eq(PROFESSIONAL_ID), eq(OFFER_ID), eq(SosRequestStatus.WAITING_FOR_PROFESSIONALS),
+                eq(null), any());
+        verify(notificationService).recordSosNotification(REQUEST_ID, PROFESSIONAL_USER_ID,
+                NotificationMessageType.SOS_OFFER_EXPIRED);
+        // The customer is told nothing: "professional X ignored you" is neither actionable nor
+        // true to what happened, and their dispatch view is deliberately aggregate.
+        verify(notificationService, never()).recordSosNotification(eq(REQUEST_ID), eq(CUSTOMER_ID), any());
+    }
+
+    /**
+     * Idempotence, which is the whole reason expiry is a guarded per-offer update rather than the
+     * bulk statement it used to be. The sweep runs every 15s and can overlap itself, and it also
+     * races professionals answering — a second pass must produce no second event and no second
+     * notification.
+     */
+    @Test
+    void aSecondSweepOverTheSameOfferProducesNoDuplicateEventOrNotification() {
+        when(sosOfferRepository.expireOfferIfOpen(eq(OFFER_ID), any())).thenReturn(0);
+
+        assertThat(service.expireOffer(OFFER_ID)).isFalse();
+
+        verify(sosEventService, never()).record(anyLong(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(notificationService, never()).recordSosNotification(anyLong(), anyLong(), any());
     }
 
     // ------------------------------------------------------------------

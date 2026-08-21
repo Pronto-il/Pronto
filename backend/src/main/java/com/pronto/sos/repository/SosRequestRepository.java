@@ -27,7 +27,28 @@ import java.util.Optional;
  */
 public interface SosRequestRepository extends JpaRepository<SosRequest, Long> {
 
-    boolean existsByIssueId(Long issueId);
+    /**
+     * Is there an SOS attempt on this issue that has not finished yet?
+     *
+     * <p>The product rule this encodes: <b>an SOS request is an attempt, not the problem.</b> One
+     * issue may accumulate many attempts over its life — the first expired because nobody
+     * answered, the second was cancelled, the third found somebody — and the customer must never
+     * be made to re-describe a problem they already described. What must not happen is two
+     * attempts running at once, fanning out two competing dispatch waves for the same job.
+     *
+     * <p>The terminal set here is exactly {@link SosRequestStatus#isTerminal()}, and is the same
+     * set {@code ux_sos_requests_active_issue} (V36) excludes. The two must agree: this is the
+     * friendly pre-check, that index is the authoritative guard that decides a race.
+     */
+    @Query("SELECT COUNT(r) > 0 FROM SosRequest r WHERE r.issueId = :issueId AND r.status NOT IN ("
+            + "com.pronto.sos.entity.SosRequestStatus.COMPLETED, "
+            + "com.pronto.sos.entity.SosRequestStatus.CANCELLED, "
+            + "com.pronto.sos.entity.SosRequestStatus.EXPIRED, "
+            + "com.pronto.sos.entity.SosRequestStatus.FAILED)")
+    boolean existsActiveByIssueId(@Param("issueId") Long issueId);
+
+    /** History for one issue, newest attempt first — every attempt, terminal ones included. */
+    List<SosRequest> findByIssueIdOrderByCreatedAtDesc(Long issueId);
 
     List<SosRequest> findByCustomerIdOrderByCreatedAtDesc(Long customerId);
 

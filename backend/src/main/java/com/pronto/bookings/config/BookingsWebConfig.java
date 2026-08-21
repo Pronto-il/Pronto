@@ -23,10 +23,11 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * {@code /api/bookings/professionals/*&#47;available-windows} — same {@code CUSTOMER}-only
  * gate, renamed route only (the old route is removed entirely, not kept for compatibility).
  *
- * <p>Milestone 4 adds two more {@code CUSTOMER}-only literal patterns
- * ({@code /api/bookings/sos-professionals}, {@code /api/bookings/sos-orders}, §2.12/§2.13) to
- * the same registration — this package's literal-list design doesn't pick up new routes
- * automatically the way a wildcard would (§0.1/§6 item 8 of the contract doc).
+ * <p>Milestone 4's two {@code CUSTOMER}-only SOS patterns
+ * ({@code /api/bookings/sos-professionals}, {@code /api/bookings/sos-orders}) were removed
+ * along with the browse-and-pick SOS flow itself — Pronto SOS ({@code /api/sos/**}, gated by
+ * {@code sos.config.SosWebConfig}) is the only SOS flow now. Nothing in this package is
+ * SOS-specific any more.
  *
  * <p>Milestone 6 adds two more {@code PROFESSIONAL}-only literal patterns
  * ({@code /api/bookings/orders/*&#47;on-the-way}, {@code /api/bookings/orders/*&#47;complete},
@@ -47,7 +48,7 @@ public class BookingsWebConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.CUSTOMER.name()))
                 .addPathPatterns("/api/bookings/professionals", "/api/bookings/professionals/*/available-windows",
-                        "/api/bookings/orders", "/api/bookings/sos-professionals", "/api/bookings/sos-orders");
+                        "/api/bookings/orders");
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.PROFESSIONAL.name()))
                 .addPathPatterns("/api/bookings/orders/*/accept", "/api/bookings/orders/*/reject",
                         "/api/bookings/orders/*/on-the-way", "/api/bookings/orders/*/complete");

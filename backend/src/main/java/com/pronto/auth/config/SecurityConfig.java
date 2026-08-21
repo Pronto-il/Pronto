@@ -40,6 +40,18 @@ import java.util.List;
  * including {@code /api/users/me} and any endpoint added by a later milestone — requires a
  * valid, non-revoked JWT.
  *
+ * <p><b>{@code /ws/**} (the STOMP handshake, SOS realtime phase) is permitted here, and that is
+ * not a weakening.</b> A browser's {@code WebSocket} constructor cannot attach an
+ * {@code Authorization} header to the HTTP upgrade request, so gating the handshake on a JWT
+ * would make the endpoint unusable rather than secure — the standard STOMP answer, and the one
+ * taken here, is to authenticate one layer up, on the {@code CONNECT} frame, where the client
+ * <em>can</em> send headers. {@code realtime.security.StompAuthChannelInterceptor} is that gate:
+ * it resolves the same JWT through the same {@code JwtPrincipalResolver} this filter chain uses,
+ * refuses the session outright when the token is missing/invalid/revoked, and allow-lists the
+ * single destination a client may subscribe to. Opening the handshake therefore buys an
+ * unauthenticated caller an open socket that can do nothing except receive an {@code ERROR}
+ * frame. Deliberately scoped to {@code /ws/**} and nothing else.
+ *
  * <p>CSRF and form-login are disabled: this is a stateless token API with no server-side
  * session/cookie-based auth, so neither applies.
  *
@@ -73,6 +85,7 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/health", "/api/auth/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/storage/images/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/categories").permitAll()
+                        .requestMatchers("/ws/**").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(eh -> eh.authenticationEntryPoint(authenticationEntryPoint))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

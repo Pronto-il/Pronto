@@ -231,3 +231,135 @@ no business logic moves, no service signature changes.
 - **Dispatch is single-wave.** `SosDispatchService.dispatch` already excludes
   already-offered professionals and continues the rank sequence, so a radius/pool expansion
   strategy is a matter of calling it again — but nothing calls it a second time yet.
+
+---
+
+# Realtime delivery (`sos.realtime`)
+
+Added in the realtime phase. **Purely additive**: no business logic moved, no service signature
+changed, no state-machine rule was touched. Every SOS transition already wrote its `sos_events` row
+and published a `SosDomainEvent`; this layer is a listener bolted onto that seam.
+
+`SOS business action` → `SosDomainEvent` → `SosRealtimePublisher` (after commit) →
+`SosRealtimeDelivery` → `/user/queue/sos`
+
+Transport, authentication and the "no inbound commands" rule live in `realtime/README.md`. This
+section covers only what is SOS-specific: **who gets told what**.
+
+## Terminology — why `ACCEPTED` was NOT renamed
+
+The word "accepted" is ambiguous in English: it could mean *"the professional says they're
+available"* or *"the customer awarded them the job"*. The persisted model, however, already keeps
+those strictly apart:
+
+| `SosOfferStatus` | Meaning |
+|---|---|
+| `ACCEPTED` | The professional is available and willing to come. **Not an award.** |
+| `SELECTED` | The customer chose them. This is the award. |
+| `NOT_SELECTED` | They were available and the customer chose someone else. |
+
+So the distinction is cleanly encoded already, and a rename would be a breaking change to a schema
+that has been applied and live-verified (`V34`'s `ck_sos_offers_status`, plus an `UPDATE` of
+existing rows and churn across services, repositories and tests) for **zero semantic gain**. It was
+therefore deliberately not done.
+
+What *was* done: the realtime wire vocabulary (`SosRealtimeEventType`) avoids the word entirely.
+A professional's positive response is **`PROFESSIONAL_AVAILABLE`**; being awarded the job is
+**`SOS_SELECTED`**. Nothing a client ever sees says "accepted". If the vocabulary should be aligned
+in the database too, that is a clean standalone follow-up (`V36`: widen the CHECK, `UPDATE` rows,
+rename the enum constant) — flagged rather than smuggled into this phase.
+
+## Professional availability semantics
+
+`PROFESSIONAL_AVAILABLE` means exactly **"I am available and can take this SOS"** — never "I got
+the job". Confirming this in code rather than only in prose:
+
+- The realtime layer emits it from a `PROFESSIONAL_RESPONDED` event whose offer is `ACCEPTED`, and
+  emits **no** selection-shaped message at that point (asserted by
+  `aPositiveResponseNeverAwardsTheJob`).
+- The request stays in `WAITING_FOR_PROFESSIONALS`; ownership changes only at
+  `SosService.selectProfessional`.
+
+## Customer candidate flow
+
+A positive response pushes `PROFESSIONAL_AVAILABLE` to the customer carrying the running
+`availableCandidateCount`. When the shortlist settles, `CANDIDATES_UPDATED` follows, then
+`CUSTOMER_SELECTION_STARTED` with the backend-owned `selectionExpiresAt`.
+
+**REST stays canonical.** Realtime carries counts and ids; the actual candidate list comes from
+`GET /api/sos/requests/{id}/candidates`, which already enforces eligibility (accepted offers only,
+capped at the target count) and authorization on every field. The frontend reacts to the push by
+refetching. That keeps one authoritative definition of "who is a candidate" and means a routing bug
+can leak at most an id.
+
+The selection deadline remains backend-enforced — `selection_expires_at` is checked inside the
+atomic selection UPDATE. Any client timer is presentation only.
+
+## Event → audience routing
+
+| `SosEventType` (persisted) | Customer | Offered professional | Selected professional | Available-but-not-selected |
+|---|---|---|---|---|
+| `SOS_CREATED` | `SOS_CREATED` | — | — | — |
+| `MATCHING_STARTED` | `MATCHING_STARTED` | — | — | — |
+| `OFFERS_SENT` | `OFFERS_SENT` (count only) | `SOS_OFFER_RECEIVED` (own offer only) | n/a | n/a |
+| `OFFER_VIEWED` | — | — | — | — |
+| `PROFESSIONAL_RESPONDED` (offer `ACCEPTED`) | `PROFESSIONAL_AVAILABLE` + count | `OFFER_RESPONSE_RECORDED` (self-ack) | n/a | — |
+| `PROFESSIONAL_RESPONDED` (offer `REJECTED`) | — | `OFFER_RESPONSE_RECORDED` (self-ack) | n/a | — |
+| `PROFESSIONAL_RESPONDED` (offer `SELECTED`) | `ETA_UPDATED` | n/a | `OFFER_RESPONSE_RECORDED` | — |
+| `CANDIDATES_READY` | `CANDIDATES_UPDATED` | — | n/a | — |
+| `CUSTOMER_SELECTION_STARTED` | `CUSTOMER_SELECTION_STARTED` + deadline | — | n/a | — |
+| `PROFESSIONAL_SELECTED` | `PROFESSIONAL_SELECTED` | — | **`SOS_SELECTED`** | **`SOS_NOT_SELECTED`** |
+| `PROFESSIONAL_CONFIRMED` | `PROFESSIONAL_CONFIRMED` | — | self-ack | — |
+| `ON_THE_WAY` / `ARRIVED` / `COMPLETED` | same type | — | self-ack | — |
+| `CANCELLED` | `CANCELLED` | `CANCELLED` | `CANCELLED` | `CANCELLED` |
+| `EXPIRED` | `EXPIRED` | `EXPIRED` | n/a | `EXPIRED` |
+| `FAILED` | `SOS_FAILED` | — | — | — |
+
+**`SOS_NOT_SELECTED` goes only to offers now sitting at `NOT_SELECTED`** — which by construction is
+exactly the set that positively responded and lost, because `closeLosingOffers` maps
+`ACCEPTED → NOT_SELECTED` and open offers to `EXPIRED`. A professional who never answered is never
+told they were passed over; one who actively declined is skipped too, on `CANCELLED`/`EXPIRED` as
+well (they opted out).
+
+**Privacy:** the offer payload carries `serviceCity` but never street, house number, apartment,
+customer name or phone. Those become reachable through REST only once a professional is selected
+and an order exists.
+
+## After-commit guarantee
+
+`@TransactionalEventListener(phase = AFTER_COMMIT)` + `@Transactional(REQUIRES_NEW, readOnly)`. The
+listener is registered as a transaction synchronization when the event is published and runs only
+once the publishing transaction has committed — a rolled-back selection pushes nothing, and no
+client can be told about a state the database does not hold. Its own reads run in a fresh
+transaction so they see committed truth, which is what makes "derive the audience from current
+state" safe. Pinned by `publishingIsWiredToRunAfterCommitInItsOwnTransaction`.
+
+## Failure isolation
+
+Two independent nets:
+
+1. **`SosRealtimePublisher.onSosDomainEvent` catches everything.** This is not belt-and-braces: an
+   after-commit synchronization that throws propagates out of the transaction manager to the
+   original caller, so a delivery fault would turn a committed, successful selection into an HTTP
+   500.
+2. **`SosRealtimeDelivery` isolates per recipient**, so one dead session cannot deprive the other
+   parties of their message.
+
+A dropped message costs nothing permanent: `sos_events` retains the full history and the client
+refetches canonical state over REST on reconnect. Realtime is an accelerator, never the record.
+
+## Reconnect
+
+No replay is implemented, deliberately. `SosRealtimeMessage.eventId` is the `sos_events` row id, so
+a client can correlate pushes with the persisted timeline and detect duplicates — that is the hook
+a replay mechanism would use later, without changing this contract. Today the intended recovery is:
+reconnect → refetch REST → continue.
+
+## Key classes
+
+| Class | Role |
+|---|---|
+| `SosRealtimePublisher` | The routing matrix. The only class here with domain logic. |
+| `SosRealtimeDelivery` | Outbound edge + per-recipient failure isolation. |
+| `SosRealtimeMessage` | The stable wire DTO. Never a JPA entity. |
+| `SosRealtimeEventType` | Wire vocabulary, deliberately distinct from `SosEventType`. |

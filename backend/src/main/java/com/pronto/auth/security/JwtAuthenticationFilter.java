@@ -1,10 +1,6 @@
 package com.pronto.auth.security;
 
 import com.pronto.common.security.AuthenticatedUser;
-import com.pronto.users.entity.User;
-import com.pronto.users.repository.UserRepository;
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -32,56 +28,39 @@ import java.util.Optional;
  * either allows it (public endpoint) or rejects it with {@code 401 UNAUTHORIZED} via
  * {@link JsonAuthenticationEntryPoint}.
  *
- * <p>Also implements the per-request revocation check from §3.1: a token whose {@code sub}
- * no longer resolves to an existing, non-soft-deleted {@code users} row is treated as
- * unauthenticated even if the JWT signature itself is still valid — this is what gives
- * account deletion effectively-immediate effect without a token blocklist.
+ * <p>The token-to-identity decision itself (including §3.1's per-request revocation check, which
+ * treats a valid signature over a deleted user as unauthenticated) now lives in
+ * {@link JwtPrincipalResolver}, extracted when the realtime layer needed the identical answer for
+ * a STOMP {@code CONNECT} frame. This filter's behaviour is unchanged; it simply no longer owns
+ * that logic alone. See that class for why sharing it matters.
  */
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
-    private static final String CLAIM_ROLE = "role";
 
-    private final JwtService jwtService;
-    private final UserRepository userRepository;
+    private final JwtPrincipalResolver jwtPrincipalResolver;
 
-    public JwtAuthenticationFilter(JwtService jwtService, UserRepository userRepository) {
-        this.jwtService = jwtService;
-        this.userRepository = userRepository;
+    public JwtAuthenticationFilter(JwtPrincipalResolver jwtPrincipalResolver) {
+        this.jwtPrincipalResolver = jwtPrincipalResolver;
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                      HttpServletResponse response,
                                      FilterChain filterChain) throws ServletException, IOException {
-        String token = extractToken(request);
+        String token = JwtPrincipalResolver.stripBearer(request.getHeader("Authorization"));
         if (token != null) {
-            try {
-                Claims claims = jwtService.parseClaims(token);
-                Long userId = Long.valueOf(claims.getSubject());
-                Optional<User> userOpt = userRepository.findById(userId);
-                if (userOpt.isPresent() && userOpt.get().getDeletedAt() == null) {
-                    User user = userOpt.get();
-                    String role = claims.get(CLAIM_ROLE, String.class);
-                    AuthenticatedUser principal = new AuthenticatedUser(user.getId(), role);
-                    List<GrantedAuthority> authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role));
-                    var authentication =
-                            new UsernamePasswordAuthenticationToken(principal, null, authorities);
-                    SecurityContextHolder.getContext().setAuthentication(authentication);
-                }
-            } catch (JwtException | NumberFormatException e) {
-                log.debug("Rejecting invalid JWT on {}: {}", request.getRequestURI(), e.getMessage());
+            Optional<AuthenticatedUser> principal = jwtPrincipalResolver.resolve(token);
+            if (principal.isPresent()) {
+                AuthenticatedUser user = principal.get();
+                List<GrantedAuthority> authorities = List.of(new SimpleGrantedAuthority("ROLE_" + user.role()));
+                var authentication = new UsernamePasswordAuthenticationToken(user, null, authorities);
+                SecurityContextHolder.getContext().setAuthentication(authentication);
+            } else {
+                log.debug("Rejecting invalid or revoked JWT on {}", request.getRequestURI());
             }
         }
         filterChain.doFilter(request, response);
-    }
-
-    private String extractToken(HttpServletRequest request) {
-        String header = request.getHeader("Authorization");
-        if (header != null && header.startsWith("Bearer ")) {
-            return header.substring("Bearer ".length());
-        }
-        return null;
     }
 }

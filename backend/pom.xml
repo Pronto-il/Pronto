@@ -59,6 +59,23 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
+        <!-- STOMP-over-WebSocket realtime delivery for Pronto SOS (realtime.config.WebSocketConfig).
+             The one new dependency this phase needs: it brings spring-websocket plus
+             spring-messaging, which supply the in-memory simple broker and SimpMessagingTemplate.
+             No external broker (Rabbit/ActiveMQ) is introduced; the simple broker is in-JVM and
+             matches this codebase's single-instance, zero-external-dependency posture. See
+             src/main/java/com/pronto/realtime/README.md for the scaling caveat that implies.
+
+             Deliberately NOT adding spring-security-messaging/@EnableWebSocketSecurity: the whole
+             authorization surface here is one CONNECT check plus one allow-listed SUBSCRIBE
+             destination, which realtime.security.StompAuthChannelInterceptor expresses directly
+             and reviewably in about 30 lines. A second security DSL for that would be more
+             machinery, not more safety. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
+
         <!-- JWT issuance/validation, per docs/architecture/api-contract.md §3.1. -->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>

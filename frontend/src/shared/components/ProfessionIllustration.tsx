@@ -19,11 +19,10 @@ import styles from './ProfessionIllustration.module.css';
  * generator filenames (`ChatGPT Image Aug 20, 2026, 10_03_49 PM (1).png` …) to the profession
  * each one actually depicts, so this mapping is verifiable by reading it.
  *
- * **Category 6 (`carpentry`/נגרות) has no illustration in that folder** — seven drawings were
- * supplied for eight categories. It is deliberately absent from this map rather than pointed
- * at a loosely-related drawing, and renders the shared `Mascot` fallback below. Dropping a
- * carpentry illustration into the folder and adding one line here is all that is needed to
- * complete it.
+ * **Every seeded category has a drawing as of V31** (`replace_carpentry_with_handyman`): the
+ * eighth category, Carpentry, was retired and folded into Handyman, which already had
+ * `general-handyman.png`. The `Mascot` fallback below is therefore no longer reachable for any
+ * real category — it remains as the safe path for an unknown id, which is what it was for.
  */
 const CATEGORY_ILLUSTRATIONS: Record<number, string> = {
   1: plumbing, // אינסטלציה — kneeling by a sink trap with a wrench
@@ -31,9 +30,9 @@ const CATEGORY_ILLUSTRATIONS: Record<number, string> = {
   3: acHvac, // מיזוג אוויר — servicing a split unit from a stepladder with manifold gauges
   4: applianceRepair, // תיקון מוצרי חשמל — wall-mounted boiler/water heater
   5: locksmith, // מנעולן — fitting a door lock, keyring on the belt
-  // 6: carpentry — no asset supplied, see the doc comment above.
+  // 6 (carpentry) was retired by V31 and folded into 8 — there is no category 6 any more.
   7: painting, // צביעה — rolling a wall, paint can and brushes
-  8: generalHandyman, // הנדימן כללי — carrying a full kit, on the move
+  8: generalHandyman, // הנדימן — carrying a full kit, on the move
 };
 
 /** Emitted once per unmapped category id, so a missing illustration is reported rather than
@@ -55,7 +54,7 @@ export interface ProfessionIllustrationProps {
 /**
  * A profession's illustration, or the project's existing `Mascot` fallback when that
  * profession has no drawing yet. Never renders a broken image and never substitutes another
- * profession's drawing — showing a plumber for a carpenter would be a quieter bug than a
+ * profession's drawing — showing a plumber for a locksmith would be a quieter bug than a
  * missing image, not a smaller one.
  */
 export function ProfessionIllustration({ categoryId, label, className }: ProfessionIllustrationProps) {

@@ -129,10 +129,14 @@ this as the seed migration's starting content, freely editable before/after this
 | `locksmith` | `locksmith_cylinder_replace` | החלפת צילינדר | 2 |
 | `locksmith` | `locksmith_lock_install` | התקנת מנעול | 3 |
 | `locksmith` | `locksmith_key_duplication` | שכפול מפתחות | 4 |
-| `carpentry` | `carpentry_furniture_repair` | תיקון והרכבת רהיטים | 1 |
-| `carpentry` | `carpentry_cabinet_install` | התקנת ארונות | 2 |
-| `carpentry` | `carpentry_custom_woodwork` | עבודות עץ בהתאמה אישית | 3 |
-| `carpentry` | `carpentry_door_repair` | תיקון דלתות עץ | 4 |
+
+> **Superseded for this category (2026-08-20, `V31__replace_carpentry_with_handyman.sql`)**: the
+> four `carpentry_*` sub-services above were removed with the Carpentry category itself, which
+> was folded into Handyman (`general_handyman`, id 8). The handyman-shaped part of that scope —
+> door/cabinet adjustment and handles/hinges — now lives under Handyman's own sub-services,
+> which V31 extended from four to eight. Woodwork-specific entries (custom joinery, wooden door
+> repair) were deliberately not carried over.
+
 | `painting` | `painting_interior_walls` | צביעת קירות פנים | 1 |
 | `painting` | `painting_exterior` | צביעת חוץ | 2 |
 | `painting` | `painting_wall_patching` | שפכטל ותיקוני קיר | 3 |

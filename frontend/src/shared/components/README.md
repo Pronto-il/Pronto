@@ -241,12 +241,11 @@ filename matching.
 | 3 מיזוג אוויר | `ac-hvac.png` — split unit, manifold gauges, stepladder |
 | 4 תיקון מוצרי חשמל | `appliance-repair.png` — wall-mounted boiler |
 | 5 מנעולן | `locksmith.png` — door lock, keyring |
-| 6 נגרות | **none supplied** — renders the `Mascot` fallback |
 | 7 צביעה | `painting.png` — roller, paint can |
-| 8 הנדימן כללי | `general-handyman.png` — full kit, on the move |
+| 8 הנדימן | `general-handyman.png` — full kit, on the move |
 
-Category 6 is deliberately absent from the map rather than pointed at a loosely-related
-drawing: showing a plumber for a carpenter would be a quieter bug than a missing image, not a
-smaller one. The component renders `Mascot state="idle"` and emits one dev-only console warning
-per unmapped id, so the gap is reported instead of swallowed. Adding a carpentry drawing to the
-folder and one line to the map completes it.
+As of `V31__replace_carpentry_with_handyman.sql` there is no category 6: Carpentry was retired
+and folded into Handyman (id 8), which already had a drawing. Every seeded category therefore
+maps to a real illustration, and the `Mascot` fallback is no longer reachable for any live
+category — it stays as the safe path for an unknown id, and still emits one dev-only console
+warning per unmapped id so a future gap is reported rather than swallowed.

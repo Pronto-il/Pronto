@@ -174,7 +174,6 @@ The AI classifier picks from, and the customer confirms/overrides against, this 
 3. AC / HVAC (מיזוג אוויר)
 4. Appliance Repair (תיקון מוצרי חשמל)
 5. Locksmith (מנעולן)
-6. Carpentry (נגרות)
 7. Painting (צביעה)
 8. General Handyman (הנדימן כללי)
 
@@ -1313,7 +1312,7 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
     booking flow's own resume-hydration opens on the professionals step rather than the address
     step. A customer with no saved address still lands on the address step — the listing endpoint
     requires one.
-  - **Known gap, reported rather than papered over**: category 6 (`carpentry`) has no
+  - **Known gap at the time (closed later the same day by V31, which retired Carpentry): category 6 (`carpentry`) had no
     illustration among the seven supplied for eight categories. It renders the shared `Mascot`
     fallback and logs a one-time dev warning naming the missing mapping, instead of borrowing
     another profession's drawing.

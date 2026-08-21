@@ -2551,7 +2551,8 @@ passes on every changed file across all six milestones.
 - **Determinism**: the wheel's final angle is `360 * SPINS - targetIndex * segmentAngle`, where
   `targetIndex` is the issue's own classified category's fixed position. No random draw exists in
   the component. Verified across four categories driven through the real UI (plumbing,
-  locksmith, AC, carpentry), each landing on its own profession.
+  locksmith, AC, carpentry — the last of which V31 later retired into Handyman), each
+  landing on its own profession.
 - **Preloading without duplication**: a single-entry, path-keyed, single-use, TTL-bounded
   prefetch cache in `shared/api/bookings.ts`. Asserted live: exactly one
   `/api/bookings/professionals` request across the roulette and the listing screen (and one
@@ -2566,7 +2567,7 @@ passes on every changed file across all six milestones.
   2. *The wheel sat a face-width off-centre under RTL.* The geometry used logical inset
      properties (`inset-inline-start`), which flip which edge is the anchor — but the rotation
      maths is physical. Switched to physical `left` throughout the wheel's geometry.
-- **Known gap**: category 6 (`carpentry`) has no illustration; it renders the `Mascot` fallback
+- **Known gap at the time, since closed**: category 6 (`carpentry`) had no illustration and rendered the `Mascot` fallback
   and reports the missing mapping once per session in dev. Seven drawings were supplied for
   eight categories — this is a missing asset, not a mapping mistake.
 - **Documentation updated**: this entry, `overview.md`'s changelog,

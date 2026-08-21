@@ -77,7 +77,23 @@ public enum ErrorCode {
     // docs/architecture/professional-weekly-calendar-design.md §9.2.2. SLOT_UNAVAILABLE
     // (above) becomes vestigial as of M2 -- kept in the enum, never returned by any code
     // path once no caller can supply a slotId anymore.
-    BOOKING_TIME_UNAVAILABLE(HttpStatus.CONFLICT);
+    BOOKING_TIME_UNAVAILABLE(HttpStatus.CONFLICT),
+
+    // Pronto SOS (broadcast-and-choose urgent dispatch). See the sos package README.
+    /** An SOS request already exists for this issue ({@code ux_sos_requests_issue}). */
+    SOS_REQUEST_ALREADY_EXISTS(HttpStatus.CONFLICT),
+    /** The requested operation is not legal from the request's current status. */
+    SOS_INVALID_STATE(HttpStatus.CONFLICT),
+    /** Matching found nobody eligible — terminal {@code FAILED}. */
+    SOS_NO_PROFESSIONALS_AVAILABLE(HttpStatus.CONFLICT),
+    /** The offer is no longer open (already responded to, expired, or superseded). */
+    SOS_OFFER_NOT_OPEN(HttpStatus.CONFLICT),
+    /** The professional-response window or the customer-selection window has elapsed. */
+    SOS_WINDOW_EXPIRED(HttpStatus.GONE),
+    /** The chosen offer is not one of the current candidates (not accepted, or not this request). */
+    SOS_CANDIDATE_NOT_AVAILABLE(HttpStatus.CONFLICT),
+    /** A professional has already been selected for this request — selection is one-shot. */
+    SOS_ALREADY_SELECTED(HttpStatus.CONFLICT);
 
     private final HttpStatus httpStatus;
 

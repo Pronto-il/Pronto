@@ -39,6 +39,16 @@ public class Notification {
     @Column(name = "related_order_id")
     private Long relatedOrderId;
 
+    /**
+     * The Pronto SOS subject, when this notification is about an SOS request rather than an
+     * order ({@code V35}). A second nullable subject column rather than a reuse of
+     * {@link #relatedOrderId} because the two point at different tables and the SOS dispatch
+     * phase deliberately has no order yet — offers are sent before anyone is chosen. Exactly
+     * one of the two is set on any given row.
+     */
+    @Column(name = "related_sos_request_id")
+    private Long relatedSosRequestId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "message_type", nullable = false, length = 50)
     private NotificationMessageType messageType;
@@ -81,6 +91,19 @@ public class Notification {
         this.createdAt = Instant.now();
     }
 
+    /**
+     * SOS variant of the constructor above — identical semantics, with the subject being an
+     * {@code sos_requests} row instead of an {@code orders} row. A separate constructor rather
+     * than a widened one so no caller can accidentally set both subjects.
+     */
+    public static Notification forSosRequest(Long userId, Long sosRequestId, NotificationMessageType messageType,
+                                              NotificationChannel channel, NotificationDeliveryStatus deliveryStatus,
+                                              Instant sentAt) {
+        Notification notification = new Notification(userId, null, messageType, channel, deliveryStatus, sentAt);
+        notification.relatedSosRequestId = sosRequestId;
+        return notification;
+    }
+
     public Long getId() {
         return id;
     }
@@ -91,6 +114,10 @@ public class Notification {
 
     public Long getRelatedOrderId() {
         return relatedOrderId;
+    }
+
+    public Long getRelatedSosRequestId() {
+        return relatedSosRequestId;
     }
 
     public NotificationMessageType getMessageType() {

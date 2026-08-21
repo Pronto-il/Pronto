@@ -142,6 +142,42 @@ pronto:
     # §4.4; LoggingEmailSender is the sole implementation for now).
     mode: ${EMAIL_MODE:log}
 
+  sos:
+    # Pronto SOS (broadcast-and-choose urgent dispatch). Every value below is read only at the
+    # moment an offer is created, then snapshotted onto the sos_offers row — so changing one
+    # affects future offers and never rewrites the economics of an offer already in flight.
+    # See sos.config.SosProperties for the full rationale on each.
+    #
+    # Pronto's cut, as a fraction of the VISIT-RELATED FEES ONLY (visit fee + SOS surcharge) —
+    # never of the repair itself, which the platform takes nothing from. On a 250 ILS visit fee
+    # this is 25 ILS. This is the defining rule of the business model; it is configuration
+    # precisely so that changing it never requires a code change or a migration.
+    commission-rate: ${SOS_COMMISSION_RATE:0.10}
+    # Flat surcharge on top of the visit fee for an urgent call, to make dropping everything
+    # worth the professional's while. Defaults to 50.00 to match bookings.service
+    # .BookingsService's existing hardcoded SOS_SURCHARGE_AMOUNT, so both SOS paths quote the
+    # same number today. Consolidating that constant onto this property is a flagged follow-up.
+    visit-surcharge: ${SOS_VISIT_SURCHARGE:50.00}
+    # How many ranked professionals are actually contacted. The structural answer to "do not
+    # spam every professional in the database": matching may score hundreds, only this many are
+    # ever sent an offer.
+    candidate-pool-size: ${SOS_CANDIDATE_POOL_SIZE:8}
+    emergency-candidate-pool-size: ${SOS_EMERGENCY_CANDIDATE_POOL_SIZE:15}
+    # How many accepted professionals the customer is shown, and the count at which dispatch
+    # stops waiting and opens the selection window early.
+    target-candidate-count: ${SOS_TARGET_CANDIDATE_COUNT:3}
+    # Per-offer response deadline, and the overall professional-response window.
+    offer-ttl-seconds: ${SOS_OFFER_TTL_SECONDS:120}
+    matching-window-seconds: ${SOS_MATCHING_WINDOW_SECONDS:150}
+    # The product's "approximately 2 minutes" for the customer to choose. The backend is the
+    # source of truth for this deadline; any frontend timer is presentation only.
+    selection-window-seconds: ${SOS_SELECTION_WINDOW_SECONDS:120}
+    # Geographic eligibility cap, compared against matching.EtaResult#distanceKm. That v1
+    # figure is a coarse same-city/different-city approximation, so today this behaves as a
+    # same-city preference rather than a true radius; kept as km so real geocoding can be
+    # swapped in later with no config or API change.
+    max-dispatch-radius-km: ${SOS_MAX_DISPATCH_RADIUS_KM:40.0}
+
 server:
   port: ${SERVER_PORT:8080}
 

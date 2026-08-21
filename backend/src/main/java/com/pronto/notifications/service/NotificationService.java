@@ -23,6 +23,15 @@ public interface NotificationService {
      */
     void recordOrderNotification(Long orderId, Long recipientUserId, NotificationMessageType messageType);
 
+    /**
+     * Pronto SOS equivalent of {@link #recordOrderNotification}, for the {@code sos ->
+     * notifications} call boundary. Same contract in every respect (two rows, IN_APP + EMAIL,
+     * inside the caller's transaction, primitives/enums only) — the subject is an
+     * {@code sos_requests} row rather than an {@code orders} row, because SOS offers are
+     * dispatched before any order exists.
+     */
+    void recordSosNotification(Long sosRequestId, Long recipientUserId, NotificationMessageType messageType);
+
     /** §3.1 — the in-app feed / bell. */
     NotificationsListResponse getFeed(Long callerId, boolean unreadOnly);
 

@@ -1,0 +1,177 @@
+package com.pronto.sos.repository;
+
+import com.pronto.sos.entity.SosOffer;
+import com.pronto.sos.entity.SosOfferStatus;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * Same atomic-guarded-update discipline as {@code SosRequestRepository}: no
+ * {@code sos_offers.status} change is ever a load-mutate-save.
+ */
+public interface SosOfferRepository extends JpaRepository<SosOffer, Long> {
+
+    Optional<SosOffer> findBySosRequestIdAndProfessionalId(Long sosRequestId, Long professionalId);
+
+    List<SosOffer> findBySosRequestIdOrderByMatchRankAsc(Long sosRequestId);
+
+    List<SosOffer> findBySosRequestIdAndStatusOrderByEstimatedArrivalMinutesAsc(Long sosRequestId,
+                                                                                  SosOfferStatus status);
+
+    /** The professional's inbox. */
+    List<SosOffer> findByProfessionalIdAndStatusInOrderByCreatedAtDesc(Long professionalId,
+                                                                         List<SosOfferStatus> statuses);
+
+    List<SosOffer> findByProfessionalIdOrderByCreatedAtDesc(Long professionalId);
+
+    long countBySosRequestIdAndStatus(Long sosRequestId, SosOfferStatus status);
+
+    /**
+     * Professionals already holding an open or accepted offer on <em>any</em> live request.
+     * Used by matching to avoid dispatching a third and fourth simultaneous urgent job to
+     * somebody who is already juggling two — a cheap availability signal that costs one query
+     * rather than a per-candidate lookup.
+     */
+    @Query("SELECT DISTINCT o.professionalId FROM SosOffer o "
+            + "WHERE o.professionalId IN :professionalIds "
+            + "AND o.status IN (com.pronto.sos.entity.SosOfferStatus.OFFERED, "
+            + "com.pronto.sos.entity.SosOfferStatus.VIEWED, com.pronto.sos.entity.SosOfferStatus.ACCEPTED) "
+            + "AND o.expiresAt > :now")
+    List<Long> findProfessionalIdsWithLiveOffers(@Param("professionalIds") List<Long> professionalIds,
+                                                   @Param("now") Instant now);
+
+    /**
+     * {@code OFFERED -> VIEWED}. Guarded on {@code OFFERED} alone so a second open is a no-op
+     * rather than an error, and so it can never clobber a response that has already happened —
+     * viewing is telemetry and must never be able to move an offer backwards.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE SosOffer o SET o.status = com.pronto.sos.entity.SosOfferStatus.VIEWED, "
+            + "o.viewedAt = :now, o.updatedAt = :now "
+            + "WHERE o.id = :id AND o.status = com.pronto.sos.entity.SosOfferStatus.OFFERED")
+    int markViewed(@Param("id") Long id, @Param("now") Instant now);
+
+    /**
+     * {@code OFFERED|VIEWED -> ACCEPTED}, carrying the professional's own ETA.
+     *
+     * <p>{@code expiresAt > :now} is part of the guard, so <b>the database refuses an expired
+     * acceptance</b> rather than trusting an application-level expiry check that raced the
+     * write. This is the authoritative protection against the "accepted an expired offer"
+     * case; the service's own pre-check exists only to produce a friendlier error.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE SosOffer o SET o.status = com.pronto.sos.entity.SosOfferStatus.ACCEPTED, "
+            + "o.estimatedArrivalMinutes = :etaMinutes, o.respondedAt = :now, o.updatedAt = :now "
+            + "WHERE o.id = :id AND o.expiresAt > :now AND o.status IN ("
+            + "com.pronto.sos.entity.SosOfferStatus.OFFERED, com.pronto.sos.entity.SosOfferStatus.VIEWED)")
+    int accept(@Param("id") Long id, @Param("etaMinutes") Short etaMinutes, @Param("now") Instant now);
+
+    /** {@code OFFERED|VIEWED -> REJECTED}. No expiry guard: declining late is harmless. */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE SosOffer o SET o.status = com.pronto.sos.entity.SosOfferStatus.REJECTED, "
+            + "o.respondedAt = :now, o.updatedAt = :now "
+            + "WHERE o.id = :id AND o.status IN ("
+            + "com.pronto.sos.entity.SosOfferStatus.OFFERED, com.pronto.sos.entity.SosOfferStatus.VIEWED)")
+    int reject(@Param("id") Long id, @Param("now") Instant now);
+
+    /** Lets an accepted professional revise their ETA while they still hold the offer. */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE SosOffer o SET o.estimatedArrivalMinutes = :etaMinutes, o.updatedAt = :now "
+            + "WHERE o.id = :id AND o.status IN (com.pronto.sos.entity.SosOfferStatus.ACCEPTED, "
+            + "com.pronto.sos.entity.SosOfferStatus.SELECTED)")
+    int updateEta(@Param("id") Long id, @Param("etaMinutes") Short etaMinutes, @Param("now") Instant now);
+
+    /**
+     * {@code ACCEPTED -> SELECTED} for the winner. Guarded on {@code ACCEPTED} so an offer that
+     * was withdrawn, expired or never accepted cannot be selected, whatever the request-level
+     * state says.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE SosOffer o SET o.status = com.pronto.sos.entity.SosOfferStatus.SELECTED, "
+            + "o.updatedAt = :now "
+            + "WHERE o.id = :id AND o.status = com.pronto.sos.entity.SosOfferStatus.ACCEPTED")
+    int markSelected(@Param("id") Long id, @Param("now") Instant now);
+
+    /**
+     * Marks the losing <em>accepted</em> offers on a decided request {@code NOT_SELECTED} —
+     * they were genuinely in the running and lost, which is a different fact from an offer that
+     * simply lapsed, and the distinction is what makes the acceptance-rate statistic honest.
+     *
+     * <p>Paired with {@link #expireUnansweredOffers}: together they leave no offer on a decided
+     * request still looking like a live opportunity. Two plain guarded updates rather than one
+     * statement with a {@code CASE} in its {@code SET} clause — same number of round trips in
+     * practice, and each is the same trivially-reviewable shape as every other update here.
+     *
+     * @param winningOfferId excluded from the sweep; pass a non-matching id (e.g. {@code -1})
+     *                       when the request ended with no winner at all
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE SosOffer o SET o.status = com.pronto.sos.entity.SosOfferStatus.NOT_SELECTED, "
+            + "o.updatedAt = :now WHERE o.sosRequestId = :sosRequestId AND o.id <> :winningOfferId "
+            + "AND o.status = com.pronto.sos.entity.SosOfferStatus.ACCEPTED")
+    int markAcceptedOffersNotSelected(@Param("sosRequestId") Long sosRequestId,
+                                        @Param("winningOfferId") Long winningOfferId,
+                                        @Param("now") Instant now);
+
+    /** Closes every still-unanswered offer on a request. See {@link #markAcceptedOffersNotSelected}. */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE SosOffer o SET o.status = com.pronto.sos.entity.SosOfferStatus.EXPIRED, "
+            + "o.updatedAt = :now WHERE o.sosRequestId = :sosRequestId "
+            + "AND o.status IN (com.pronto.sos.entity.SosOfferStatus.OFFERED, "
+            + "com.pronto.sos.entity.SosOfferStatus.VIEWED)")
+    int expireUnansweredOffers(@Param("sosRequestId") Long sosRequestId, @Param("now") Instant now);
+
+    /**
+     * Closes out every offer on a request that is not the winner. Callers use this rather than
+     * the two statements above so that "a request has been decided" always means the same pair
+     * of writes.
+     */
+    default void closeLosingOffers(Long sosRequestId, Long winningOfferId, Instant now) {
+        markAcceptedOffersNotSelected(sosRequestId, winningOfferId, now);
+        expireUnansweredOffers(sosRequestId, now);
+    }
+
+    /**
+     * Closes every remaining live offer when a request ends with nobody chosen (cancelled,
+     * expired). {@code -1} can never be a real generated id, so no offer is excluded.
+     */
+    default void closeAllOpenOffers(Long sosRequestId, Instant now) {
+        markAcceptedOffersNotSelected(sosRequestId, -1L, now);
+        expireUnansweredOffers(sosRequestId, now);
+    }
+
+    /** Individual offer expiry, for the sweep. Only touches still-open offers. */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE SosOffer o SET o.status = com.pronto.sos.entity.SosOfferStatus.EXPIRED, o.updatedAt = :now "
+            + "WHERE o.expiresAt <= :now AND o.status IN ("
+            + "com.pronto.sos.entity.SosOfferStatus.OFFERED, com.pronto.sos.entity.SosOfferStatus.VIEWED)")
+    int expireOverdueOffers(@Param("now") Instant now);
+
+    // ---- ranking inputs (see SosMatchingService) ----
+
+    /**
+     * Offers dispatched to each of {@code professionalIds} since {@code since}, and how many of
+     * them were accepted — the acceptance-rate signal. One grouped query for the whole
+     * candidate pool rather than N per-professional queries, because matching is on the
+     * critical path of an urgent request.
+     *
+     * <p>Returns {@code [professionalId, offered, accepted]} rows. {@code ACCEPTED},
+     * {@code SELECTED} and {@code NOT_SELECTED} all count as accepted — the professional said
+     * yes in every one of those cases, and whether the customer then picked them is not a fact
+     * about their responsiveness.
+     */
+    @Query("SELECT o.professionalId, COUNT(o), "
+            + "SUM(CASE WHEN o.status IN (com.pronto.sos.entity.SosOfferStatus.ACCEPTED, "
+            + "com.pronto.sos.entity.SosOfferStatus.SELECTED, "
+            + "com.pronto.sos.entity.SosOfferStatus.NOT_SELECTED) THEN 1 ELSE 0 END) "
+            + "FROM SosOffer o WHERE o.professionalId IN :professionalIds AND o.createdAt >= :since "
+            + "GROUP BY o.professionalId")
+    List<Object[]> findAcceptanceStats(@Param("professionalIds") List<Long> professionalIds,
+                                         @Param("since") Instant since);
+}

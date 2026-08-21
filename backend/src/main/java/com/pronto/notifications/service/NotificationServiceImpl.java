@@ -44,6 +44,18 @@ public class NotificationServiceImpl implements NotificationService {
         notificationRepository.save(email);
     }
 
+    /** Pronto SOS. Structurally identical to {@link #recordOrderNotification} above. */
+    @Override
+    public void recordSosNotification(Long sosRequestId, Long recipientUserId, NotificationMessageType messageType) {
+        Instant now = Instant.now();
+        Notification inApp = Notification.forSosRequest(recipientUserId, sosRequestId, messageType,
+                NotificationChannel.IN_APP, NotificationDeliveryStatus.SENT, now);
+        Notification email = Notification.forSosRequest(recipientUserId, sosRequestId, messageType,
+                NotificationChannel.EMAIL, NotificationDeliveryStatus.PENDING, null);
+        notificationRepository.save(inApp);
+        notificationRepository.save(email);
+    }
+
     /** §3.1. */
     @Override
     @Transactional(readOnly = true)
@@ -82,6 +94,7 @@ public class NotificationServiceImpl implements NotificationService {
 
     private NotificationResponse toResponse(Notification notification) {
         return new NotificationResponse(notification.getId(), notification.getMessageType(),
-                notification.getRelatedOrderId(), notification.getReadAt(), notification.getCreatedAt());
+                notification.getRelatedOrderId(), notification.getRelatedSosRequestId(),
+                notification.getReadAt(), notification.getCreatedAt());
     }
 }

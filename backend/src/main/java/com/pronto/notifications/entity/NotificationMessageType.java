@@ -20,5 +20,22 @@ public enum NotificationMessageType {
     ORDER_CANCELLED,
     ORDER_REJECTED,
     ORDER_EXPIRED,
-    EMAIL_VERIFICATION
+    EMAIL_VERIFICATION,
+
+    // Pronto SOS (V35). Produced by sos.service.*, carried on a notifications row whose
+    // subject is related_sos_request_id rather than related_order_id -- see Notification's
+    // Javadoc. Named for what the recipient sees: SOS_OFFER_RECEIVED/SOS_OFFER_EXPIRED/
+    // SOS_NOT_SELECTED go to professionals, the rest to the customer.
+    SOS_OFFER_RECEIVED,
+    SOS_OFFER_EXPIRED,
+    SOS_CANDIDATES_READY,
+    SOS_NOT_SELECTED,
+    SOS_PROFESSIONAL_SELECTED,
+    SOS_PROFESSIONAL_CONFIRMED,
+    SOS_ON_THE_WAY,
+    SOS_ARRIVED,
+    SOS_COMPLETED,
+    SOS_CANCELLED,
+    SOS_EXPIRED,
+    SOS_NO_PROFESSIONALS
 }

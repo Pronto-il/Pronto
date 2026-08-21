@@ -11,6 +11,10 @@ export interface ClarificationAnswer {
 export interface ClassifyIssueRequest {
   description: string;
   imageKeys: string[];
+  /** The customer's own category pick, when the flow has one. A hint the backend may overrule. */
+  selectedCategoryId?: number;
+  /** **Every** answer so far, not just the newest — the endpoint is stateless and re-classifies
+   *  against the whole conversation on each call. */
   clarificationAnswers?: ClarificationAnswer[];
 }
 
@@ -20,20 +24,26 @@ export interface ClassifyQuestion {
   options: string[];
 }
 
+/**
+ * Carries no `confidence` or `explanation`: those are real, but they are backend diagnostics
+ * (persisted and logged) rather than anything a customer can act on. The previous shape sent
+ * both to a UI that was explicitly documented as never allowed to render either — the fields
+ * are gone rather than shipped-and-ignored.
+ *
+ * `questions` holds at most one entry. Pronto asks one question at a time and re-classifies
+ * after each answer, so `QUESTIONS` may come back more than once, up to the server-side limit.
+ */
 export interface ClassifyIssueResponse {
   status: 'CLASSIFIED' | 'QUESTIONS';
   suggestedCategoryId: number | null;
   suggestedCategoryCode: string | null;
-  confidence: number | null;
-  explanation: string;
   questions: ClassifyQuestion[];
 }
 
 /**
- * `POST /api/issues/classify` — stateless preview, never writes to the database. May be
- * called repeatedly (e.g. after editing the description, or with `clarificationAnswers` for
- * the single allowed clarification round). See `docs/architecture/api-contract-issues.md`
- * §2.1.
+ * `POST /api/issues/classify` — stateless preview, never writes to the database. Called once
+ * per clarification round with the same `description`/`imageKeys` and the accumulated
+ * `clarificationAnswers`. See `docs/architecture/api-contract-issues.md` §2.1.
  */
 export function classifyIssue(payload: ClassifyIssueRequest): Promise<ClassifyIssueResponse> {
   return httpClient.post<ClassifyIssueResponse>('/api/issues/classify', payload);
@@ -44,6 +54,8 @@ export interface CreateIssueRequest {
   description: string;
   urgencyType: IssueUrgencyType;
   imageKeys: string[];
+  /** Persisted with the issue and replayed to the professional — see `IssueDetailResponse`. */
+  clarificationAnswers?: ClarificationAnswer[];
 }
 
 export interface IssueImage {
@@ -88,15 +100,49 @@ export interface LatestOrderSummary {
   createdAt: string;
 }
 
+/** One question/answer pair from the clarification flow — customer-supplied fact, not AI output. */
+export interface ClarificationEntry {
+  question: string;
+  answer: string;
+}
+
+/**
+ * Pronto's Professional Brief. Returned **only to a professional** with an order on the issue,
+ * and `null` otherwise (including for issues created before the feature existed).
+ *
+ * This is the AI's interpretation and is a separate object from `IssueDetailResponse.description`,
+ * which is and remains the customer's own untouched words — screens must keep the two visually
+ * distinct. `status` distinguishes "still generating" from "generation failed"; both are
+ * non-blocking. Every list may legitimately be empty.
+ */
+export interface ProntoAnalysis {
+  status: 'PENDING' | 'READY' | 'FAILED';
+  customerProblemSummary: string | null;
+  clarificationSummary: string | null;
+  imageObservations: string[];
+  likelyIssue: {
+    description: string;
+    confidence: number | null;
+    evidence: string[];
+  } | null;
+  possibleCauses: string[];
+  recommendedTools: string[];
+  recommendedParts: string[];
+  safetyNotes: string[];
+}
+
 export interface IssueDetailResponse {
   id: number;
   customerId: number;
   categoryId: number;
   categoryCode: string;
+  /** The customer's own report, verbatim. Never rewritten by anything in the system. */
   description: string;
   urgencyType: IssueUrgencyType;
   status: string;
   images: IssueImage[];
+  clarifications: ClarificationEntry[];
+  prontoAnalysis: ProntoAnalysis | null;
   latestOrder: LatestOrderSummary | null;
   createdAt: string;
   updatedAt: string;

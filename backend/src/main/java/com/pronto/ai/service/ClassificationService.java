@@ -1,144 +1,167 @@
 package com.pronto.ai.service;
 
+import com.pronto.ai.catalog.ServiceCategory;
+import com.pronto.ai.catalog.ServiceCategoryCatalog;
 import com.pronto.ai.client.AiClassificationClient;
-import com.pronto.ai.client.ClarificationAnswer;
-import com.pronto.ai.client.ClassificationResult;
-import com.pronto.ai.client.ImageAttachment;
+import com.pronto.ai.decision.RoutingDecision;
+import com.pronto.ai.decision.RoutingDecisionPolicy;
+import com.pronto.ai.dto.CategoryCandidate;
+import com.pronto.ai.dto.ClarificationExchange;
+import com.pronto.ai.dto.ClassificationRequest;
+import com.pronto.ai.dto.ClassificationResponse;
 import com.pronto.ai.dto.ClassificationStatus;
 import com.pronto.ai.dto.ClassificationSuggestion;
+import com.pronto.ai.dto.ImageAttachment;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
-import com.pronto.professionals.entity.Category;
-import com.pronto.professionals.repository.CategoryRepository;
-import com.pronto.storage.ImageContentType;
-import com.pronto.storage.ImageKeyUtils;
-import com.pronto.storage.client.StorageClient;
-import com.pronto.storage.client.StorageException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /**
- * Orchestrates {@code POST /api/issues/classify} (§2.1 steps 4-5): resolves each image key
- * to bytes via {@code storage.StorageClient}, delegates to the configured
- * {@link AiClassificationClient} (mock or real OpenAI, per {@code pronto.ai.mode}), then
- * maps the result's {@code categoryCode} to a real {@code categories} row — applying the
- * {@code general_handyman} fallback (§2.1 step 5 / §4, a flagged recommendation, not a hard
- * requirement) if the AI's code doesn't match any seeded category.
+ * Orchestrates one routing pass: gather every piece of evidence, ask the AI, let
+ * {@link RoutingDecisionPolicy} decide, and return a suggestion the {@code issues} package
+ * can serve directly.
  *
- * <p>Stateless: no DB write happens here or anywhere in this call path (§2.1's "no side
- * effects" rule) — {@link CategoryRepository} is read-only lookup.
+ * <p><b>There is one entry point, not an initial one and a follow-up one.</b> Every call —
+ * the first pass and every pass after a clarification answer — runs the same code over the
+ * same complete context: original description, original images, the customer's category
+ * hint, and every question/answer pair so far. Re-classifying from the newest answer alone
+ * is the failure this shape is designed to make impossible.
+ *
+ * <p>The clarification budget is derived from how many answers were supplied
+ * ({@code maxClarificationQuestions - answers.size()}), so the loop is bounded by data rather
+ * than by trusting the model to stop. When the budget reaches zero the prompt switches to
+ * commit-now mode and the policy returns a final (possibly low-confidence) decision.
+ *
+ * <p>Stateless: nothing here writes to the database. Persistence of the resulting
+ * classification/clarification history belongs to {@code issues}, which owns the issue
+ * aggregate and its transaction.
  */
 @Service
 public class ClassificationService {
 
     private static final Logger log = LoggerFactory.getLogger(ClassificationService.class);
-    private static final String FALLBACK_CATEGORY_CODE = "general_handyman";
 
     private final AiClassificationClient aiClassificationClient;
-    private final StorageClient storageClient;
-    private final CategoryRepository categoryRepository;
+    private final ServiceCategoryCatalog catalog;
+    private final RoutingDecisionPolicy routingDecisionPolicy;
+    private final IssueImageResolver imageResolver;
 
     public ClassificationService(AiClassificationClient aiClassificationClient,
-                                  StorageClient storageClient,
-                                  CategoryRepository categoryRepository) {
+                                  ServiceCategoryCatalog catalog,
+                                  RoutingDecisionPolicy routingDecisionPolicy,
+                                  IssueImageResolver imageResolver) {
         this.aiClassificationClient = aiClassificationClient;
-        this.storageClient = storageClient;
-        this.categoryRepository = categoryRepository;
-    }
-
-    public ClassificationSuggestion classify(String description, List<String> imageKeys) {
-        List<ImageAttachment> images = resolveImages(imageKeys);
-        ClassificationResult result = callClient(() -> aiClassificationClient.classify(description, images));
-        return toSuggestion(result);
+        this.catalog = catalog;
+        this.routingDecisionPolicy = routingDecisionPolicy;
+        this.imageResolver = imageResolver;
     }
 
     /**
-     * Exactly one additional AI request after the customer answered the clarification
-     * questions from a prior {@link #classify} call that returned
-     * {@code ClassificationStatus.QUESTIONS} — see
-     * {@code docs/architecture/api-contract-issues.md} §2.1's clarification-question
-     * extension. {@code description}/{@code imageKeys} are the same original values passed
-     * to {@link #classify}; there is no server-side session linking the two calls (mirrors
-     * this endpoint's existing stateless design), so the caller round-trips them.
+     * @param description        the customer's original words (never rewritten)
+     * @param imageKeys          storage keys of the attached photos, already ownership-checked
+     *                           by the caller
+     * @param selectedCategoryId the category the customer picked, if any — a hint only
+     * @param answers            every clarification question already answered, in order
      */
-    public ClassificationSuggestion classifyWithClarification(String description, List<String> imageKeys,
-                                                                List<ClarificationAnswer> clarificationAnswers) {
-        List<ImageAttachment> images = resolveImages(imageKeys);
-        ClassificationResult result = callClient(() ->
-                aiClassificationClient.classifyWithClarification(description, images, clarificationAnswers));
-        return toSuggestion(result);
-    }
-
-    private ClassificationResult callClient(Supplier<ClassificationResult> call) {
-        try {
-            return call.get();
-        } catch (ApiException e) {
-            throw e;
-        } catch (Exception e) {
-            log.warn("AI classification client threw an unexpected exception.", e);
-            throw new ApiException(ErrorCode.AI_SERVICE_ERROR, "AI classification service failed to produce a result.");
-        }
+    public ClassificationSuggestion classify(String description, List<String> imageKeys,
+                                              Long selectedCategoryId, List<ClarificationExchange> answers) {
+        return classifyResolved(description, imageResolver.resolveRequired(imageKeys), selectedCategoryId, answers);
     }
 
     /**
-     * A {@code QUESTIONS} result has no category to resolve — it's passed straight through.
-     * A {@code CLASSIFIED} result gets the existing category-code-to-row mapping, with the
-     * {@code general_handyman} fallback if the AI's code doesn't match any seeded category.
+     * Same pass, for a caller that has already resolved the images — so an operation making
+     * more than one AI call downloads and encodes each photo once instead of once per call
+     * (see {@code issues.service.IssueBriefService}).
+     *
+     * <p>Reuse is only possible within a single server-side operation. Across clarification
+     * rounds each round is its own stateless HTTP request, so the attachments genuinely have
+     * to be re-resolved; sharing them there would need a cross-request cache, which is
+     * infrastructure this does not warrant.
      */
-    private ClassificationSuggestion toSuggestion(ClassificationResult result) {
-        if (result.status() == ClassificationStatus.QUESTIONS) {
-            return new ClassificationSuggestion(ClassificationStatus.QUESTIONS, null, null,
-                    result.confidence(), result.explanation(), result.questions());
-        }
+    public ClassificationSuggestion classifyResolved(String description, List<ImageAttachment> images,
+                                                       Long selectedCategoryId,
+                                                       List<ClarificationExchange> answers) {
 
-        List<Category> categories = categoryRepository.findAll();
-        Category matched = categories.stream()
-                .filter(c -> c.getCode().equalsIgnoreCase(result.categoryCode()))
+        List<ClarificationExchange> priorExchanges = answers == null ? List.of() : List.copyOf(answers);
+        List<ServiceCategory> categories = catalog.categories();
+        String selectedCategoryCode = categories.stream()
+                .filter(category -> category.id().equals(selectedCategoryId))
+                .map(ServiceCategory::code)
                 .findFirst()
                 .orElse(null);
 
-        Double confidence = result.confidence();
-        String explanation = result.explanation();
+        int budget = routingDecisionPolicy.remainingBudget(priorExchanges.size());
 
-        if (matched == null) {
-            log.warn("AI returned unrecognized category code '{}'; falling back to '{}'.",
-                    result.categoryCode(), FALLBACK_CATEGORY_CODE);
-            matched = categories.stream()
-                    .filter(c -> c.getCode().equals(FALLBACK_CATEGORY_CODE))
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Seeded category '" + FALLBACK_CATEGORY_CODE + "' is missing from the categories table."));
-            confidence = null;
-        }
+        log.info("ai.classification.started images={} answers={} selectedCategory={} budget={}",
+                images.size(), priorExchanges.size(), selectedCategoryCode, budget);
 
-        return new ClassificationSuggestion(ClassificationStatus.CLASSIFIED, matched.getId(), matched.getCode(),
-                confidence, explanation, List.of());
+        ClassificationRequest request = new ClassificationRequest(description, images, selectedCategoryCode,
+                priorExchanges, budget);
+
+        ClassificationResponse response = callClient(request);
+        RoutingDecision decision = routingDecisionPolicy.decide(response, categories, priorExchanges,
+                priorExchanges.size());
+
+        log.info("ai.classification.decided outcome={} category={} confidence={} candidates=[{}] round={}",
+                decision.outcome(),
+                decision.category() == null ? "none" : decision.category().code(),
+                decision.confidence(),
+                renderCandidates(decision.candidates()),
+                priorExchanges.size());
+
+        return toSuggestion(decision);
     }
 
-    private List<ImageAttachment> resolveImages(List<String> imageKeys) {
-        if (imageKeys == null || imageKeys.isEmpty()) {
-            return List.of();
+    /**
+     * {@code FINAL_UNRESOLVED} still reaches the customer as {@code CLASSIFIED} — deliberately.
+     * The product flow has one path forward, and the fallback category is a real, bookable
+     * one the customer can override on the review screen; inventing a customer-facing
+     * "we could not decide" state would be a new flow for no benefit. The distinction is
+     * preserved where it matters instead: in {@code unresolved}, which is logged, persisted
+     * with the telemetry pass, and reported separately by the evaluation harness.
+     */
+    private ClassificationSuggestion toSuggestion(RoutingDecision decision) {
+        if (decision.outcome() == RoutingDecision.Outcome.ASK_CLARIFICATION) {
+            return new ClassificationSuggestion(ClassificationStatus.QUESTIONS, null, null, decision.confidence(),
+                    false, false, decision.ambiguityReason(), decision.candidates(),
+                    List.of(decision.question()));
         }
-        List<ImageAttachment> images = new ArrayList<>();
-        for (String key : imageKeys) {
-            byte[] bytes;
-            try {
-                bytes = storageClient.download(key);
-            } catch (StorageException e) {
-                throw new ApiException(ErrorCode.STORAGE_SERVICE_ERROR, "Failed to resolve an attached image.");
-            }
-            String contentType = ImageKeyUtils.extractExtension(key)
-                    .flatMap(ImageContentType::fromExtension)
-                    .map(ImageContentType::contentType)
-                    .orElse(MediaType.APPLICATION_OCTET_STREAM_VALUE);
-            images.add(new ImageAttachment(key, bytes, contentType));
+
+        boolean unresolved = decision.outcome() == RoutingDecision.Outcome.FINAL_UNRESOLVED;
+        boolean lowConfidence = unresolved || decision.outcome() == RoutingDecision.Outcome.FINAL_LOW_CONFIDENCE;
+
+        return new ClassificationSuggestion(ClassificationStatus.CLASSIFIED, decision.category().id(),
+                decision.category().code(), decision.confidence(), lowConfidence, unresolved,
+                decision.ambiguityReason(), decision.candidates(), List.of());
+    }
+
+    /**
+     * An {@link ApiException} (already a clean {@code AI_SERVICE_ERROR}/{@code
+     * STORAGE_SERVICE_ERROR}) passes through untouched; anything else is logged with its
+     * stack trace and normalised, so an unexpected client bug never leaks as a 500 with an
+     * internal message.
+     */
+    private ClassificationResponse callClient(ClassificationRequest request) {
+        try {
+            return aiClassificationClient.classify(request);
+        } catch (ApiException e) {
+            log.warn("ai.classification.failed code={} ", e.getCode());
+            throw e;
+        } catch (Exception e) {
+            log.warn("ai.classification.failed code=UNEXPECTED", e);
+            throw new ApiException(ErrorCode.AI_SERVICE_ERROR,
+                    "AI classification service failed to produce a result.");
         }
-        return images;
+    }
+
+    private String renderCandidates(List<CategoryCandidate> candidates) {
+        return candidates.stream()
+                .map(candidate -> candidate.categoryCode() + "=" + String.format("%.2f", candidate.confidence()))
+                .collect(Collectors.joining(","));
     }
 }

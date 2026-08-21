@@ -496,6 +496,8 @@ one).
 
 ### 2.1 `GET /api/issues/{id}` — new, `issues` package
 
+> **Extended (2026-08-20) by `ai-issue-classification-redesign.md`.** The response gains `clarifications` (the customer's own answers, verbatim, for both roles) and `prontoAnalysis` — Pronto's Professional Brief, returned **only** to a `PROFESSIONAL` caller with an order on the issue, and `null` otherwise. Authorization, ownership rules and every existing field are unchanged.
+
 **Why this belongs here, not silently assumed to exist.** `api-contract-issues.md` §4 and
 `overview.md` §6 both flagged this exact gap: M3's booking flow needs to resolve an issue
 by id (show its category/description on the professional-listing screen; validate it

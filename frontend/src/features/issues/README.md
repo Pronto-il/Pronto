@@ -6,9 +6,14 @@ AI-suggested service category.
 
 ## Responsibilities
 - Home / New Issue screen — text description entry plus optional image attachments.
-- AI Review screen — shows the AI-suggested category as a simple confirmation (never the
-  raw AI `explanation`/`confidence`, which are internal-only), lets the customer confirm or
-  override it against the fixed 8-category list.
+- AI Review screen — shows the AI-suggested category as a simple confirmation, and lets the
+  customer confirm or override it against the seeded category list (seven categories since
+  `V31` retired Carpentry).
+  **Issue-classification redesign (2026-08-20):** `explanation`/`confidence` are no longer
+  merely never-rendered — they are gone from the response entirely, along with candidates and
+  the ambiguity reason. Those are backend diagnostics (persisted and logged); the convention
+  "must never be shown to the customer" is now a structural guarantee rather than a rule this
+  README has to keep restating.
 - Hands off into `features/booking` once a category is confirmed (customer picks
   Standard or SOS).
 
@@ -16,8 +21,11 @@ AI-suggested service category.
 Implemented, 2026-08-16: `NewIssuePage` (routed at `/issues/new`, customer-only via
 `RequireAuth role="CUSTOMER"`) runs a three-step flow — `DescribeIssueStep` (description +
 `PhotoUploader` photos + Standard/SOS urgency, calls `POST /api/issues/classify`),
-`ClarifyQuestionsStep` (only reached on `status: "QUESTIONS"`, rendering the backend's
-`questions` array dynamically — no frontend-invented questions), and `ReviewStep` (a plain
+`ClarifyQuestionsStep` (reached on `status: "QUESTIONS"`, rendering the backend's `questions`
+array dynamically — no frontend-invented questions; **as of the issue-classification redesign
+this step can repeat**: the backend asks one highest-value question at a time, re-classifies
+against the accumulated answers, and may ask one more, up to a server-side budget. The step
+carries the growing conversation forward and neither counts nor caps rounds), and `ReviewStep` (a plain
 category confirmation card built from `suggestedCategoryId`/`suggestedCategoryCode` only,
 lets the customer confirm/override the category, calls `POST /api/issues` — the flow's only
 DB write) ending in `IssueSuccessStep`. `HomePage` got its Milestone 2 entry point: a single
@@ -110,13 +118,12 @@ the full design record.
   לך את בעל המקצוע הכי מתאים."). If `urgencyType === 'SOS'`, an inline "דחוף — SOS" badge
   renders next to the headline using `--color-sos`/`--color-sos-bg` directly (not `Badge` —
   its `BadgeTone` enum has no `'sos'` value, out of this milestone's scope to add).
-  **`classification.explanation`/`.confidence` are still never rendered anywhere in this
-  component** — a deliberate, backend-verified continuation of the prior stricter behavior
-  (design doc §5.3): in real (OpenAI) mode `explanation` is English-only prose, contradicting
-  Pronto's Hebrew-only v1.0 scope; in mock mode it literally names the internal
-  keyword-matching mechanism (`OpenAiClassificationClient.java`/`MockAiClassificationClient.
-  java`, both directly inspected). `handleConfirm`/`createIssue`'s payload, `categoryId`/
-  `isChangingCategory` state, and `onConfirmed` are unchanged.
+  **`classification.explanation`/`.confidence` no longer exist** — the issue-classification
+  redesign removed them from `ClassifyIssueResponse` rather than continuing to ship fields
+  this component was documented as never allowed to render. `categoryId`/`isChangingCategory`
+  state and `onConfirmed` are unchanged; `handleConfirm`'s `createIssue` payload now also
+  carries `clarificationAnswers`, so the conversation is persisted with the issue instead of
+  being discarded at that boundary.
 - **`IssueSuccessStep`.** The `✓` circle is now `<Mascot state="success" size="xl" label="הבקשה
   נשלחה בהצלחה" />` (meaningful, not decorative); headline "הבקשה נשלחה" → "הבנתי. עכשיו נמצא
   לך מישהו." Body copy (both `isStandard` branches), CTA labels, and both navigation
@@ -167,7 +174,8 @@ its own address step stays one explicit "back" away for a customer who wants to 
   `360 * SPINS - targetIndex * segmentAngle`, computed from the issue's own category's fixed
   position, so the same issue always lands identically. Nothing random is drawn anywhere.
 - **Illustrations** come from `shared/components/ProfessionIllustration.tsx`, the single
-  category-id → drawing map. Category 6 (`carpentry`) has **no** illustration in
+  category-id → drawing map. (Category 6, `carpentry`, had no illustration; V31 retired that
+  category into Handyman, so every surviving category now has one.) Formerly missing in
   `assets/rollete-animation-images/` — seven drawings were supplied for eight categories — so it
   renders the shared `Mascot` fallback and logs a one-time dev warning naming the gap, rather
   than borrowing another profession's drawing.

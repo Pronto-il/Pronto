@@ -1,0 +1,169 @@
+[
+  {
+    "id": "case-001",
+    "description": "הכיור במטבח סתום ולא מתנקז בכלל",
+    "expectedCategory": "plumbing",
+    "notes": "Straightforward plumbing. Must never need a question."
+  },
+  {
+    "id": "case-002",
+    "description": "המזגן בסלון עובד אבל לא מקרר",
+    "expectedCategory": "ac_hvac",
+    "notes": "Straightforward AC. Must never need a question."
+  },
+  {
+    "id": "case-003",
+    "description": "אין מים חמים בכלל, נראה שהדוד לא מחמם",
+    "expectedCategory": "plumbing",
+    "notes": "Pronto has no boiler category — water-heater work is plumbing."
+  },
+  {
+    "id": "case-004",
+    "description": "יש מים על הרצפה ליד הדוד",
+    "clarificationAnswers": {
+      "מים": "מהדוד עצמו",
+      "דוד": "מהדוד עצמו"
+    },
+    "expectedCategory": "plumbing",
+    "notes": "Ambiguous source. Either resolution lands on plumbing here, but the system should not commit blindly."
+  },
+  {
+    "id": "case-005",
+    "description": "המפסק קופץ כל פעם שאני מדליק את המזגן, שום דבר אחר לא מפיל אותו",
+    "expectedCategory": "ac_hvac",
+    "notes": "Electrical symptom, AC-owned component. The core routing-not-diagnosis case."
+  },
+  {
+    "id": "case-006",
+    "description": "המפסק קופץ כל הזמן, גם עם הקומקום וגם עם מכונת הכביסה וגם עם המזגן",
+    "expectedCategory": "electrical",
+    "notes": "Same symptom, shared across unrelated loads — a distribution fault."
+  },
+  {
+    "id": "case-007",
+    "description": "המפסק קופץ כשאני משתמש במזגן",
+    "clarificationAnswers": {
+      "מפסק": "רק כשהמזגן פועל",
+      "מזגן": "רק כשהמזגן פועל",
+      "מכשיר": "רק כשהמזגן פועל"
+    },
+    "expectedCategory": "ac_hvac",
+    "notes": "AC vs electrical with the distinguishing fact withheld — should ask, then route to AC."
+  },
+  {
+    "id": "case-008",
+    "description": "האסלה בשירותים סתומה ולא מורידה מים",
+    "selectedCategory": "electrical",
+    "expectedCategory": "plumbing",
+    "notes": "Customer picked the wrong category. The hint must lose to clear evidence, with no question asked."
+  },
+  {
+    "id": "case-009",
+    "description": "יש מים מתחת למכונת הכביסה אחרי כל כביסה",
+    "clarificationAnswers": {
+      "מים": "מהמכשיר עצמו",
+      "מכשיר": "מהמכשיר עצמו",
+      "מכונ": "מהמכשיר עצמו"
+    },
+    "expectedCategory": "appliance_repair",
+    "notes": "Appliance vs plumbing; the answer says the machine itself."
+  },
+  {
+    "id": "case-010",
+    "description": "יש מים מתחת למכונת הכביסה",
+    "clarificationAnswers": {
+      "מים": "מהברז או מחיבור הניקוז בקיר",
+      "מכשיר": "מהברז או מחיבור הניקוז בקיר",
+      "מכונ": "מהברז או מחיבור הניקוז בקיר"
+    },
+    "expectedCategory": "plumbing",
+    "notes": "Same opening text as case-009 — only the answer differs. Proves the answer actually changes the routing."
+  },
+  {
+    "id": "case-011",
+    "description": "טפטוף מים מהיחידה של המזגן על הקיר בסלון, נוצרה שלולית מתחת",
+    "expectedCategory": "ac_hvac",
+    "notes": "Water words dominate the text but the component is the AC condensate system."
+  },
+  {
+    "id": "case-012",
+    "description": "השקע בסלון מנצנץ ויוצא ממנו ריח שרוף",
+    "expectedCategory": "electrical",
+    "notes": "Straightforward electrical, safety-relevant."
+  },
+  {
+    "id": "case-013",
+    "description": "ננעלתי מחוץ לדירה, המפתח נשאר בפנים",
+    "expectedCategory": "locksmith",
+    "notes": "Straightforward locksmith."
+  },
+  {
+    "id": "case-014",
+    "description": "דלת חדר השינה משתפשפת במשקוף ולא נסגרת עד הסוף",
+    "expectedCategory": "general_handyman",
+    "notes": "Door leaf/alignment, not the lock. Handyman since V31 retired carpentry."
+  },
+  {
+    "id": "case-015",
+    "description": "המפתח נשבר בתוך הצילינדר של דלת הכניסה",
+    "expectedCategory": "locksmith",
+    "notes": "Door problem that IS the lock — the other side of the locksmith/handyman overlap."
+  },
+  {
+    "id": "case-016",
+    "description": "צריך לתלות טלוויזיה על הקיר בסלון ולהרכיב מדפים",
+    "expectedCategory": "general_handyman",
+    "notes": "Mounting and assembly."
+  },
+  {
+    "id": "case-017",
+    "description": "הצבע בקיר בחדר האמבטיה מתקלף ויש כתם רטוב שגדל",
+    "expectedCategory": "plumbing",
+    "notes": "Painting words, but an unresolved moisture source must be fixed first."
+  },
+  {
+    "id": "case-018",
+    "description": "רוצה לצבוע מחדש את הסלון, הקירות מלוכלכים ויש כמה סדקים קטנים בטיח",
+    "expectedCategory": "painting",
+    "notes": "Genuinely decorative — the other side of the painting/plumbing overlap."
+  },
+  {
+    "id": "case-019",
+    "description": "המקרר לא מקרר, המנוע עובד אבל בפנים חם",
+    "expectedCategory": "appliance_repair",
+    "notes": "Appliance, not AC, despite 'not cooling'."
+  },
+  {
+    "id": "case-020",
+    "description": "התנור לא מתחמם בכלל, התאורה בתוכו כן נדלקת",
+    "expectedCategory": "appliance_repair",
+    "notes": "Appliance vs electrical — power reaches it, so the fault is internal."
+  },
+  {
+    "id": "case-021",
+    "description": "כל האורות בדירה מהבהבים בערב, בכל החדרים",
+    "expectedCategory": "electrical",
+    "notes": "Whole-installation symptom."
+  },
+  {
+    "id": "case-022",
+    "description": "יש עובש בתקרה של חדר האמבטיה ומטפטף משם קצת",
+    "expectedCategory": "plumbing",
+    "notes": "Mould plus an active drip — the source, not the cosmetics."
+  },
+  {
+    "id": "case-023",
+    "description": "המזגן מרעיש מאוד ומוציא ריח לא נעים כשהוא נדלק",
+    "expectedCategory": "ac_hvac",
+    "notes": "AC servicing."
+  },
+  {
+    "id": "case-024",
+    "description": "משהו לא בסדר בדירה, אפשר לשלוח מישהו שיבדוק",
+    "clarificationAnswers": {
+      "": "אני לא בטוח/ה"
+    },
+    "expectedCategory": "general_handyman",
+    "notes": "Genuinely contentless. The correct outcome is the controlled fallback, not a confident specialist guess. The empty-string key matches any question, so this case always answers 'not sure' — it exists to check the system stays uncertain rather than inventing certainty."
+  }
+]

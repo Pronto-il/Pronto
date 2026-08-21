@@ -5,29 +5,37 @@ import { Circle, CheckCircle2 } from 'lucide-react';
 import { Button } from '../../shared/components';
 import type { UploadedPhoto } from '../../shared/components';
 import { classifyIssue, GENERIC_ERROR_MESSAGE } from '../../shared/api';
-import type { ClassifyIssueResponse, ClassifyQuestion } from '../../shared/api';
+import type { ClarificationAnswer, ClassifyIssueResponse, ClassifyQuestion } from '../../shared/api';
 import { pageTransition } from '../../shared/motion/variants';
 import styles from './ClarifyQuestionsStep.module.css';
 
 export interface ClarifyQuestionsStepProps {
   description: string;
   photos: UploadedPhoto[];
+  /** Normally exactly one — the backend asks the single highest-value question per round. The
+   *  component still renders a list defensively rather than assuming a length. */
   questions: ClassifyQuestion[];
-  onClassified: (result: ClassifyIssueResponse) => void;
+  /** Answers from earlier rounds. Resubmitted alongside the new ones so the backend always
+   *  re-classifies against the complete conversation, never the latest answer alone. */
+  previousAnswers: ClarificationAnswer[];
+  onClassified: (result: ClassifyIssueResponse, answers: ClarificationAnswer[]) => void;
   /** Design doc §2.2/§4.3 — same minimal wiring as `DescribeIssueStepProps`, around this
    *  component's own `classifyIssue` call in `handleContinue`. */
   onAnalyzingChange: (isAnalyzing: boolean) => void;
 }
 
 /**
- * The single allowed clarification round (api-contract-issues.md §2.1, "Clarification-
- * question extension") — resubmits the same description/images plus the chosen answers, and
- * always resolves to `status: "CLASSIFIED"`.
+ * One clarification round. Pronto asks the highest-value question, re-classifies with the
+ * answer, and may ask one more — so this step can legitimately be shown again with a different
+ * question rather than always resolving straight to `CLASSIFIED`. The server-side question
+ * budget is what ends the loop; this component neither counts nor caps rounds, it just carries
+ * the growing conversation forward.
  */
 export function ClarifyQuestionsStep({
   description,
   photos,
   questions,
+  previousAnswers,
   onClassified,
   onAnalyzingChange,
 }: ClarifyQuestionsStepProps) {
@@ -60,16 +68,18 @@ export function ClarifyQuestionsStep({
     setBannerError(null);
     setIsSubmitting(true);
     onAnalyzingChange(true);
+    const accumulated: ClarificationAnswer[] = [
+      ...previousAnswers,
+      ...questions.map((question) => ({ question: question.question, answer: answers[question.id] })),
+    ];
+
     try {
       const result = await classifyIssue({
         description,
         imageKeys: photos.map((photo) => photo.imageKey),
-        clarificationAnswers: questions.map((question) => ({
-          question: question.question,
-          answer: answers[question.id],
-        })),
+        clarificationAnswers: accumulated,
       });
-      onClassified(result);
+      onClassified(result, accumulated);
     } catch {
       setBannerError(GENERIC_ERROR_MESSAGE);
     } finally {

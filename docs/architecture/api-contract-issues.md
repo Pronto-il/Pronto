@@ -95,6 +95,9 @@ existing taxonomy:
 
 Auth required: **yes** (role: CUSTOMER).
 
+> **Superseded (2026-08-20) by `ai-issue-classification-redesign.md`.** The request gains an optional `selectedCategoryId` hint and carries the **accumulated** `clarificationAnswers`; the response drops `confidence` and `explanation` (backend-only diagnostics) and returns **one** question per round instead of up to three. The single-round "Clarification-question extension" below is replaced by iterative clarification bounded by `pronto.ai.routing.max-clarification-questions`. The rest of this section is kept for historical context — read the redesign doc for the shape that is actually implemented.
+
+
 **Package placement — stated explicitly, per the task brief's instruction.** This
 endpoint lives in the `issues` controller (not a standalone `ai` controller), and
 delegates internally to an `ai.ClassificationService`. Reasoning: the customer-facing
@@ -262,6 +265,9 @@ confidence just because clarification answers were provided — see
 ### 2.2 `POST /api/issues`
 
 Auth required: **yes** (role: CUSTOMER).
+
+> **Superseded (2026-08-20) by `ai-issue-classification-redesign.md`.** The request gains `clarificationAnswers`, which are now persisted as `issue_clarifications` rows instead of being discarded, and creation also seeds the `issue_classifications`/`issue_briefs` rows and triggers asynchronous Professional Brief generation. `categoryId` semantics are unchanged. The rest of this section is kept for historical context — read the redesign doc for the shape that is actually implemented.
+
 
 Persists the `issues` row (and any associated `issue_images` rows) — this is the call that
 actually writes to the database, **only reachable after** the customer has seen the AI
@@ -513,6 +519,9 @@ exist yet and is explicitly out of this milestone's scope to design.
 ## 3. Cross-cutting mechanism decisions
 
 ### 3.1 AI classification client — mock/real split behind an interface, mirroring `EmailSender`
+
+> **Superseded (2026-08-20) by `ai-issue-classification-redesign.md`.** The mock/real split via `pronto.ai.mode` and the image-reachability decision below both still hold. The interface itself changed: `classify(ClassificationRequest)` plus a second `generateBrief(...)` responsibility, replacing `classify`/`classifyWithClarification`. The rest of this section is kept for historical context — read the redesign doc for the shape that is actually implemented.
+
 
 **Decision, stated explicitly per the task brief's instruction not to let this be a silent
 shortcut**: an `AiClassificationClient` interface lives in the `ai` package, e.g.:

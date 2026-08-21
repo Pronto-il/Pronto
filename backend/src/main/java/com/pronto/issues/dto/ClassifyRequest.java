@@ -9,18 +9,28 @@ import java.util.List;
 /**
  * Wire shape for {@code POST /api/issues/classify}. See
  * {@code docs/architecture/api-contract-issues.md} §2.1. {@code imageKeys} entries are
- * further validated (existence + ownership, §3.3) in {@code IssuesService} — Bean
- * Validation only covers shape (non-blank entries, at most 6).
+ * further validated (existence + ownership, §3.3) in {@code IssuesService} — Bean Validation
+ * only covers shape.
  *
- * <p>{@code clarificationAnswers} is the second-call shape of this same endpoint (§2.1's
- * clarification-question extension): omitted/empty for the initial classification pass;
- * when present, {@code description}/{@code imageKeys} must be the same original values from
- * the first call, and the backend performs exactly one final classification instead of a
- * fresh initial one — see {@code IssuesService.classify}.
+ * <p>The endpoint is stateless, so the client round-trips the whole conversation on every
+ * call: {@code description}/{@code imageKeys} stay the original values, and
+ * {@code clarificationAnswers} accumulates — every question answered so far, not just the
+ * newest one. That is what lets the backend re-classify against the complete context each
+ * round instead of reacting to the latest answer in isolation.
+ *
+ * <p>{@code selectedCategoryId} is the customer's own category choice, when the flow has one
+ * to offer. It is passed to the model as a <b>hint only</b> and is explicitly allowed to be
+ * overruled by the evidence.
+ *
+ * <p>The {@code @Size(max = 3)} cap is a wire-level sanity bound, not the business rule: the
+ * real limit is {@code pronto.ai.routing.max-clarification-questions}, enforced server-side
+ * by {@code ai.decision.RoutingDecisionPolicy}. Sending more answers than the configured
+ * budget simply leaves no budget remaining, which forces a final decision.
  */
 public record ClassifyRequest(
         @NotBlank @Size(min = 10, max = 2000) String description,
         @Size(max = 6) List<@NotBlank String> imageKeys,
+        Long selectedCategoryId,
         @Valid @Size(max = 3) List<ClarificationAnswerRequest> clarificationAnswers
 ) {
 }

@@ -99,6 +99,37 @@ pronto:
     # docs/architecture/api-contract-issues.md §3.1.
     mode: ${AI_MODE:mock}
 
+    # Whether the post-creation job also records what the AI independently routes a created
+    # issue to (issues.service.IssueBriefService). Pure telemetry — it never changes
+    # issues.category_id — but it costs a second model call on EVERY created issue.
+    #
+    # Off by default: paying that on every issue is not justified yet. Accuracy is measured by
+    # the labelled evaluation harness (backend src/test/java/com/pronto/ai/eval); this only
+    # adds a production drift signal ("how often does the model disagree with the category the
+    # customer confirmed") on top. Switch it on deliberately when that signal is wanted.
+    record-final-classification: ${AI_RECORD_FINAL_CLASSIFICATION:false}
+
+    routing:
+      # Every threshold the routing decision depends on. These are starting points to be
+      # tuned against the labelled evaluation harness, NOT measured optima — see
+      # ai.decision.RoutingProperties. Raising max-clarification-questions trades customer
+      # friction for accuracy; the other three trade clarification rate against the risk of
+      # committing to a close call.
+      #
+      # Hard cap on questions per issue, across all rounds. This is what makes an endless
+      # clarification loop structurally impossible.
+      max-clarification-questions: ${AI_MAX_CLARIFICATION_QUESTIONS:2}
+      # Below this the top candidate is not self-evidently safe on its own. Never sufficient
+      # on its own to ask a question — see RoutingDecisionPolicy's Javadoc.
+      min-confidence: ${AI_MIN_CONFIDENCE:0.70}
+      # Minimum gap between the top two candidates before they count as genuinely competing.
+      min-candidate-margin: ${AI_MIN_CANDIDATE_MARGIN:0.15}
+      # A candidate at or above this still counts as "reasonably plausible".
+      plausible-candidate-confidence: ${AI_PLAUSIBLE_CANDIDATE_CONFIDENCE:0.20}
+      # Used by the evaluation harness to flag high-confidence wrong classifications, the
+      # most dangerous failure mode.
+      high-confidence: ${AI_HIGH_CONFIDENCE:0.85}
+
   openai:
     # Never committed — env-var-sourced only, same treatment as JWT_SECRET. Required only
     # when pronto.ai.mode=openai.

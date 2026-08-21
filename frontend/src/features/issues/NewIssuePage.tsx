@@ -6,6 +6,7 @@ import { PageHeader } from '../../shared/components';
 import type { UploadedPhoto } from '../../shared/components';
 import { classifyIssue, getPresignedImageUrls, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type {
+  ClarificationAnswer,
   ClassifyIssueResponse,
   IssueResponse,
   IssueUrgencyType,
@@ -85,6 +86,13 @@ export default function NewIssuePage() {
     canHydrate ? initialDraft!.urgencyType : 'STANDARD',
   );
   const [step, setStep] = useState<Step>({ name: 'describe' });
+  // Every clarification answer given so far, accumulated across rounds. The backend asks one
+  // question at a time and re-classifies against the whole conversation, so this list — not
+  // just the latest answer — is what every subsequent `classifyIssue` call carries, and it is
+  // also what gets persisted with the issue on confirm.
+  const [clarificationAnswers, setClarificationAnswers] = useState<ClarificationAnswer[]>(() =>
+    canHydrate ? (initialDraft!.clarificationAnswers ?? []) : [],
+  );
   const [isResuming, setIsResuming] = useState(() => canHydrate && initialDraft!.stage !== 'ISSUE_DESCRIBE');
   const [resumeError, setResumeError] = useState<string | null>(null);
   // Design doc §2.2/§2.5 — purely local, no persistence, no draft interaction.
@@ -186,18 +194,28 @@ export default function NewIssuePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function handleClassified(result: ClassifyIssueResponse) {
+  /**
+   * The single step-transition point for every classification result, whether it came from the
+   * describe step (no answers yet) or from a clarification round (`answers` is the accumulated
+   * list including the one just given). A `QUESTIONS` result now legitimately repeats — the
+   * customer answers one question, the backend re-classifies with everything known and may ask
+   * one more — so this deliberately re-enters the clarify step rather than treating it as a
+   * one-shot stage. The backend's own budget is what ends the loop, not this component.
+   */
+  function handleClassified(result: ClassifyIssueResponse, answers: ClarificationAnswer[] = []) {
     const nextStep: Step =
       result.status === 'QUESTIONS'
         ? { name: 'clarify', classification: result }
         : { name: 'review', classification: result };
     setDirection(1);
+    setClarificationAnswers(answers);
     setStep(nextStep);
     updateDraft({
       stage: nextStep.name === 'clarify' ? 'ISSUE_CLARIFY' : 'ISSUE_REVIEW',
       urgencyType,
       description,
       photos: toDraftPhotos(photos),
+      clarificationAnswers: answers,
       ...(nextStep.name === 'review' ? { categoryId: result.suggestedCategoryId ?? undefined } : {}),
     });
   }
@@ -208,7 +226,17 @@ export default function NewIssuePage() {
     } else {
       setDirection(-1);
       setStep({ name: 'describe' });
-      updateDraft({ stage: 'ISSUE_DESCRIBE', urgencyType, description, photos: toDraftPhotos(photos) });
+      // Editing the description invalidates the conversation that was built on top of it —
+      // keeping stale answers would feed the classifier facts about a problem the customer is
+      // in the middle of restating.
+      setClarificationAnswers([]);
+      updateDraft({
+        stage: 'ISSUE_DESCRIBE',
+        urgencyType,
+        description,
+        photos: toDraftPhotos(photos),
+        clarificationAnswers: [],
+      });
     }
   }
 
@@ -314,9 +342,13 @@ export default function NewIssuePage() {
               )}
               {step.name === 'clarify' && (
                 <ClarifyQuestionsStep
+                  // Remounts per question set, so answering round 2 starts from a clean
+                  // selection state instead of inheriting round 1's.
+                  key={step.classification.questions.map((question) => question.id).join('|')}
                   description={description}
                   photos={photos}
                   questions={step.classification.questions}
+                  previousAnswers={clarificationAnswers}
                   onClassified={handleClassified}
                   onAnalyzingChange={setIsAnalyzing}
                 />
@@ -327,6 +359,7 @@ export default function NewIssuePage() {
                   description={description}
                   photos={photos}
                   urgencyType={urgencyType}
+                  clarificationAnswers={clarificationAnswers}
                   onConfirmed={handleConfirmed}
                 />
               )}

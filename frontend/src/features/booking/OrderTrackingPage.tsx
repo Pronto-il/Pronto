@@ -3,6 +3,7 @@ import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { PageHeader, Card, Button, StatusBadge, Skeleton, Modal } from '../../shared/components';
 import { OrderStatusHero } from './OrderStatusHero';
 import { OrderProgressStepper } from './OrderProgressStepper';
+import { ProntoAnalysisCard } from './ProntoAnalysisCard';
 import { useAuth, useOrderStatus, useEtaCountdown } from '../../shared/hooks';
 import { cancelOrder, markOnTheWay, completeOrder, getIssue, getCategoryNameHe, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { OrderStatus, IssueDetailResponse } from '../../shared/api';
@@ -272,6 +273,10 @@ export default function OrderTrackingPage() {
               {issue?.urgencyType === 'SOS' && <span className={styles.sosTag}>SOS</span>}
             </div>
 
+            {/* Labelled only for the professional: on the customer's own screen "מה הלקוח
+                תיאר" would be redundant, but on the professional's it is what keeps the
+                customer's words distinguishable from the Pronto analysis card below. */}
+            {issue && isProfessionalViewer && <p className={styles.reportLabel}>מה הלקוח תיאר</p>}
             {issue && <p className={styles.description}>“{issue.description}”</p>}
 
             {issue && issue.images.length > 0 && (
@@ -319,6 +324,13 @@ export default function OrderTrackingPage() {
               <span className={styles.totalPrice}>₪{order.finalPrice}</span>
             </div>
           </Card>
+
+          {/* `prontoAnalysis` is server-scoped to a professional with an order on the issue, so
+              it is simply absent for a customer — no client-side role gate needed beyond this
+              null check. Absent also covers issues created before briefs existed. */}
+          {issue?.prontoAnalysis && (
+            <ProntoAnalysisCard analysis={issue.prontoAnalysis} clarifications={issue.clarifications} />
+          )}
 
           {cancelError && (
             <div className={styles.banner} role="alert">

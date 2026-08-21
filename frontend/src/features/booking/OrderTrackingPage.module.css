@@ -155,3 +155,13 @@
   flex-direction: column;
   gap: var(--space-3);
 }
+
+/* Only rendered for a professional viewer — see the note at its use site in
+   OrderTrackingPage.tsx. Marks the quoted `.description` below it as the customer's own words,
+   so the tinted Pronto analysis card that follows reads as a separate kind of content. */
+.reportLabel {
+  margin: 0 0 var(--space-1);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}

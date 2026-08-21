@@ -2,7 +2,12 @@ import { useState } from 'react';
 import { Button, Card, Select } from '../../shared/components';
 import type { UploadedPhoto } from '../../shared/components';
 import { createIssue, GENERIC_ERROR_MESSAGE, CATEGORIES, getCategoryNameHe } from '../../shared/api';
-import type { ClassifyIssueResponse, IssueResponse, IssueUrgencyType } from '../../shared/api';
+import type {
+  ClarificationAnswer,
+  ClassifyIssueResponse,
+  IssueResponse,
+  IssueUrgencyType,
+} from '../../shared/api';
 import styles from './ReviewStep.module.css';
 
 export interface ReviewStepProps {
@@ -10,6 +15,9 @@ export interface ReviewStepProps {
   description: string;
   photos: UploadedPhoto[];
   urgencyType: IssueUrgencyType;
+  /** Sent with the issue so the conversation is persisted rather than discarded at this
+   *  boundary — it is what Pronto's brief for the professional is built from. */
+  clarificationAnswers: ClarificationAnswer[];
   onConfirmed: (issue: IssueResponse) => void;
 }
 
@@ -17,16 +25,25 @@ const CATEGORY_OPTIONS = CATEGORIES.map((category) => ({ value: String(category.
 
 /**
  * AI Review screen — a diagnosis-style category confirmation, not a technical prediction
- * (FRONTEND_AGENT.md §14 / DESIGN_SYSTEM.md §40). `classification`'s `explanation`/
- * `confidence` fields are the AI's internal reasoning (useful for debugging/logging, per
- * api-contract-issues.md §2.1) and must **never** be rendered to the customer — a deliberate,
- * backend-verified decision (design doc §5.3): in real (OpenAI) mode `explanation` is
- * English-only prose (contradicts Pronto's Hebrew-only v1.0 scope); in mock mode it literally
- * names the internal keyword-matching mechanism. Only `suggestedCategoryId`/
- * `suggestedCategoryCode` drive this screen. Confirming here is the call that actually
- * persists the issue (`POST /api/issues`, api-contract-issues.md §2.2).
+ * (FRONTEND_AGENT.md §14 / DESIGN_SYSTEM.md §40). Only `suggestedCategoryId`/
+ * `suggestedCategoryCode` drive this screen, and they are all the response now carries:
+ * confidence, candidates and the ambiguity reason are backend-only diagnostics and no longer
+ * cross the wire at all (they used to, and were documented as never allowed to be rendered —
+ * the field removal replaces that convention with a structural guarantee).
+ *
+ * The customer keeps the final word here: the category can still be overridden, and whatever
+ * they confirm is what `POST /api/issues` persists. Confirming is the call that actually
+ * creates the issue (api-contract-issues.md §2.2), now carrying the clarification answers with
+ * it so the professional's brief can be built from them.
  */
-export function ReviewStep({ classification, description, photos, urgencyType, onConfirmed }: ReviewStepProps) {
+export function ReviewStep({
+  classification,
+  description,
+  photos,
+  urgencyType,
+  clarificationAnswers,
+  onConfirmed,
+}: ReviewStepProps) {
   const [categoryId, setCategoryId] = useState(String(classification.suggestedCategoryId ?? ''));
   const [isChangingCategory, setIsChangingCategory] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -41,6 +58,7 @@ export function ReviewStep({ classification, description, photos, urgencyType, o
         description,
         urgencyType,
         imageKeys: photos.map((photo) => photo.imageKey),
+        clarificationAnswers,
       });
       onConfirmed(issue);
     } catch {

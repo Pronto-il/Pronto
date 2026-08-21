@@ -1,0 +1,141 @@
+/* Pronto's analysis, deliberately styled as a different kind of content from the customer's
+   own report above it: a tinted primary-light surface with a left accent rail, versus the plain
+   white card the customer's quoted description lives in. The visual difference is the point —
+   a professional should never have to read carefully to tell an AI hypothesis from something
+   the customer actually said. */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  background: var(--color-primary-light);
+  border-inline-start: 3px solid var(--color-primary);
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--color-primary);
+  text-transform: uppercase;
+}
+
+/* PENDING only: a single quiet line, not a card. The brief is generated asynchronously, so a
+   professional can open a job before it exists; "it is coming" is worth one line and nothing
+   more. FAILED and empty-but-READY render nothing at all — see the component. */
+.pendingNote {
+  margin: 0;
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--color-text-secondary);
+}
+
+.summary {
+  margin: 0;
+  font-size: 15px;
+  line-height: 22px;
+  color: var(--color-text-primary);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sectionTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.sectionIcon {
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.likelyIssue {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+  color: var(--color-text-primary);
+}
+
+.evidenceLabel {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.list,
+.evidenceList {
+  margin: 0;
+  padding-inline-start: var(--space-5);
+  font-size: 14px;
+  line-height: 21px;
+  color: var(--color-text-secondary);
+}
+
+/* Clarification answers are customer-supplied fact, not analysis — quoted, on the plain
+   surface, so they read as a record of what was said rather than as a Pronto conclusion. */
+.qa {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.qaRow {
+  background: var(--color-surface);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+.qaQuestion {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.qaAnswer {
+  margin: 2px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.safety {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  background: var(--color-warning-bg);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+}
+
+.safetyTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-warning);
+}
+
+.safety .sectionIcon {
+  color: var(--color-warning);
+}
+
+.disclaimer {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--color-text-secondary);
+}

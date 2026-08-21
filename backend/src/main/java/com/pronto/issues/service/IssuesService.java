@@ -1,6 +1,8 @@
 package com.pronto.issues.service;
 
-import com.pronto.ai.client.ClarificationAnswer;
+import com.pronto.ai.dto.ClarificationExchange;
+import com.pronto.ai.dto.ClarificationQuestion;
+import com.pronto.ai.dto.ClassificationStatus;
 import com.pronto.ai.dto.ClassificationSuggestion;
 import com.pronto.ai.service.ClassificationService;
 import com.pronto.bookings.entity.Order;
@@ -8,6 +10,9 @@ import com.pronto.bookings.repository.OrderRepository;
 import com.pronto.common.dto.FieldError;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
+import com.pronto.issues.dto.ClarificationAnswerRequest;
+import com.pronto.issues.dto.ClarificationEntryResponse;
+import com.pronto.issues.dto.ClarifyQuestionResponse;
 import com.pronto.issues.dto.ClassifyRequest;
 import com.pronto.issues.dto.ClassifyResponse;
 import com.pronto.issues.dto.CreateIssueRequest;
@@ -15,8 +20,16 @@ import com.pronto.issues.dto.IssueDetailResponse;
 import com.pronto.issues.dto.IssueImageResponse;
 import com.pronto.issues.dto.IssueResponse;
 import com.pronto.issues.dto.LatestOrderSummary;
+import com.pronto.issues.dto.ProntoAnalysisResponse;
 import com.pronto.issues.entity.Issue;
+import com.pronto.issues.entity.IssueBrief;
+import com.pronto.issues.entity.IssueClarification;
+import com.pronto.issues.entity.IssueClassification;
 import com.pronto.issues.entity.IssueImage;
+import com.pronto.issues.event.IssueCreatedEvent;
+import com.pronto.issues.repository.IssueBriefRepository;
+import com.pronto.issues.repository.IssueClarificationRepository;
+import com.pronto.issues.repository.IssueClassificationRepository;
 import com.pronto.issues.repository.IssueImageRepository;
 import com.pronto.issues.repository.IssueRepository;
 import com.pronto.professionals.entity.Category;
@@ -30,24 +43,29 @@ import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.entity.UserRole;
 import com.pronto.users.repository.UserRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 /**
- * {@code POST /api/issues/classify} and {@code POST /api/issues}, per
- * {@code docs/architecture/api-contract-issues.md} §2.1-2.2. Role check
- * ({@code 403 FORBIDDEN} for a non-{@code CUSTOMER} caller) happens in the controller via
- * {@code common.security.RoleGuard}, before either method here is invoked.
+ * {@code POST /api/issues/classify}, {@code POST /api/issues} and {@code GET /api/issues/{id}},
+ * per {@code docs/architecture/api-contract-issues.md} §2.1-2.2 and
+ * {@code api-contract-bookings.md} §2.1. Role checks happen in the controller layer via
+ * {@code common.security.RoleGuard}, before any method here is invoked.
  */
 @Service
 public class IssuesService {
 
     private final IssueRepository issueRepository;
     private final IssueImageRepository issueImageRepository;
+    private final IssueClarificationRepository issueClarificationRepository;
+    private final IssueClassificationRepository issueClassificationRepository;
+    private final IssueBriefRepository issueBriefRepository;
     private final CategoryRepository categoryRepository;
     private final StorageClient storageClient;
     private final StorageService storageService;
@@ -55,18 +73,26 @@ public class IssuesService {
     private final ProfessionalRepository professionalRepository;
     private final OrderRepository orderRepository;
     private final UserRepository userRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     public IssuesService(IssueRepository issueRepository,
                           IssueImageRepository issueImageRepository,
+                          IssueClarificationRepository issueClarificationRepository,
+                          IssueClassificationRepository issueClassificationRepository,
+                          IssueBriefRepository issueBriefRepository,
                           CategoryRepository categoryRepository,
                           StorageClient storageClient,
                           StorageService storageService,
                           ClassificationService classificationService,
                           ProfessionalRepository professionalRepository,
                           OrderRepository orderRepository,
-                          UserRepository userRepository) {
+                          UserRepository userRepository,
+                          ApplicationEventPublisher eventPublisher) {
         this.issueRepository = issueRepository;
         this.issueImageRepository = issueImageRepository;
+        this.issueClarificationRepository = issueClarificationRepository;
+        this.issueClassificationRepository = issueClassificationRepository;
+        this.issueBriefRepository = issueBriefRepository;
         this.categoryRepository = categoryRepository;
         this.storageClient = storageClient;
         this.storageService = storageService;
@@ -74,32 +100,46 @@ public class IssuesService {
         this.professionalRepository = professionalRepository;
         this.orderRepository = orderRepository;
         this.userRepository = userRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
-     * §2.1. Stateless — no DB write, may be called repeatedly with no side effects. When
-     * {@code request.clarificationAnswers()} is present (the customer answered a prior
-     * {@code QUESTIONS} response), performs the single allowed clarification round instead of
-     * a fresh initial classification — see the clarification-question extension in §2.1.
+     * §2.1. Stateless — no DB write, may be called repeatedly with no side effects.
+     *
+     * <p>There is no longer an "initial pass" branch and a "clarification round" branch: every
+     * call runs the same classification over the same complete evidence, and the accumulated
+     * {@code clarificationAnswers} simply shrink the server-side question budget. A response
+     * can therefore come back {@code QUESTIONS} more than once — Pronto asks one question at a
+     * time and re-evaluates — until the budget is spent, after which a final decision is
+     * guaranteed rather than enforced by throwing.
      */
     public ClassifyResponse classify(Long callerId, ClassifyRequest request) {
         List<String> imageKeys = validateImageKeys(callerId, request.imageKeys());
+        List<ClarificationExchange> answers = toExchanges(request.clarificationAnswers());
 
-        ClassificationSuggestion suggestion;
-        if (request.clarificationAnswers() != null && !request.clarificationAnswers().isEmpty()) {
-            List<ClarificationAnswer> answers = request.clarificationAnswers().stream()
-                    .map(a -> new ClarificationAnswer(a.question(), a.answer()))
-                    .toList();
-            suggestion = classificationService.classifyWithClarification(request.description(), imageKeys, answers);
-        } else {
-            suggestion = classificationService.classify(request.description(), imageKeys);
-        }
+        ClassificationSuggestion suggestion = classificationService.classify(
+                request.description(), imageKeys, request.selectedCategoryId(), answers);
+
+        List<ClarifyQuestionResponse> questions = suggestion.questions().stream()
+                .map(this::toQuestionResponse)
+                .toList();
 
         return new ClassifyResponse(suggestion.status(), suggestion.categoryId(), suggestion.categoryCode(),
-                suggestion.confidence(), suggestion.explanation(), suggestion.questions());
+                questions);
     }
 
-    /** §2.2. First (and only) DB write in this milestone's request flow. */
+    /**
+     * §2.2. The one DB write in the customer's issue-creation flow — now also persisting the
+     * clarification conversation and seeding the classification/brief rows.
+     *
+     * <p>The two AI-artefact rows are created here, empty, rather than only by the async job:
+     * that guarantees the clarification-round count is recorded even if the AI is completely
+     * unavailable, and gives the professional's screen a {@code PENDING} state to read instead
+     * of a missing object it has to interpret.
+     *
+     * <p>The event is published inside the transaction but consumed after commit (see
+     * {@code IssueBriefService}), so no model call can affect whether this issue is saved.
+     */
     @Transactional
     public IssueResponse create(Long callerId, CreateIssueRequest request) {
         if (!categoryRepository.existsById(request.categoryId())) {
@@ -117,6 +157,19 @@ public class IssuesService {
             images.add(issueImageRepository.save(new IssueImage(issue.getId(), key)));
         }
 
+        List<ClarificationAnswerRequest> answers = request.clarificationAnswers() == null
+                ? List.of() : request.clarificationAnswers();
+        for (int position = 0; position < answers.size(); position++) {
+            ClarificationAnswerRequest answer = answers.get(position);
+            issueClarificationRepository.save(
+                    new IssueClarification(issue.getId(), position, answer.question(), answer.answer()));
+        }
+
+        issueClassificationRepository.save(new IssueClassification(issue.getId(), answers.size()));
+        issueBriefRepository.save(new IssueBrief(issue.getId()));
+
+        eventPublisher.publishEvent(new IssueCreatedEvent(issue.getId()));
+
         return toResponse(callerId, issue, images);
     }
 
@@ -132,6 +185,8 @@ public class IssuesService {
         Issue issue = issueRepository.findById(issueId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Issue " + issueId + " not found."));
 
+        boolean isProfessionalViewer = false;
+
         if (UserRole.CUSTOMER.name().equals(callerRole)) {
             if (!issue.getCustomerId().equals(callerId)) {
                 throw new ApiException(ErrorCode.FORBIDDEN, "You are not authorized to view this issue.");
@@ -143,6 +198,7 @@ public class IssuesService {
             if (!hasOrder) {
                 throw new ApiException(ErrorCode.FORBIDDEN, "You are not authorized to view this issue.");
             }
+            isProfessionalViewer = true;
         } else {
             throw new ApiException(ErrorCode.FORBIDDEN, "You are not authorized to view this issue.");
         }
@@ -161,13 +217,55 @@ public class IssuesService {
                         storageService.getPresignedUrlAssumingCallerAuthorized(img.getImageKey()), img.getUploadedAt()))
                 .toList();
 
+        List<ClarificationEntryResponse> clarifications = issueClarificationRepository
+                .findByIssueIdOrderByPositionAsc(issueId).stream()
+                .map(row -> new ClarificationEntryResponse(row.getQuestion(), row.getAnswer()))
+                .toList();
+
+        // Preparation material for whoever is going — not customer-facing content, so it is
+        // resolved only for the professional branch above.
+        ProntoAnalysisResponse prontoAnalysis = isProfessionalViewer
+                ? issueBriefRepository.findById(issueId).map(this::toProntoAnalysis).orElse(null)
+                : null;
+
         LatestOrderSummary latestOrder = orderRepository.findFirstByIssueIdOrderByCreatedAtDesc(issueId)
                 .map(this::toLatestOrderSummary)
                 .orElse(null);
 
         return new IssueDetailResponse(issue.getId(), issue.getCustomerId(), issue.getCategoryId(), categoryCode,
-                issue.getDescription(), issue.getUrgencyType(), issue.getStatus(), images, latestOrder,
-                issue.getCreatedAt(), issue.getUpdatedAt());
+                issue.getDescription(), issue.getUrgencyType(), issue.getStatus(), images, clarifications,
+                prontoAnalysis, latestOrder, issue.getCreatedAt(), issue.getUpdatedAt());
+    }
+
+    private ProntoAnalysisResponse toProntoAnalysis(IssueBrief brief) {
+        ProntoAnalysisResponse.LikelyIssueResponse likelyIssue = brief.getLikelyIssueDescription() == null
+                ? null
+                : new ProntoAnalysisResponse.LikelyIssueResponse(
+                        brief.getLikelyIssueDescription(),
+                        toDouble(brief.getLikelyIssueConfidence()),
+                        brief.getLikelyIssueEvidence());
+
+        return new ProntoAnalysisResponse(brief.getStatus(), brief.getCustomerProblemSummary(),
+                brief.getClarificationSummary(), brief.getImageObservations(), likelyIssue,
+                brief.getPossibleCauses(), brief.getRecommendedTools(), brief.getRecommendedParts(),
+                brief.getSafetyNotes());
+    }
+
+    private Double toDouble(BigDecimal value) {
+        return value == null ? null : value.doubleValue();
+    }
+
+    private ClarifyQuestionResponse toQuestionResponse(ClarificationQuestion question) {
+        return new ClarifyQuestionResponse(question.id(), question.question(), question.options());
+    }
+
+    private List<ClarificationExchange> toExchanges(List<ClarificationAnswerRequest> answers) {
+        if (answers == null || answers.isEmpty()) {
+            return List.of();
+        }
+        return answers.stream()
+                .map(answer -> new ClarificationExchange(answer.question(), answer.answer()))
+                .toList();
     }
 
     private LatestOrderSummary toLatestOrderSummary(Order order) {

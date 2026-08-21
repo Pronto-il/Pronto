@@ -70,6 +70,18 @@ export function IncomingRequestCard({
 
         {issue && <p className={styles.description}>“{issue.description}”</p>}
 
+        {/* One line, not the full brief: this is the accept/reject card, and "what is this
+            likely to be" is the single piece of Pronto analysis that changes that decision.
+            The full brief lives on the job screen. Rendered only when a hypothesis actually
+            survived validation — a PENDING or evidence-less brief shows nothing rather than a
+            placeholder. */}
+        {issue?.prontoAnalysis?.likelyIssue && (
+          <p className={styles.analysisLine}>
+            <span className={styles.analysisLabel}>ניתוח Pronto:</span>{' '}
+            {issue.prontoAnalysis.likelyIssue.description}
+          </p>
+        )}
+
         {issue && issue.images.length > 0 && (
           <div className={styles.photoRow}>
             {issue.images.map((image) => (

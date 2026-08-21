@@ -17,25 +17,35 @@ Implements `docs/architecture/api-contract-issues.md` §2.1–2.2 and
   called repeatedly (e.g. after the customer edits their description) with zero side
   effects. Lives under `/api/issues/*`, not a standalone `/api/ai/*` route — see the
   controller's Javadoc for the full "package placement" rationale from the contract doc.
-  **Clarification-question extension**: when `ai` can't confidently pick one category
-  (description/image contradiction, or two categories realistically possible), the
-  response comes back `status = QUESTIONS` with 1-3 clarification questions instead of a
-  suggestion. The frontend re-calls this same endpoint with the original
-  `description`/`imageKeys` plus `clarificationAnswers`; `IssuesService.classify` detects
-  that field and routes to `ClassificationService.classifyWithClarification` (the single
-  allowed follow-up) instead of a fresh initial pass. See
-  `docs/architecture/api-contract-issues.md` §2.1's "Clarification-question extension" and
-  `ai/README.md` for the full design.
-- `POST /api/issues` — persists the `issues` row and any `issue_images` rows in a single
-  transaction, only meaningfully reachable after the customer has seen/confirmed-or-overridden
-  the AI suggestion (there is no server-side link back to a specific prior `/classify` call
-  — the AI's original suggestion is fully discarded once confirmed, a genuine design
-  decision flagged in the contract doc §2.2 for user sign-off, not silently settled).
-  Validates `categoryId` against `categories` (`400 VALIDATION_ERROR` if invalid/absent,
-  same convention M1 used for registration's `categoryId` — not `404`), re-validates
-  `imageKeys` ownership/existence independently of whatever was passed to `/classify`, then
-  inserts `issues` + one `issue_images` row per validated key, all in one `@Transactional`
-  method.
+  **Iterative clarification** (issue-classification redesign — supersedes the old
+  "Clarification-question extension"): there is no longer an initial-pass branch and a
+  follow-up branch. Every call runs the same classification over the same complete context —
+  original `description`/`imageKeys`, the optional `selectedCategoryId` hint, and the
+  **accumulated** `clarificationAnswers`. When a specific missing fact could still change
+  which professional is sent, the response comes back `status = QUESTIONS` with exactly
+  **one** question; the client answers it and calls again with the answer appended. That can
+  legitimately repeat until the server-side budget
+  (`pronto.ai.routing.max-clarification-questions`) is spent, after which a `CLASSIFIED`
+  result is guaranteed — by the routing policy committing, never by throwing. The response
+  carries no confidence, candidates or ambiguity reason; those are backend diagnostics. See
+  `docs/architecture/ai-issue-classification-redesign.md` and `ai/README.md`.
+- `POST /api/issues` — persists the `issues` row, any `issue_images` rows, **the clarification
+  conversation**, and the two AI-artefact rows, in a single transaction. Validates
+  `categoryId` against `categories` (`400 VALIDATION_ERROR` if invalid/absent, same
+  convention M1 used for registration's `categoryId` — not `404`) and re-validates
+  `imageKeys` ownership/existence independently of whatever was passed to `/classify`.
+  `categoryId` remains whatever the customer confirmed or overrode — the AI suggestion never
+  wins over an explicit customer choice.
+  - `clarificationAnswers` are now persisted as `issue_clarifications` rows rather than
+    discarded at this boundary. They were the highest-signal context in the whole flow and
+    are what the Professional Brief is built from.
+  - An `issue_classifications` row (round count) and a `PENDING` `issue_briefs` row are
+    seeded here, so the round count survives even if the AI is entirely unavailable and the
+    professional's screen reads an explicit state rather than a missing object.
+  - An `IssueCreatedEvent` is published inside the transaction and consumed **after commit**
+    by `IssueBriefService`, so no model call can affect whether the issue is saved.
+  - The request still deliberately carries no AI confidence/candidate fields — those are
+    recorded server-side, where they can be vouched for, rather than accepted from a client.
 - `/classify` and `POST /api/issues` require `role = CUSTOMER`, enforced via
   `common.security.RoleRequiredInterceptor` (registered for the two literal paths
   `/api/issues/classify` and `/api/issues` by `config.IssuesWebConfig`), which calls
@@ -53,6 +63,62 @@ Implements `docs/architecture/api-contract-issues.md` §2.1–2.2 and
   (customer owns the issue, OR professional has an order on it) is now also what grants
   image access — see "Image URLs (backend MS9)" below, a fix for a gap that was open since
   Milestone 2 and never picked up through Milestone 6.
+  **Issue-classification redesign**: the response also carries `clarifications` (the
+  customer's own answers, verbatim, for both roles) and `prontoAnalysis` — the Professional
+  Brief, resolved **only** for the `PROFESSIONAL` branch above, since it is preparation
+  material for whoever is going rather than customer-facing content. It is `null` for a
+  customer and for any issue created before briefs existed. See "Customer report vs Pronto
+  analysis" below.
+
+## Customer report vs Pronto analysis (issue-classification redesign)
+
+**The customer's own report and Pronto's AI interpretation are separate at every layer, and
+that separation is the point** — a professional must never have to read carefully to tell an
+AI hypothesis from something the customer actually said.
+
+- **Storage** — `issues.description` is never written by AI. The brief lives in its own
+  `issue_briefs` table; the conversation lives in `issue_clarifications`.
+- **API** — `IssueDetailResponse.description`, `.images` and `.clarifications` are verbatim
+  customer content. `.prontoAnalysis` is the only AI-authored object in the response, and it
+  is a distinct field rather than enriched prose folded into the description.
+- **UI** — the customer's words stay quoted on the plain card under "מה הלקוח תיאר";
+  `ProntoAnalysisCard` is a separately styled, labelled card carrying an explicit
+  "not a site inspection" disclaimer.
+
+`ProntoAnalysisResponse.status` (`PENDING`/`READY`/`FAILED`) exists because generation is
+asynchronous: the professional's screen must distinguish "not ready yet" from "we tried and
+could not", and neither may ever block a booking.
+
+## Persistence added by the classification redesign
+
+| Table | Entity / repository | Notes |
+|---|---|---|
+| `issue_clarifications` | `entity.IssueClarification` / `repository.IssueClarificationRepository` | One row per question+answer, ordered by `position` (unique per issue). Immutable. |
+| `issue_classifications` | `entity.IssueClassification` / `repository.IssueClassificationRepository` | What the AI independently routed to, plus confidence/candidates/round count and the `low_confidence` / `unresolved` flags. **Telemetry only** — `issues.category_id` stays the source of truth for dispatch. Only the round count is written unless `record-final-classification` is on. |
+| `issue_briefs` | `entity.IssueBrief` / `repository.IssueBriefRepository` | The Professional Brief and its status. |
+
+Created by `V32__create_issue_classification_and_brief.sql`, plus
+`V33__alter_issue_classifications_add_unresolved.sql` for the `unresolved` flag. No pre-existing
+table or column was changed; all three cascade from `issues`. List-valued columns are `TEXT` holding JSON via
+`entity.converter` `AttributeConverter`s — nothing queries inside them, and `TEXT` keeps
+`ddl-auto: validate` unambiguous.
+
+`service.IssueBriefService` is the one asynchronous consumer: it listens for
+`IssueCreatedEvent` **after commit** on the `aiTaskExecutor` pool, optionally records the AI's
+independent routing (`pronto.ai.record-final-classification`, **off by default** — it is a
+second model call on every created issue), then generates and stores the brief. Images are
+resolved once per run and shared by both calls.
+
+A failure is recorded as `FAILED`, logged with its cause, and **not retried**: the booking is
+unaffected either way, a brief is preparation material rather than a transactional obligation,
+and a retry loop around a paid model call is a cost risk out of proportion to what is lost.
+
+Because generation is asynchronous, `prontoAnalysis` is routinely absent or `PENDING` when a
+professional opens a job — that is a normal state, not an error. `GET /api/issues/{id}` returns
+the issue exactly as before in that case, and the professional still has the description,
+photos, clarification answers and category. The UI omits the analysis card entirely on `FAILED`
+or when the brief came back empty, and shows one unobtrusive line on `PENDING`; there is no
+polling.
 
 ## Image URLs (backend MS9, 2026-08-18)
 

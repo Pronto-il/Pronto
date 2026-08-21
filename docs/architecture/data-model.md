@@ -102,7 +102,6 @@ change). Small (8 rows), read-mostly.
 | `ac_hvac` | מיזוג אוויר | AC / HVAC | 3 |
 | `appliance_repair` | תיקון מוצרי חשמל | Appliance Repair | 4 |
 | `locksmith` | מנעולן | Locksmith | 5 |
-| `carpentry` | נגרות | Carpentry | 6 |
 | `painting` | צביעה | Painting | 7 |
 | `general_handyman` | הנדימן כללי | General Handyman | 8 |
 
@@ -589,6 +588,101 @@ extension this would support).
 **No data migration** — every professional starts with zero selected sub-services, same
 "expected onboarding state, not a migration gap" framing `professional_working_hours` (§2.13)
 already established.
+
+---
+
+### 2.17 `issue_clarifications` — *new table, 2026-08-20 (issue-classification redesign)*
+
+Added by `V32__create_issue_classification_and_brief.sql`. The clarification conversation for
+one issue: one row per question Pronto asked and the answer the customer gave.
+
+Persisted because it used to be thrown away. `POST /api/issues/classify` is stateless and
+`POST /api/issues` accepted only the final category, so the answers — the highest-signal
+context the whole flow produces — never reached the database or the professional. They are
+now replayed into the Professional Brief prompt and shown to the professional next to the
+customer's own description.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `BIGINT` | NO | identity | PK. |
+| `issue_id` | `BIGINT` | NO | — | FK → `issues(id)` `ON DELETE CASCADE` — an answer has no meaning without its issue. |
+| `position` | `SMALLINT` | NO | — | Zero-based order within the conversation. Ordering is data, not an accident of insertion order: the replayed conversation reads differently if shuffled. |
+| `question` | `TEXT` | NO | — | The question text as the customer saw it (Hebrew). Stored rather than referenced by id — `/classify` is stateless, so there is no server-side question record to point at. |
+| `answer` | `TEXT` | NO | — | The customer's answer, verbatim. Customer-authored content, never AI-rewritten. |
+| `created_at` | `TIMESTAMPTZ` | NO | `now()` | |
+
+**Constraints**: PK(`id`); FK(`issue_id`) → `issues(id)` `ON DELETE CASCADE`;
+UNIQUE(`issue_id`, `position`) — a duplicated position would silently corrupt the replayed
+conversation; CHECK(`position >= 0`).
+**Indexes**: `idx_issue_clarifications_issue` on (`issue_id`).
+
+Rows are immutable once written — a conversation that already happened is not edited.
+
+---
+
+### 2.18 `issue_classifications` — *new table, 2026-08-20 (issue-classification redesign)*
+
+Added by `V32`. One row per issue recording **what the AI independently concluded** about
+routing.
+
+**This is telemetry, not authority.** `issues.category_id` remains the single source of truth
+for who is dispatched — the customer confirms or overrides it. This row sits next to it so
+"how often does the model disagree with the customer's final choice, and on which category
+pairs" is answerable in production. Accuracy itself is measured properly by the labelled
+evaluation harness (`backend/src/test/java/com/pronto/ai/eval`); this is drift monitoring, not
+a substitute for it.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `issue_id` | `BIGINT` | NO | — | **PK and FK** → `issues(id)` `ON DELETE CASCADE`. There is exactly one final classification per issue, so the FK *is* the key — no surrogate id. |
+| `ai_category_code` | `VARCHAR(50)` | YES | `NULL` | The `categories.code` the AI would have routed to. Nullable: the recording pass runs asynchronously and may fail, or be disabled via `pronto.ai.record-final-classification`. Deliberately **not** an FK to `categories(id)` — this is a historical record of what the model said, and it must survive a category being retired (as `carpentry` was in `V31`). |
+| `ai_confidence` | `NUMERIC(4,3)` | YES | `NULL` | The model's self-report. Explicitly not a calibrated probability — see `ai.decision.RoutingDecisionPolicy`. |
+| `candidates` | `TEXT` | NO | `'[]'` | JSON array of `{"categoryCode", "confidence"}`. `TEXT`, not `jsonb`: nothing queries inside it, it is read as a whole document by one consumer, and `TEXT` keeps `ddl-auto: validate` unambiguous. Converted by `issues.entity.converter.CategoryCandidateListConverter`. |
+| `ambiguity_reason` | `TEXT` | YES | `NULL` | Short internal note about what stayed unresolved. Never shown to a customer. |
+| `clarification_rounds` | `SMALLINT` | NO | `0` | How many questions the customer answered. Written at issue creation, so it survives even if the AI is entirely unavailable. |
+| `low_confidence` | `BOOLEAN` | NO | `FALSE` | True when Pronto committed to this category while recording that it was not fully confident. Still a genuine prediction. |
+| `unresolved` | `BOOLEAN` | NO | `FALSE` | *Added by `V33__alter_issue_classifications_add_unresolved.sql`.* True when routing could not separate two materially different categories (or validated nothing) and deliberately used the `general_handyman` fallback — so `ai_category_code` is not a prediction at all. Kept distinct from `low_confidence` because collapsing them would make routing accuracy unreadable: a system quietly diverting every hard case to the fallback would look like it was improving. Always implies `low_confidence`; the reverse does not hold. Existing rows default to `FALSE`, which is correct — before `V33` the policy always committed to the top candidate. |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | NO | `now()` | |
+
+**Constraints**: PK(`issue_id`); FK(`issue_id`) → `issues(id)` `ON DELETE CASCADE`;
+CHECK(`ai_confidence` between 0 and 1 or NULL); CHECK(`clarification_rounds >= 0`).
+**Indexes**: none beyond the PK — the only access pattern is by `issue_id`.
+
+---
+
+### 2.19 `issue_briefs` — *new table, 2026-08-20 (issue-classification redesign)*
+
+Added by `V32`. Pronto's Professional Brief: the preparation material the professional reads
+before arriving.
+
+**Held separately from `issues` on purpose.** This is Pronto's *analysis*, and the customer's
+own report (`issues.description`) must stay untouched and separately identifiable at every
+layer — storage, API and UI. Nothing here ever overwrites what the customer wrote.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `issue_id` | `BIGINT` | NO | — | **PK and FK** → `issues(id)` `ON DELETE CASCADE`. One brief per issue. |
+| `status` | `VARCHAR(20)` | NO | — | `PENDING` \| `READY` \| `FAILED`. Explicit rather than inferred from null fields: generation is asynchronous, so the professional's screen must distinguish "not ready yet" from "we tried and could not", and neither state may block a booking. |
+| `customer_problem_summary` | `TEXT` | YES | `NULL` | Pronto's neutral restatement — **not** a quote attributed to the customer. |
+| `clarification_summary` | `TEXT` | YES | `NULL` | What the answers established. `NULL` when no questions were asked. |
+| `image_observations` | `TEXT` | NO | `'[]'` | JSON array. Observations only, never diagnoses; forced empty when no photo was actually sent. |
+| `likely_issue_description` | `TEXT` | YES | `NULL` | The hypothesis. Named "likely", never "confirmed" — nobody inspected anything. |
+| `likely_issue_confidence` | `NUMERIC(4,3)` | YES | `NULL` | |
+| `likely_issue_evidence` | `TEXT` | NO | `'[]'` | JSON array of the customer-supplied facts supporting the hypothesis. A hypothesis that arrives with none is dropped before persistence — an unexplained guess is not stored. |
+| `possible_causes` / `recommended_tools` / `recommended_parts` / `safety_notes` | `TEXT` | NO | `'[]'` | JSON arrays, capped at 6 entries. Empty is a legitimate, meaningful answer: empty `recommended_parts` means the evidence identified no part worth bringing. |
+| `generated_at` | `TIMESTAMPTZ` | YES | `NULL` | Set when the row reaches `READY`. |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | NO | `now()` | |
+
+**Constraints**: PK(`issue_id`); FK(`issue_id`) → `issues(id)` `ON DELETE CASCADE`;
+CHECK(`status IN ('PENDING','READY','FAILED')`); CHECK(`likely_issue_confidence` between 0 and
+1 or NULL).
+**Indexes**: none beyond the PK.
+
+**No data migration.** Issues created before `V32` simply have no brief and no classification
+row; `GET /api/issues/{id}` returns `prontoAnalysis: null` for them, which the professional UI
+already handles as "nothing to show" rather than an error.
+
+See `docs/architecture/ai-issue-classification-redesign.md` for the full design.
 
 ---
 

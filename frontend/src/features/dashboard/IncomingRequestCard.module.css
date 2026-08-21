@@ -92,3 +92,20 @@
   background: var(--color-surface-secondary);
   width: 60%;
 }
+
+/* Pronto's hypothesis, one line, visually subordinate to the customer's quoted description
+   above it and tinted so the two are never confused. See the note at its use site. */
+.analysisLine {
+  margin: 0;
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--color-text-secondary);
+  background: var(--color-primary-light);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+.analysisLabel {
+  font-weight: 700;
+  color: var(--color-primary);
+}

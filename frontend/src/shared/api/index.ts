@@ -36,6 +36,8 @@ export type {
   IssueResponse,
   LatestOrderSummary,
   IssueDetailResponse,
+  ClarificationEntry,
+  ProntoAnalysis,
 } from './issues';
 
 export {

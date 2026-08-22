@@ -1,17 +1,21 @@
 name: backend-ci
 
+# Triggers are deliberately unfiltered by path. Path filters meant a docs-only change
+# produced no check run at all, which would deadlock a required status check on a PR that
+# never reports one (proven on commits 18585b4 and e253c23, both zero check runs). Running
+# the suite on every change is the simple, reliable behaviour; it costs a few CI minutes on
+# documentation commits and removes an entire class of merge deadlock.
 on:
   push:
-    paths:
-      - "backend/**"
-      - ".github/workflows/backend-ci.yml"
   pull_request:
-    paths:
-      - "backend/**"
-      - ".github/workflows/backend-ci.yml"
+    branches: [main]
 
 jobs:
   build:
+    # Explicit job name. This string is what GitHub reports as the check-run name and what
+    # branch protection lists as a required status check. Without it the job id ("build")
+    # is used, and both workflows reported the same indistinguishable "build" context.
+    name: Backend CI
     runs-on: ubuntu-latest
 
     services:

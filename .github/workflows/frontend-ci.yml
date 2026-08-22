@@ -1,18 +1,21 @@
 name: Frontend CI
 
+# Triggers are deliberately unfiltered by path, and no longer restricted to pushes on main.
+# Path filters meant a docs-only change produced no check run at all, which would deadlock a
+# required status check on a PR that never reports one (proven on commits 18585b4 and
+# e253c23, both zero check runs). Running the suite on every change is the simple, reliable
+# behaviour and matches backend-ci.yml.
 on:
   push:
-    branches: [main]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-ci.yml'
   pull_request:
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-ci.yml'
+    branches: [main]
 
 jobs:
   build:
+    # Explicit job name. This string is what GitHub reports as the check-run name and what
+    # branch protection lists as a required status check. Without it the job id ("build")
+    # is used, and both workflows reported the same indistinguishable "build" context.
+    name: Frontend CI
     runs-on: ubuntu-latest
     defaults:
       run:

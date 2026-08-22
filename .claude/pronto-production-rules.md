@@ -97,6 +97,26 @@ these win — they are recorded in the Playbook as §0.1 D1–D3.
   product-read-only and builds nothing). **MS5 owns creating** the permanent DB integration /
   E2E / CI validation infrastructure. **MS8 uses** that infrastructure rather than inventing its
   own; if it is inadequate, that is an MS5 gap to report.
+- **D4 — MS1 eligibility = approval AND completed onboarding.** Approval alone never makes a
+  professional bookable. Eligible requires `approval_status == APPROVED` **and** onboarding
+  complete: valid category, **≥1 sub-service belonging to that category**, **weekly working hours
+  configured**, verification document present, plus every onboarding field already enforced.
+  `APPROVED` + incomplete onboarding **must not behave as bookable** anywhere. Backend-enforced in
+  every query and service — never frontend filtering. Never invent missing data to confer
+  eligibility. Sub-services and working hours must both stay editable through the existing profile
+  and availability flows. Full specification: Playbook MS1 §"Required Onboarding & Marketplace
+  Eligibility".
+- **D5 — existing professionals migrate deliberately.** Do not bulk-flip existing `APPROVED` rows
+  to `PENDING`; do not fabricate working hours or sub-services. MS1 audits the real data shape and
+  plans for five cohorts: complete · missing sub-services · missing working hours · missing
+  verification material · new registration.
+- **D6 — approval naming (extends D1).** Keep `PENDING`/`APPROVED`/`REJECTED`. MS1 must explicitly
+  decide and record whether to introduce `DISABLED` now, so MS7's suspend capability does not force
+  a second lifecycle migration. Do not add it automatically.
+- **D7 — MS1 reuses the existing registration surface** rather than rebuilding it: account info →
+  category → sub-services → pricing/existing required fields → weekly working hours → verification
+  document → submit → `PENDING` → operator review → `APPROVED`/`REJECTED` → eligible only if
+  onboarding is also complete.
 
 ## 4. Execution discipline
 

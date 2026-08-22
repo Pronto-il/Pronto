@@ -51,6 +51,18 @@ Until MS5 creates the real Test/Staging environment, exercising a **real externa
 - **MS5 owns creation** of the permanent DB integration / E2E / CI validation infrastructure, as part of its CI/CD production path and Database Validation scope.
 - **MS8 must use that established infrastructure** for production hardening rather than inventing a harness of its own. If MS8 finds the infrastructure inadequate, that is an MS5 gap to report — not a licence to build a parallel one.
 
+**D4 — MS1 marketplace eligibility = approval AND completed onboarding.**
+Approval alone is **not** sufficient. See the MS1 section's "Required Onboarding & Marketplace Eligibility" for the full specification. Summary: a professional is marketplace-eligible only when `approval_status == APPROVED` **and** onboarding is complete (valid category, ≥1 valid sub-service belonging to that category, weekly working hours configured, verification document present, plus every professional onboarding field the repository already enforces). The state **`APPROVED` but onboarding incomplete must never behave as bookable**. Enforcement is backend-side in every query and service — never frontend filtering. Never fabricate missing data to make a professional eligible.
+
+**D5 — existing professional rows are migrated deliberately, never automatically.**
+Do **not** bulk-flip existing `APPROVED` professionals to `PENDING`. Do **not** fabricate working hours or sub-services for anyone. MS1 planning must audit the actual baseline data shape and propose a safe strategy that distinguishes five cohorts: already complete · missing sub-services · missing working hours · missing verification material · new registration.
+
+**D6 — approval state naming (extends D1).**
+Keep `PENDING` / `APPROVED` / `REJECTED`. During MS1, make an explicit, recorded decision on whether to introduce **`DISABLED`** now — so MS7's suspend capability does not force an avoidable second lifecycle migration. Do not add it automatically; decide from the existing account/domain model and record the reasoning either way.
+
+**D7 — MS1 reuses the existing registration surface.**
+The intended professional flow is: personal/account info → category → **required sub-services** → pricing and existing required fields → **weekly working hours** → verification document → submission → `PENDING` → operator review → `APPROVED`/`REJECTED` → if approved *and* onboarding complete, marketplace eligible; if onboarding incomplete, non-bookable until completed. Reuse the current screens and flow where possible rather than rebuilding registration.
+
 ---
 
 # GLOBAL EXECUTION RULES
@@ -570,6 +582,69 @@ Historically, professional registration stored a verification document while app
 - background checks
 - professional subscriptions
 - complex moderation tooling
+
+## Required Onboarding & Marketplace Eligibility (governing decision, settled 2026-08-22)
+
+Approval by itself does **not** make a professional bookable. This section is binding — see **D4–D7** (§0.1).
+
+### Required sub-services
+
+- At least one sub-service is **required**.
+- Every selected sub-service **must belong to the professional's selected main category**.
+- Invalid or cross-category sub-services must be **rejected by the backend**, not merely hidden by the UI.
+- Registration/onboarding is **not complete** without valid sub-services.
+- Professionals must be able to **edit** their sub-services later through the existing profile flow.
+- **Do not fabricate sub-services** for existing professionals during migration or backfill.
+
+### Required weekly working hours
+
+- Registration/onboarding is **not complete** without valid weekly working hours.
+- **At least one valid bookable weekly time window** must exist.
+- Overlapping and otherwise invalid ranges must be validated.
+- **Backend enforcement is required; frontend-only validation is not sufficient.**
+- **Do not invent default working hours.**
+- Professionals must be able to **edit** their normal working hours later through the existing availability/settings flow.
+
+> MS0 recorded the concrete gap this closes: registration never seeds `professional_working_hours`, so a newly registered professional derives an empty calendar and is listed but unbookable — the customer discovers the dead end at step 3 of 4.
+
+### Marketplace eligibility rule
+
+A professional is eligible for Standard matching and SOS **only** when:
+
+```text
+approval_status == APPROVED
+        AND
+required onboarding is complete
+```
+
+Onboarding completeness requires, at minimum:
+
+- a valid professional category
+- **at least one valid sub-service**
+- **required weekly working hours configured**
+- **required verification document present**
+- every other professional onboarding field the repository already enforces
+
+Binding constraints:
+
+- **Backend queries and services must enforce this consistently.** Do not rely on frontend filtering.
+- The state **`APPROVED` but onboarding incomplete must not behave as bookable** anywhere.
+- If an operator approves someone before onboarding completion, they **remain non-bookable** until it is complete.
+- **Never silently invent missing data** to make a professional eligible.
+
+> MS0 proved the current enforcement asymmetry live: `SosCandidateRepository` filters `approvalStatus = 'APPROVED'`, while the Standard listing, available-windows, order creation, public profile, favorites and reviews paths do not. MS1 must close every path, against the fuller eligibility rule above rather than approval alone.
+
+### Existing professionals (see D5)
+
+MS1 planning must explicitly address existing rows, distinguishing:
+
+1. existing professional already complete
+2. existing professional missing sub-services
+3. existing professional missing working hours
+4. existing professional missing verification material
+5. new professional registration
+
+Do **not** auto-flip existing `APPROVED` rows to `PENDING`, and do **not** fabricate data for any cohort. Audit the real baseline data shape first, then propose the migration/onboarding strategy.
 
 ## Required Product Behavior
 

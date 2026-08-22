@@ -80,6 +80,24 @@ status documented" is the handover, and "confirm the working tree is clean" appl
 of the *next* milestone, which is only reachable after the approved commit → push → merge → sync
 sequence above.
 
+## 3.1 Governing roadmap decisions (settled 2026-08-22)
+
+User decisions binding every milestone. Where the Playbook's milestone sections read differently,
+these win — they are recorded in the Playbook as §0.1 D1–D3.
+
+- **D1 — MS1 keeps `PENDING`.** The schema already supports
+  `CHECK (approval_status IN ('PENDING','APPROVED','REJECTED'))`. Read every `PENDING_REVIEW` in
+  the Playbook as `PENDING`. Rename only if MS1 discovers a concrete technical/product reason
+  requiring the migration, and only with explicit approval.
+- **D2 — interim `staging-like validation`.** Until MS5 builds the real Test/Staging environment,
+  a **real external provider exercised from local with non-production/sandbox credentials**
+  satisfies MS2/MS3 completion evidence. It does not replace MS5's full parity validation; list
+  every path validated this way in the milestone report so MS5 can re-validate it.
+- **D3 — integration/E2E infrastructure ownership.** MS0 records the gap only (it is
+  product-read-only and builds nothing). **MS5 owns creating** the permanent DB integration /
+  E2E / CI validation infrastructure. **MS8 uses** that infrastructure rather than inventing its
+  own; if it is inadequate, that is an MS5 gap to report.
+
 ## 4. Execution discipline
 
 - **Audit before code.** Inspect what already exists and classify it: fully implemented,
@@ -207,9 +225,9 @@ listing/matching path and the standard booking path have **no approval filter at
 introduces a real approval lifecycle with backend eligibility enforcement in matching, listing,
 Standard requests and SOS requests, plus minimal operator approve/reject capability and secure
 verification-document review. **An approval workflow is no longer scope drift — it is MS1.**
-Note the naming gap: the Playbook writes `PENDING_REVIEW`, the existing schema uses `PENDING`;
-MS1 decides which survives and records the decision. `DISABLED` is optional in MS1 but assumed by
-MS7's suspend capability.
+Naming is settled by **D1** (§3.1): keep the existing `PENDING`; read `PENDING_REVIEW` in the
+Playbook as `PENDING`, and rename only on a concrete discovered reason with explicit approval.
+`DISABLED` is optional in MS1 but assumed by MS7's suspend capability.
 
 **Authentication — email-only is being replaced by MS2.**
 Today: single-step login (`AuthService#login` — password verified, JWT returned immediately),
@@ -278,7 +296,8 @@ every `handyman_*` sub-service). Categories live in the `categories` reference t
    repository. This is separate from finding 1 and is not remedied by enabling branch protection.
 
 Never claim migration, integration, or E2E validation happened unless the command and its actual
-output are in front of you.
+output are in front of you. Ownership of the fix is settled by **D3** (§3.1): MS0 records the gap,
+**MS5 builds** the permanent integration/E2E/CI infrastructure, **MS8 uses** it.
 
 **Deployment.** There is no Dockerfile and no release-artifact pipeline; `docker-compose.yml`
 provisions local PostgreSQL only (host port 5433 — a native Windows PostgreSQL service owns 5432 on

@@ -36,6 +36,21 @@ Known limitations carried into MS0, to be classified in the MS0 readiness matrix
 
 Every production milestone branches from the latest approved `main`, per the lifecycle in §1 below.
 
+## 0.1 Governing Roadmap Decisions (settled 2026-08-22)
+
+User decisions that bind every milestone below. Where a milestone section reads differently, these win.
+
+**D1 — MS1 approval state name: keep `PENDING`.**
+The shipped schema already supports `CHECK (approval_status IN ('PENDING','APPROVED','REJECTED'))` (`V4__create_professionals.sql`). Prefer that existing state. Wherever this Playbook writes `PENDING_REVIEW`, read it as `PENDING`. Do **not** rename to `PENDING_REVIEW` unless MS1 discovers a concrete technical or product reason that requires the migration — in which case report the reason and get approval before migrating.
+
+**D2 — `staging-like validation` before MS5 exists.**
+Until MS5 creates the real Test/Staging environment, exercising a **real external provider from local using non-production/sandbox credentials** counts as acceptable `staging-like validation` for MS2 and MS3 completion evidence. This is an interim standard, not a substitute: it does **not** replace the full Staging parity validation required in MS5, and every delivery path validated this way must be listed in the milestone report so MS5 can re-validate it under real parity.
+
+**D3 — Integration/E2E infrastructure ownership.**
+- **MS0** records the current gap only (no Spring-context/database tests, no Flyway/JPA coverage in CI, no E2E harness). MS0 builds nothing — it is product-read-only.
+- **MS5 owns creation** of the permanent DB integration / E2E / CI validation infrastructure, as part of its CI/CD production path and Database Validation scope.
+- **MS8 must use that established infrastructure** for production hardening rather than inventing a harness of its own. If MS8 finds the infrastructure inadequate, that is an MS5 gap to report — not a licence to build a parallel one.
+
 ---
 
 # GLOBAL EXECUTION RULES
@@ -535,7 +550,7 @@ Historically, professional registration stored a verification document while app
 ## IN SCOPE
 
 - professional approval state lifecycle
-- `PENDING_REVIEW`
+- `PENDING` — per **D1** (§0.1), keep the state name the schema already supports; do not rename to `PENDING_REVIEW` without a concrete discovered reason and explicit approval
 - `APPROVED`
 - `REJECTED`
 - optional `DISABLED` if consistent with existing account architecture
@@ -770,7 +785,7 @@ Email → Password → Email OTP → same User ID
 Phone → Password → SMS OTP → same User ID
 ```
 
-Record which real provider integrations were exercised in staging-like validation and which delivery paths, if any, remain unverified.
+Record which real provider integrations were exercised in staging-like validation and which delivery paths, if any, remain unverified. Per **D2** (§0.1), until MS5 builds the real Staging environment, a real provider exercised from local with non-production/sandbox credentials satisfies this — and every path validated that way must be listed so MS5 can re-validate it under full parity.
 
 # MS3 — Real Maps, Geocoding, Distance & ETA
 
@@ -814,6 +829,8 @@ Replace approximate/placeholder travel data with real geocoded route distance an
 - Placeholder distance must never be presented as real production data.
 
 If the maps provider fails, implement an explicit fallback strategy approved by product behavior. Do not fabricate a precise ETA.
+
+Per **D2** (§0.1), the real maps provider exercised from local with non-production/sandbox credentials counts as acceptable staging-like validation for this milestone, pending MS5's full parity validation.
 
 ## Required Tests
 
@@ -944,6 +961,7 @@ Make Pronto deployable as a real production system with safe configuration, dura
 - CI/CD production path
 - branch protection recommendations
 - production startup guards
+- **permanent DB integration / E2E / CI validation infrastructure — MS5 owns this** (per **D3**, §0.1). The baseline has no Spring-context or database tests, so CI exercises no Flyway migration and no JPA `validate` check, and there is no E2E harness. MS5 builds it; MS8 consumes it.
 
 ## OUT OF SCOPE
 
@@ -1113,6 +1131,8 @@ Report missing legal/product surfaces for external legal review.
 ## Objective
 
 Attempt to break the system before real customers do. No new product features unless required to fix a verified production blocker.
+
+Per **D3** (§0.1), MS8 runs on the integration/E2E/CI infrastructure **MS5 established** — it does not invent its own harness. If that infrastructure proves inadequate, report it as an MS5 gap rather than building a parallel one.
 
 ## IN SCOPE
 

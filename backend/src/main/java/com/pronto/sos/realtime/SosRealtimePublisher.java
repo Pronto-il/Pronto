@@ -129,7 +129,14 @@ public class SosRealtimePublisher {
             case MATCHING_STARTED -> toCustomer(request, event, SosRealtimeEventType.MATCHING_STARTED,
                     data("status", request.getStatus().name()));
 
-            case OFFERS_SENT -> publishOffersSent(request, event);
+            case OFFERS_SENT -> publishOffersSent(request, event, SosRealtimeEventType.OFFERS_SENT,
+                    data("offerCount", offerCount(request.getId()), "status", request.getStatus().name()));
+
+            case SEARCH_EXPANDED -> publishOffersSent(request, event, SosRealtimeEventType.SEARCH_EXPANDED,
+                    data("status", request.getStatus().name(),
+                            "offerCount", offerCount(request.getId()),
+                            "availableCandidateCount", availableCandidateCount(request.getId()),
+                            "searchExpansions", request.getSearchExpansions()));
 
             // Telemetry only. Nobody needs to be woken up because a professional opened a card.
             case OFFER_VIEWED -> { }
@@ -137,6 +144,8 @@ public class SosRealtimePublisher {
             case OFFER_EXPIRED -> publishOfferExpired(request, event);
 
             case PROFESSIONAL_RESPONDED -> publishProfessionalResponded(request, event);
+
+            case ETA_UPDATED -> publishEtaUpdated(request, event);
 
             case CANDIDATES_READY -> toCustomer(request, event, SosRealtimeEventType.CANDIDATES_UPDATED,
                     data("availableCandidateCount", availableCandidateCount(request.getId())));
@@ -181,21 +190,29 @@ public class SosRealtimePublisher {
     // ------------------------------------------------------------------
 
     /**
-     * Dispatch fan-out. The customer learns only <em>how many</em> professionals were contacted —
-     * who they are is not theirs to know until those professionals choose to respond. Each
-     * contacted professional gets their own offer, and only their own.
+     * Dispatch fan-out — shared by the initial wave ({@code OFFERS_SENT}) and by every manual
+     * expansion ({@code SEARCH_EXPANDED}), because who gets told what is identical in both cases
+     * and only the customer's own message differs.
+     *
+     * <p>The customer learns only <em>how many</em> professionals were contacted — who they are
+     * is not theirs to know until those professionals choose to respond. Each contacted
+     * professional gets their own offer, and only their own.
+     *
+     * <p><b>Only offers still sitting at {@code OFFERED} are pushed</b>, which is what makes this
+     * safe to re-run for an expansion: a professional from the first wave who has already
+     * answered is skipped, and one who has not is being told about an opportunity that is still
+     * genuinely live and whose search has just widened. Nobody is notified twice about an offer
+     * they have already dealt with, and no second offer row exists to notify about
+     * ({@code ux_sos_offers_request_professional}).
      */
-    private void publishOffersSent(SosRequest request, SosEvent event) {
+    private void publishOffersSent(SosRequest request, SosEvent event, SosRealtimeEventType customerType,
+                                    Map<String, Object> customerPayload) {
+        toCustomer(request, event, customerType, customerPayload);
+
         List<SosOffer> offers = sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(request.getId());
-
-        toCustomer(request, event, SosRealtimeEventType.OFFERS_SENT,
-                data("offerCount", offers.size(), "status", request.getStatus().name()));
-
         Map<Long, Long> userIds = professionalUserIds(offers.stream().map(SosOffer::getProfessionalId).toList());
         for (SosOffer offer : offers) {
             if (offer.getStatus() != SosOfferStatus.OFFERED) {
-                // A later dispatch wave re-running over an already-answered offer must not
-                // re-notify it as a fresh opportunity.
                 continue;
             }
             delivery.sendToUser(userIds.get(offer.getProfessionalId()),
@@ -235,9 +252,11 @@ public class SosRealtimePublisher {
      *   <li>{@code REJECTED} — the customer is told nothing. A decline changes nothing they can
      *       see or act on, and naming who declined would leak a professional's business decision
      *       for no benefit.</li>
-     *   <li>{@code SELECTED} — the only way to reach this branch is an ETA revision after being
-     *       chosen, which the customer very much wants.</li>
      * </ul>
+     *
+     * <p>{@code SELECTED} no longer reaches this branch at all: an ETA revision is now its own
+     * event type, handled by {@link #publishEtaUpdated}. This method sees only the yes/no answer
+     * it was always meant to describe.
      *
      * The responding professional always gets a self-ack, so their other devices stay in step.
      */
@@ -249,14 +268,50 @@ public class SosRealtimePublisher {
             return;
         }
 
-        switch (offer.getStatus()) {
-            case ACCEPTED -> toCustomer(request, event, SosRealtimeEventType.PROFESSIONAL_AVAILABLE,
+        if (offer.getStatus() == SosOfferStatus.ACCEPTED) {
+            toCustomer(request, event, SosRealtimeEventType.PROFESSIONAL_AVAILABLE,
                     data("availableCandidateCount", availableCandidateCount(request.getId()),
-                            "offerId", offer.getId()));
-            case SELECTED -> toCustomer(request, event, SosRealtimeEventType.ETA_UPDATED,
-                    data("offerId", offer.getId(),
+                            "offerId", offer.getId(),
                             "estimatedArrivalMinutes", offer.getEstimatedArrivalMinutes()));
-            default -> { /* REJECTED and every closed status: nothing for the customer. */ }
+        }
+        // REJECTED and every closed status: nothing for the customer. A decline changes nothing
+        // they can see or act on, and naming who declined leaks a business decision for no benefit.
+
+        delivery.sendToUser(professionalUserId(offer.getProfessionalId()),
+                message(event, SosRealtimeEventType.OFFER_RESPONSE_RECORDED, request,
+                        data("offerId", offer.getId(), "offerStatus", offer.getStatus().name(),
+                                "estimatedArrivalMinutes", offer.getEstimatedArrivalMinutes())));
+    }
+
+    /**
+     * A professional revised a committed ETA. <b>The customer is told regardless of whether they
+     * have chosen yet</b> — which is the whole point of this branch existing.
+     *
+     * <p>Before, an ETA revision arrived as {@code PROFESSIONAL_RESPONDED} and was routed by the
+     * offer's status, so a revision on an {@code ACCEPTED} offer was indistinguishable from a
+     * fresh acceptance and went out as {@link SosRealtimeEventType#PROFESSIONAL_AVAILABLE}. The
+     * customer's screen refetched and did technically show the new number, but it was being told
+     * "one more professional is available" — which is false, drives a candidate-count animation on
+     * an edit, and would make an existing card re-announce itself. Only the post-selection case
+     * ever said {@code ETA_UPDATED}. Both now do.
+     *
+     * <p>Nothing is emitted for an offer that is no longer live: {@code updateEta}'s repository
+     * guard means only {@code ACCEPTED}/{@code SELECTED} can get here, but routing on the read-back
+     * status rather than assuming keeps this correct if that guard ever widens.
+     */
+    private void publishEtaUpdated(SosRequest request, SosEvent event) {
+        SosOffer offer = event.getSosOfferId() == null
+                ? null
+                : sosOfferRepository.findById(event.getSosOfferId()).orElse(null);
+        if (offer == null) {
+            return;
+        }
+
+        if (offer.getStatus() == SosOfferStatus.ACCEPTED || offer.getStatus() == SosOfferStatus.SELECTED) {
+            toCustomer(request, event, SosRealtimeEventType.ETA_UPDATED,
+                    data("offerId", offer.getId(),
+                            "professionalId", offer.getProfessionalId(),
+                            "estimatedArrivalMinutes", offer.getEstimatedArrivalMinutes()));
         }
 
         delivery.sendToUser(professionalUserId(offer.getProfessionalId()),
@@ -340,8 +395,11 @@ public class SosRealtimePublisher {
 
     /**
      * What a professional may see about a job they have not been selected for: enough to decide,
-     * and nothing more. City only — never street, house number, customer name or phone. The full
-     * address becomes available through REST once they are actually selected and an order exists.
+     * and nothing more. Street and city — never house number, apartment, floor, entrance, address
+     * notes, coordinates, customer name or phone. Deliberately identical to what
+     * {@code sos.service.SosAddressAccess.STREET_AND_CITY} yields over REST: the privacy rule
+     * being real in two places out of three is the same as it not being real, so this payload and
+     * the assembler disclose exactly the same fields.
      */
     private Map<String, Object> offerPayload(SosRequest request, SosOffer offer) {
         return data(
@@ -351,6 +409,7 @@ public class SosRealtimePublisher {
                 "issueSummary", request.getIssueSummary(),
                 "urgency", request.getUrgency().name(),
                 "serviceCity", request.getServiceCity(),
+                "serviceStreet", request.getServiceStreet(),
                 "distanceKm", offer.getDistanceKm(),
                 "estimatedArrivalMinutes", offer.getEstimatedArrivalMinutes(),
                 "visitFee", offer.getVisitFee(),
@@ -367,6 +426,10 @@ public class SosRealtimePublisher {
 
     private long availableCandidateCount(Long sosRequestId) {
         return sosOfferRepository.countBySosRequestIdAndStatus(sosRequestId, SosOfferStatus.ACCEPTED);
+    }
+
+    private int offerCount(Long sosRequestId) {
+        return sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(sosRequestId).size();
     }
 
     /** One batched lookup for a whole fan-out, rather than a query per recipient. */

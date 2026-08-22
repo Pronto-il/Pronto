@@ -65,10 +65,58 @@ public class SosProperties {
     private int emergencyCandidatePoolSize = 15;
 
     /**
-     * How many accepted professionals the customer is shown, and the count at which dispatch
-     * stops waiting and opens the selection window early.
+     * How many accepted professionals the customer is shown <b>in the initial search scope</b>.
+     *
+     * <p>No longer the count at which the selection window opens: selection opens on the
+     * <em>first</em> acceptance now, because a customer with an emergency and one real option in
+     * hand has nothing to gain from being made to wait for a quota to fill. See
+     * {@code SosService.maybeOpenSelectionWindow}.
+     *
+     * <p>Each manual "scan again" raises the shortlist cap by one (so 3, then 4, then 5 at the
+     * default {@link #maxSearchExpansions} of 2). It has to grow: the shortlist is filled in
+     * arrival order and a fixed cap would mean a professional who accepted <em>after</em> an
+     * expansion could push a candidate the customer is already looking at off the screen, which
+     * is the one thing expansion must never do.
      */
     private int targetCandidateCount = 3;
+
+    /**
+     * How many times one SOS request may be manually expanded ("סרוק שוב") before the search is
+     * at its widest.
+     *
+     * <p><b>This is the bound.</b> There is no automatic, continuous radius growth anywhere in
+     * this feature — expansion happens only when the customer asks for it, and only this many
+     * times. Two steps beyond the initial scope is the default because the pool grows by
+     * {@link #expansionPoolIncrement} each time: at the defaults that is 8 professionals
+     * contacted initially and at most 24 in total, which is already a large fan-out for one job.
+     */
+    private int maxSearchExpansions = 2;
+
+    /**
+     * How many <b>additional</b> ranked professionals each expansion step may contact, on top of
+     * everyone already offered this request.
+     *
+     * <p>This is the dimension expansion actually moves today. Matching scores every eligible
+     * professional and truncates to the pool cap; an expansion raises that cap and dispatches to
+     * the next slice of the same ranking, so a "wider search" means "we asked further down the
+     * list of people who could do this job" — which is true, is enforceable, and needs no
+     * geographic data the platform does not have.
+     */
+    private int expansionPoolIncrement = 8;
+
+    /**
+     * The factor {@link #maxDispatchRadiusKm} is multiplied by per expansion step.
+     *
+     * <p><b>A seam, deliberately, not a feature.</b> The only distance implementation in this
+     * codebase ({@code matching.ApproximateDistanceEtaStrategy}) returns one of two placeholder
+     * figures — 8 km same-city, 35 km otherwise — so multiplying a 40 km ceiling changes nothing
+     * observable today, and no customer-facing copy quotes a radius. It exists so that when real
+     * geocoding replaces that strategy, "expand the search" becomes a genuine radius expansion by
+     * changing one implementation rather than by redesigning this flow. Documented as inert
+     * rather than removed, because removing it would mean re-deciding where expansion hooks into
+     * matching at exactly the moment that decision is hardest to revisit.
+     */
+    private BigDecimal expansionRadiusMultiplier = new BigDecimal("1.5");
 
     /** How long a professional has to respond to an individual offer. */
     private int offerTtlSeconds = 120;
@@ -135,6 +183,19 @@ public class SosProperties {
         requirePositive("candidate-pool-size", candidatePoolSize);
         requirePositive("emergency-candidate-pool-size", emergencyCandidatePoolSize);
         requirePositive("target-candidate-count", targetCandidateCount);
+        requirePositive("expansion-pool-increment", expansionPoolIncrement);
+
+        // Zero is legal and meaningful here, unlike every value above: it turns "סרוק שוב" off
+        // entirely and restores single-wave dispatch, which is a deployment a operator might
+        // genuinely want. Negative is not.
+        if (maxSearchExpansions < 0) {
+            throw new IllegalStateException("Refusing to start: pronto.sos.max-search-expansions must not be "
+                    + "negative (0 disables manual search expansion), but was " + maxSearchExpansions + ".");
+        }
+        if (expansionRadiusMultiplier == null || expansionRadiusMultiplier.compareTo(BigDecimal.ONE) < 0) {
+            throw new IllegalStateException("Refusing to start: pronto.sos.expansion-radius-multiplier must be "
+                    + "at least 1 (1 leaves the radius unchanged), but was " + expansionRadiusMultiplier + ".");
+        }
 
         if (commissionRate == null || commissionRate.signum() < 0 || commissionRate.compareTo(BigDecimal.ONE) > 0) {
             throw new IllegalStateException("Refusing to start: pronto.sos.commission-rate must be a fraction "
@@ -205,6 +266,30 @@ public class SosProperties {
 
     public void setTargetCandidateCount(int targetCandidateCount) {
         this.targetCandidateCount = targetCandidateCount;
+    }
+
+    public int getMaxSearchExpansions() {
+        return maxSearchExpansions;
+    }
+
+    public void setMaxSearchExpansions(int maxSearchExpansions) {
+        this.maxSearchExpansions = maxSearchExpansions;
+    }
+
+    public int getExpansionPoolIncrement() {
+        return expansionPoolIncrement;
+    }
+
+    public void setExpansionPoolIncrement(int expansionPoolIncrement) {
+        this.expansionPoolIncrement = expansionPoolIncrement;
+    }
+
+    public BigDecimal getExpansionRadiusMultiplier() {
+        return expansionRadiusMultiplier;
+    }
+
+    public void setExpansionRadiusMultiplier(BigDecimal expansionRadiusMultiplier) {
+        this.expansionRadiusMultiplier = expansionRadiusMultiplier;
     }
 
     public int getOfferTtlSeconds() {

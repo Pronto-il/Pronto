@@ -5,6 +5,7 @@ import { Button, Card, Input } from '../../shared/components';
 import { useAuth } from '../../shared/hooks';
 import { ApiError } from '../../shared/api';
 import { AccountLockoutBanner } from './AccountLockoutBanner';
+import { LoginRateLimitBanner } from './LoginRateLimitBanner';
 import styles from './formStyles.module.css';
 
 export interface LoginFormProps {
@@ -28,6 +29,7 @@ export function LoginForm({ initialEmail = '' }: LoginFormProps) {
   const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
   const [bannerError, setBannerError] = useState<string | null>(null);
   const [lockedRetryAfterSeconds, setLockedRetryAfterSeconds] = useState<number | null>(null);
+  const [rateLimitedRetryAfterSeconds, setRateLimitedRetryAfterSeconds] = useState<number | null>(null);
   const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -36,6 +38,7 @@ export function LoginForm({ initialEmail = '' }: LoginFormProps) {
     setFieldErrors({});
     setBannerError(null);
     setLockedRetryAfterSeconds(null);
+    setRateLimitedRetryAfterSeconds(null);
     setUnverifiedEmail(null);
 
     const trimmedEmail = email.trim();
@@ -60,6 +63,13 @@ export function LoginForm({ initialEmail = '' }: LoginFormProps) {
         if (error.code === 'ACCOUNT_LOCKED') {
           const details = error.details as { retryAfterSeconds?: number } | null;
           setLockedRetryAfterSeconds(details?.retryAfterSeconds ?? 0);
+        } else if (error.code === 'RATE_LIMITED') {
+          // Backend `RateLimitDetails.retryAfterSeconds`. Read from the body's `details` —
+          // the same path `ACCOUNT_LOCKED` above already uses — rather than the `Retry-After`
+          // header, which carries the identical value but is not surfaced by `httpClient`
+          // (it parses the JSON envelope only, never response headers).
+          const details = error.details as { retryAfterSeconds?: number } | null;
+          setRateLimitedRetryAfterSeconds(details?.retryAfterSeconds ?? 0);
         } else if (error.code === 'INVALID_CREDENTIALS') {
           setBannerError('אימייל או סיסמה שגויים.');
         } else if (error.code === 'EMAIL_NOT_VERIFIED') {
@@ -82,6 +92,11 @@ export function LoginForm({ initialEmail = '' }: LoginFormProps) {
         {lockedRetryAfterSeconds !== null && (
           <div className="motion-list-item">
             <AccountLockoutBanner retryAfterSeconds={lockedRetryAfterSeconds} />
+          </div>
+        )}
+        {rateLimitedRetryAfterSeconds !== null && (
+          <div className="motion-list-item">
+            <LoginRateLimitBanner retryAfterSeconds={rateLimitedRetryAfterSeconds} />
           </div>
         )}
         {bannerError && (

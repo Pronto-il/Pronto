@@ -3,9 +3,22 @@ spring:
     name: pronto-backend
 
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:pronto}
+    # Defaults deliberately mirror docker-compose.yml's published service, variable for
+    # variable, so `docker compose up -d` followed by running this application connects with
+    # no env vars set at all. See that file's header for why the host port is 5433 rather than
+    # 5432 (a native Windows PostgreSQL service permanently owns 5432 on this project's
+    # development machine). Every value stays env-overridable — .github/workflows/
+    # backend-ci.yml sets all five explicitly and is unaffected by these defaults, and any
+    # real deployment must do the same.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/${DB_NAME:pronto}
     username: ${DB_USER:pronto}
-    password: ${DB_PASSWORD:}
+    # Local-dev-only default, matching docker-compose.yml's POSTGRES_PASSWORD — same
+    # "obviously a local placeholder" convention as pronto.jwt.secret below. It was
+    # previously empty, which made the documented `docker compose up -d` flow fail with a
+    # SCRAM authentication error until the developer guessed an undocumented env var. This is
+    # not a production secret: a deployment supplies DB_PASSWORD, and if it forgets, this
+    # value fails to authenticate against a real database rather than granting anything.
+    password: ${DB_PASSWORD:pronto}
     driver-class-name: org.postgresql.Driver
 
   jpa:
@@ -163,8 +176,11 @@ pronto:
     # ever sent an offer.
     candidate-pool-size: ${SOS_CANDIDATE_POOL_SIZE:8}
     emergency-candidate-pool-size: ${SOS_EMERGENCY_CANDIDATE_POOL_SIZE:15}
-    # How many accepted professionals the customer is shown, and the count at which dispatch
-    # stops waiting and opens the selection window early.
+    # How many accepted professionals the customer is shown at the initial search scope. NOT the
+    # count at which selection opens -- selection opens on the FIRST acceptance, because somebody
+    # with an active leak and one real option in hand gains nothing from waiting for a quota.
+    # Each "סרוק שוב" raises this cap by one, so a widened search has somewhere to put what it
+    # finds and no visible candidate is ever pushed off the list by a later arrival.
     target-candidate-count: ${SOS_TARGET_CANDIDATE_COUNT:3}
     # Per-offer response deadline, and the overall professional-response window.
     offer-ttl-seconds: ${SOS_OFFER_TTL_SECONDS:120}
@@ -183,6 +199,25 @@ pronto:
     # same-city preference rather than a true radius; kept as km so real geocoding can be
     # swapped in later with no config or API change.
     max-dispatch-radius-km: ${SOS_MAX_DISPATCH_RADIUS_KM:40.0}
+    # ---- manual search expansion ("סרוק שוב") ----
+    # How many times ONE request may be widened by the customer. This is the bound: there is no
+    # automatic or continuous expansion anywhere in this feature, and at this ceiling the control
+    # stops being offered while every candidate found so far stays selectable. 0 disables the
+    # feature entirely and restores single-wave dispatch.
+    max-search-expansions: ${SOS_MAX_SEARCH_EXPANSIONS:2}
+    # How many ADDITIONAL professionals each expansion may contact, as a running total on top of
+    # everyone already offered this request. This is the dimension expansion actually moves:
+    # matching ranks every eligible professional and truncates to the pool cap, so widening it
+    # means "we asked further down the ranked list". Defaults give 8 contacted initially and at
+    # most 24 in total.
+    expansion-pool-increment: ${SOS_EXPANSION_POOL_INCREMENT:8}
+    # The factor max-dispatch-radius-km is multiplied by per expansion step. A SEAM, not a
+    # feature: the v1 distance model returns 8 km same-city / 35 km otherwise against a 40 km
+    # ceiling, so this changes nothing observable today and no customer-facing copy quotes a
+    # radius. It exists so that when real geocoding lands, "expand the search" becomes a genuine
+    # radius expansion by changing one strategy rather than by redesigning the flow. 1 leaves the
+    # radius untouched.
+    expansion-radius-multiplier: ${SOS_EXPANSION_RADIUS_MULTIPLIER:1.5}
 
 server:
   port: ${SERVER_PORT:8080}

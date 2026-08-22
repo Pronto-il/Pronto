@@ -186,9 +186,10 @@ export default function OrderTrackingPage() {
    * the recovery target is a plain URL that survives a refresh — no router state, no re-created
    * issue, no second trip through classification.
    *
-   * <p>The SOS branch points at `ProntoSosEntryPage` (the placeholder for the upcoming Pronto SOS
-   * frontend). Only reachable for historical SOS orders: the legacy flow that created them is
-   * gone, so no new order can arrive here that way.
+   * <p>The SOS branch points at `/issues/{issueId}/sos-booking`, which now renders `features/sos`'s
+   * real Pronto SOS entry page — so this recovery CTA lands a customer straight back into an
+   * urgent search on the same issue, which is exactly what it should do. (Historical orders from
+   * the removed legacy SOS flow reach it too, and are equally well served.)
    */
   function renderTerminalAction() {
     if (!order || isProfessionalViewer) {

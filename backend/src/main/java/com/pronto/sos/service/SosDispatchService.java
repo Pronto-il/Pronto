@@ -73,16 +73,80 @@ public class SosDispatchService {
     @Transactional
     public int dispatch(SosRequest request) {
         Instant now = Instant.now();
+        int dispatched = writeWave(request, SosSearchScope.initial(request.getUrgency(), properties), now);
 
+        if (dispatched == 0) {
+            failNoProfessionals(request, now);
+            return 0;
+        }
+
+        // 0 affected rows means something else already moved the request out of MATCHING
+        // (a cancellation racing the dispatch). The offers are still valid and will be closed
+        // out by whatever transition won, so this is not an error.
+        int moved = sosRequestRepository.markWaitingForProfessionals(request.getId(), now);
+        if (moved == 0) {
+            log.info("sos.dispatch.request-moved-concurrently sosRequestId={} offersCreated={}",
+                    request.getId(), dispatched);
+            return dispatched;
+        }
+
+        sosEventService.recordSystem(request.getId(), SosEventType.OFFERS_SENT, SosRequestStatus.MATCHING,
+                SosRequestStatus.WAITING_FOR_PROFESSIONALS,
+                dispatched + " offer(s) dispatched, expiring in " + properties.getOfferTtlSeconds() + "s");
+        return dispatched;
+    }
+
+    /**
+     * One <b>expansion</b> wave, for a request the customer has asked to widen ("סרוק שוב").
+     *
+     * <p>The same offer-writing machinery as {@link #dispatch}, with three deliberate differences,
+     * each of which would be a bug the other way round:
+     *
+     * <ol>
+     *   <li><b>No status transition.</b> The request is already
+     *       {@code WAITING_FOR_PROFESSIONALS} or {@code WAITING_FOR_CUSTOMER_SELECTION} and stays
+     *       there. In particular it does not go back to {@code MATCHING}: a customer who already
+     *       has one professional on screen must not lose the ability to pick them because they
+     *       asked to see more.</li>
+     *   <li><b>An empty wave is not a failure.</b> {@link #failNoProfessionals} is never called
+     *       here. "The wider scope turned up nobody new" is an ordinary outcome — usually it just
+     *       means the platform has already asked everybody it can — and terminating a request
+     *       that has usable candidates because of it would destroy the customer's options for
+     *       pressing a button.</li>
+     *   <li><b>Nobody previously offered is contacted again.</b> The exclusion set and
+     *       {@code ux_sos_offers_request_professional} both hold, and the scope's pool size is a
+     *       running total rather than a per-wave allowance — see
+     *       {@code SosMatchingService#findCandidates(SosRequest, Set, SosSearchScope)}.</li>
+     * </ol>
+     *
+     * <p>Runs inside the caller's transaction, so the expansion counter, the new offers and the
+     * {@code SEARCH_EXPANDED} history row commit together or not at all.
+     *
+     * @return how many additional professionals were contacted; {@code 0} is a normal result
+     */
+    @Transactional
+    public int expand(SosRequest request, SosSearchScope scope) {
+        int dispatched = writeWave(request, scope, Instant.now());
+        log.info("sos.dispatch.expanded sosRequestId={} scopeLevel={} poolSize={} newOffers={}",
+                request.getId(), scope.level(), scope.poolSize(), dispatched);
+        return dispatched;
+    }
+
+    /**
+     * Ranks at {@code scope}, writes the offer rows, and notifies exactly the professionals whose
+     * rows were actually created. Shared by the initial dispatch and every expansion so the two
+     * cannot drift on pricing, ranking, duplicate handling or notification.
+     *
+     * @return the number of offers written
+     */
+    private int writeWave(SosRequest request, SosSearchScope scope, Instant now) {
         Set<Long> alreadyOffered = new HashSet<>(
                 sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(request.getId()).stream()
                         .map(SosOffer::getProfessionalId)
                         .toList());
 
-        List<RankedCandidate> candidates = sosMatchingService.findCandidates(request, alreadyOffered);
-
+        List<RankedCandidate> candidates = sosMatchingService.findCandidates(request, alreadyOffered, scope);
         if (candidates.isEmpty()) {
-            failNoProfessionals(request, now);
             return 0;
         }
 
@@ -111,14 +175,10 @@ public class SosDispatchService {
             }
             rank++;
             recipientUserIds.add(candidate.professional().userId());
-            log.debug("sos.dispatch.offer sosRequestId={} professionalId={} rank={} score={} components={}",
-                    request.getId(), candidate.professional().professionalId(), rank, candidate.score(),
-                    candidate.componentScores());
-        }
-
-        if (recipientUserIds.isEmpty()) {
-            failNoProfessionals(request, now);
-            return 0;
+            log.debug("sos.dispatch.offer sosRequestId={} professionalId={} rank={} scopeLevel={} score={} "
+                            + "components={}",
+                    request.getId(), candidate.professional().professionalId(), rank, scope.level(),
+                    candidate.score(), candidate.componentScores());
         }
 
         // Notify after every offer row exists, so a professional cannot open the notification
@@ -127,21 +187,6 @@ public class SosDispatchService {
             notificationService.recordSosNotification(request.getId(), recipientUserId,
                     NotificationMessageType.SOS_OFFER_RECEIVED);
         }
-
-        // 0 affected rows means something else already moved the request out of MATCHING
-        // (a cancellation racing the dispatch). The offers are still valid and will be closed
-        // out by whatever transition won, so this is not an error.
-        int moved = sosRequestRepository.markWaitingForProfessionals(request.getId(), now);
-        if (moved == 0) {
-            log.info("sos.dispatch.request-moved-concurrently sosRequestId={} offersCreated={}",
-                    request.getId(), recipientUserIds.size());
-            return recipientUserIds.size();
-        }
-
-        sosEventService.recordSystem(request.getId(), SosEventType.OFFERS_SENT, SosRequestStatus.MATCHING,
-                SosRequestStatus.WAITING_FOR_PROFESSIONALS,
-                recipientUserIds.size() + " offer(s) dispatched, expiring in "
-                        + properties.getOfferTtlSeconds() + "s");
         return recipientUserIds.size();
     }
 

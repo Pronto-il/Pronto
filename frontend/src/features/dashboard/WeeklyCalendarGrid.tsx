@@ -25,6 +25,12 @@ type BlockModalState =
  *  working-hours row order"). */
 const WEEKDAY_LABELS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 
+/** Single-letter weekday labels for the mobile day-switcher, same Sunday(0)-first order.
+ *  Deliberately a separate list rather than `WEEKDAY_LABELS[i][0]`: taking the first letter of
+ *  the full names produces ר/ש/ש/ר/ח/ש/ש — four collisions across the week, so three different
+ *  chips read "ש". The conventional Hebrew calendar letters (א-ו + ש for שבת) are unique. */
+const MOBILE_WEEKDAY_LABELS = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'];
+
 /** Design §7.3/§31: "a coarser interval than the 3-5s order-tracking polling — recommended
  *  20-30s." */
 const CALENDAR_POLL_INTERVAL_MS = 25000;
@@ -318,8 +324,11 @@ function CalendarWeekView({ weekStart }: { weekStart: Date }) {
               type="button"
               className={`${styles.dayChip} ${index === selectedDayIndex ? styles.dayChipActive : ''}`}
               onClick={() => setSelectedDayIndex(index)}
+              // The visible label is a single letter now, so the full weekday name moves to the
+              // accessible name rather than being lost.
+              aria-label={`${WEEKDAY_LABELS[day.weekday]} ${DAY_HEADER_DATE_FORMATTER.format(day.date)}`}
             >
-              <span className={styles.dayChipWeekday}>{WEEKDAY_LABELS[day.weekday][0]}</span>
+              <span className={styles.dayChipWeekday}>{MOBILE_WEEKDAY_LABELS[day.weekday]}</span>
               <span className={styles.dayChipDate}>{DAY_HEADER_DATE_FORMATTER.format(day.date)}</span>
             </button>
           ))}

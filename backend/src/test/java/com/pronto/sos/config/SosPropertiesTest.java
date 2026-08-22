@@ -104,6 +104,36 @@ class SosPropertiesTest {
         }).validate()).doesNotThrowAnyException();
     }
 
+    // ---- search expansion ----
+
+    /**
+     * Zero is legal here and nowhere else above: it turns "סרוק שוב" off and restores single-wave
+     * dispatch, which is a deployment somebody might genuinely want.
+     */
+    @Test
+    void zeroSearchExpansionsIsAcceptedAndDisablesTheFeature() {
+        assertThatCode(() -> propertiesWith(p -> p.setMaxSearchExpansions(0)).validate())
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void aNegativeExpansionCeilingIsRejected() {
+        assertRejected("max-search-expansions", p -> p.setMaxSearchExpansions(-1));
+    }
+
+    /** An expansion that adds nobody is a button that does nothing — a config error, not a policy. */
+    @Test
+    void aNonPositiveExpansionIncrementIsRejected() {
+        assertRejected("expansion-pool-increment", p -> p.setExpansionPoolIncrement(0));
+    }
+
+    /** A multiplier below 1 would <em>narrow</em> the search on expansion — the opposite of the word. */
+    @Test
+    void anExpansionRadiusMultiplierBelowOneIsRejected() {
+        assertRejected("expansion-radius-multiplier",
+                p -> p.setExpansionRadiusMultiplier(new java.math.BigDecimal("0.5")));
+    }
+
     private static void assertRejected(String expectedPropertyName, java.util.function.Consumer<SosProperties> mutate) {
         assertThatThrownBy(() -> propertiesWith(mutate).validate())
                 .isInstanceOf(IllegalStateException.class)

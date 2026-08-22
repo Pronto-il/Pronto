@@ -1,0 +1,102 @@
+/* Mobile-first single column. The desktop enhancement (two columns) is at the bottom. */
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.loadingHeader {
+  height: 120px;
+  border-radius: var(--radius-lg);
+}
+
+.loadingPanel {
+  height: 260px;
+  border-radius: var(--radius-xl);
+}
+
+.errorCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.errorTitle {
+  font-size: var(--font-size-body-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.errorBody {
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+}
+
+.endedCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-4);
+}
+
+.endedTitle {
+  font-size: var(--font-size-body-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.endedBody {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+  color: var(--color-text-secondary);
+}
+
+.endedError,
+.inlineError {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.endedActions,
+.doneActions,
+.confirmActions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.confirmText {
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+  color: var(--color-text-secondary);
+}
+
+/* The desktop candidate list. On mobile the scan surface carries the candidates as mini-cards
+   instead — a tall tray beneath the map is exactly what stops the mobile SOS screen fitting on one
+   screen, which is the whole point of that composition. */
+.desktopTray {
+  display: contents;
+}
+
+/* Selection/cancel errors normally live inside the tray; with the tray hidden on mobile they need
+   their own home, so this one shows only where the tray does not. */
+.mobileOnlyError {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .desktopTray {
+    display: none;
+  }
+
+  .mobileOnlyError {
+    display: block;
+  }
+}

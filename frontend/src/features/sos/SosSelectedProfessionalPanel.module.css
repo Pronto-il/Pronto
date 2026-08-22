@@ -1,0 +1,106 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-4);
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.avatar,
+.avatarFallback {
+  flex-shrink: 0;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+}
+
+.avatar {
+  object-fit: cover;
+  background: var(--color-surface-secondary);
+}
+
+.avatarFallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: 22px;
+  font-weight: var(--font-weight-bold);
+}
+
+.identity {
+  min-width: 0;
+  flex: 1;
+}
+
+.eyebrow {
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+}
+
+.name {
+  font-size: var(--font-size-h3);
+  line-height: var(--line-height-h3);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+}
+
+.rating {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-block-start: var(--space-1);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.ratingStar {
+  color: var(--color-warning);
+}
+
+.reviewCount {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-regular);
+}
+
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fact {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+}
+
+.priceRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-block-start: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.priceLabel {
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+}
+
+.priceValue {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}

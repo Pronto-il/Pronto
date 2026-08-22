@@ -43,7 +43,19 @@ public enum SosRealtimeEventType {
      */
     PROFESSIONAL_AVAILABLE,
 
-    /** The candidate shortlist is settled and worth re-fetching. */
+    /**
+     * The customer widened the search ("סרוק שוב") and a further wave of offers went out.
+     *
+     * <p>Carries how many expansions have been used and how many remain, so a second session of
+     * the same customer's — another tab, another device — sees the control's state change without
+     * having to re-derive the platform's expansion policy. Deliberately does <b>not</b> carry a
+     * radius or a distance: there is no real geographic data behind this expansion yet (see
+     * {@code sos.service.SosSearchScope}), and a wire field is exactly how invented precision
+     * ends up in a UI.
+     */
+    SEARCH_EXPANDED,
+
+    /** The candidate shortlist changed and is worth re-fetching. */
     CANDIDATES_UPDATED,
 
     /** The customer's ~2-minute choosing window opened. Carries the backend-owned deadline. */
@@ -52,7 +64,16 @@ public enum SosRealtimeEventType {
     /** The customer's own confirmation that their selection landed. */
     PROFESSIONAL_SELECTED,
 
-    /** The selected professional revised their ETA after being chosen. */
+    /**
+     * A professional revised the ETA they had committed to. Carries the offer, the professional
+     * and the new figure.
+     *
+     * <p>Sent whether or not the customer has chosen yet — a candidate who says "12 minutes, not
+     * 20" while still merely {@link #PROFESSIONAL_AVAILABLE} is changing the very thing the
+     * customer is comparing on. This used to be emitted only after selection, and a pre-selection
+     * revision went out as {@code PROFESSIONAL_AVAILABLE} instead, which told the customer another
+     * candidate had appeared when none had.
+     */
     ETA_UPDATED,
 
     // ---- professional-facing ----

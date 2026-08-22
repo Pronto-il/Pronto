@@ -21,7 +21,29 @@ public enum ErrorCode {
     EMAIL_NOT_VERIFIED(HttpStatus.FORBIDDEN),
     ACCOUNT_LOCKED(HttpStatus.LOCKED),
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED),
+    /**
+     * The requested resource does not exist. Deliberately shared by two callers: domain code
+     * raising {@code ApiException(NOT_FOUND, ...)} for a missing entity, and
+     * {@code GlobalExceptionHandler}'s unmatched-route handler. Both mean "what you asked for
+     * isn't here" at the same status, and the frontend branches only on the code — so a
+     * second, near-identical code would split the taxonomy without telling any caller
+     * anything new.
+     */
     NOT_FOUND(HttpStatus.NOT_FOUND),
+    /**
+     * The request body's {@code Content-Type} is not one this endpoint can read (e.g.
+     * {@code text/plain} posted to a JSON endpoint). Like {@link #METHOD_NOT_ALLOWED} below,
+     * a framework-level failure kept out of {@link #INTERNAL_ERROR}.
+     */
+    UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE),
+    /**
+     * The path exists but not for the HTTP method used (e.g. {@code GET /api/auth/login},
+     * which is {@code POST}-only). A framework-level routing failure, deliberately NOT
+     * folded into {@link #INTERNAL_ERROR} — nothing unexpected happened server-side, the
+     * caller simply used the wrong verb, and a 500 both misleads the caller and hides the
+     * real 4xx in monitoring.
+     */
+    METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR),
 
     // Milestone 2 additions (issues/ai/storage). See
@@ -114,7 +136,16 @@ public enum ErrorCode {
     /** The chosen offer is not one of the current candidates (not accepted, or not this request). */
     SOS_CANDIDATE_NOT_AVAILABLE(HttpStatus.CONFLICT),
     /** A professional has already been selected for this request — selection is one-shot. */
-    SOS_ALREADY_SELECTED(HttpStatus.CONFLICT);
+    SOS_ALREADY_SELECTED(HttpStatus.CONFLICT),
+    /**
+     * "סרוק שוב" was asked for on a request already at {@code pronto.sos.max-search-expansions}.
+     *
+     * <p>Its own code rather than a generic {@code SOS_INVALID_STATE} because it is the one
+     * refusal here that is neither an error nor a race: the search really is as wide as this
+     * platform will take it, every candidate found so far is still selectable, and the customer
+     * needs to be told that specific thing rather than "something went wrong".
+     */
+    SOS_EXPANSION_LIMIT_REACHED(HttpStatus.CONFLICT);
 
     private final HttpStatus httpStatus;
 

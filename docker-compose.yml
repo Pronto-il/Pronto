@@ -5,9 +5,23 @@
 #           docker compose down -v       (also deletes the data volume)
 #
 # Credentials below (pronto/pronto) are for local development only — not used in any
-# deployed environment. The backend (backend/src/main/resources/application.yml) reads
-# DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD env vars with defaults matching this file,
-# so it works out of the box against this compose service.
+# deployed environment.
+#
+# Host port 5433, not 5432. A native Windows PostgreSQL service (postgresql-x64-18, start
+# type Automatic) permanently owns 5432 on the development machine this project is built on.
+# Publishing this container there too meant whichever process started first won the port, and
+# the backend silently connected to the wrong database — a trap that cost three separate
+# milestones' QA sessions time before being made explicit here (see
+# docs/architecture/overview.md and implementation-plan.md's Frontend Milestone 5 entries).
+# The container still listens on 5432 *inside* the Docker network; only the published host
+# port moved.
+#
+# This file and backend/src/main/resources/application.yml read the SAME five variables with
+# the SAME defaults, so the two sides cannot drift: DB_PORT is the host port published here
+# and the port the backend dials, DB_NAME/DB_USER/DB_PASSWORD are the database created here
+# and the credentials the backend presents. Override any of them (env var or a .env file next
+# to this compose file) and both sides move together — e.g. DB_PORT=5432 docker compose up -d
+# on a machine with no port conflict, with the same DB_PORT exported for the backend.
 
 services:
   postgres:
@@ -15,18 +29,18 @@ services:
     container_name: pronto-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: pronto
-      POSTGRES_USER: pronto
-      POSTGRES_PASSWORD: pronto
+      POSTGRES_DB: ${DB_NAME:-pronto}
+      POSTGRES_USER: ${DB_USER:-pronto}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-pronto}
       # UTF-8 encoding/collation is required for correct Hebrew text storage/sorting
       # (docs/architecture/data-model.md §0).
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=en_US.UTF-8 --lc-ctype=en_US.UTF-8"
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5433}:5432"
     volumes:
       - pronto-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pronto -d pronto"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-pronto} -d ${DB_NAME:-pronto}"]
       interval: 5s
       timeout: 5s
       retries: 10

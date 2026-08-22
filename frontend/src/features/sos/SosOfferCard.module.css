@@ -1,0 +1,231 @@
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+/*
+ * §13: an SOS offer must read as more urgent than a standard request without turning the screen
+ * red. One tinted inline-start rail plus the mark carries it; the card body stays a normal
+ * Pronto surface.
+ */
+.live {
+  border-color: var(--color-sos);
+  box-shadow: 0 0 0 3px var(--color-sos-bg);
+}
+
+/* Resolved outcomes recede — they are news, not work. `.finished` is a job that ran its course
+   (completed/cancelled/expired), which reads the same way here. */
+.not_selected,
+.rejected,
+.expired,
+.finished {
+  background: var(--color-surface-secondary);
+}
+
+.topRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-sos-bg);
+  color: var(--color-sos);
+}
+
+.category {
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emergency {
+  flex-shrink: 0;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-sos);
+  color: #fff;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-bold);
+}
+
+.title {
+  font-size: var(--font-size-body-lg);
+  line-height: var(--line-height-body-lg);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+}
+
+.description {
+  margin-block-start: var(--space-1);
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+  color: var(--color-text-secondary);
+}
+
+.summary {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-secondary);
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+  color: var(--color-text-secondary);
+}
+
+/* The single most decision-relevant number on the card while the window is open. */
+.countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: flex-start;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-sos-bg);
+  color: var(--color-sos);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+}
+
+.countdownValue {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-body-lg);
+  font-weight: var(--font-weight-bold);
+}
+
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fact {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+}
+
+.money {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-secondary);
+}
+
+.moneyRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.moneyLabel {
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+}
+
+.moneyValue {
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.netRow {
+  margin-block-start: var(--space-1);
+  padding-block-start: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.netLabel {
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.netValue {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Two equal targets: a yes/no decision under time pressure, thumb-sized on a phone. */
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.actions button {
+  min-height: 48px;
+}
+
+.waitingFooter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-block-start: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.waitingNote {
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+}
+
+.dismiss {
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-end: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.dismiss:hover {
+  background: var(--color-surface-secondary);
+  color: var(--color-text-secondary);
+}
+
+.dismiss:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+/* A dismissable card puts a close control where the status badge sits, so the badge moves in.
+   Keyed on the control actually being rendered rather than on status, so the two cannot drift. */
+.dismissable .topRow {
+  padding-inline-end: var(--space-8);
+}

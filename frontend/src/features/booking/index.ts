@@ -1,5 +1,7 @@
 export { default as BookingFlowPage } from './BookingFlowPage';
-export { default as ProntoSosEntryPage } from './ProntoSosEntryPage';
+// The SOS entry point moved to `features/sos` when the real Pronto SOS customer flow replaced
+// this feature's no-API placeholder. `/issues/:issueId/sos-booking` now renders
+// `features/sos`'s `ProntoSosEntryPage`; nothing SOS-specific lives in this feature any more.
 export { default as MyOrdersPage } from './MyOrdersPage';
 export { default as OrderTrackingPage } from './OrderTrackingPage';
 export { default as CompletionReviewPage } from './CompletionReviewPage';

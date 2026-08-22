@@ -50,7 +50,7 @@ class SosResponseAssemblerTest {
         sosOfferRepository = Mockito.mock(SosOfferRepository.class);
         StorageService storageService = Mockito.mock(StorageService.class);
         assembler = new SosResponseAssembler(professionalRepository, userRepository, reviewAggregateRepository,
-                sosOfferRepository, storageService);
+                sosOfferRepository, storageService, new com.pronto.sos.config.SosProperties());
 
         when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(anyLong())).thenReturn(List.of());
     }
@@ -80,12 +80,15 @@ class SosResponseAssemblerTest {
         assertThat(response.longitude()).isEqualByComparingTo("34.775200");
     }
 
+    /**
+     * The door-identifying fields, and only those. The street is deliberately <em>not</em> in this
+     * list — see {@link #streetAndCityAccessDisclosesTheStreetSoAnEtaCanBeEstimated}.
+     */
     @Test
-    void cityOnlyAccessStripsEveryExactLocationField() {
+    void streetAndCityAccessStripsEveryDoorIdentifyingField() {
         SosRequestResponse response =
-                assembler.toRequestResponse(fullyAddressedRequest(), SosAddressAccess.CITY_ONLY);
+                assembler.toRequestResponse(fullyAddressedRequest(), SosAddressAccess.STREET_AND_CITY);
 
-        assertThat(response.serviceStreet()).isNull();
         assertThat(response.serviceHouseNumber()).isNull();
         assertThat(response.serviceApartment()).isNull();
         assertThat(response.serviceFloor()).isNull();
@@ -98,14 +101,25 @@ class SosResponseAssemblerTest {
     }
 
     /**
-     * City survives redaction on purpose. It is what a professional needs to judge whether the job
-     * is reachable at all, it is already on their offer card, and a response with no location
-     * whatsoever would be useless to the screen that has to render it.
+     * Street and city survive redaction on purpose, and the street's presence is the point of this
+     * access level rather than an oversight: a professional is being asked to commit to an arrival
+     * time, and "Tel Aviv" spans an hour of driving. A house number would add nothing to that
+     * estimate and everything to a stranger's ability to turn up uninvited, which is why the line
+     * is drawn between the two.
      */
     @Test
-    void cityOnlyAccessStillReturnsTheCityAndTheJobContext() {
+    void streetAndCityAccessDisclosesTheStreetSoAnEtaCanBeEstimated() {
         SosRequestResponse response =
-                assembler.toRequestResponse(fullyAddressedRequest(), SosAddressAccess.CITY_ONLY);
+                assembler.toRequestResponse(fullyAddressedRequest(), SosAddressAccess.STREET_AND_CITY);
+
+        assertThat(response.serviceStreet()).isEqualTo("Dizengoff");
+        assertThat(response.serviceCity()).isEqualTo("Tel Aviv");
+    }
+
+    @Test
+    void streetAndCityAccessStillReturnsTheJobContext() {
+        SosRequestResponse response =
+                assembler.toRequestResponse(fullyAddressedRequest(), SosAddressAccess.STREET_AND_CITY);
 
         assertThat(response.serviceCity()).isEqualTo("Tel Aviv");
         assertThat(response.id()).isEqualTo(REQUEST_ID);
@@ -123,7 +137,7 @@ class SosResponseAssemblerTest {
     void theTwoAccessLevelsDifferOnlyInTheLocationFields() {
         SosRequest request = fullyAddressedRequest();
         SosRequestResponse full = assembler.toRequestResponse(request, SosAddressAccess.FULL);
-        SosRequestResponse redacted = assembler.toRequestResponse(request, SosAddressAccess.CITY_ONLY);
+        SosRequestResponse redacted = assembler.toRequestResponse(request, SosAddressAccess.STREET_AND_CITY);
 
         assertThat(redacted).isNotEqualTo(full);
         assertThat(redacted.id()).isEqualTo(full.id());
@@ -131,6 +145,10 @@ class SosResponseAssemblerTest {
         assertThat(redacted.customerId()).isEqualTo(full.customerId());
         assertThat(redacted.status()).isEqualTo(full.status());
         assertThat(redacted.serviceCity()).isEqualTo(full.serviceCity());
+        // Street is now shared by both levels — the difference between them is the door, not the
+        // road. Asserted explicitly so a future change that re-redacts the street has to come
+        // through here rather than silently narrowing what a professional can estimate from.
+        assertThat(redacted.serviceStreet()).isEqualTo(full.serviceStreet());
         assertThat(redacted.offerCount()).isEqualTo(full.offerCount());
         assertThat(redacted.acceptedCandidateCount()).isEqualTo(full.acceptedCandidateCount());
     }

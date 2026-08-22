@@ -99,6 +99,17 @@ public class SosRequest {
     @Column(name = "cancelled_by", length = 20)
     private SosActorType cancelledBy;
 
+    /**
+     * How many manual "scan again" expansions this attempt has used ({@code V39}).
+     *
+     * <p>Canonical backend state, and the compare-and-set target of
+     * {@code SosRequestRepository#expandSearch} — which is what makes a double-tapped button
+     * produce exactly one expansion rather than two dispatch waves. Never mutated through this
+     * entity; like {@link #status} it has no setter.
+     */
+    @Column(name = "search_expansions", nullable = false)
+    private Short searchExpansions;
+
     @Column(name = "matching_expires_at")
     private Instant matchingExpiresAt;
 
@@ -157,6 +168,7 @@ public class SosRequest {
         this.latitude = latitude;
         this.longitude = longitude;
         this.status = SosRequestStatus.CREATED;
+        this.searchExpansions = 0;
     }
 
     @PrePersist
@@ -253,6 +265,11 @@ public class SosRequest {
 
     public SosActorType getCancelledBy() {
         return cancelledBy;
+    }
+
+    /** Never {@code null} — the column is {@code NOT NULL DEFAULT 0} and the constructor seeds it. */
+    public int getSearchExpansions() {
+        return searchExpansions == null ? 0 : searchExpansions;
     }
 
     public Instant getMatchingExpiresAt() {

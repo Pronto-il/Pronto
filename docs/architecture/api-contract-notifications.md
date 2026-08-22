@@ -686,3 +686,41 @@ call this doc makes is recorded here for traceability.
 - **SMS/push notification channels remain out of scope** — not requested by any source
   document (`overview.md` §2's already-settled decision), restated here only so it isn't
   assumed this milestone silently reconsidered it.
+
+---
+
+## Addendum — `relatedIssueId` (Pronto SOS final-readiness pass)
+
+`NotificationResponse` carries a third subject hint alongside `relatedOrderId` and
+`relatedSosRequestId`:
+
+```jsonc
+{
+  "id": 1,
+  "messageType": "SOS_CANDIDATES_READY",
+  "relatedOrderId": null,
+  "relatedSosRequestId": 77,
+  "relatedIssueId": 42,      // <- new
+  "readAt": null,
+  "createdAt": "..."
+}
+```
+
+**Derived, never stored.** There is no `related_issue_id` column and no migration:
+`NotificationServiceImpl` resolves it from `relatedSosRequestId` at response-assembly time, in one
+batched lookup for the whole (unpaginated) feed.
+
+**Why it exists.** `relatedSosRequestId` is the right subject to *store* — the row is about an SOS
+attempt, and the column is FK-constrained to `sos_requests`. But it was not enough to *navigate*
+with: the customer's live SOS screen is `/issues/{issueId}/sos-booking`, keyed by the problem rather
+than by the attempt (one issue accumulates many attempts, and the customer should land on where
+their problem stands now). So every customer-facing SOS row in the bell was a dead end. Professional
+rows are unaffected — their destination is `/pro/sos`, which needs no id.
+
+**Nullability.** `null` on every order row, and `null` on an SOS row whose request no longer
+resolves. Clients render that as "no deep link", never as a guess — a dead end beats a wrong link.
+
+**Package boundary.** `sos` already depends on `notifications`, so `notifications` declares the port
+(`notifications.service.SosRequestIssueResolver`) and `sos` implements it
+(`sos.service.SosRequestIssueLookup`). Nothing depends on `sos`. The resolver failing degrades the
+feed to "no deep links" rather than failing the request.

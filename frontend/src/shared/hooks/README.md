@@ -102,8 +102,11 @@ Reusable React hooks shared across features.
   `AuthProvider`'s `pronto_auth_token` naming). `updateDraft(patch)` is an upsert — creates
   the draft (with sensible defaults) if none exists, else shallow-merges the patch, always
   refreshing `updatedAt` and re-writing storage; called on every step transition, forward
-  and backward, in `NewIssuePage`/`BookingFlowPage`/`SosBookingFlowPage`. `clearDraft()` has
-  exactly two call sites: each booking flow page's post-order-creation success handler, and
+  and backward, in `NewIssuePage`/`BookingFlowPage`/`SosBookingFlowPage`. `clearDraft()` is
+  called only where a flow genuinely finished or was dismissed: a booking flow page's
+  post-order-creation success handler, `features/sos`'s `ProntoSosScreen` on a successful SOS
+  selection (which creates an order, so it is the same condition — added with the Pronto SOS
+  customer frontend, 2026-08-21, and guarded on the draft belonging to that issue), and
   `BookingDraftIndicator`'s explicit dismiss action — never anywhere else. **Cross-account
   leakage guard**: nested inside `AuthProvider` in `App.tsx` specifically so it can call
   `useAuth()` internally; watches `user` and auto-clears the draft if `user` becomes `null`
@@ -152,6 +155,48 @@ Reusable React hooks shared across features.
   persisted (`orders.expected_arrival_at`, see `backend/.../bookings/README.md`), not any
   client-held countdown state. Shared by `app/ActiveOrderIndicator.tsx` and
   `features/booking/OrderTrackingPage.tsx` (the only two consumers).
+- `useCountdown.ts` — **new, Pronto SOS customer frontend MS1 (2026-08-21).** The same
+  recompute-from-`Date.now()` principle as `useEtaCountdown.ts` above, at second resolution:
+  given an absolute ISO deadline it returns `{ remainingSeconds, label: 'm:ss', isElapsed }`.
+  A separate hook rather than a parameter on `useEtaCountdown` because the two report different
+  units for different jobs — whole minutes is right for "arriving in ~20 min" and wrong for a
+  two-minute selection window, which would read "2 דקות" for most of its life and then jump.
+  **Presentation only**: the backend owns and enforces every SOS deadline, and `isElapsed` is
+  never treated as a state transition. Consumer: `features/sos`'s `SosCandidateTray`.
+- `useSosRequest.ts` / `useSosRealtime.ts` — **new, Pronto SOS customer frontend MS1
+  (2026-08-21).** The customer's SOS state, and the socket behind it.
+  `useSosRequest(sosRequestId)` returns `{ request, candidates, selectionOpen, isLoading, error,
+  refetch, realtimeStatus }`, built on `usePolling` (3s while live, stopped at a terminal status —
+  `useOrderStatus`'s precedent) over `GET /api/sos/requests/{id}` + `GET .../candidates`.
+  **REST is the source of truth and this hook enforces that**: realtime never patches state, it
+  only triggers a refetch, because the pushed payloads are deliberately minimal (ids, counts,
+  deadlines) and only REST re-applies elapsed deadlines server-side. Two details worth knowing:
+  candidates stop being fetched once a professional is selected (the endpoint would return an
+  empty list, and the last pre-selection view is retained so the chosen professional stays on
+  screen), and the `refetch` handed to realtime is a stable wrapper so an inline callback can't
+  churn the socket. `useSosRealtime` is the thin binding to `shared/realtime`: it takes the JWT
+  from `useAuth`, subscribes to `/user/queue/sos`, and calls `onResync` on every (re)subscribe —
+  which is what covers whatever was missed while the socket was down, since nothing replays.
+- `proSosContext.ts` / `ProSosProvider.tsx` / `useProSos.ts` — **new, Pronto SOS professional
+  frontend MS2 (2026-08-21).** The professional's SOS state, as the same context+provider+hook
+  triad — and at the same scope — as `PendingRequestsProvider`: mounted inside
+  `ProDashboardLayout`, so the nav's SOS badge and the `/pro/sos` screen share one poll and one
+  `/user/queue/sos` subscription instead of each opening their own. Mounting it on the layout
+  rather than the route is what makes discovery work: an offer has a ~2-minute window, so a
+  professional sitting on the availability calendar must learn about it without navigating — the
+  provider raises the "קריאת SOS חדשה התקבלה" toast (via `useToast`) and lights the badge from
+  anywhere under `/pro/*`. Deliberately not in `App.tsx`; none of it concerns a customer session.
+  Exposes derived buckets (`incomingOffers`/`availableOffers`/`activeJob`/`resolvedOffers`) rather
+  than a raw list, because the bucketing *is* the product semantics — an offer awaiting an answer,
+  one where availability was reported and the customer is still choosing, and the job actually won
+  are three different situations, and collapsing them is how "you got the job!" copy ends up in
+  front of a professional who merely said they were free. Three details worth knowing: it fetches
+  with `includeClosed=true` (a `NOT_SELECTED` offer leaves the live set instantly, so the default
+  inbox cannot show "the customer chose someone else" at all); its fetcher also reads
+  `GET /api/sos/requests/{id}` while a job is live, because the exact address exists nowhere else
+  and fetching both in one tick keeps them consistent; and realtime `eventId`s are de-duplicated,
+  since a message can legitimately arrive twice and a duplicate toast on an urgent inbox is real
+  noise. Same contract as the customer side: realtime triggers a refetch, never a state patch.
 - `useNotifications.ts` — **new, Frontend Milestone 5.** Polling wrapper around
   `usePolling` (`GET /api/notifications` via `shared/api/notifications.ts`'s
   `getNotifications`, default 4s interval, no `unreadOnly` filter). Deliberately a plain

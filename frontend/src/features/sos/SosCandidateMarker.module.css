@@ -1,0 +1,213 @@
+/*
+ * A candidate mini-card floating on the Pronto Scan surface. Sized to be readable at a glance and
+ * tappable without precision: the whole card is the hit target, comfortably over 44px tall.
+ *
+ * `position: absolute` against `SosScanPanel`'s own positioned box. The component supplies only a
+ * row and a column (`--sos-slot-row` / `--sos-slot-column`); the offsets are computed here, from
+ * variables the panel's own stylesheet sets per breakpoint.
+ *
+ * That split exists for a concrete reason. The offsets used to be inline percentages, and an
+ * inline style beats every media query — so when the panel header wraps to two lines at 360px and
+ * grows by ~25px, there was no way to move the first card row out from under it. Now
+ * `--sos-scan-header` moves at that breakpoint and all three rows follow.
+ *
+ * Logical inset properties throughout, so the columns mirror correctly under RTL with no second
+ * table.
+ */
+.marker {
+  position: absolute;
+  z-index: 2;
+
+  /* Row 0 starts below the panel header; each row is one card plus breathing room. Column 1 sits
+     far enough past the middle that neither column can reach the centre pin. */
+  top: calc(var(--sos-scan-header, 100px) + var(--sos-slot-row, 0) * var(--sos-slot-row-gap, 74px));
+  inset-inline-start: calc(2% + var(--sos-slot-column, 0) * 58%);
+
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+
+  /* Bounded rather than fixed: a long first name may stretch it a little, but never far enough to
+     collide with the slot on the other side. 38% against columns at 2% and 60% leaves the centre
+     band clear from both directions, which is what keeps the middle row off the location pin. */
+  min-width: 100px;
+  max-width: 38%;
+  min-height: 48px;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+
+  background: var(--color-surface);
+  box-shadow: var(--shadow-elevated);
+
+  cursor: pointer;
+  text-align: start;
+
+  animation: sos-marker-in var(--duration-moderate) var(--ease-out) both;
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.marker:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 8px 20px var(--color-focus-ring-subtle);
+}
+
+.marker:active {
+  transform: scale(var(--motion-press-scale));
+}
+
+.marker:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+
+/* The arrival transition asked for by the product brief: a new professional should feel like they
+   *appeared*, not like the list silently grew by one. Deliberately small — this fires during an
+   emergency, and a bouncy entrance would be the wrong register. */
+@keyframes sos-marker-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/*
+ * "Pronto found someone." A single soft teal ring expanding out of the card and fading, played once
+ * on mount alongside the scale-in above.
+ *
+ * `animation-fill-mode: forwards` on a keyframe that ends at zero opacity, and `pointer-events:
+ * none` throughout, so after its one cycle it is completely inert — it never repeats, never
+ * intercepts a tap, and cannot accumulate into ambient noise if three professionals answer at once.
+ * A repeating pulse here was the tempting version and the wrong one: three cards each throbbing
+ * permanently is a nightclub, not a calm emergency screen.
+ */
+.discovery {
+  position: absolute;
+  inset: -2px;
+  z-index: -1;
+  border-radius: inherit;
+  border: 2px solid var(--color-primary);
+  pointer-events: none;
+  animation: sos-marker-discovery 900ms var(--ease-out) forwards;
+}
+
+@keyframes sos-marker-discovery {
+  from {
+    opacity: 0.5;
+    scale: 1;
+  }
+  to {
+    opacity: 0;
+    scale: 1.14;
+  }
+}
+
+.avatar,
+.avatarFallback {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.avatarFallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: var(--font-weight-bold);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.name {
+  font-size: 13px;
+  font-weight: var(--font-weight-bold);
+  line-height: 17px;
+  color: var(--color-text-primary);
+
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--color-text-secondary);
+}
+
+.rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--color-warning);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* The ETA is the number the customer is actually comparing on, so it carries the primary colour
+   and flashes when it changes — the element is re-keyed on the value, which restarts this. */
+.eta {
+  color: var(--color-primary);
+  font-weight: var(--font-weight-bold);
+  white-space: nowrap;
+  animation: sos-eta-change var(--duration-moderate) var(--ease-out);
+}
+
+@keyframes sos-eta-change {
+  from {
+    background: var(--color-primary-light);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+/* Narrow phones: the two slot columns have less room, so the card gives back its padding and the
+   avatar shrinks rather than the name truncating to nothing. */
+@media (max-width: 360px) {
+  .marker {
+    min-width: 88px;
+    max-width: 38%;
+    padding-inline: var(--space-1) var(--space-2);
+  }
+
+  .avatar,
+  .avatarFallback {
+    width: 30px;
+    height: 30px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marker,
+  .eta {
+    animation: none;
+    transition: none;
+  }
+
+  /* Removed outright rather than frozen: a static ring stuck at half opacity around every card
+     would read as a selected state, which is exactly the thing tapping a marker does not do. */
+  .discovery {
+    display: none;
+  }
+}

@@ -1,14 +1,19 @@
 # features/booking
 
-> **SOS status (2026-08-21).** The legacy browse-and-pick SOS flow — `SosBookingFlowPage`,
-> `SosBookingSummary` and the `getSosProfessionalsForIssue`/`createSosOrder` API calls behind them
-> — has been **deleted** along with its backend endpoints. Pronto SOS (`/api/sos/**`) is the only
-> SOS flow now, and its customer UI has **not been built yet**.
+> **SOS status (2026-08-21).** **No SOS code lives in this feature any more.** The legacy
+> browse-and-pick SOS flow — `SosBookingFlowPage`, `SosBookingSummary` and the
+> `getSosProfessionalsForIssue`/`createSosOrder` API calls behind them — was deleted along with its
+> backend endpoints, and the no-API `ProntoSosEntryPage` placeholder that briefly held its route
+> was deleted in turn when the real customer flow landed.
 >
-> `/issues/:issueId/sos-booking` currently renders `ProntoSosEntryPage`, a placeholder that makes
-> no API calls. **That component is the single hand-off point for the upcoming Pronto SOS frontend
-> task**; the two places that route to it are `features/issues/ProfessionMatchPage` and
-> `shared/hooks/bookingDraftContext.resolveDraftRoute`.
+> `/issues/:issueId/sos-booking` (unchanged path, still CUSTOMER-only) now renders
+> **`features/sos`**'s `ProntoSosEntryPage`, the real Pronto SOS flow against `/api/sos/**`. The
+> two places that route to it — `features/issues/ProfessionMatchPage` and
+> `shared/hooks/bookingDraftContext.resolveDraftRoute` — were unaffected.
+>
+> What this feature still owns for an SOS job: everything after selection creates a real order, so
+> `/orders/:orderId` tracking and the review flow are shared with Standard bookings.
+> `AddressSelectionStep` is also imported by `features/sos` rather than duplicated.
 >
 > Also changed: an `EXPIRED` order's tracking screen now offers "בחירת בעל מקצוע אחר" into
 > `/issues/{issueId}/booking` (the same issue, no re-classification) instead of sending the

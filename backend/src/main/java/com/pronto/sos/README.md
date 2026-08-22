@@ -5,9 +5,10 @@
 **Pronto SOS** — urgent, *broadcast-and-choose* dispatch.
 
 The customer activates SOS on an existing issue and **names nobody**. The platform matches and
-ranks eligible professionals, dispatches offers to a bounded pool, collects acceptances, and
-presents up to three candidates with roughly two minutes to choose. Selection atomically creates
-an `orders` row, after which the job runs confirm → on the way → arrived → completed.
+ranks eligible professionals, dispatches offers to a bounded pool, and shows each one the moment
+they answer — the customer may take the **first** professional who says they can come, or wait,
+or widen the search themselves with "סרוק שוב". Selection atomically creates an `orders` row, after
+which the job runs confirm → on the way → arrived → completed.
 
 ### Pronto SOS is the only SOS flow
 
@@ -40,7 +41,8 @@ What that path *shared* stayed, because this package depends on all of it:
 | `GET /api/sos/requests/me` | either | Caller's own requests, newest first. |
 | `GET /api/sos/requests/{id}` | either | Customer, or a professional who was offered it. |
 | `GET /api/sos/requests/{id}/events` | either | Chronological timeline. |
-| `GET /api/sos/requests/{id}/candidates` | CUSTOMER | Up to 3 accepted professionals. |
+| `GET /api/sos/requests/{id}/candidates` | CUSTOMER | The shortlist. Populated from the **first** acceptance. |
+| `POST /api/sos/requests/{id}/scan-again` | CUSTOMER | Widen the search on this same request. Bounded. |
 | `POST /api/sos/requests/{id}/select` | CUSTOMER | One-shot, deadline-enforced. |
 | `POST /api/sos/requests/{id}/cancel` | either | Professional only once selected. |
 
@@ -83,6 +85,12 @@ CREATED ──► MATCHING ──► WAITING_FOR_PROFESSIONALS ──► WAITING
 
 `CANCELLED` is reachable from **every** non-terminal state. `COMPLETED` / `CANCELLED` /
 `EXPIRED` / `FAILED` are terminal and accept nothing.
+
+**`WAITING_FOR_CUSTOMER_SELECTION` is reached on the *first* acceptance**, and the search does not
+stop when it is. Both `WAITING_FOR_PROFESSIONALS` and `WAITING_FOR_CUSTOMER_SELECTION` accept
+professional responses (`SosRequestStatus.isAcceptingProfessionalResponses`), so later professionals
+keep appearing alongside the first while the customer decides. What ends the search is the customer
+choosing — see *Selection stops the search* below.
 
 `FAILED` ≠ `EXPIRED`: `FAILED` means nobody was *eligible to ask* (thin supply — a product
 problem); `EXPIRED` means nobody *answered*, or the customer did not choose in time.
@@ -135,6 +143,79 @@ category expertise) slot in as extra weights without restructuring.
 **Not spamming everyone**: the pool cap (`candidate-pool-size`, default 8; 15 for `EMERGENCY`)
 is the structural answer — matching may score hundreds, only the top N are ever contacted.
 
+## The customer's side of the search: one acceptance, then their call
+
+Three rules, and they only make sense together.
+
+### 1. The first acceptance opens selection
+
+`SosService.maybeOpenSelectionWindow` used to hold the window shut until `target-candidate-count`
+professionals had accepted, or until the response window closed. So a customer whose first
+professional answered in eight seconds could see them, read their profile — and not be allowed to
+take them for another two minutes while the platform waited for a second and a third.
+
+For somebody with water coming through a ceiling that is the wrong trade in every direction: the
+option is real, it is on their screen, and the wait buys them nothing they asked for. The gate is
+now simply *is there at least one*.
+
+Everything the old threshold was protecting is still protected, by the mechanisms that were always
+the real ones — later professionals still appear (the status still accepts responses), the customer
+can ask for more (*Scan Again*, below), and the window is a deadline rather than an instruction.
+
+### 2. The customer can widen the search — "סרוק שוב"
+
+`POST /api/sos/requests/{id}/scan-again` → `SosService.expandSearch`. A real domain operation, not a
+refetch: it dispatches offers to professionals who were **not** contacted before, extends the
+deadline the search runs against, and writes a `SEARCH_EXPANDED` history row. The same
+`sos_requests` row, the same issue, the same offers, and — critically — the same candidates.
+Everyone who has already said they are available stays visible and stays selectable throughout.
+
+**What "wider" means here** is `SosSearchScope`, and it is worth being exact, because there are two
+dimensions and only one of them is real today:
+
+| Dimension | Level 0 | Each expansion | Real today? |
+|---|---|---|---|
+| **Pool size** — how far down the ranked list the platform asks | `candidate-pool-size` (8; 15 for `EMERGENCY`) | `+ expansion-pool-increment` (8) | **Yes.** Matching scores every eligible professional and truncates; a wider pool means more of them are contacted. Dispatch already excludes everyone previously offered and continues the rank sequence. |
+| **Radius ceiling** | `max-dispatch-radius-km` (40) | `× expansion-radius-multiplier` (1.5) | **No — a seam.** `ApproximateDistanceEtaStrategy` returns 8 km same-city / 35 km otherwise, so widening a 40 km ceiling changes nothing observable. It exists so real geocoding turns expansion into a genuine radius expansion by changing one strategy. |
+| **Shortlist cap** | `target-candidate-count` (3) | `+ 1` | Yes — it has to grow, or expansion would find professionals with nowhere to be shown. |
+
+**No customer-facing copy quotes a radius, a distance, or a wave number**, and the realtime payload
+carries none either. Inventing "מרחיבים ל־15 ק״מ" against a placeholder distance model would be a
+promise the platform cannot keep. The screen says it is looking further, and says when it has looked
+as far as it can.
+
+**The pool cap is a running total, not a per-wave allowance.** Expanding from 8 to 16 dispatches at
+most 8 more, so two presses cannot fan out 24 fresh offers on top of the 8 already live.
+
+**Eligibility is a hard filter at every level.** A professional who should never have been asked does
+not become askable because the customer pressed a button twice.
+
+**The bound is `max-search-expansions` (2), enforced inside the guarded update** rather than by an
+application check that could race the increment. There is no automatic or continuous expansion
+anywhere in this feature. `0` disables it and restores single-wave dispatch.
+
+**An expansion that finds nobody is not a failure.** `SosDispatchService.expand` never calls
+`failNoProfessionals` — usually an empty wave just means the platform has already asked everyone it
+can, and terminating a request that has usable candidates over it would destroy the customer's
+options for pressing a button.
+
+### 3. Selection stops the search
+
+The moment `selectProfessional` commits, every route into the search closes, and each one closes
+where it is decided rather than by a client being told not to ask:
+
+| What must stop | What stops it |
+|---|---|
+| Further acceptances | `SosOfferService.accept` requires `isAcceptingProfessionalResponses()`; `PROFESSIONAL_SELECTED` is not one |
+| Further expansion | `selected_professional_id IS NULL` inside `SosRequestRepository.expandSearch`'s `WHERE` |
+| The customer's button | `SosRequestResponse.canExpandSearch`, computed from the same three conditions |
+| Live offers left dangling | `closeLosingOffers` — `ACCEPTED → NOT_SELECTED`, open → `EXPIRED` |
+| A wrong outcome for a non-responder | `NOT_SELECTED` is reachable only from `ACCEPTED`, so somebody who never answered is `EXPIRED` and is never told they were passed over |
+
+**Selection always wins over an in-flight expansion**, in either arrival order: an expansion that
+lands first simply adds offers that are immediately closed out, and one that lands second matches
+zero rows.
+
 ## Business model
 
 `SosDispatchService.priceOffer` is the only place pricing is computed.
@@ -163,8 +244,11 @@ and never rewrites the economics of one already in flight.
 |---|---|---|
 | `offer-ttl-seconds` | 120 | One professional's window to answer one offer. |
 | `matching-window-seconds` | 150 | Overall professional-response window. |
-| `selection-window-seconds` | 120 | The customer's ~2 minutes to choose. |
+| `selection-window-seconds` | 120 | The customer's ~2 minutes to choose. Reset by each "סרוק שוב". |
 | `confirmation-grace-seconds` | 180 | Selected professional's window to confirm. |
+| `max-search-expansions` | 2 | How many times the customer may widen one request. `0` disables it. |
+| `expansion-pool-increment` | 8 | Additional professionals per expansion, as a running total. |
+| `expansion-radius-multiplier` | 1.5 | Radius seam per expansion. Inert against the v1 distance model. |
 
 Every one of these is `pronto.sos.*` configuration. `confirmation-grace-seconds` was a hardcoded
 `Duration` constant on `SosService` until the final-readiness pass; it is the same 3 minutes it
@@ -196,7 +280,10 @@ A frontend timer is presentation only and is never trusted.
 | Customer selects twice | `selectProfessional` guards on status **and** `selected_professional_id IS NULL`, atomically |
 | Selection after the deadline | `selection_expires_at > :now` **inside** the guarded UPDATE — the DB decides, not an application clock read |
 | Accepting an expired offer | `expires_at > :now` inside `SosOfferRepository.accept` |
-| Duplicate offers | `ux_sos_offers_request_professional` + exclusion set |
+| Duplicate offers | `ux_sos_offers_request_professional` + exclusion set, on every wave |
+| Double-tapped "סרוק שוב" | Compare-and-set on `search_expansions` inside `expandSearch` — two racing calls, exactly one increment and one dispatch wave |
+| Expansion past the ceiling | `search_expansions < :maxExpansions` **inside** the same guarded UPDATE, so the bound holds under concurrency |
+| An expansion racing a selection | `selected_professional_id IS NULL` + the status set, both inside that UPDATE. Selection always wins |
 | Non-selected professional drives the job | `selected_professional_id` in both the service check *and* every guarded UPDATE |
 | Duplicate state transitions | Every transition is `UPDATE … WHERE <expected state>` |
 | Duplicate events | `ux_sos_events_singleton` partial unique index |
@@ -241,23 +328,32 @@ and `CANCELLED` run `IssueRepository.revertToOpen`, and `FAILED` never booked th
 
 ## Address privacy — availability is not assignment
 
-Offers fan out to up to 15 professionals. **None of them gets the customer's street address until
-the customer actually picks one** — including a professional who has already responded
-"I'm available and can come".
+Offers fan out to up to 15 professionals. **None of them learns which door to knock on until the
+customer actually picks one** — including a professional who has already responded "I'm available
+and can come".
 
 | Who | Sees |
 |---|---|
 | The customer | The exact address, always. |
-| A professional with an `OFFERED`/`VIEWED` offer | City only. |
-| A professional with an **`ACCEPTED`** offer (available) | City only. **This is the case that matters.** |
+| A professional with an `OFFERED`/`VIEWED` offer | Street + city. |
+| A professional with an **`ACCEPTED`** offer (available) | Street + city. **This is the case that matters.** |
 | The **selected** professional | The exact address, from the moment of selection. |
 | Anyone else | `403`. |
 
-Redacted means `null` for `serviceStreet`, `serviceHouseNumber`, `serviceApartment`,
-`serviceFloor`, `serviceEntrance`, `serviceAddressNotes`, `latitude` and `longitude`. City
-survives because it is what makes an offer decidable at all, and it is already on the offer card.
-`serviceAddressNotes` matters as much as the street: it is free text and in practice holds gate
-codes.
+Redacted means `null` for `serviceHouseNumber`, `serviceApartment`, `serviceFloor`,
+`serviceEntrance`, `serviceAddressNotes`, `latitude` and `longitude`.
+
+**The line moved, and it moved deliberately.** This was city-only until the SOS fixes milestone.
+City-only turned out to be too little to do the one thing the offer actually asks for: a
+professional is being asked to commit to an arrival time, and "Tel Aviv" spans an hour of driving
+at rush hour, so every ETA in the system was a guess made against a city centroid — and the
+customer was then shown that guess as a promise. A street name closes that gap. A house number
+does not: it adds nothing to a journey estimate and everything to a stranger's ability to turn up
+uninvited. So the line is now drawn at *enough to estimate the journey*, not *enough to make the
+journey*.
+
+`serviceAddressNotes` stays withheld and matters as much as the house number: it is free text and
+in practice holds gate codes and "the key is under the mat".
 
 Mechanically this is `SosService.authorizeRead` returning a `SosAddressAccess`, which
 `SosResponseAssembler.toRequestResponse` requires as an argument — there is **no default
@@ -288,6 +384,8 @@ bottom of this file for the full routing matrix, and `realtime/README.md` for th
 | `SosEventService` | History log + the realtime publish seam. |
 | `SosResponseAssembler` | Shared DTO mapping, so both services' overlapping views cannot drift. |
 | `SosSweepJob` | Deadline completeness sweep (every 15s). |
+| `SosSearchScope` | How wide the search currently is, derived from `search_expansions`. |
+| `SosRequestIssueLookup` | The one fact `notifications` needs about an SOS request, so its rows can deep-link. |
 | `SosProperties` | Every tunable, `pronto.sos.*`. |
 
 ## Tables
@@ -300,6 +398,8 @@ bottom of this file for the full routing matrix, and `realtime/README.md` for th
 |---|---|
 | `V36__replace_sos_request_issue_uniqueness.sql` | Drops `ux_sos_requests_issue`; adds the partial `ux_sos_requests_active_issue` and `idx_sos_requests_issue_created`. See *Retry* above. |
 | `V37__alter_sos_events_add_offer_expired.sql` | Adds `OFFER_EXPIRED` to `ck_sos_events_type`, exempts it from `ux_sos_events_singleton` (it is per-offer, so it repeats within a request), and indexes `sos_events.sos_offer_id`. |
+| `V38__alter_sos_events_add_eta_updated.sql` | Adds `ETA_UPDATED` and exempts it from the singleton index — a professional revising an ETA twice is routine. |
+| `V39__alter_sos_add_search_expansion.sql` | Adds `sos_requests.search_expansions` (`SMALLINT NOT NULL DEFAULT 0`, `>= 0`), adds `SEARCH_EXPANDED` to `ck_sos_events_type`, and exempts it from the singleton index. See *Scan Again* above. |
 
 ## Cross-package dependencies
 
@@ -316,11 +416,15 @@ bottom of this file for the full routing matrix, and `realtime/README.md` for th
   They exist so real geocoding can be swapped in with no migration or API change.
 - **`sub_service_id` is always null** — nothing in the current issue flow settles a sub-service.
   The column and FK exist for when it does.
-- **Dispatch is single-wave.** `SosDispatchService.dispatch` already excludes
-  already-offered professionals and continues the rank sequence, so a radius/pool expansion
-  strategy is a matter of calling it again — but nothing calls it a second time yet. There is no
-  radius expansion and no re-dispatch: if the response window closes with nobody available, the
-  request expires, and the customer's recourse is a fresh attempt (see *Retry*).
+- **Dispatch is multi-wave, but only when the customer asks.** `SosDispatchService.expand` runs a
+  further wave for a request the customer widened with "סרוק שוב", bounded by
+  `max-search-expansions`. There is still no *automatic* re-dispatch and no automatic radius growth:
+  if the response window closes with nobody available and the customer has not widened, the request
+  expires and their recourse is a fresh attempt (see *Retry*).
+- **The radius dimension of expansion is inert.** It computes correctly and is unit-tested, but
+  `ApproximateDistanceEtaStrategy`'s two placeholder figures mean widening the ceiling excludes
+  nobody it did not already include. Real geographic radius arrives with the Maps/ETA milestone; see
+  `SosSearchScope`.
 - **`SOS_NO_PROFESSIONALS_AVAILABLE` is never thrown.** "Nobody eligible" is not an error the
   activating customer sees — `POST /api/sos/requests` returns `201` with terminal `FAILED`, which
   the client reads off `status` and hears as realtime `SOS_FAILED`.
@@ -384,8 +488,10 @@ the job". Confirming this in code rather than only in prose:
 ## Customer candidate flow
 
 A positive response pushes `PROFESSIONAL_AVAILABLE` to the customer carrying the running
-`availableCandidateCount`. When the shortlist settles, `CANDIDATES_UPDATED` follows, then
-`CUSTOMER_SELECTION_STARTED` with the backend-owned `selectionExpiresAt`.
+`availableCandidateCount`. On the **first** such response `CANDIDATES_UPDATED` follows, then
+`CUSTOMER_SELECTION_STARTED` with the backend-owned `selectionExpiresAt` — the customer may choose
+from that moment. Later acceptances push `PROFESSIONAL_AVAILABLE` again and the shortlist grows
+behind them; those two are singleton events and fire once.
 
 **REST stays canonical.** Realtime carries counts and ids; the actual candidate list comes from
 `GET /api/sos/requests/{id}/candidates`, which already enforces eligibility (accepted offers only,
@@ -408,6 +514,7 @@ atomic selection UPDATE. Any client timer is presentation only.
 | `PROFESSIONAL_RESPONDED` (offer `ACCEPTED`) | `PROFESSIONAL_AVAILABLE` + count | `OFFER_RESPONSE_RECORDED` (self-ack) | n/a | — |
 | `PROFESSIONAL_RESPONDED` (offer `REJECTED`) | — | `OFFER_RESPONSE_RECORDED` (self-ack) | n/a | — |
 | `PROFESSIONAL_RESPONDED` (offer `SELECTED`) | `ETA_UPDATED` | n/a | `OFFER_RESPONSE_RECORDED` | — |
+| `SEARCH_EXPANDED` | `SEARCH_EXPANDED` (counts only) | `SOS_OFFER_RECEIVED` (newly-offered, and anyone still unanswered) | n/a | — |
 | `CANDIDATES_READY` | `CANDIDATES_UPDATED` | — | n/a | — |
 | `CUSTOMER_SELECTION_STARTED` | `CUSTOMER_SELECTION_STARTED` + deadline | — | n/a | — |
 | `PROFESSIONAL_SELECTED` | `PROFESSIONAL_SELECTED` | — | **`SOS_SELECTED`** | **`SOS_NOT_SELECTED`** |
@@ -423,10 +530,11 @@ exactly the set that positively responded and lost, because `closeLosingOffers` 
 told they were passed over; one who actively declined is skipped too, on `CANCELLED`/`EXPIRED` as
 well (they opted out).
 
-**Privacy:** the offer payload carries `serviceCity` but never street, house number, apartment,
-customer name or phone. Those become reachable through REST only once a professional is selected
-— see *Address privacy* above, which is now enforced on `GET /api/sos/requests/{id}` too rather
-than only on the realtime and offer payloads.
+**Privacy:** the offer payload carries `serviceStreet` and `serviceCity` but never house number,
+apartment, floor, entrance, address notes, coordinates, customer name or phone. Those become
+reachable through REST only once a professional is selected — see *Address privacy* above. The
+realtime payload and the REST assembler disclose exactly the same fields on purpose: a privacy
+rule that holds in two surfaces out of three is the same as no rule at all.
 
 ## Individual offer expiry
 

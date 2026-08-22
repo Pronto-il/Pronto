@@ -38,6 +38,7 @@ public class SosWebConfig implements WebMvcConfigurer {
                 .addPathPatterns(
                         "/api/sos/requests",
                         "/api/sos/requests/*/candidates",
+                        "/api/sos/requests/*/scan-again",
                         "/api/sos/requests/*/select");
 
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.PROFESSIONAL.name()))

@@ -42,10 +42,41 @@ public record SosRequestResponse(
         Long selectedProfessionalId,
         String selectedProfessionalName,
         Long selectedOfferId,
+        /**
+         * The selected professional's own committed ETA, in minutes, kept current as they revise
+         * it. {@code null} until somebody is selected.
+         *
+         * <p>Here rather than left to the candidates endpoint because that endpoint returns only
+         * {@code ACCEPTED} offers and so goes empty the moment a choice is made — the customer's
+         * tracking screen was therefore rendering the ETA from a snapshot taken before selection,
+         * and a post-selection revision could never reach it however promptly the client
+         * refetched. The number the customer is watching has to live on the resource that stays
+         * canonical for the whole journey.
+         */
+        Short selectedEstimatedArrivalMinutes,
         Long orderId,
         SosActorType cancelledBy,
         int offerCount,
         int acceptedCandidateCount,
+        /**
+         * How many times the customer has widened this search with "סרוק שוב". {@code 0} for a
+         * request still running at its initial scope.
+         */
+        int searchExpansions,
+        /**
+         * The configured ceiling ({@code pronto.sos.max-search-expansions}). Sent so the client
+         * can say "this is as wide as it gets" without hardcoding the platform's own bound, and
+         * so raising it is a configuration change rather than a frontend release.
+         */
+        int maxSearchExpansions,
+        /**
+         * <b>Whether "סרוק שוב" would be accepted right now</b> — the same three conditions the
+         * guarded update in {@code SosRequestRepository#expandSearch} enforces, evaluated
+         * server-side so the control's enabled state is canonical backend state rather than a
+         * client's guess at the rules. Goes false the instant a professional is selected, which
+         * is what removes the button as part of "selection stops the search".
+         */
+        boolean canExpandSearch,
         Instant matchingExpiresAt,
         Instant selectionExpiresAt,
         Instant createdAt,

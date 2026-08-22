@@ -49,6 +49,16 @@ class SosSchemaConstraintTest {
      */
     private static final String OFFER_EXPIRY_MIGRATION =
             "db/migration/V37__alter_sos_events_add_offer_expired.sql";
+    /** V38 does the same again, for {@code ETA_UPDATED}. Superseded as the live definition by V39. */
+    private static final String ETA_UPDATE_MIGRATION =
+            "db/migration/V38__alter_sos_events_add_eta_updated.sql";
+    /**
+     * V39 does the same again, for {@code SEARCH_EXPANDED}. This is now the live definition of
+     * both {@code ck_sos_events_type} and {@code ux_sos_events_singleton}; V38, V37 and V34 are
+     * history. Any later migration that rewrites either must move this constant forward with it.
+     */
+    private static final String SEARCH_EXPANSION_MIGRATION =
+            "db/migration/V39__alter_sos_add_search_expansion.sql";
 
     private static String migration(String path) {
         try (InputStream in = SosSchemaConstraintTest.class.getClassLoader().getResourceAsStream(path)) {
@@ -105,23 +115,28 @@ class SosSchemaConstraintTest {
                 .isEqualTo(names(SosOfferStatus.values()));
     }
 
-    /** Read from V37, which redefines this constraint. See {@link #OFFER_EXPIRY_MIGRATION}. */
+    /** Read from V39, the latest migration to redefine this constraint. See {@link #SEARCH_EXPANSION_MIGRATION}. */
     @Test
     void sosEventTypeMatchesItsCheckConstraint() {
-        assertThat(checkConstraintValues(migration(OFFER_EXPIRY_MIGRATION), "ck_sos_events_type"))
+        assertThat(checkConstraintValues(migration(SEARCH_EXPANSION_MIGRATION), "ck_sos_events_type"))
                 .isEqualTo(names(SosEventType.values()));
     }
 
     /**
-     * V37 rewrites {@code ck_sos_events_type} wholesale, so — exactly like V35 and the
-     * notifications constraint — it must reproduce every pre-existing event type as well as the
+     * V37 and V38 each rewrite {@code ck_sos_events_type} wholesale, so — exactly like V35 and the
+     * notifications constraint — each must reproduce every pre-existing event type as well as the
      * new one. Dropping one on the way past would only surface as a constraint violation on a
-     * live SOS request.
+     * live SOS request. Checked as a chain, so a future rewrite cannot quietly drop a type that
+     * an intermediate migration had added.
      */
     @Test
     void theRewrittenEventTypeConstraintKeepsEveryOriginalType() {
         assertThat(checkConstraintValues(migration(OFFER_EXPIRY_MIGRATION), "ck_sos_events_type"))
                 .containsAll(checkConstraintValues(migration(SOS_MIGRATION), "ck_sos_events_type"));
+        assertThat(checkConstraintValues(migration(ETA_UPDATE_MIGRATION), "ck_sos_events_type"))
+                .containsAll(checkConstraintValues(migration(OFFER_EXPIRY_MIGRATION), "ck_sos_events_type"));
+        assertThat(checkConstraintValues(migration(SEARCH_EXPANSION_MIGRATION), "ck_sos_events_type"))
+                .containsAll(checkConstraintValues(migration(ETA_UPDATE_MIGRATION), "ck_sos_events_type"));
     }
 
     @Test
@@ -170,21 +185,26 @@ class SosSchemaConstraintTest {
      */
     @Test
     void onlyGenuinelyRepeatableEventsAreExemptFromTheSingletonIndex() {
-        // V37's definition, not V34's -- it drops and recreates the index to add OFFER_EXPIRED.
+        // V39's definition, not V34's, V37's or V38's -- each drops and recreates the index.
         Matcher index = Pattern.compile("CREATE UNIQUE INDEX ux_sos_events_singleton.*?NOT IN\\s*\\((.*?)\\)",
                         Pattern.DOTALL)
-                .matcher(migration(OFFER_EXPIRY_MIGRATION));
+                .matcher(migration(SEARCH_EXPANSION_MIGRATION));
         assertThat(index.find()).isTrue();
 
         Set<String> exempt = Pattern.compile("'([A-Z_]+)'").matcher(index.group(1))
                 .results().map(r -> r.group(1)).collect(Collectors.toSet());
 
-        // Exactly the three per-offer events. One too many silently disables the guard for that
-        // type; one too few makes a normal second occurrence throw on a live request.
+        // Exactly the four per-offer events plus SEARCH_EXPANDED, which is per-request but
+        // genuinely repeatable. One too many silently disables the guard for that type; one too
+        // few makes a normal second occurrence throw on a live request -- for ETA_UPDATED that
+        // would be a professional revising their ETA twice, and for SEARCH_EXPANDED a customer
+        // pressing "scan again" a second time. Both are routine.
         assertThat(exempt).containsExactlyInAnyOrder(
                 SosEventType.PROFESSIONAL_RESPONDED.name(),
                 SosEventType.OFFER_VIEWED.name(),
-                SosEventType.OFFER_EXPIRED.name());
+                SosEventType.OFFER_EXPIRED.name(),
+                SosEventType.ETA_UPDATED.name(),
+                SosEventType.SEARCH_EXPANDED.name());
     }
 
     /**

@@ -9,8 +9,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
-import java.util.Optional;
 
 /**
  * Every {@code sos_requests.status} change in this package goes through exactly one of the
@@ -125,6 +125,61 @@ public interface SosRequestRepository extends JpaRepository<SosRequest, Long> {
     int selectProfessional(@Param("id") Long id, @Param("professionalId") Long professionalId,
                             @Param("offerId") Long offerId, @Param("orderId") Long orderId,
                             @Param("now") Instant now);
+
+    /**
+     * Manual search expansion ("סרוק שוב"). <b>Not a status transition</b> — the request stays
+     * exactly where it is; only how wide it is searching, and how long it has to keep searching,
+     * change.
+     *
+     * <p>Everything that makes this safe is folded into the one statement:
+     * <ol>
+     *   <li>{@code searchExpansions = :expectedExpansions} — a compare-and-set. Two taps racing
+     *       each other both read {@code 0}; exactly one writes {@code 1} and the other gets 0
+     *       rows. <b>This is what makes a double-click produce one expansion, not two.</b></li>
+     *   <li>{@code searchExpansions < :maxExpansions} — the bound, enforced by the database
+     *       rather than by an application check that could race the increment. There is no
+     *       unbounded search here, at any level of concurrency.</li>
+     *   <li>{@code selectedProfessionalId IS NULL} <em>and</em> the status set — <b>selection
+     *       always wins over an in-flight expansion.</b> An expansion that arrives after the
+     *       customer has chosen affects nothing and creates no offers.</li>
+     *   <li>The two deadlines are extended in the same write, each only for the status it
+     *       governs, so a customer who asks to keep looking is not expired a few seconds later by
+     *       a clock that was set before they asked.</li>
+     * </ol>
+     * A {@code 0} return means one of those failed; the caller re-reads to decide which.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE SosRequest r SET r.searchExpansions = :nextExpansions, "
+            + "r.matchingExpiresAt = CASE WHEN r.status = "
+            + "  com.pronto.sos.entity.SosRequestStatus.WAITING_FOR_PROFESSIONALS "
+            + "  THEN :matchingExpiresAt ELSE r.matchingExpiresAt END, "
+            + "r.selectionExpiresAt = CASE WHEN r.status = "
+            + "  com.pronto.sos.entity.SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION "
+            + "  THEN :selectionExpiresAt ELSE r.selectionExpiresAt END, "
+            + "r.updatedAt = :now "
+            + "WHERE r.id = :id AND r.selectedProfessionalId IS NULL "
+            + "AND r.status IN (com.pronto.sos.entity.SosRequestStatus.WAITING_FOR_PROFESSIONALS, "
+            + "  com.pronto.sos.entity.SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION) "
+            + "AND r.searchExpansions = :expectedExpansions AND r.searchExpansions < :maxExpansions")
+    int expandSearch(@Param("id") Long id,
+                      @Param("expectedExpansions") short expectedExpansions,
+                      @Param("nextExpansions") short nextExpansions,
+                      @Param("maxExpansions") short maxExpansions,
+                      @Param("matchingExpiresAt") Instant matchingExpiresAt,
+                      @Param("selectionExpiresAt") Instant selectionExpiresAt,
+                      @Param("now") Instant now);
+
+    /**
+     * {@code (sosRequestId, issueId)} pairs for a batch of requests — the one thing the
+     * {@code notifications} package needs to know about an SOS request in order to deep-link a
+     * customer's notification at the screen that renders it.
+     *
+     * <p>Ids only, and reached through {@code notifications.service.SosRequestIssueResolver}
+     * rather than by importing this repository: {@code sos} depends on {@code notifications}, so
+     * the reverse edge would be a package cycle. See that interface for the whole arrangement.
+     */
+    @Query("SELECT r.id, r.issueId FROM SosRequest r WHERE r.id IN :ids")
+    List<Object[]> findIssueIdsByIds(@Param("ids") Collection<Long> ids);
 
     /** {@code PROFESSIONAL_SELECTED -> CONFIRMED}, by the selected professional only. */
     @Modifying(clearAutomatically = true)

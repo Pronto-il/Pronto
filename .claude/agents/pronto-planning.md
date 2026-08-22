@@ -32,7 +32,7 @@ classification, professional matching, standard + SOS booking, real-time status 
 - **Professional approval**: auto-approved in v1.0 — no manual admin review gate, no
   approval workflow/admin screen to design.
 - **Service categories (fixed v1.0 list)**: Plumbing, Electrical, AC/HVAC, Appliance
-  Repair, Locksmith, Carpentry, Painting, General Handyman — stored as a `Categories`
+  Repair, Locksmith, Painting, Handyman (Carpentry retired into Handyman by V31) — stored as a `Categories`
   reference table, not a hardcoded enum.
 - **Core flows to design for**: registration + email verification; issue creation with
   AI-suggested category (customer confirms/edits) and optional images; Standard booking

@@ -13,11 +13,11 @@ import {
 import { NewIssuePage, ProfessionMatchPage } from '../features/issues';
 import {
   BookingFlowPage,
-  ProntoSosEntryPage,
   MyOrdersPage,
   OrderTrackingPage,
   CompletionReviewPage,
 } from '../features/booking';
+import { ProntoSosEntryPage, ProSosPage } from '../features/sos';
 import {
   ProDashboardLayout,
   IncomingRequestsPage,
@@ -67,6 +67,23 @@ import type { RouteObject } from 'react-router-dom';
  * conditional spread `designSystemRoutes` so it's absent from the route table (and, per Vite's
  * dead-code elimination on the statically-replaced `import.meta.env.DEV` literal, from the
  * production bundle) entirely in production builds.
+ *
+ * **Pronto SOS customer flow, MS1 (2026-08-21)**: `/issues/:issueId/sos-booking` keeps its path
+ * and its CUSTOMER-only gate, but now renders `features/sos`'s `ProntoSosEntryPage` — the real
+ * flow against `/api/sos/**` — instead of `features/booking`'s no-API placeholder of the same
+ * name, which is deleted. The path is unchanged deliberately: `features/issues/ProfessionMatchPage`
+ * and `shared/hooks/bookingDraftContext.resolveDraftRoute` are the two places that name it, and
+ * neither needed to change. Pronto SOS is one continuous state-driven screen rather than a route
+ * per step, so no new routes were added — a refresh re-attaches to the live request by looking it
+ * up on `GET /api/sos/requests/me`.
+ *
+ * **Pronto SOS professional frontend, MS2 (2026-08-21)**: `/pro/sos` (`ProSosPage`) joins
+ * `ProDashboardLayout`'s children as a fifth tab — the professional's whole SOS surface (offer
+ * inbox, availability response, and the operational flow once selected). Its own route rather than
+ * a section of `/pro/requests` because that page is an accept/reject feed of *scheduled orders*,
+ * where "אישור" would mean something different from what it means on an SOS offer. Discovery does
+ * not depend on being on this route: `ProSosProvider` is mounted on the layout, so the tab badge
+ * and the new-offer toast reach a professional anywhere under `/pro/*`.
  */
 const designSystemRoutes: RouteObject[] = import.meta.env.DEV
   ? [{ path: '/__design', element: <DesignSystemPage /> }]
@@ -112,6 +129,7 @@ export const router = createBrowserRouter([
             children: [
               { path: 'pro', element: <Navigate to="/pro/availability" replace /> },
               { path: 'pro/requests', element: <IncomingRequestsPage /> },
+              { path: 'pro/sos', element: <ProSosPage /> },
               { path: 'pro/jobs', element: <MyJobsPage /> },
               { path: 'pro/availability', element: <WeeklyAvailabilityPage /> },
               { path: 'pro/profile', element: <ProfileEditorPage /> },

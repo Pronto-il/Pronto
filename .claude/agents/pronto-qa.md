@@ -19,7 +19,7 @@ professional matching, standard + SOS booking, real-time status updates).
 - **Real-time transport**: short-polling, not WebSocket. **Professional approval**:
   auto-approved in v1.0 — flag a manual approval gate as scope drift if found. **Service
   categories**: fixed 8-item list (Plumbing, Electrical, AC/HVAC, Appliance Repair,
-  Locksmith, Carpentry, Painting, General Handyman).
+  Locksmith, Painting, Handyman — Carpentry was retired into Handyman by V31).
 - **Performance targets from PRD** you should test against: max 2s screen load, max 1s
   status-update response, max 5s image upload, account lockout after 5 failed logins,
   HTTPS/TLS 1.3.

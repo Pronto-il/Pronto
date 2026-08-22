@@ -27,7 +27,7 @@ updates).
 - **Real-time transport**: short-polling, not WebSocket. **Professional approval**:
   auto-approved in v1.0, no admin review gate. **AWS compute**: ECS/Elastic Beanstalk,
   not raw EC2. **Service categories (fixed)**: Plumbing, Electrical, AC/HVAC, Appliance
-  Repair, Locksmith, Carpentry, Painting, General Handyman.
+  Repair, Locksmith, Painting, Handyman (Carpentry was retired into Handyman by V31).
 - **Core flows**: user registration + email verification; issue creation with
   AI-suggested category (customer can confirm/edit) and optional images; Standard booking
   (customer picks directly from a list of professionals, each with their own price

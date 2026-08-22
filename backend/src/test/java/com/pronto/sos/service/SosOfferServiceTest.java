@@ -146,6 +146,24 @@ class SosOfferServiceTest {
         verify(sosService).maybeOpenSelectionWindow(REQUEST_ID, false);
     }
 
+    /**
+     * <b>The selection window opening does not stop the search.</b> Selection opens on the first
+     * acceptance, so if a second professional could not answer after that, a customer who was
+     * given one option would be stuck with exactly one — and "סרוק שוב" would have nothing to
+     * produce.
+     */
+    @Test
+    void aProfessionalCanStillAcceptWhileTheCustomerIsChoosing() {
+        when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.OFFERED)));
+        when(sosService.loadRequest(REQUEST_ID))
+                .thenReturn(request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION));
+        when(sosOfferRepository.accept(anyLong(), any(), any())).thenReturn(1);
+
+        service.accept(PROFESSIONAL_USER_ID, OFFER_ID, 20);
+
+        verify(sosOfferRepository).accept(eq(OFFER_ID), eq((short) 20), any());
+    }
+
     /** Omitting an ETA keeps the platform's dispatch-time estimate rather than nulling it. */
     @Test
     void acceptWithoutAnEtaKeepsThePlatformEstimate() {
@@ -187,7 +205,11 @@ class SosOfferServiceTest {
         verify(sosOfferRepository, never()).accept(anyLong(), any(), any());
     }
 
-    /** Once somebody has been chosen, late acceptances must not reopen the decision. */
+    /**
+     * Once somebody has been chosen, late acceptances must not reopen the decision — the backend
+     * half of "selection stops the search". No offer row moves, so no new candidate can appear
+     * behind the customer's tracking screen.
+     */
     @Test
     void acceptingAfterTheRequestMovedOnIsRefused() {
         when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.OFFERED)));
@@ -277,6 +299,44 @@ class SosOfferServiceTest {
         service.updateEta(PROFESSIONAL_USER_ID, OFFER_ID, 40);
 
         verify(sosOfferRepository).updateEta(eq(OFFER_ID), eq((short) 40), any());
+    }
+
+    /**
+     * A revision must be recorded as {@link SosEventType#ETA_UPDATED}, not as
+     * {@code PROFESSIONAL_RESPONDED}.
+     *
+     * <p>This is the seam the stale-ETA bug lived in. With both recorded under one type, the
+     * realtime publisher had only the offer's current status to route on — and on an
+     * {@code ACCEPTED} offer a revision is indistinguishable from a fresh acceptance, so the
+     * customer was told "another professional is available" instead of "this one's ETA changed".
+     * Asserting the recorded type here is what keeps the publisher's routing decidable at all.
+     */
+    @Test
+    void revisingAnEtaIsRecordedAsItsOwnEventTypeNotAsAResponse() {
+        when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.ACCEPTED)));
+        when(sosOfferRepository.updateEta(eq(OFFER_ID), eq((short) 12), any())).thenReturn(1);
+        when(sosService.loadRequest(REQUEST_ID))
+                .thenReturn(request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION));
+
+        service.updateEta(PROFESSIONAL_USER_ID, OFFER_ID, 12);
+
+        verify(sosEventService).recordProfessional(eq(REQUEST_ID), eq(PROFESSIONAL_USER_ID), eq(PROFESSIONAL_ID),
+                eq(OFFER_ID), eq(SosEventType.ETA_UPDATED), any(), any(), any());
+        verify(sosEventService, never()).recordProfessional(anyLong(), anyLong(), anyLong(), anyLong(),
+                eq(SosEventType.PROFESSIONAL_RESPONDED), any(), any(), any());
+    }
+
+    /** Availability is not selection: revising an ETA while merely available is legal and normal. */
+    @Test
+    void etaCanBeRevisedBeforeTheCustomerHasChosen() {
+        when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.ACCEPTED)));
+        when(sosOfferRepository.updateEta(eq(OFFER_ID), eq((short) 12), any())).thenReturn(1);
+        when(sosService.loadRequest(REQUEST_ID))
+                .thenReturn(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS));
+
+        service.updateEta(PROFESSIONAL_USER_ID, OFFER_ID, 12);
+
+        verify(sosOfferRepository).updateEta(eq(OFFER_ID), eq((short) 12), any());
     }
 
     @Test

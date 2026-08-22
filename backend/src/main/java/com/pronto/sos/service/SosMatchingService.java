@@ -6,7 +6,6 @@ import com.pronto.matching.ServiceLocation;
 import com.pronto.sos.config.SosProperties;
 import com.pronto.sos.dto.EligibleProfessional;
 import com.pronto.sos.entity.SosRequest;
-import com.pronto.sos.entity.SosUrgency;
 import com.pronto.sos.repository.SosCandidateRepository;
 import com.pronto.sos.repository.SosOfferRepository;
 import org.slf4j.Logger;
@@ -128,19 +127,48 @@ public class SosMatchingService {
     }
 
     /**
-     * The ranked, pool-capped list of professionals to offer {@code request} to, best first.
-     * Empty means nothing eligible was found — the caller's cue to fail the request rather than
-     * leave the customer waiting on a dispatch that will never arrive.
+     * The ranked, pool-capped list of professionals to offer {@code request} to, best first, at
+     * the request's <em>current</em> search scope.
+     *
+     * <p>Overload for the initial wave, where the scope is derived from the request's own urgency
+     * and no expansion has happened yet.
+     */
+    @Transactional(readOnly = true)
+    public List<RankedCandidate> findCandidates(SosRequest request, Set<Long> alreadyOfferedProfessionalIds) {
+        return findCandidates(request, alreadyOfferedProfessionalIds,
+                SosSearchScope.initial(request.getUrgency(), properties));
+    }
+
+    /**
+     * The ranked, scope-capped list of professionals to offer {@code request} to, best first.
+     * Empty means nothing eligible was found — for the initial wave that is the caller's cue to
+     * fail the request rather than leave the customer waiting on a dispatch that will never
+     * arrive; for an expansion it simply means the wider scope turned up nobody new, which must
+     * never terminate a request that already has candidates.
+     *
+     * <p><b>The pool cap is a total, not a per-wave allowance.</b> {@code scope.poolSize()} is
+     * measured against everybody who already holds an offer on this request, so expanding from a
+     * pool of 8 to 16 dispatches at most 8 more — a customer cannot press "סרוק שוב" twice and
+     * fan out 24 fresh offers on top of the 8 that are already live.
      *
      * @param alreadyOfferedProfessionalIds professionals already sent an offer on this request
      *                                       by an earlier dispatch wave. Excluding them here is
      *                                       the first line of defence against duplicate offers;
      *                                       {@code ux_sos_offers_request_professional} is the
      *                                       authoritative one.
+     * @param scope                         how wide to search — see {@link SosSearchScope} for
+     *                                       what "wider" means in this implementation
      */
     @Transactional(readOnly = true)
-    public List<RankedCandidate> findCandidates(SosRequest request, Set<Long> alreadyOfferedProfessionalIds) {
+    public List<RankedCandidate> findCandidates(SosRequest request, Set<Long> alreadyOfferedProfessionalIds,
+                                                 SosSearchScope scope) {
         Instant now = Instant.now();
+        int remainingPoolSlots = scope.poolSize() - alreadyOfferedProfessionalIds.size();
+        if (remainingPoolSlots <= 0) {
+            log.info("sos.matching.pool-full sosRequestId={} scopeLevel={} poolSize={} alreadyOffered={}",
+                    request.getId(), scope.level(), scope.poolSize(), alreadyOfferedProfessionalIds.size());
+            return List.of();
+        }
 
         List<Long> excluded = alreadyOfferedProfessionalIds.isEmpty()
                 ? List.of(NO_EXCLUSIONS_SENTINEL)
@@ -177,7 +205,7 @@ public class SosMatchingService {
                 available.stream().map(EligibleProfessional::professionalId).toList(), now);
 
         ServiceLocation location = toServiceLocation(request);
-        BigDecimal maxRadius = properties.getMaxDispatchRadiusKm();
+        BigDecimal maxRadius = scope.maxRadiusKm();
 
         List<RankedCandidate> ranked = new ArrayList<>();
         for (EligibleProfessional professional : available) {
@@ -199,20 +227,18 @@ public class SosMatchingService {
             return List.of();
         }
 
-        int poolSize = request.getUrgency() == SosUrgency.EMERGENCY
-                ? properties.getEmergencyCandidatePoolSize()
-                : properties.getCandidatePoolSize();
-
         List<RankedCandidate> pool = ranked.stream()
                 .sorted(Comparator.comparing(RankedCandidate::score).reversed()
                         // Deterministic tie-break, so two runs over identical data produce
                         // identical dispatch order and a disputed ranking is reproducible.
                         .thenComparing(c -> c.professional().professionalId()))
-                .limit(poolSize)
+                .limit(remainingPoolSlots)
                 .toList();
 
-        log.info("sos.matching.ranked sosRequestId={} eligible={} scored={} dispatching={} poolSize={}",
-                request.getId(), eligible.size(), ranked.size(), pool.size(), poolSize);
+        log.info("sos.matching.ranked sosRequestId={} scopeLevel={} eligible={} scored={} dispatching={} "
+                        + "poolSize={} remainingSlots={}",
+                request.getId(), scope.level(), eligible.size(), ranked.size(), pool.size(),
+                scope.poolSize(), remainingPoolSlots);
         return pool;
     }
 

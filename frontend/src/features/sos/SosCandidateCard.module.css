@@ -1,0 +1,176 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  /* Each card arrives as its own answer, so it fades in on mount rather than the list
+     re-animating as a block — see SosCandidateTray. */
+  animation: candidateIn var(--duration-moderate) var(--ease-out) both;
+}
+
+@keyframes candidateIn {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.avatar,
+.avatarFallback {
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+}
+
+.avatar {
+  object-fit: cover;
+  background: var(--color-surface-secondary);
+}
+
+.avatarFallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: var(--font-size-body-lg);
+  font-weight: var(--font-weight-bold);
+}
+
+.identity {
+  min-width: 0;
+  flex: 1;
+}
+
+.name {
+  font-size: var(--font-size-body-lg);
+  line-height: var(--line-height-body-lg);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+}
+
+.rating {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.ratingStar {
+  color: var(--color-warning);
+}
+
+.reviewCount {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-regular);
+}
+
+.noRating {
+  font-size: var(--font-size-caption);
+  color: var(--color-text-muted);
+}
+
+/* ETA is the SOS-specific comparison signal, so it gets the emphasis the listing card gives
+   price — "how fast can you be here" is the question this screen exists to answer. */
+.eta {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+}
+
+.meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+}
+
+.priceBreakdown {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-secondary);
+}
+
+.priceRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.priceLabel {
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+}
+
+.priceValue {
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.totalRow {
+  margin-block-start: var(--space-1);
+  padding-block-start: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.totalLabel {
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.totalValue {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    animation: none;
+  }
+}
+
+/* Inspect vs. commit, side by side. Two full-width buttons stacked would make "פרטים נוספים" look
+   like an equal-weight primary action; the row keeps `בחר` dominant while leaving the secondary
+   action a real target. */
+.actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.actions > :first-child {
+  flex: 0 1 40%;
+}
+
+.actions > :last-child {
+  flex: 1 1 60%;
+}

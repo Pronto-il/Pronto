@@ -9,11 +9,17 @@ import com.pronto.notifications.entity.NotificationChannel;
 import com.pronto.notifications.entity.NotificationDeliveryStatus;
 import com.pronto.notifications.entity.NotificationMessageType;
 import com.pronto.notifications.repository.NotificationRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * See {@code docs/architecture/api-contract-notifications.md} §3/§4.1/§4.3.
@@ -21,10 +27,15 @@ import java.util.List;
 @Service
 public class NotificationServiceImpl implements NotificationService {
 
-    private final NotificationRepository notificationRepository;
+    private static final Logger log = LoggerFactory.getLogger(NotificationServiceImpl.class);
 
-    public NotificationServiceImpl(NotificationRepository notificationRepository) {
+    private final NotificationRepository notificationRepository;
+    private final SosRequestIssueResolver sosRequestIssueResolver;
+
+    public NotificationServiceImpl(NotificationRepository notificationRepository,
+                                    SosRequestIssueResolver sosRequestIssueResolver) {
         this.notificationRepository = notificationRepository;
+        this.sosRequestIssueResolver = sosRequestIssueResolver;
     }
 
     /**
@@ -65,7 +76,16 @@ public class NotificationServiceImpl implements NotificationService {
                         callerId, NotificationChannel.IN_APP)
                 : notificationRepository.findByUserIdAndChannelOrderByCreatedAtDesc(callerId, NotificationChannel.IN_APP);
         long unreadCount = notificationRepository.countByUserIdAndChannelAndReadAtIsNull(callerId, NotificationChannel.IN_APP);
-        List<NotificationResponse> notifications = rows.stream().map(this::toResponse).toList();
+        // One batched lookup for the whole (unpaginated) feed rather than a query per SOS row --
+        // a customer with several SOS attempts behind them would otherwise turn one feed read
+        // into N.
+        Map<Long, Long> issueIds = resolveIssueIds(rows.stream()
+                .map(Notification::getRelatedSosRequestId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet()));
+        List<NotificationResponse> notifications = rows.stream()
+                .map(row -> toResponse(row, issueIds))
+                .toList();
         return new NotificationsListResponse(unreadCount, notifications);
     }
 
@@ -82,7 +102,9 @@ public class NotificationServiceImpl implements NotificationService {
             notification.setReadAt(Instant.now());
             notification = notificationRepository.save(notification);
         }
-        return toResponse(notification);
+        return toResponse(notification, resolveIssueIds(notification.getRelatedSosRequestId() == null
+                ? Set.of()
+                : Set.of(notification.getRelatedSosRequestId())));
     }
 
     /** §3.3. */
@@ -92,9 +114,30 @@ public class NotificationServiceImpl implements NotificationService {
         return notificationRepository.markAllRead(callerId, Instant.now());
     }
 
-    private NotificationResponse toResponse(Notification notification) {
+    private NotificationResponse toResponse(Notification notification, Map<Long, Long> issueIds) {
         return new NotificationResponse(notification.getId(), notification.getMessageType(),
                 notification.getRelatedOrderId(), notification.getRelatedSosRequestId(),
+                notification.getRelatedSosRequestId() == null
+                        ? null
+                        : issueIds.get(notification.getRelatedSosRequestId()),
                 notification.getReadAt(), notification.getCreatedAt());
+    }
+
+    /**
+     * The SOS-request-to-issue lookup a customer's deep link needs. Best effort by design: if the
+     * resolver fails, the feed still renders and the affected rows simply have no destination —
+     * a notification list that 500s because a deep-link hint could not be computed would be a far
+     * worse outcome than a row that does not navigate.
+     */
+    private Map<Long, Long> resolveIssueIds(Set<Long> sosRequestIds) {
+        if (sosRequestIds.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            return sosRequestIssueResolver.issueIdsBySosRequestId(sosRequestIds);
+        } catch (RuntimeException e) {
+            log.warn("notifications.sos-issue-lookup-failed count={}", sosRequestIds.size(), e);
+            return Map.of();
+        }
     }
 }

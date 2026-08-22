@@ -1,5 +1,25 @@
 # features/dashboard
 
+> **Pronto SOS professional frontend, MS2 (2026-08-21).** `ProDashboardLayout` gained a fifth tab,
+> **`/pro/sos`**, and mounts `ProSosProvider` alongside the existing `PendingRequestsProvider` — at
+> the same scope and for the same reason (the nav badge and the SOS screen share one poll and one
+> `/user/queue/sos` subscription). The screen itself is **not** in this feature: it lives in
+> `features/sos` with the rest of the SOS product semantics, and this feature only routes to it.
+>
+> Mounting the provider on the layout rather than on the route is deliberate — an SOS offer has a
+> ~2-minute window, so a professional sitting on the availability calendar has to be told about it
+> without navigating anywhere. The provider raises the toast and lights the badge from anywhere
+> under `/pro/*`.
+>
+> `IncomingRequestsPage` (`/pro/requests`) is untouched and stays what it was: an accept/reject
+> feed of *scheduled orders*. SOS was deliberately not folded into it — "אישור" would have meant
+> two different things on one screen, and an SOS offer is a different resource with a countdown, a
+> different vocabulary (available ≠ awarded) and a four-step operational flow once won.
+>
+> One knock-on fix: a fifth tab pushed the mobile tab strip past a 430px viewport, clipping
+> "פרופיל". The SOS tab now renders a short label (`SOS`) below 640px and the descriptive one
+> ("קריאות SOS") on the desktop sidebar.
+
 ## Purpose
 The professional-facing dashboard.
 
@@ -7,6 +27,8 @@ The professional-facing dashboard.
 - Availability management UI (backed by the `availability` backend package).
 - Incoming requests view (Standard and SOS booking requests awaiting accept/reject).
 - Job-status update actions (Confirmed -> On the Way -> Completed, plus Cancel).
+- Routing to the professional's Pronto SOS surface (`features/sos`'s `ProSosPage`) and surfacing
+  its live count badge.
 
 ## Professional weekly availability calendar — M3/M4 (2026-08-18)
 

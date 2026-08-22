@@ -28,13 +28,22 @@ public enum SosAddressAccess {
     FULL,
 
     /**
-     * City only — every exact-location field is nulled out: street, house number, apartment,
-     * floor, entrance, address notes, latitude and longitude. This is what a professional who
-     * has been offered the job sees, including one who has responded {@code ACCEPTED}.
+     * Street name and city — and nothing else that would locate a specific door. House number,
+     * apartment, floor, entrance, address notes, latitude and longitude are all nulled out. This
+     * is what a professional who has been offered the job sees, including one who has responded
+     * {@code ACCEPTED}.
      *
-     * <p>City plus the offer's own {@code distanceKm}/{@code estimatedArrivalMinutes} is
-     * deliberately enough to decide whether to respond, and deliberately not enough to turn up
+     * <p><b>Why the street is included, when it used to be city-only.</b> A professional deciding
+     * whether to commit to an arrival time needs to know roughly where they are going: "Tel Aviv"
+     * spans an hour of driving at rush hour, and an ETA guessed against a city centroid is a
+     * promise made to the customer on a number nobody could have estimated. A street name closes
+     * that gap. A house number does not help estimate anything — it only tells a stranger which
+     * door to knock on, which is precisely the thing selection is supposed to grant.
+     *
+     * <p>So the line is drawn at "enough to estimate the journey", not "enough to make the
+     * journey": street plus city plus the offer's own {@code distanceKm} is deliberately enough
+     * to decide whether to respond and how fast, and deliberately not enough to turn up
      * uninvited.
      */
-    CITY_ONLY
+    STREET_AND_CITY
 }

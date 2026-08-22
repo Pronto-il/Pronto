@@ -3,8 +3,36 @@
 > **SOS (2026-08-21).** `getSosProfessionalsForIssue`, `createSosOrder` and the
 > `CreateSosOrderRequest` type were removed with the legacy browse-and-pick SOS endpoints.
 > `prefetchProfessionalListing` lost its `urgencyType` parameter for the same reason — there
-> is only one professional-listing endpoint now. No client for `/api/sos/**` exists yet; it
-> arrives with the Pronto SOS frontend task.
+> is only one professional-listing endpoint now. The client for `/api/sos/**` is **`sos.ts`**,
+> added with the Pronto SOS customer frontend (see below) — it covers the customer half only.
+
+> **`sos.ts` (2026-08-21).** Pronto SOS, the only SOS flow. `createSosRequest`,
+> `getMySosRequests`, `getSosRequest`, `getSosCandidates`, `getSosTimeline`,
+> `selectSosProfessional`, `cancelSosRequest`, plus the `isSosTerminalStatus`/`hasSosSelection`/
+> `isSosSearching` status predicates that mirror the backend enum's own helpers. Every shape was
+> verified against `com.pronto.sos.dto.*`/`entity.*`/`realtime.*` directly. Two things worth
+> knowing before using it: deadlines (`matchingExpiresAt`/`selectionExpiresAt`) are **absolute
+> instants**, so a countdown rendered from them survives a remount or a backgrounded tab and the
+> server enforces them regardless; and `SosCandidate` means "this professional is available",
+> never "this professional got the job" — selection is a separate, one-shot call. The file also
+> declares the `/user/queue/sos` realtime wire types (`SosRealtimeEventType`,
+> `SosRealtimeMessage`), whose `data` is deliberately typed loosely because it is not a source of
+> truth.
+>
+> **Professional half added MS2 (2026-08-21)**: `getMySosOffers`, `getSosOffer`, `acceptSosOffer`,
+> `rejectSosOffer`, `updateSosOfferEta`, plus the four selected-professional transitions
+> (`confirmSosRequest`, `markSosOnTheWay`, `markSosArrived`, `completeSosRequest`), with
+> `SosOfferStatus`/`SosOfferResponse`/`SosOffersListResponse` and the
+> `isSosOfferOpen`/`isSosOfferResolved` predicates. Shared enums are reused, not redeclared. Two
+> traps this module documents in place: **`getSosOffer` is a mutation** (opening an offer marks it
+> `VIEWED` server-side, so it must not be called speculatively or in a loop), and an offer exposes
+> `serviceCity` and nothing else about the location — street/house/floor/coordinates are withheld
+> until selection and then served only through `getSosRequest`. `SOS_ETA_MIN_MINUTES`/
+> `SOS_ETA_MAX_MINUTES` mirror the backend's `@Min(0) @Max(480)` so an out-of-range ETA is refused
+> before the round trip.
+>
+> `API_BASE_URL` is now exported from `httpClient.ts` so `shared/realtime` can derive the
+> WebSocket origin from the same configured value rather than a second env var.
 
 
 ## Purpose

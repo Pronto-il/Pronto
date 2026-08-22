@@ -4,6 +4,7 @@ import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRatingAggregate;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.professionals.repository.ReviewAggregateRepository;
+import com.pronto.sos.config.SosProperties;
 import com.pronto.sos.dto.SosCandidate;
 import com.pronto.sos.dto.SosEventResponse;
 import com.pronto.sos.dto.SosOfferResponse;
@@ -36,6 +37,7 @@ public class SosResponseAssembler {
     private final ReviewAggregateRepository reviewAggregateRepository;
     private final SosOfferRepository sosOfferRepository;
     private final StorageService storageService;
+    private final SosProperties properties;
 
     /**
      * {@code ReviewAggregateRepository} is reused from the {@code professionals} package rather
@@ -47,12 +49,14 @@ public class SosResponseAssembler {
                                  UserRepository userRepository,
                                  ReviewAggregateRepository reviewAggregateRepository,
                                  SosOfferRepository sosOfferRepository,
-                                 StorageService storageService) {
+                                 StorageService storageService,
+                                 SosProperties properties) {
         this.professionalRepository = professionalRepository;
         this.userRepository = userRepository;
         this.reviewAggregateRepository = reviewAggregateRepository;
         this.sosOfferRepository = sosOfferRepository;
         this.storageService = storageService;
+        this.properties = properties;
     }
 
     /**
@@ -60,10 +64,10 @@ public class SosResponseAssembler {
      *
      * <p><b>{@code access} has no default on purpose.</b> Every call site must state whose view
      * it is building — see {@link SosAddressAccess} for why a silently-full default was the bug
-     * this signature exists to prevent. Under {@link SosAddressAccess#CITY_ONLY} the exact
-     * location fields come back {@code null} rather than being omitted from a different DTO:
-     * one shape means the frontend renders one component either way, and a null street is an
-     * honest "you may not see this" rather than a second contract to keep in sync.
+     * this signature exists to prevent. Under {@link SosAddressAccess#STREET_AND_CITY} the
+     * door-identifying fields come back {@code null} rather than being omitted from a different
+     * DTO: one shape means the frontend renders one component either way, and a null house
+     * number is an honest "you may not see this" rather than a second contract to keep in sync.
      */
     public SosRequestResponse toRequestResponse(SosRequest request, SosAddressAccess access) {
         List<SosOffer> offers = sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(request.getId());
@@ -73,6 +77,16 @@ public class SosResponseAssembler {
         String selectedName = request.getSelectedProfessionalId() == null
                 ? null
                 : resolveProfessionalName(request.getSelectedProfessionalId());
+        // Read off the selected offer itself, so a post-selection revision is reflected here on
+        // the very next read. Sourced from the offer list already loaded above rather than a
+        // second query.
+        Short selectedEta = request.getSelectedOfferId() == null
+                ? null
+                : offers.stream()
+                        .filter(o -> o.getId().equals(request.getSelectedOfferId()))
+                        .findFirst()
+                        .map(SosOffer::getEstimatedArrivalMinutes)
+                        .orElse(null);
         boolean exact = access == SosAddressAccess.FULL;
 
         return new SosRequestResponse(request.getId(), request.getIssueId(), request.getCustomerId(),
@@ -81,7 +95,10 @@ public class SosResponseAssembler {
                 // City is never redacted -- it is what a professional needs to judge whether the
                 // job is reachable at all, and it is already on their offer card.
                 request.getServiceCity(),
-                exact ? request.getServiceStreet() : null,
+                // Street is likewise visible before selection: it is what makes a committed ETA
+                // an estimate rather than a guess. Everything below it stays withheld -- see
+                // SosAddressAccess.STREET_AND_CITY for where the line is drawn and why.
+                request.getServiceStreet(),
                 exact ? request.getServiceHouseNumber() : null,
                 exact ? request.getServiceApartment() : null,
                 exact ? request.getServiceFloor() : null,
@@ -90,11 +107,30 @@ public class SosResponseAssembler {
                 exact ? request.getLatitude() : null,
                 exact ? request.getLongitude() : null,
                 request.getSelectedProfessionalId(), selectedName,
-                request.getSelectedOfferId(), request.getOrderId(), request.getCancelledBy(), offers.size(),
-                accepted, request.getMatchingExpiresAt(), request.getSelectionExpiresAt(), request.getCreatedAt(),
+                request.getSelectedOfferId(), selectedEta,
+                request.getOrderId(), request.getCancelledBy(), offers.size(),
+                accepted,
+                request.getSearchExpansions(), properties.getMaxSearchExpansions(), canExpandSearch(request),
+                request.getMatchingExpiresAt(), request.getSelectionExpiresAt(), request.getCreatedAt(),
                 request.getUpdatedAt(), request.getMatchedAt(), request.getCandidatesReadyAt(),
                 request.getSelectedAt(), request.getConfirmedAt(), request.getCancelledAt(),
                 request.getCompletedAt());
+    }
+
+    /**
+     * Whether {@code POST /api/sos/requests/{id}/scan-again} would be accepted for this request
+     * right now.
+     *
+     * <p>The three conditions are exactly the ones inside
+     * {@code SosRequestRepository#expandSearch}'s {@code WHERE} clause — <b>that statement is
+     * what enforces them</b>; this is the same rule projected into the DTO so the customer's
+     * button can be right without the client re-deriving the platform's policy. Evaluated per
+     * response rather than cached, so it goes false on the very read after a selection lands.
+     */
+    private boolean canExpandSearch(SosRequest request) {
+        return request.getSelectedProfessionalId() == null
+                && request.getStatus().isAcceptingProfessionalResponses()
+                && request.getSearchExpansions() < properties.getMaxSearchExpansions();
     }
 
     /**
@@ -133,13 +169,15 @@ public class SosResponseAssembler {
 
     /**
      * The professional's offer card. {@code request} supplies the job context; only its
-     * {@code serviceCity} is exposed — see {@code SosOfferResponse}'s Javadoc on why the full
-     * address is withheld until selection.
+     * {@code serviceCity} and {@code serviceStreet} are exposed — see {@code SosOfferResponse}'s
+     * Javadoc, and {@link SosAddressAccess#STREET_AND_CITY}, on why the door-identifying part of
+     * the address is withheld until selection.
      */
     public SosOfferResponse toOfferResponse(SosOffer offer, SosRequest request) {
         return new SosOfferResponse(offer.getId(), offer.getSosRequestId(), offer.getProfessionalId(),
                 offer.getStatus(), request.getStatus(), request.getCategoryId(), request.getIssueSummary(),
-                request.getUrgency(), request.getServiceCity(), offer.getMatchRank(), offer.getDistanceKm(),
+                request.getUrgency(), request.getServiceCity(), request.getServiceStreet(),
+                offer.getMatchRank(), offer.getDistanceKm(),
                 offer.getEstimatedArrivalMinutes(), offer.getVisitFee(), offer.getSosFee(),
                 offer.getPlatformCommission(), offer.getProfessionalNet(),
                 // The order id is only meaningful to the professional who was actually selected.

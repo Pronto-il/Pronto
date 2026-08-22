@@ -92,6 +92,30 @@
   background: var(--color-primary-hover);
 }
 
+/* Mobile-only account action. On desktop the profile link already lives inside
+   `.desktopOnlyNav` above, so this stays hidden there — never two profile entry points at the
+   same width. Below 640px it replaces `<BottomNav>`'s former "פרופיל" tab (removed from
+   `BottomNav.tsx` in the same change, so there is exactly one profile action on mobile too).
+   Styled as a filled primary-tinted circle rather than borrowing `.logoutButton`'s transparent
+   treatment: this is a primary account action, not a demoted utility one, and the contrast also
+   keeps the two adjacent icon buttons distinguishable at a glance. */
+.mobileProfileLink {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.mobileProfileLink:hover {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
 /* Icon-only, demoted logout (design doc §3.1) — a secondary utility action, not a nav
    destination, so it drops the visible "יציאה" label; `aria-label`/`title` carry the meaning.
    `margin-inline-start` gives it its own extra gap after the profile link on desktop, on top
@@ -139,6 +163,16 @@
 
   .desktopOnlyNav {
     display: none;
+  }
+
+  .mobileProfileLink {
+    display: inline-flex;
+  }
+
+  /* The compact 56px bar now carries up to four actions (draft indicator, bell, profile,
+     logout), so it tightens its own gap rather than letting them crowd each other. */
+  .nav {
+    gap: var(--space-2);
   }
 
   /* Post-MS2 mobile logout fix: drop the desktop-only extra "own gap" — on mobile

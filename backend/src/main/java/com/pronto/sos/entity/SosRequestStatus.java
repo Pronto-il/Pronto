@@ -27,8 +27,16 @@ public enum SosRequestStatus {
     WAITING_FOR_PROFESSIONALS,
 
     /**
-     * Enough professionals accepted (or the response window closed with at least one). The
-     * customer now has until {@code selectionExpiresAt} — roughly two minutes — to choose.
+     * <b>At least one professional is available and the customer may choose, right now.</b>
+     * Bounded by {@code selectionExpiresAt} — roughly two minutes, extended each time the
+     * customer widens the search.
+     *
+     * <p>Reached on the <em>first</em> acceptance, not on a quota. A customer with a burst pipe
+     * and one real option in hand has nothing to gain from being made to wait for a second and a
+     * third, so the window opens the moment there is anything to choose between. The search does
+     * not stop when it opens: professionals with live offers keep answering and keep appearing
+     * (see {@link #isAcceptingProfessionalResponses()}), and the customer can widen it further
+     * with "סרוק שוב". What ends the search is the customer choosing.
      */
     WAITING_FOR_CUSTOMER_SELECTION,
 
@@ -59,6 +67,19 @@ public enum SosRequestStatus {
 
     /** Matching found nobody eligible at all — distinct from {@link #EXPIRED}, which means nobody answered. */
     FAILED;
+
+    /**
+     * True while a professional holding a live offer may still answer it, and while the customer
+     * may still widen the search.
+     *
+     * <p><b>Two statuses, and that is the point.</b> Selection opening no longer stops the search:
+     * the customer can choose from the first professional who answered <em>and</em> keep receiving
+     * more, which would be contradictory if "the window is open" also meant "nobody else may
+     * respond". What stops the search is {@link #hasSelection()} — a choice, or a terminal state.
+     */
+    public boolean isAcceptingProfessionalResponses() {
+        return this == WAITING_FOR_PROFESSIONALS || this == WAITING_FOR_CUSTOMER_SELECTION;
+    }
 
     /** Terminal states accept no further transitions. */
     public boolean isTerminal() {

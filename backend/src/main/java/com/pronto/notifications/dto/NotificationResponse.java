@@ -23,6 +23,22 @@ public record NotificationResponse(
         NotificationMessageType messageType,
         Long relatedOrderId,
         Long relatedSosRequestId,
+        /**
+         * The issue the SOS request in {@code relatedSosRequestId} was activated on, or
+         * {@code null} for an order row (and for an SOS row whose request no longer resolves).
+         *
+         * <p><b>Derived, never stored.</b> There is no {@code related_issue_id} column: this is
+         * read through {@code notifications.service.SosRequestIssueResolver} at response-assembly
+         * time, in one batched lookup for the whole feed.
+         *
+         * <p>It exists because {@code relatedSosRequestId} alone was not enough to navigate. The
+         * customer's live SOS screen is {@code /issues/{issueId}/sos-booking} — anchored to the
+         * problem rather than to the attempt, since one issue accumulates many attempts — so the
+         * bell had a subject it could not turn into a destination, and every customer-facing SOS
+         * row was a dead end. Professional-facing SOS rows are unaffected: their destination is
+         * the offer inbox, which needs no id at all.
+         */
+        Long relatedIssueId,
         Instant readAt,
         Instant createdAt
 ) {

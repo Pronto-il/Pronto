@@ -72,6 +72,22 @@
   }
 }
 
+/* Breakpoint-swapped tab label, used by the SOS tab only — see its comment in the TSX. Matched to
+   the 640px boundary the mobile tab bar / desktop sidebar split already uses. */
+.labelNarrow {
+  display: none;
+}
+
+@media (max-width: 639.98px) {
+  .labelWide {
+    display: none;
+  }
+
+  .labelNarrow {
+    display: inline;
+  }
+}
+
 .tabActive {
   color: var(--color-primary);
   border-bottom-color: var(--color-primary);

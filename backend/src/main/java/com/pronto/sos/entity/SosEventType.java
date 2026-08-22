@@ -9,10 +9,12 @@ package com.pronto.sos.entity;
  * status — and a realtime publisher added later only has to forward what is already being
  * written, with no business logic moved or rewritten.
  *
- * <p>All types except {@link #PROFESSIONAL_RESPONDED}, {@link #OFFER_VIEWED} and
- * {@link #OFFER_EXPIRED} occur at most once per request, enforced by the
- * {@code ux_sos_events_singleton} partial unique index. Those three are per-offer rather than
- * per-request, and one request fans out to many offers.
+ * <p>All types except {@link #PROFESSIONAL_RESPONDED}, {@link #OFFER_VIEWED},
+ * {@link #OFFER_EXPIRED}, {@link #ETA_UPDATED} and {@link #SEARCH_EXPANDED} occur at most once
+ * per request, enforced by the {@code ux_sos_events_singleton} partial unique index. The first
+ * four are per-offer rather than per-request (one request fans out to many offers); the last is
+ * per-request but legitimately repeatable, since expanding the search twice is the whole point of
+ * the control that produces it.
  */
 public enum SosEventType {
 
@@ -38,7 +40,33 @@ public enum SosEventType {
     /** Repeatable — one per professional who accepts or rejects. */
     PROFESSIONAL_RESPONDED,
 
-    /** Enough professionals accepted; the candidate shortlist is assembled. */
+    /**
+     * Repeatable — a professional revised the ETA they had already committed to.
+     *
+     * <p>Deliberately distinct from {@link #PROFESSIONAL_RESPONDED}, which it used to be recorded
+     * as. Three different things were sharing that one type — "I'm available", "I decline" and
+     * "make that 12 minutes, not 20" — which left the realtime publisher inferring which had
+     * happened from the offer's current status. That inference is wrong for the case that matters
+     * most: a revision on an {@code ACCEPTED} offer is indistinguishable from a fresh acceptance,
+     * so the customer was told {@code PROFESSIONAL_AVAILABLE} ("one more candidate for you") when
+     * the truth was {@code ETA_UPDATED} ("the one you're looking at will be here sooner"). Same
+     * refetch, entirely different thing to say — and with candidate cards animating in on arrival,
+     * the wrong one makes an existing card re-announce itself on every edit.
+     */
+    ETA_UPDATED,
+
+    /**
+     * Repeatable — the customer pressed "סרוק שוב" and the search widened on this same request.
+     *
+     * <p>Bounded by {@code pronto.sos.max-search-expansions}, and exempt from
+     * {@code ux_sos_events_singleton} ({@code V39}) precisely because repeating it is the
+     * feature: expansion step 1, then step 2. The {@code detail} carries the new scope level and
+     * how many additional professionals were contacted, so the timeline can explain a second wave
+     * of offers that would otherwise appear out of nowhere.
+     */
+    SEARCH_EXPANDED,
+
+    /** The first professional accepted; the customer may choose from here on. */
     CANDIDATES_READY,
 
     /** The customer's ~2-minute selection window opened. */

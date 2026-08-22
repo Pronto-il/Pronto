@@ -85,6 +85,16 @@ export default function AppLayout() {
                     <span>הפרופיל שלי</span>
                   </Link>
                 </div>
+                {user.role === 'CUSTOMER' && (
+                  <Link
+                    to="/profile"
+                    className={styles.mobileProfileLink}
+                    aria-label="הפרופיל שלי"
+                    title="הפרופיל שלי"
+                  >
+                    <User size={20} aria-hidden="true" />
+                  </Link>
+                )}
                 <button
                   type="button"
                   className={styles.logoutButton}

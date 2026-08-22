@@ -41,6 +41,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 
@@ -271,18 +272,29 @@ public class SosService {
     /**
      * {@code GET /api/sos/requests/{id}/candidates} — customer only, and only their own request.
      *
-     * <p>Returns at most {@code pronto.sos.target-candidate-count} accepted offers, soonest ETA
-     * first. Deliberately not an error to call this early or late — a polling client needs a
+     * <p>Deliberately not an error to call this early or late — a polling client needs a
      * successful response with {@code selectionOpen} and {@code status} to reason about, not an
      * exception it has to special-case:
      * <ul>
-     *   <li><b>Still gathering responses</b> — empty list, {@code selectionOpen = false}.</li>
-     *   <li><b>Window open</b> — up to 3 candidates, {@code selectionOpen = true}.</li>
+     *   <li><b>Still gathering responses, nobody yet</b> — empty list,
+     *       {@code selectionOpen = false}.</li>
+     *   <li><b>At least one professional available</b> — that professional, and
+     *       {@code selectionOpen = true}. There is no waiting for a second or a third.</li>
      *   <li><b>Window closed</b> — empty list, {@code selectionOpen = false}, {@code status =
      *       EXPIRED}. Empty because expiry closes every outstanding offer out of
      *       {@code ACCEPTED}, so the query below correctly finds none; the terminal
      *       {@code status} is what tells the client to render "your request expired".</li>
      * </ul>
+     *
+     * <h2>The cap, and why it grows</h2>
+     *
+     * At most {@link #candidateCap(SosRequest)} candidates:
+     * {@code target-candidate-count} in the initial scope, plus one per manual expansion. The
+     * shortlist is filled in <b>arrival order</b> (ascending offer id) and only then sorted by
+     * ETA for display, which is what guarantees the property the whole "סרוק שוב" flow depends
+     * on: <b>a candidate the customer can already see never disappears because somebody faster
+     * turned up later.</b> A fixed cap over an ETA-sorted query would do exactly that, and it
+     * would do it precisely when the customer had asked for more options.
      */
     @Transactional
     public SosCandidatesResponse getCandidates(Long callerId, Long sosRequestId) {
@@ -293,9 +305,11 @@ public class SosService {
         SosRequest current = enforceDeadlines(request);
 
         List<SosCandidate> candidates = sosOfferRepository
-                .findBySosRequestIdAndStatusOrderByEstimatedArrivalMinutesAsc(sosRequestId, SosOfferStatus.ACCEPTED)
+                .findBySosRequestIdAndStatusOrderByIdAsc(sosRequestId, SosOfferStatus.ACCEPTED)
                 .stream()
-                .limit(properties.getTargetCandidateCount())
+                .limit(candidateCap(current))
+                .sorted(Comparator.comparing(SosOffer::getEstimatedArrivalMinutes,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
                 .map(assembler::toCandidate)
                 .toList();
 
@@ -305,6 +319,19 @@ public class SosService {
 
         return new SosCandidatesResponse(sosRequestId, current.getStatus(), current.getSelectionExpiresAt(),
                 selectionOpen, candidates);
+    }
+
+    /**
+     * How many candidates this request's shortlist may hold: the configured target, plus one for
+     * each expansion the customer has asked for.
+     *
+     * <p>It has to grow with the search. Expansion exists to give the customer <em>more</em> to
+     * choose between; a fixed cap would mean the professionals it turned up had nowhere to be
+     * shown, so pressing the button would visibly do nothing. Bounded by construction —
+     * {@code target-candidate-count + max-search-expansions}, three plus two at the defaults.
+     */
+    private int candidateCap(SosRequest request) {
+        return properties.getTargetCandidateCount() + request.getSearchExpansions();
     }
 
     // ------------------------------------------------------------------
@@ -429,10 +456,137 @@ public class SosService {
                 "Customer selected professional " + professional.getId());
         notificationService.recordSosNotification(sosRequestId, professional.getUserId(),
                 NotificationMessageType.SOS_PROFESSIONAL_SELECTED);
+        notifyLosingCandidates(sosRequestId, offerId);
 
         log.info("sos.selected sosRequestId={} offerId={} professionalId={} orderId={}",
                 sosRequestId, offerId, professional.getId(), order.getId());
         return assembler.toRequestResponse(reload(sosRequestId), SosAddressAccess.FULL);
+    }
+
+    // ------------------------------------------------------------------
+    // Customer: widen the search ("סרוק שוב")
+    // ------------------------------------------------------------------
+
+    /**
+     * {@code POST /api/sos/requests/{id}/scan-again} — <b>the customer asks the platform to look
+     * further, on the same request.</b>
+     *
+     * <p>This is a real domain operation, not a refetch and not an animation. It widens the
+     * request's search scope, dispatches offers to professionals who were <em>not</em> contacted
+     * before, extends the deadline the search is running against, and writes a
+     * {@code SEARCH_EXPANDED} history row. Nothing about the attempt is reset: the same
+     * {@code sos_requests} row, the same issue, the same offers, and — critically — the same
+     * candidates. A professional who has already said they are available stays visible and stays
+     * selectable throughout.
+     *
+     * <h2>What it is bounded by</h2>
+     *
+     * {@code pronto.sos.max-search-expansions}, enforced inside the guarded update rather than by
+     * a check here, so it holds under concurrency. There is no automatic expansion anywhere in
+     * this feature: the search widens when the customer asks, at most that many times, and then
+     * stops offering. {@link SosSearchScope} documents what "wider" actually means.
+     *
+     * <h2>The four races this has to survive, and where each is handled</h2>
+     *
+     * <ul>
+     *   <li><b>A professional accepts while the expansion is in flight.</b> Nothing collides:
+     *       acceptance touches the offer, expansion touches the request's expansion counter and
+     *       writes new offer rows for different professionals. The accepting professional stays
+     *       a candidate, and cannot be dispatched a second offer
+     *       ({@code ux_sos_offers_request_professional} plus the exclusion set).</li>
+     *   <li><b>The customer selects while the expansion is in flight.</b>
+     *       {@code selectedProfessionalId IS NULL} and the status set are both inside the guarded
+     *       update, so a late expansion affects nothing and dispatches nothing.
+     *       <b>Selection always wins.</b></li>
+     *   <li><b>The customer double-taps.</b> The update is a compare-and-set on the expansion
+     *       count: both calls read {@code n}, exactly one writes {@code n+1}. The loser returns
+     *       the current state rather than an error — it asked for something that had just
+     *       happened, which is not a failure to report to somebody in a hurry.</li>
+     *   <li><b>The request expires between the read and the write.</b> {@link #enforceDeadlines}
+     *       runs first and the status set in the update is checked by the database, so an expired
+     *       request cannot be expanded.</li>
+     * </ul>
+     *
+     * @throws ApiException {@code 403} if not this customer's request, {@code 409
+     *         SOS_ALREADY_SELECTED} once a professional has been chosen, {@code 409
+     *         SOS_EXPANSION_LIMIT_REACHED} at the configured maximum, {@code 410
+     *         SOS_WINDOW_EXPIRED} / {@code 409 SOS_INVALID_STATE} when the request is no longer
+     *         searching
+     */
+    @Transactional
+    public SosRequestResponse expandSearch(Long callerId, Long sosRequestId) {
+        SosRequest request = loadRequest(sosRequestId);
+        if (!request.getCustomerId().equals(callerId)) {
+            throw forbidden();
+        }
+        SosRequest current = enforceDeadlines(request);
+        requireExpandable(current);
+
+        short expected = (short) current.getSearchExpansions();
+        Instant now = Instant.now();
+        int affected = sosRequestRepository.expandSearch(sosRequestId, expected, (short) (expected + 1),
+                (short) properties.getMaxSearchExpansions(),
+                now.plus(Duration.ofSeconds(properties.getMatchingWindowSeconds())),
+                now.plus(Duration.ofSeconds(properties.getSelectionWindowSeconds())),
+                now);
+        if (affected == 0) {
+            // Lost a race. Re-read and report the accurate reason -- except for the double-tap
+            // case, where the thing the customer asked for has just happened and the honest
+            // answer is the current state, not an error.
+            SosRequest after = reload(sosRequestId);
+            if (after.getSelectedProfessionalId() != null) {
+                throw new ApiException(ErrorCode.SOS_ALREADY_SELECTED,
+                        "A professional has already been selected for SOS request " + sosRequestId + ".");
+            }
+            if (after.getSearchExpansions() >= properties.getMaxSearchExpansions()) {
+                throw new ApiException(ErrorCode.SOS_EXPANSION_LIMIT_REACHED,
+                        "SOS request " + sosRequestId + " has already been expanded the maximum "
+                                + properties.getMaxSearchExpansions() + " time(s).");
+            }
+            if (!after.getStatus().isAcceptingProfessionalResponses()) {
+                throw new ApiException(ErrorCode.SOS_INVALID_STATE,
+                        "SOS request " + sosRequestId + " is no longer searching (status "
+                                + after.getStatus() + ").");
+            }
+            log.info("sos.search-expanded.concurrent-duplicate sosRequestId={} expansions={}",
+                    sosRequestId, after.getSearchExpansions());
+            return assembler.toRequestResponse(after, SosAddressAccess.FULL);
+        }
+
+        SosRequest expanded = reload(sosRequestId);
+        SosSearchScope scope = SosSearchScope.forLevel(expanded.getSearchExpansions(),
+                expanded.getUrgency(), properties);
+        int dispatched = sosDispatchService.expand(expanded, scope);
+
+        sosEventService.recordCustomer(sosRequestId, callerId, SosEventType.SEARCH_EXPANDED,
+                expanded.getStatus(), expanded.getStatus(),
+                "Search widened to scope level " + scope.level() + "; " + dispatched
+                        + " additional professional(s) contacted");
+
+        log.info("sos.search-expanded sosRequestId={} level={} poolSize={} newOffers={} status={}",
+                sosRequestId, scope.level(), scope.poolSize(), dispatched, expanded.getStatus());
+        return assembler.toRequestResponse(reload(sosRequestId), SosAddressAccess.FULL);
+    }
+
+    /** The friendly pre-check. The guarded update is what actually decides — see {@link #expandSearch}. */
+    private void requireExpandable(SosRequest current) {
+        if (current.getSelectedProfessionalId() != null) {
+            throw new ApiException(ErrorCode.SOS_ALREADY_SELECTED,
+                    "A professional has already been selected for SOS request " + current.getId() + ".");
+        }
+        if (!current.getStatus().isAcceptingProfessionalResponses()) {
+            if (current.getStatus() == SosRequestStatus.EXPIRED) {
+                throw new ApiException(ErrorCode.SOS_WINDOW_EXPIRED,
+                        "SOS request " + current.getId() + " has expired and can no longer be expanded.");
+            }
+            throw new ApiException(ErrorCode.SOS_INVALID_STATE,
+                    "SOS request " + current.getId() + " is not searching (status " + current.getStatus() + ").");
+        }
+        if (current.getSearchExpansions() >= properties.getMaxSearchExpansions()) {
+            throw new ApiException(ErrorCode.SOS_EXPANSION_LIMIT_REACHED,
+                    "SOS request " + current.getId() + " has already been expanded the maximum "
+                            + properties.getMaxSearchExpansions() + " time(s).");
+        }
     }
 
     // ------------------------------------------------------------------
@@ -482,13 +636,39 @@ public class SosService {
     // ------------------------------------------------------------------
 
     /**
-     * Opens the customer's selection window if the request is ready for it. Called after every
-     * professional acceptance, and by the sweep when the response window closes.
+     * Opens the customer's selection window as soon as there is anything to choose between.
+     * Called after every professional acceptance, and by the sweep when the response window
+     * closes.
      *
-     * @param force when {@code true} (the response window has closed), opens with however many
-     *              acceptances exist. When {@code false} (a professional just accepted), opens
-     *              only once the target count is reached — so a customer with three good options
-     *              chooses immediately rather than waiting out a timer for a fourth.
+     * <h2>One acceptance is enough — and that is the change this method exists to record</h2>
+     *
+     * This used to hold the window shut until {@code target-candidate-count} professionals had
+     * accepted (or the response window closed), so a customer whose first professional answered
+     * in eight seconds could see them, read their profile, and not be allowed to take them for
+     * another two minutes while the platform waited for a second and a third. For somebody with
+     * water coming through a ceiling that is the wrong trade in every direction: the option is
+     * real, it is on their screen, and the wait buys them nothing they asked for.
+     *
+     * <p>So the gate is now simply "is there at least one". Everything the old threshold was
+     * protecting is still protected, by mechanisms that were always the real ones:
+     * <ul>
+     *   <li><b>More options still arrive.</b> Opening the window does not stop the search —
+     *       {@code WAITING_FOR_CUSTOMER_SELECTION} still accepts professional responses (see
+     *       {@code SosRequestStatus#isAcceptingProfessionalResponses}), so candidates two and
+     *       three appear alongside the first if they answer.</li>
+     *   <li><b>The customer can ask for more.</b> "סרוק שוב" widens the search on this same
+     *       request and extends the window it runs in — see {@link #expandSearch}.</li>
+     *   <li><b>Nobody is rushed.</b> The window is a deadline, not an instruction; it is the same
+     *       {@code selection-window-seconds} it always was.</li>
+     * </ul>
+     *
+     * <p>{@code CANDIDATES_READY}/{@code CUSTOMER_SELECTION_STARTED} are singleton events, so
+     * they are written once, by whichever call actually wins the guarded update.
+     *
+     * @param force retained to distinguish the caller for the history row: {@code true} means the
+     *              response window closed and this is the sweep's last chance to salvage the
+     *              request, {@code false} means a professional just answered. Both open the
+     *              window on one acceptance now; the parameter no longer changes the threshold.
      * @return {@code true} if the window was opened by this call
      */
     @Transactional
@@ -500,9 +680,6 @@ public class SosService {
 
         long accepted = sosOfferRepository.countBySosRequestIdAndStatus(sosRequestId, SosOfferStatus.ACCEPTED);
         if (accepted == 0) {
-            return false;
-        }
-        if (!force && accepted < properties.getTargetCandidateCount()) {
             return false;
         }
 
@@ -712,7 +889,9 @@ public class SosService {
      *         {@link SosAddressAccess#FULL}; a professional gets it only once
      *         {@code selected_professional_id} is them. An offered professional — including one
      *         who has already responded {@code ACCEPTED} — gets
-     *         {@link SosAddressAccess#CITY_ONLY}, because being available is not being chosen.
+     *         {@link SosAddressAccess#STREET_AND_CITY}: street and city are enough to estimate the
+     *         journey, and the house number stays withheld because being available is not being
+     *         chosen.
      * @throws com.pronto.common.exception.ApiException {@code 403} if the caller is neither the
      *         customer nor a professional holding an offer on this request
      */
@@ -729,7 +908,7 @@ public class SosService {
                 // field that records it.
                 return professional.get().getId().equals(request.getSelectedProfessionalId())
                         ? SosAddressAccess.FULL
-                        : SosAddressAccess.CITY_ONLY;
+                        : SosAddressAccess.STREET_AND_CITY;
             }
         }
         throw forbidden();
@@ -778,6 +957,36 @@ public class SosService {
             case PROFESSIONAL -> CancelledBy.PROFESSIONAL;
             case SYSTEM -> CancelledBy.SYSTEM;
         };
+    }
+
+    /**
+     * Tells the professionals who said "I'm available" and were not chosen.
+     *
+     * <p>{@code SOS_NOT_SELECTED} existed in {@code NotificationMessageType} and in the realtime
+     * vocabulary, but nothing ever wrote the notification row — so a professional who held a slot
+     * open for a stranger learned the outcome only if they happened to have the socket connected
+     * at that moment, and otherwise never at all. Their inbox simply kept a card that had quietly
+     * stopped being real.
+     *
+     * <p>Scoped to {@code NOT_SELECTED}, read back after {@code closeLosingOffers} has run.
+     * That status is reachable only from {@code ACCEPTED}, so this is exactly the set that
+     * positively responded and lost. Professionals who never answered are {@code EXPIRED} and are
+     * deliberately skipped: being passed over is only meaningful to someone who was in the
+     * running, and telling the rest would be inventing a rejection they never risked.
+     *
+     * <p>The winner's own offer is {@code SELECTED} by now and so cannot match, but
+     * {@code selectedOfferId} is excluded explicitly anyway — a notification telling the chosen
+     * professional they were passed over is the one mistake here that would actually cost a job.
+     */
+    private void notifyLosingCandidates(Long sosRequestId, Long selectedOfferId) {
+        for (SosOffer offer : sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(sosRequestId)) {
+            if (offer.getStatus() != SosOfferStatus.NOT_SELECTED || offer.getId().equals(selectedOfferId)) {
+                continue;
+            }
+            professionalRepository.findById(offer.getProfessionalId())
+                    .ifPresent(p -> notificationService.recordSosNotification(sosRequestId, p.getUserId(),
+                            NotificationMessageType.SOS_NOT_SELECTED));
+        }
     }
 
     /** Notifies whichever party did <em>not</em> take the action. Nobody needs telling what they just did. */

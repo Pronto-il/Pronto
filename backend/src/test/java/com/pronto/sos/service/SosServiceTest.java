@@ -13,6 +13,7 @@ import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.sos.config.SosProperties;
 import com.pronto.sos.dto.CreateSosRequestRequest;
+import com.pronto.sos.dto.SosCandidate;
 import com.pronto.sos.dto.SosCandidatesResponse;
 import com.pronto.sos.dto.SosRequestResponse;
 import com.pronto.sos.entity.SosActorType;
@@ -41,6 +42,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -96,18 +98,28 @@ class SosServiceTest {
 
     /**
      * Mirrors the real assembler closely enough to be worth asserting on: it echoes back the
-     * {@link SosAddressAccess} it was handed via the street/lat fields, so a test can tell a
-     * redacted response from a full one without standing up the real assembler.
+     * {@link SosAddressAccess} it was handed via the latitude field, so a test can tell a redacted
+     * response from a full one without standing up the real assembler.
+     *
+     * <p>Latitude rather than street, since street is now disclosed at <em>both</em> access levels
+     * — a professional needs it to estimate an arrival time. Coordinates are not disclosed at
+     * either level below {@code FULL}, which makes latitude the honest discriminator here.
      */
     private static SosRequestResponse stubResponse(SosRequest request, SosAddressAccess access) {
         boolean exact = access == SosAddressAccess.FULL;
         return new SosRequestResponse(request.getId(), request.getIssueId(), request.getCustomerId(),
                 request.getCategoryId(), null, null, request.getUrgency(), request.getStatus(),
                 request.getServiceCity(),
-                exact ? request.getServiceStreet() : null, null, null, null, null, null,
+                request.getServiceStreet(), null, null, null, null, null,
                 exact ? request.getLatitude() : null, null,
-                request.getSelectedProfessionalId(), null, request.getSelectedOfferId(), request.getOrderId(),
-                request.getCancelledBy(), 0, 0, request.getMatchingExpiresAt(), request.getSelectionExpiresAt(),
+                request.getSelectedProfessionalId(), null, request.getSelectedOfferId(), null,
+                request.getOrderId(),
+                request.getCancelledBy(), 0, 0,
+                request.getSearchExpansions(), 2,
+                request.getSelectedProfessionalId() == null
+                        && request.getStatus().isAcceptingProfessionalResponses()
+                        && request.getSearchExpansions() < 2,
+                request.getMatchingExpiresAt(), request.getSelectionExpiresAt(),
                 null, null, null, null, null, null, null, null);
     }
 
@@ -133,6 +145,23 @@ class SosServiceTest {
         setField(offer, "id", OFFER_ID);
         setField(offer, "status", status);
         return offer;
+    }
+
+    /** An accepted offer with a distinct id and ETA, for the ordering/cap tests. */
+    private static SosOffer offerWith(long offerId, int etaMinutes) {
+        SosOffer offer = new SosOffer(REQUEST_ID, PROFESSIONAL_ID, 1, new BigDecimal("0.8"),
+                new BigDecimal("8.0"), etaMinutes, new BigDecimal("250.00"), new BigDecimal("50.00"),
+                new BigDecimal("30.00"), Instant.now(), Instant.now().plusSeconds(120));
+        setField(offer, "id", offerId);
+        setField(offer, "status", SosOfferStatus.ACCEPTED);
+        return offer;
+    }
+
+    /** Just enough of a candidate to assert identity and order on. */
+    private static SosCandidate candidateOf(SosOffer offer) {
+        return new SosCandidate(offer.getId(), offer.getProfessionalId(), "Dana", null, null, null,
+                null, 0L, offer.getEstimatedArrivalMinutes(), offer.getDistanceKm(), offer.getVisitFee(),
+                offer.getSosFee(), offer.getSosFee(), offer.getPlatformCommission(), Instant.now());
     }
 
     private static Professional professional() {
@@ -285,6 +314,26 @@ class SosServiceTest {
         when(sosOfferRepository.markSelected(eq(OFFER_ID), any())).thenReturn(1);
     }
 
+    /**
+     * A losing candidate: a second professional who responded available and was passed over. Its
+     * status is what {@code closeLosingOffers} leaves behind, since {@code notifyLosingCandidates}
+     * reads the offers back <em>after</em> that call rather than trusting the pre-selection view.
+     */
+    private static SosOffer losingOffer(Long offerId, Long professionalId, SosOfferStatus status) {
+        SosOffer offer = new SosOffer(REQUEST_ID, professionalId, 2, new BigDecimal("1.2"),
+                new BigDecimal("9.0"), 25, new BigDecimal("250.00"), new BigDecimal("50.00"),
+                new BigDecimal("30.00"), Instant.now(), Instant.now().plusSeconds(120));
+        setField(offer, "id", offerId);
+        setField(offer, "status", status);
+        return offer;
+    }
+
+    private static Professional professional(Long id, Long userId) {
+        Professional professional = new Professional(userId, CATEGORY_ID, "Center", new BigDecimal("250.00"));
+        setField(professional, "id", id);
+        return professional;
+    }
+
     @Test
     void selectCreatesAnOrderMarksTheWinnerAndClosesTheRest() {
         stubSelectableRequest();
@@ -302,6 +351,87 @@ class SosServiceTest {
                 eq(SosRequestStatus.PROFESSIONAL_SELECTED), any());
         verify(notificationService).recordSosNotification(REQUEST_ID, PROFESSIONAL_USER_ID,
                 NotificationMessageType.SOS_PROFESSIONAL_SELECTED);
+    }
+
+    /**
+     * The professionals who said "I'm available" and lost are told so.
+     *
+     * <p>{@code SOS_NOT_SELECTED} existed in the notification enum and in the realtime vocabulary,
+     * but nothing ever wrote the row — so a professional who held time open for a stranger learned
+     * the outcome only if their socket happened to be connected at that instant, and otherwise
+     * never. Their inbox just kept a card that had quietly stopped being real.
+     */
+    @Test
+    void selectTellsTheAvailableProfessionalsWhoWerePassedOver() {
+        stubSelectableRequest();
+        when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(REQUEST_ID)).thenReturn(List.of(
+                offer(SosOfferStatus.SELECTED),
+                losingOffer(201L, 4L, SosOfferStatus.NOT_SELECTED)));
+        when(professionalRepository.findById(4L)).thenReturn(Optional.of(professional(4L, 44L)));
+
+        service.selectProfessional(CUSTOMER_ID, REQUEST_ID, OFFER_ID);
+
+        verify(notificationService).recordSosNotification(REQUEST_ID, 44L,
+                NotificationMessageType.SOS_NOT_SELECTED);
+    }
+
+    /**
+     * Being passed over is only meaningful to somebody who was actually in the running. A
+     * professional whose offer simply lapsed never risked anything, and inventing a rejection for
+     * them would be both untrue and demoralising.
+     */
+    @Test
+    void selectDoesNotTellProfessionalsWhoNeverAnsweredThatTheyWerePassedOver() {
+        stubSelectableRequest();
+        when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(REQUEST_ID)).thenReturn(List.of(
+                offer(SosOfferStatus.SELECTED),
+                losingOffer(201L, 4L, SosOfferStatus.EXPIRED),
+                losingOffer(202L, 5L, SosOfferStatus.REJECTED)));
+
+        service.selectProfessional(CUSTOMER_ID, REQUEST_ID, OFFER_ID);
+
+        verify(notificationService, never()).recordSosNotification(anyLong(), anyLong(),
+                eq(NotificationMessageType.SOS_NOT_SELECTED));
+    }
+
+    /** The one mistake here that would actually cost somebody a job. */
+    @Test
+    void selectNeverTellsTheWinnerTheyWerePassedOver() {
+        stubSelectableRequest();
+        when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(REQUEST_ID)).thenReturn(List.of(
+                offer(SosOfferStatus.SELECTED),
+                losingOffer(201L, 4L, SosOfferStatus.NOT_SELECTED)));
+        when(professionalRepository.findById(4L)).thenReturn(Optional.of(professional(4L, 44L)));
+
+        service.selectProfessional(CUSTOMER_ID, REQUEST_ID, OFFER_ID);
+
+        verify(notificationService, never()).recordSosNotification(REQUEST_ID, PROFESSIONAL_USER_ID,
+                NotificationMessageType.SOS_NOT_SELECTED);
+        verify(notificationService).recordSosNotification(REQUEST_ID, PROFESSIONAL_USER_ID,
+                NotificationMessageType.SOS_PROFESSIONAL_SELECTED);
+    }
+
+    /**
+     * Exactly one notification per losing professional. The duplicate-looking notification list
+     * this milestone investigated turned out to be a labelling problem rather than duplicate rows,
+     * and this is the assertion that keeps it that way from the newest producer.
+     */
+    @Test
+    void eachPassedOverProfessionalIsNotifiedExactlyOnce() {
+        stubSelectableRequest();
+        when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(REQUEST_ID)).thenReturn(List.of(
+                offer(SosOfferStatus.SELECTED),
+                losingOffer(201L, 4L, SosOfferStatus.NOT_SELECTED),
+                losingOffer(202L, 5L, SosOfferStatus.NOT_SELECTED)));
+        when(professionalRepository.findById(4L)).thenReturn(Optional.of(professional(4L, 44L)));
+        when(professionalRepository.findById(5L)).thenReturn(Optional.of(professional(5L, 55L)));
+
+        service.selectProfessional(CUSTOMER_ID, REQUEST_ID, OFFER_ID);
+
+        verify(notificationService, times(1))
+                .recordSosNotification(REQUEST_ID, 44L, NotificationMessageType.SOS_NOT_SELECTED);
+        verify(notificationService, times(1))
+                .recordSosNotification(REQUEST_ID, 55L, NotificationMessageType.SOS_NOT_SELECTED);
     }
 
     /** The order carries the offer's snapshotted economics, not a freshly-read base price. */
@@ -385,6 +515,169 @@ class SosServiceTest {
         SosRequest request = request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
         setField(request, "selectionExpiresAt", Instant.now().plusSeconds(60));
         return request;
+    }
+
+    // ------------------------------------------------------------------
+    // "סרוק שוב" — manual, bounded search expansion
+    // ------------------------------------------------------------------
+
+    /**
+     * The base case: a request still waiting on responses widens, dispatches a further wave, and
+     * records it — all on the same {@code sos_requests} row, with no status change.
+     */
+    @Test
+    void scanAgainWidensTheSameRequestAndDispatchesAFurtherWave() {
+        SosRequest searching = request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
+        SosRequest expanded = request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
+        setField(expanded, "searchExpansions", (short) 1);
+        when(sosRequestRepository.findById(REQUEST_ID))
+                .thenReturn(Optional.of(searching))
+                .thenReturn(Optional.of(expanded));
+        when(sosRequestRepository.expandSearch(eq(REQUEST_ID), eq((short) 0), eq((short) 1), eq((short) 2),
+                any(), any(), any())).thenReturn(1);
+        when(sosDispatchService.expand(any(), any())).thenReturn(4);
+
+        SosRequestResponse response = service.expandSearch(CUSTOMER_ID, REQUEST_ID);
+
+        assertThat(response.id()).isEqualTo(REQUEST_ID);
+        var scope = org.mockito.ArgumentCaptor.forClass(SosSearchScope.class);
+        verify(sosDispatchService).expand(any(), scope.capture());
+        assertThat(scope.getValue().level()).isEqualTo(1);
+        // Level 1 = the base pool plus one increment, as a running total across every wave.
+        assertThat(scope.getValue().poolSize())
+                .isEqualTo(properties.getCandidatePoolSize() + properties.getExpansionPoolIncrement());
+        verify(sosEventService).recordCustomer(eq(REQUEST_ID), eq(CUSTOMER_ID),
+                eq(SosEventType.SEARCH_EXPANDED), any(), any(), any());
+    }
+
+    /** A customer already choosing may still widen — that is the whole point of the control. */
+    @Test
+    void scanAgainIsAllowedWhileTheSelectionWindowIsOpen() {
+        when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(selectableRequest()));
+        when(sosRequestRepository.expandSearch(anyLong(), Mockito.anyShort(), Mockito.anyShort(),
+                Mockito.anyShort(), any(), any(), any())).thenReturn(1);
+
+        service.expandSearch(CUSTOMER_ID, REQUEST_ID);
+
+        verify(sosDispatchService).expand(any(), any());
+    }
+
+    /**
+     * <b>Selection always wins over an in-flight expansion.</b> Nothing is dispatched, and the
+     * customer is told the specific reason rather than a generic conflict.
+     */
+    @Test
+    void scanAgainAfterAProfessionalWasSelectedIsRefusedAndDispatchesNothing() {
+        SosRequest selected = request(SosRequestStatus.PROFESSIONAL_SELECTED);
+        setField(selected, "selectedProfessionalId", PROFESSIONAL_ID);
+        when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(selected));
+
+        assertThatThrownBy(() -> service.expandSearch(CUSTOMER_ID, REQUEST_ID))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.SOS_ALREADY_SELECTED));
+        verify(sosDispatchService, never()).expand(any(), any());
+        verify(sosRequestRepository, never()).expandSearch(anyLong(), Mockito.anyShort(), Mockito.anyShort(),
+                Mockito.anyShort(), any(), any(), any());
+    }
+
+    /** The bound is real: at the configured maximum there is no further expansion to be had. */
+    @Test
+    void scanAgainAtTheConfiguredMaximumIsRefused() {
+        SosRequest maxed = request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
+        setField(maxed, "searchExpansions", (short) 2);
+        when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(maxed));
+
+        assertThatThrownBy(() -> service.expandSearch(CUSTOMER_ID, REQUEST_ID))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode())
+                        .isEqualTo(ErrorCode.SOS_EXPANSION_LIMIT_REACHED));
+        verify(sosDispatchService, never()).expand(any(), any());
+    }
+
+    /**
+     * A double-tap. Both calls read {@code searchExpansions = 0}; the compare-and-set means only
+     * one writes, and the loser returns the state the winner produced rather than an error for
+     * something the customer wanted anyway. <b>Exactly one expansion, one dispatch wave.</b>
+     */
+    @Test
+    void aDoubleTappedScanAgainExpandsOnceAndDispatchesOnce() {
+        SosRequest searching = request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
+        SosRequest expandedOnce = request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
+        setField(expandedOnce, "searchExpansions", (short) 1);
+        when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(searching));
+        // The CAS succeeds once and then loses, exactly as two racing callers would see it.
+        when(sosRequestRepository.expandSearch(anyLong(), Mockito.anyShort(), Mockito.anyShort(),
+                Mockito.anyShort(), any(), any(), any())).thenReturn(1, 0);
+        when(sosRequestRepository.findById(REQUEST_ID))
+                .thenReturn(Optional.of(searching))
+                .thenReturn(Optional.of(expandedOnce))
+                .thenReturn(Optional.of(expandedOnce));
+
+        service.expandSearch(CUSTOMER_ID, REQUEST_ID);
+        SosRequestResponse second = service.expandSearch(CUSTOMER_ID, REQUEST_ID);
+
+        assertThat(second.id()).isEqualTo(REQUEST_ID);
+        verify(sosDispatchService, times(1)).expand(any(), any());
+        verify(sosEventService, times(1)).recordCustomer(eq(REQUEST_ID), eq(CUSTOMER_ID),
+                eq(SosEventType.SEARCH_EXPANDED), any(), any(), any());
+    }
+
+    /**
+     * A customer who asks to keep looking must not be expired seconds later by a clock set before
+     * they asked. Both deadlines are pushed out in the same guarded write.
+     */
+    @Test
+    void scanAgainExtendsTheDeadlineItIsSearchingAgainst() {
+        properties.setMatchingWindowSeconds(150);
+        properties.setSelectionWindowSeconds(120);
+        when(sosRequestRepository.findById(REQUEST_ID))
+                .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
+        when(sosRequestRepository.expandSearch(anyLong(), Mockito.anyShort(), Mockito.anyShort(),
+                Mockito.anyShort(), any(), any(), any())).thenReturn(1);
+
+        service.expandSearch(CUSTOMER_ID, REQUEST_ID);
+
+        var matching = org.mockito.ArgumentCaptor.forClass(Instant.class);
+        var selection = org.mockito.ArgumentCaptor.forClass(Instant.class);
+        var now = org.mockito.ArgumentCaptor.forClass(Instant.class);
+        verify(sosRequestRepository).expandSearch(eq(REQUEST_ID), Mockito.anyShort(), Mockito.anyShort(),
+                Mockito.anyShort(), matching.capture(), selection.capture(), now.capture());
+        assertThat(matching.getValue()).isEqualTo(now.getValue().plusSeconds(150));
+        assertThat(selection.getValue()).isEqualTo(now.getValue().plusSeconds(120));
+    }
+
+    @Test
+    void scanAgainRejectsANonOwningCustomer() {
+        when(sosRequestRepository.findById(REQUEST_ID))
+                .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
+
+        assertThatThrownBy(() -> service.expandSearch(OTHER_CUSTOMER_ID, REQUEST_ID))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.FORBIDDEN));
+    }
+
+    /** An expired request is not something to widen; the reason is specific, not generic. */
+    @Test
+    void scanAgainOnAnExpiredRequestReportsWindowExpired() {
+        when(sosRequestRepository.findById(REQUEST_ID))
+                .thenReturn(Optional.of(request(SosRequestStatus.EXPIRED)));
+
+        assertThatThrownBy(() -> service.expandSearch(CUSTOMER_ID, REQUEST_ID))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.SOS_WINDOW_EXPIRED));
+    }
+
+    /** Disabling expansion entirely is a legal deployment, and it must actually disable it. */
+    @Test
+    void scanAgainIsRefusedWhenExpansionIsConfiguredOff() {
+        properties.setMaxSearchExpansions(0);
+        when(sosRequestRepository.findById(REQUEST_ID))
+                .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
+
+        assertThatThrownBy(() -> service.expandSearch(CUSTOMER_ID, REQUEST_ID))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode())
+                        .isEqualTo(ErrorCode.SOS_EXPANSION_LIMIT_REACHED));
     }
 
     @Test
@@ -515,12 +808,15 @@ class SosServiceTest {
     // Selection window opening
     // ------------------------------------------------------------------
 
-    /** Three acceptances means the customer chooses now, not after waiting out the timer. */
+    /**
+     * <b>The first acceptance is enough.</b> This is the rule the whole SOS screen turns on: one
+     * professional has said they can come, so the customer may take them — no quota, no timer.
+     */
     @Test
-    void selectionWindowOpensEarlyOnceTheTargetCountIsReached() {
+    void selectionWindowOpensOnTheVeryFirstAcceptance() {
         when(sosRequestRepository.findById(REQUEST_ID))
                 .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
-        when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(3L);
+        when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(1L);
         when(sosRequestRepository.openSelectionWindow(eq(REQUEST_ID), any(), any())).thenReturn(1);
 
         assertThat(service.maybeOpenSelectionWindow(REQUEST_ID, false)).isTrue();
@@ -532,12 +828,24 @@ class SosServiceTest {
     }
 
     @Test
-    void selectionWindowStaysShutBelowTheTargetUnlessForced() {
+    void selectionWindowOpensOnceTheTargetCountIsReachedToo() {
         when(sosRequestRepository.findById(REQUEST_ID))
                 .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
-        when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(1L);
+        when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(3L);
+        when(sosRequestRepository.openSelectionWindow(eq(REQUEST_ID), any(), any())).thenReturn(1);
+
+        assertThat(service.maybeOpenSelectionWindow(REQUEST_ID, false)).isTrue();
+    }
+
+    /** Zero is still zero — there is nothing to choose between, forced or not. */
+    @Test
+    void selectionWindowStaysShutWithNoAcceptancesAtAll() {
+        when(sosRequestRepository.findById(REQUEST_ID))
+                .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
+        when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(0L);
 
         assertThat(service.maybeOpenSelectionWindow(REQUEST_ID, false)).isFalse();
+        assertThat(service.maybeOpenSelectionWindow(REQUEST_ID, true)).isFalse();
         verify(sosRequestRepository, never()).openSelectionWindow(anyLong(), any(), any());
     }
 
@@ -578,8 +886,7 @@ class SosServiceTest {
         properties.setTargetCandidateCount(3);
         SosRequest request = selectableRequest();
         when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(request));
-        when(sosOfferRepository.findBySosRequestIdAndStatusOrderByEstimatedArrivalMinutesAsc(
-                REQUEST_ID, SosOfferStatus.ACCEPTED))
+        when(sosOfferRepository.findBySosRequestIdAndStatusOrderByIdAsc(REQUEST_ID, SosOfferStatus.ACCEPTED))
                 .thenReturn(List.of(offer(SosOfferStatus.ACCEPTED), offer(SosOfferStatus.ACCEPTED),
                         offer(SosOfferStatus.ACCEPTED), offer(SosOfferStatus.ACCEPTED),
                         offer(SosOfferStatus.ACCEPTED)));
@@ -590,13 +897,49 @@ class SosServiceTest {
         assertThat(response.selectionOpen()).isTrue();
     }
 
+    /** Each expansion buys the shortlist one more slot, so a widened search has somewhere to put
+     *  what it finds. */
+    @Test
+    void theCandidateCapGrowsWithEachExpansion() {
+        properties.setTargetCandidateCount(3);
+        SosRequest request = selectableRequest();
+        setField(request, "searchExpansions", (short) 2);
+        when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+        when(sosOfferRepository.findBySosRequestIdAndStatusOrderByIdAsc(REQUEST_ID, SosOfferStatus.ACCEPTED))
+                .thenReturn(List.of(offer(SosOfferStatus.ACCEPTED), offer(SosOfferStatus.ACCEPTED),
+                        offer(SosOfferStatus.ACCEPTED), offer(SosOfferStatus.ACCEPTED),
+                        offer(SosOfferStatus.ACCEPTED), offer(SosOfferStatus.ACCEPTED)));
+
+        assertThat(service.getCandidates(CUSTOMER_ID, REQUEST_ID).candidates()).hasSize(5);
+    }
+
+    /**
+     * The property the expansion flow depends on: <b>a candidate already on screen is never
+     * pushed off by a faster newcomer.</b> The shortlist is filled first-come (ascending offer
+     * id) and only then sorted by ETA for display — so the two early responders survive the cap
+     * even though the late arrival has the best ETA of the three, and the display order still
+     * leads with whoever gets there soonest.
+     */
+    @Test
+    void anEarlierCandidateIsNeverEvictedByAFasterLaterOne() {
+        properties.setTargetCandidateCount(2);
+        when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(selectableRequest()));
+        when(sosOfferRepository.findBySosRequestIdAndStatusOrderByIdAsc(REQUEST_ID, SosOfferStatus.ACCEPTED))
+                .thenReturn(List.of(offerWith(201L, 40), offerWith(202L, 30), offerWith(203L, 5)));
+        when(assembler.toCandidate(any())).thenAnswer(inv -> candidateOf(inv.getArgument(0)));
+
+        SosCandidatesResponse response = service.getCandidates(CUSTOMER_ID, REQUEST_ID);
+
+        assertThat(response.candidates()).extracting(SosCandidate::offerId).containsExactly(202L, 201L);
+    }
+
     /** Polling before anyone has accepted is normal, not an error. */
     @Test
     void candidatesBeforeAnyoneAcceptsIsAnEmptyListNotAnError() {
         when(sosRequestRepository.findById(REQUEST_ID))
                 .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
-        when(sosOfferRepository.findBySosRequestIdAndStatusOrderByEstimatedArrivalMinutesAsc(
-                REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(List.of());
+        when(sosOfferRepository.findBySosRequestIdAndStatusOrderByIdAsc(REQUEST_ID, SosOfferStatus.ACCEPTED))
+                .thenReturn(List.of());
 
         SosCandidatesResponse response = service.getCandidates(CUSTOMER_ID, REQUEST_ID);
 
@@ -698,7 +1041,7 @@ class SosServiceTest {
 
         service.getRequest(PROFESSIONAL_USER_ID, UserRole.PROFESSIONAL.name(), REQUEST_ID);
 
-        verify(assembler).toRequestResponse(any(SosRequest.class), eq(SosAddressAccess.CITY_ONLY));
+        verify(assembler).toRequestResponse(any(SosRequest.class), eq(SosAddressAccess.STREET_AND_CITY));
     }
 
     /** Selection is what grants the address — and it grants it immediately, before confirmation. */
@@ -731,7 +1074,7 @@ class SosServiceTest {
 
         service.getRequest(PROFESSIONAL_USER_ID, UserRole.PROFESSIONAL.name(), REQUEST_ID);
 
-        verify(assembler).toRequestResponse(any(SosRequest.class), eq(SosAddressAccess.CITY_ONLY));
+        verify(assembler).toRequestResponse(any(SosRequest.class), eq(SosAddressAccess.STREET_AND_CITY));
     }
 
     // ------------------------------------------------------------------

@@ -164,6 +164,62 @@ class SosMatchingServiceTest {
         assertThat(service.findCandidates(request(SosUrgency.EMERGENCY), Set.of())).hasSize(7);
     }
 
+    // ---- expansion scope ----
+
+    /**
+     * <b>The pool cap is a running total across every wave.</b> An expansion from 3 to 6 may
+     * contact three more, not six more — otherwise pressing "סרוק שוב" twice would fan out far
+     * more offers than the configured ceiling for one job.
+     */
+    @Test
+    void anExpansionOnlyDispatchesTheDifferenceBetweenTheOldPoolAndTheNew() {
+        properties.setCandidatePoolSize(3);
+        properties.setExpansionPoolIncrement(3);
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+                .thenReturn(IntStream.rangeClosed(4, 20)
+                        .mapToObj(i -> professional(i, 5.0, 10, "250"))
+                        .toList());
+
+        SosSearchScope expanded = SosSearchScope.forLevel(1, SosUrgency.URGENT, properties);
+        assertThat(service.findCandidates(request(SosUrgency.URGENT), Set.of(1L, 2L, 3L), expanded)).hasSize(3);
+    }
+
+    /**
+     * The pool is already full at this level — the customer widened, but everybody the wider
+     * scope allows has already been asked. Returning nothing is correct, and the caller treats it
+     * as an ordinary empty expansion rather than a failure.
+     */
+    @Test
+    void anExpansionWhosePoolIsAlreadyFullContactsNobody() {
+        properties.setCandidatePoolSize(3);
+        properties.setExpansionPoolIncrement(1);
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+                .thenReturn(IntStream.rangeClosed(10, 20)
+                        .mapToObj(i -> professional(i, 5.0, 10, "250"))
+                        .toList());
+
+        SosSearchScope expanded = SosSearchScope.forLevel(1, SosUrgency.URGENT, properties);
+        assertThat(service.findCandidates(request(SosUrgency.URGENT), Set.of(1L, 2L, 3L, 4L), expanded)).isEmpty();
+    }
+
+    /**
+     * Eligibility is a hard filter at <em>every</em> scope level. Widening the search asks more
+     * people; it never makes somebody askable who should not have been asked at all — so the
+     * excluded set is still handed to the query on an expansion.
+     */
+    @Test
+    void expandingStillExcludesEveryoneAlreadyOffered() {
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+                .thenReturn(List.of(professional(9, 5.0, 10, "250")));
+
+        service.findCandidates(request(SosUrgency.URGENT), Set.of(1L, 2L),
+                SosSearchScope.forLevel(2, SosUrgency.URGENT, properties));
+
+        ArgumentCaptor<List<Long>> excluded = ArgumentCaptor.forClass(List.class);
+        Mockito.verify(sosCandidateRepository).findEligible(eq(CATEGORY_ID), excluded.capture());
+        assertThat(excluded.getValue()).containsExactlyInAnyOrder(1L, 2L);
+    }
+
     /** ETA is the dominant weight, so with everything else equal the faster professional wins. */
     @Test
     void fasterEtaOutranksSlowerWhenAllElseIsEqual() {

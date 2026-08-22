@@ -86,6 +86,21 @@ public class SosCustomerController {
         return ResponseEntity.ok(sosService.getCandidates(principal.id(), sosRequestId));
     }
 
+    /**
+     * "סרוק שוב" — widen the search on this same request. {@code CUSTOMER}-only.
+     *
+     * <p>Idempotent under a double-tap by construction: the expansion counter is advanced by a
+     * compare-and-set, so the second of two racing calls changes nothing and returns the state
+     * the first produced. Refused once a professional has been selected, and once the configured
+     * expansion ceiling is reached ({@code SOS_EXPANSION_LIMIT_REACHED}).
+     */
+    @PostMapping("/requests/{sosRequestId}/scan-again")
+    public ResponseEntity<SosRequestResponse> scanAgain(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                          @PathVariable("sosRequestId") String sosRequestIdRaw) {
+        Long sosRequestId = parsePathId(sosRequestIdRaw);
+        return ResponseEntity.ok(sosService.expandSearch(principal.id(), sosRequestId));
+    }
+
     /** Choose one. {@code CUSTOMER}-only, one-shot, deadline-enforced. */
     @PostMapping("/requests/{sosRequestId}/select")
     public ResponseEntity<SosRequestResponse> select(@AuthenticationPrincipal AuthenticatedUser principal,

@@ -21,7 +21,7 @@ classification, professional matching, standard + SOS booking, real-time status 
 - **v1.0 language**: Hebrew only, desktop-first responsive web (not mobile-first).
 - **Real-time transport**: short-polling, not WebSocket. **Professional approval**:
   auto-approved in v1.0, no approval workflow to build. **Service categories**: fixed
-  8-item list (Plumbing, Electrical, AC/HVAC, Appliance Repair, Locksmith, Carpentry,
+  7-item list (Plumbing, Electrical, AC/HVAC, Appliance Repair, Locksmith,
   Painting, General Handyman) as a `Categories` reference table.
 - Read `docs/architecture/overview.md` and `docs/architecture/implementation-plan.md`
   before implementing anything in a new area — they hold the approved design, data

@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+### QA scratch (manual smoke-test harnesses, seeds, screenshots — not fixtures) ###
+# Mirrors backend/.gitignore's `qa-tmp/` rule. These directories accumulate one per QA pass and
+# have never been committed; making that explicit stops a `git add -A` from sweeping them in.
+qa-tmp-*/
+qa-tmp-*.txt

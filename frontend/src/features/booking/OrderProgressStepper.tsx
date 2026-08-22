@@ -7,11 +7,14 @@ export interface OrderProgressStepperProps {
 }
 
 /** The happy path, in order. Terminal-negative statuses don't appear here — see the component
- *  doc: they render no stepper at all rather than a fake final stage. */
+ *  doc: they render no stepper at all rather than a fake final stage.
+ *
+ *  Display labels only: `key` is the unchanged backend `OrderStatus` enum value, and this table
+ *  is the single place the tracking screen maps a status to the wording the customer sees. */
 const STAGES: { key: OrderStatus; label: string }[] = [
-  { key: 'PENDING', label: 'נשלחה' },
+  { key: 'PENDING', label: 'בטיפול' },
   { key: 'CONFIRMED', label: 'אושרה' },
-  { key: 'ON_THE_WAY', label: 'בדרך' },
+  { key: 'ON_THE_WAY', label: 'בדרך אליך' },
   { key: 'COMPLETED', label: 'הושלמה' },
 ];
 

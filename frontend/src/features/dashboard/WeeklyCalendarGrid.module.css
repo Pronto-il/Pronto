@@ -262,22 +262,27 @@
   display: none;
 }
 
+/* Seven fixed, evenly-spaced columns instead of a horizontally-scrolling flex row: the whole
+   week has to be visible at once on mobile, with no horizontal overflow, down to ~320px
+   viewports. `1fr` columns plus `min-width: 0` chips let each cell shrink with the viewport
+   rather than forcing a scroll. Column order is inherited from the document's RTL direction
+   exactly as the flex row was — Sunday at the inline start (physical right). */
 .daySwitcher {
-  display: flex;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  overflow-x: auto;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-2);
   border-bottom: 1px solid var(--color-border);
 }
 
 .dayChip {
-  flex-shrink: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 2px;
-  min-width: 44px;
-  padding: var(--space-2);
+  padding: var(--space-2) 0;
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--color-surface);
@@ -292,12 +297,16 @@
 }
 
 .dayChipWeekday {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
+  line-height: 18px;
 }
 
+/* `nowrap` so a two-digit month ("31.12") never breaks across two lines inside a narrow cell. */
 .dayChipDate {
   font-size: 11px;
+  line-height: 14px;
+  white-space: nowrap;
 }
 
 .mobileBody {
@@ -313,5 +322,17 @@
 
   .mobileView {
     display: block;
+  }
+}
+
+/* Narrowest phones (~320-360px): a 7-column strip leaves ~32px per cell, so the date drops a
+   point to keep "31.12" on one line inside its cell. */
+@media (max-width: 360px) {
+  .daySwitcher {
+    padding-inline: var(--space-1);
+  }
+
+  .dayChipDate {
+    font-size: 10px;
   }
 }

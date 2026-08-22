@@ -146,7 +146,7 @@ class SosDispatchServiceTest {
 
     @Test
     void createsOneOfferPerCandidateAndNotifiesEachOne() {
-        when(sosMatchingService.findCandidates(any(), any()))
+        when(sosMatchingService.findCandidates(any(), any(), any()))
                 .thenReturn(List.of(candidate(1, "250"), candidate(2, "300")));
 
         int dispatched = service.dispatch(request());
@@ -162,7 +162,7 @@ class SosDispatchServiceTest {
 
     @Test
     void offersCarryTheSnapshottedPricingAndRankingFigures() {
-        when(sosMatchingService.findCandidates(any(), any())).thenReturn(List.of(candidate(1, "250")));
+        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(List.of(candidate(1, "250")));
 
         service.dispatch(request());
 
@@ -180,7 +180,7 @@ class SosDispatchServiceTest {
 
     @Test
     void ranksAreOneBasedAndSequential() {
-        when(sosMatchingService.findCandidates(any(), any()))
+        when(sosMatchingService.findCandidates(any(), any(), any()))
                 .thenReturn(List.of(candidate(1, "250"), candidate(2, "250"), candidate(3, "250")));
 
         service.dispatch(request());
@@ -194,7 +194,7 @@ class SosDispatchServiceTest {
     @Test
     void offersExpireAfterTheConfiguredTtl() {
         properties.setOfferTtlSeconds(90);
-        when(sosMatchingService.findCandidates(any(), any())).thenReturn(List.of(candidate(1, "250")));
+        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(List.of(candidate(1, "250")));
 
         service.dispatch(request());
 
@@ -207,7 +207,7 @@ class SosDispatchServiceTest {
     /** Nobody eligible is FAILED, not EXPIRED — a different product problem entirely. */
     @Test
     void noCandidatesFailsTheRequestAndTellsTheCustomer() {
-        when(sosMatchingService.findCandidates(any(), any())).thenReturn(List.of());
+        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(List.of());
 
         int dispatched = service.dispatch(request());
 
@@ -222,7 +222,7 @@ class SosDispatchServiceTest {
 
     @Test
     void offersSentEventIsRecordedOnASuccessfulWave() {
-        when(sosMatchingService.findCandidates(any(), any())).thenReturn(List.of(candidate(1, "250")));
+        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(List.of(candidate(1, "250")));
 
         service.dispatch(request());
 
@@ -236,13 +236,73 @@ class SosDispatchServiceTest {
         SosOffer existing = new SosOffer(REQUEST_ID, 5L, 1, new BigDecimal("0.9"), null, null,
                 null, BigDecimal.ZERO, BigDecimal.ZERO, java.time.Instant.now(), java.time.Instant.now());
         when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(REQUEST_ID)).thenReturn(List.of(existing));
-        when(sosMatchingService.findCandidates(any(), any())).thenReturn(List.of(candidate(1, "250")));
+        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(List.of(candidate(1, "250")));
 
         service.dispatch(request());
 
         ArgumentCaptor<Set<Long>> excluded = ArgumentCaptor.forClass(Set.class);
-        verify(sosMatchingService).findCandidates(any(), excluded.capture());
+        verify(sosMatchingService).findCandidates(any(), excluded.capture(), any());
         assertThat(excluded.getValue()).containsExactly(5L);
+
+        ArgumentCaptor<SosOffer> captor = ArgumentCaptor.forClass(SosOffer.class);
+        verify(sosOfferRepository).saveAndFlush(captor.capture());
+        assertThat(captor.getValue().getMatchRank()).isEqualTo((short) 2);
+    }
+
+    // ---- expansion ("סרוק שוב") ----
+
+    @Test
+    void expandWritesOffersAndNotifiesWithoutTransitioningTheRequest() {
+        when(sosMatchingService.findCandidates(any(), any(), any()))
+                .thenReturn(List.of(candidate(1, "250"), candidate(2, "250")));
+
+        int dispatched = service.expand(request(), SosSearchScope.forLevel(1, SosUrgency.URGENT, properties));
+
+        assertThat(dispatched).isEqualTo(2);
+        verify(sosOfferRepository, Mockito.times(2)).saveAndFlush(any(SosOffer.class));
+        verify(notificationService).recordSosNotification(REQUEST_ID, 1001L,
+                NotificationMessageType.SOS_OFFER_RECEIVED);
+        // The request is already WAITING_FOR_PROFESSIONALS or WAITING_FOR_CUSTOMER_SELECTION and
+        // must stay exactly where it is -- in particular it must not be dragged back to MATCHING,
+        // which would take the customer's existing options off the screen.
+        verify(sosRequestRepository, never()).markWaitingForProfessionals(anyLong(), any());
+        verify(sosRequestRepository, never()).markFailed(anyLong(), any());
+    }
+
+    /**
+     * <b>An expansion that turns up nobody is not a failure.</b> Usually it just means the
+     * platform has already asked everyone it can — and failing the request over it would destroy
+     * the candidates the customer already has, for pressing a button.
+     */
+    @Test
+    void anExpansionThatFindsNobodyNewNeverFailsTheRequest() {
+        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(List.of());
+
+        int dispatched = service.expand(request(), SosSearchScope.forLevel(2, SosUrgency.URGENT, properties));
+
+        assertThat(dispatched).isZero();
+        verify(sosRequestRepository, never()).markFailed(anyLong(), any());
+        verify(notificationService, never()).recordSosNotification(anyLong(), anyLong(),
+                eq(NotificationMessageType.SOS_NO_PROFESSIONALS));
+        verify(sosOfferRepository, never()).saveAndFlush(any(SosOffer.class));
+    }
+
+    /** An expansion wave continues the rank sequence, exactly as a second dispatch wave does. */
+    @Test
+    void expansionRanksContinueFromTheOffersAlreadySent() {
+        SosOffer existing = new SosOffer(REQUEST_ID, 5L, 1, new BigDecimal("0.9"), null, null,
+                null, BigDecimal.ZERO, BigDecimal.ZERO, java.time.Instant.now(), java.time.Instant.now());
+        when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(REQUEST_ID)).thenReturn(List.of(existing));
+        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(List.of(candidate(1, "250")));
+
+        service.expand(request(), SosSearchScope.forLevel(1, SosUrgency.URGENT, properties));
+
+        ArgumentCaptor<Set<Long>> excluded = ArgumentCaptor.forClass(Set.class);
+        ArgumentCaptor<SosSearchScope> scope = ArgumentCaptor.forClass(SosSearchScope.class);
+        verify(sosMatchingService).findCandidates(any(), excluded.capture(), scope.capture());
+        // The professional who already holds an offer is excluded -- nobody is dispatched twice.
+        assertThat(excluded.getValue()).containsExactly(5L);
+        assertThat(scope.getValue().level()).isEqualTo(1);
 
         ArgumentCaptor<SosOffer> captor = ArgumentCaptor.forClass(SosOffer.class);
         verify(sosOfferRepository).saveAndFlush(captor.capture());

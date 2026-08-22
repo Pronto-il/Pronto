@@ -1,0 +1,244 @@
+/*
+ * Contents of the in-place details surface. The sheet/dialog chrome itself is the shared `Modal`'s
+ * — this file styles only what goes inside it, so the two presentations stay consistent with every
+ * other modal in the app without a second implementation.
+ */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* ---- Identity ---- */
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.avatar,
+.avatarFallback {
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.avatarFallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: 22px;
+  font-weight: var(--font-weight-bold);
+}
+
+.identityText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.name {
+  margin: 0;
+  font-size: var(--font-size-h3);
+  line-height: var(--line-height-h3);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+}
+
+.rating {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-warning);
+}
+
+.reviewCount {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-regular);
+}
+
+.noRating {
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+/* ---- The two decision facts ---- */
+
+.highlights {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.highlight {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-secondary);
+  color: var(--color-text-secondary);
+}
+
+.highlightLabel {
+  font-size: var(--font-size-caption);
+}
+
+.highlightValue {
+  grid-column: 1 / -1;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+}
+
+/* ---- Price breakdown ---- */
+
+.prices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.priceRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+}
+
+.priceTotal {
+  padding-block-start: var(--space-2);
+  border-block-start: 1px solid var(--color-border);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+}
+
+.priceNote {
+  margin: 0;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  color: var(--color-text-muted);
+}
+
+/* ---- Trust / bio / reviews ---- */
+
+.trust {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-success);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+}
+
+.bio {
+  margin: 0;
+  font-size: var(--font-size-small);
+  line-height: 21px;
+  color: var(--color-text-secondary);
+  white-space: pre-line;
+}
+
+.reviews {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-secondary);
+}
+
+.reviewHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-block-end: var(--space-1);
+}
+
+.reviewRating {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-warning);
+}
+
+.reviewAuthor {
+  font-size: var(--font-size-caption);
+  color: var(--color-text-muted);
+}
+
+.reviewComment {
+  margin: 0;
+  font-size: var(--font-size-small);
+  line-height: 20px;
+  color: var(--color-text-secondary);
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* ---- Footer ---- */
+
+.footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.footerHint {
+  margin: 0;
+  text-align: center;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 400px) {
+  /* Two columns get cramped enough to wrap the values awkwardly; one column reads better than a
+     grid that has stopped being a grid. */
+  .highlights {
+    grid-template-columns: 1fr;
+  }
+}

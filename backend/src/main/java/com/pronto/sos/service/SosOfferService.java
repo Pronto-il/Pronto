@@ -137,9 +137,12 @@ public class SosOfferService {
      * must be rejected by the database, not slip through because application code checked the
      * clock a moment too early.
      *
-     * <p>Accepting the last needed candidate opens the customer's selection window immediately
-     * rather than waiting out the response timer — with three good options in hand there is
-     * nothing to gain from making someone with a burst pipe wait for a fourth.
+     * <p><b>The first acceptance opens the customer's selection window immediately</b>, rather
+     * than waiting for a quota or for the response timer. That is the product rule the whole
+     * screen turns on: somebody with an active leak and one real option in hand should be able to
+     * take it. The search does not stop when the window opens — this method still accepts
+     * responses in {@code WAITING_FOR_CUSTOMER_SELECTION}, so later professionals keep appearing
+     * alongside the first while the customer decides.
      */
     @Transactional
     public SosOfferResponse accept(Long callerId, Long offerId, Integer estimatedArrivalMinutes) {
@@ -148,8 +151,11 @@ public class SosOfferService {
         authorizeOfferRecipient(offer, professionalId);
 
         SosRequest request = sosService.loadRequest(offer.getSosRequestId());
-        if (request.getStatus() != SosRequestStatus.WAITING_FOR_PROFESSIONALS) {
+        if (!request.getStatus().isAcceptingProfessionalResponses()) {
             // The request moved on -- someone was already chosen, or it was cancelled/expired.
+            // This is also the backend half of "selection stops the search": once the customer
+            // has picked, no further acceptance can create a candidate, whatever any client
+            // still has on screen.
             throw new ApiException(ErrorCode.SOS_INVALID_STATE,
                     "SOS request " + request.getId() + " is no longer accepting responses (status "
                             + request.getStatus() + ").");
@@ -218,6 +224,13 @@ public class SosOfferService {
      * {@code POST /api/sos/offers/{id}/eta} — revise a committed ETA. Allowed while
      * {@code ACCEPTED} or {@code SELECTED}: traffic changes, and a customer watching a stale ETA
      * is worse than one watching a revised one.
+     *
+     * <p>Records {@link SosEventType#ETA_UPDATED}, <b>not</b> {@code PROFESSIONAL_RESPONDED}. The
+     * two are different events and were previously conflated: with only the offer's current status
+     * to go on, the realtime publisher could not tell a revision on an {@code ACCEPTED} offer from
+     * a fresh acceptance, so it told the customer "another professional is available" every time
+     * somebody edited a number. Naming the event for what happened is what lets the publisher say
+     * the true thing to both audiences — see {@code SosRealtimePublisher#publishEtaUpdated}.
      */
     @Transactional
     public SosOfferResponse updateEta(Long callerId, Long offerId, Integer estimatedArrivalMinutes) {
@@ -233,8 +246,11 @@ public class SosOfferService {
 
         SosRequest request = sosService.loadRequest(offer.getSosRequestId());
         sosEventService.recordProfessional(request.getId(), callerId, professionalId, offerId,
-                SosEventType.PROFESSIONAL_RESPONDED, request.getStatus(), null,
+                SosEventType.ETA_UPDATED, request.getStatus(), null,
                 "ETA updated to " + estimatedArrivalMinutes + " min");
+
+        log.info("sos.offer.eta-updated sosRequestId={} offerId={} professionalId={} etaMinutes={}",
+                request.getId(), offerId, professionalId, estimatedArrivalMinutes);
         return assembler.toOfferResponse(loadOffer(offerId), request);
     }
 

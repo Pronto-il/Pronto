@@ -89,6 +89,7 @@ class SingleSosFlowTest {
                 "/api/sos/requests/{sosRequestId}",
                 "/api/sos/requests/{sosRequestId}/events",
                 "/api/sos/requests/{sosRequestId}/candidates",
+                "/api/sos/requests/{sosRequestId}/scan-again",
                 "/api/sos/requests/{sosRequestId}/select",
                 "/api/sos/requests/{sosRequestId}/cancel");
     }

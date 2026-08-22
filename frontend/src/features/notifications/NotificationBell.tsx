@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell } from 'lucide-react';
-import { useNotifications } from '../../shared/hooks';
+import { useAuth, useNotifications } from '../../shared/hooks';
 import type { NotificationResponse } from '../../shared/api';
 import { formatDateTimeLabel } from '../../shared/utils/formatDateTime';
 import { getMessageTypeLabel } from './notificationLabels';
@@ -26,6 +26,7 @@ const MAX_BADGE_COUNT = 9;
  */
 export function NotificationBell() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
   const [isOpen, setIsOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -43,12 +44,49 @@ export function NotificationBell() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
 
+  /**
+   * Where a row leads, or `null` when there is nowhere honest to send the reader.
+   *
+   * Three cases, one per audience:
+   *
+   * - **Order rows** go to `/orders/{id}`, unchanged and untouched by any of this.
+   * - **A professional's SOS row** goes to `/pro/sos` — their offer inbox and active job, which is
+   *   the right destination for every professional-facing SOS type and needs no id.
+   * - **A customer's SOS row** goes to `/issues/{relatedIssueId}/sos-booking`, their live SOS
+   *   screen. That route is keyed by *issue* rather than by SOS request, deliberately: one problem
+   *   accumulates many attempts, and the customer should land on where their problem stands now.
+   *
+   * The customer case is the one that used to be broken. The row carries `relatedSosRequestId`
+   * (the correct subject to store — it is FK-constrained to `sos_requests`), which was a subject
+   * with no destination, so every customer SOS notification was a dead end. `relatedIssueId` is
+   * derived server-side from that request at read time — no duplicated state, no second column.
+   * It can still be `null` for a request that no longer resolves, and a dead end remains better
+   * than a wrong link, so that case still returns `null`.
+   */
+  function destinationFor(notification: NotificationResponse): string | null {
+    if (notification.relatedOrderId !== null) {
+      return `/orders/${notification.relatedOrderId}`;
+    }
+    if (notification.relatedSosRequestId !== null) {
+      if (user?.role === 'PROFESSIONAL') {
+        return '/pro/sos';
+      }
+      if (notification.relatedIssueId !== null) {
+        return `/issues/${notification.relatedIssueId}/sos-booking`;
+      }
+    }
+    return null;
+  }
+
   function handleRowClick(notification: NotificationResponse) {
     // Optimistic mark-read + navigate immediately — the background `POST` isn't awaited,
     // per the design brief (low-stakes, next poll tick self-corrects on failure).
     markAsRead(notification.id);
     setIsOpen(false);
-    navigate(`/orders/${notification.relatedOrderId}`);
+    const destination = destinationFor(notification);
+    if (destination !== null) {
+      navigate(destination);
+    }
   }
 
   const badgeText = unreadCount > MAX_BADGE_COUNT ? '9+' : String(unreadCount);

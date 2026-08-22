@@ -21,8 +21,20 @@ public interface SosOfferRepository extends JpaRepository<SosOffer, Long> {
 
     List<SosOffer> findBySosRequestIdOrderByMatchRankAsc(Long sosRequestId);
 
-    List<SosOffer> findBySosRequestIdAndStatusOrderByEstimatedArrivalMinutesAsc(Long sosRequestId,
-                                                                                  SosOfferStatus status);
+    /**
+     * The request's offers in a given status, in <b>arrival order</b> — offer ids are assigned at
+     * dispatch and never change, so ascending id is the order the professionals were contacted
+     * (and, within one wave, the order they are ranked in).
+     *
+     * <p>This is what the customer's shortlist is filled from, and the ordering is load-bearing
+     * rather than cosmetic. The shortlist is capped, and with a search that can be expanded a
+     * professional may accept <em>after</em> the customer is already looking at somebody. Capping
+     * an ETA-sorted list would then silently evict a visible candidate the moment a faster one
+     * turned up — the customer taps the card they were reading and it is gone. Filling
+     * first-come-first-served means a candidate that has appeared can never be pushed off by a
+     * newcomer; the response then re-sorts what it kept by ETA for display.
+     */
+    List<SosOffer> findBySosRequestIdAndStatusOrderByIdAsc(Long sosRequestId, SosOfferStatus status);
 
     /** The professional's inbox. */
     List<SosOffer> findByProfessionalIdAndStatusInOrderByCreatedAtDesc(Long professionalId,

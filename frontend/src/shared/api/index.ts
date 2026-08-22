@@ -1,4 +1,4 @@
-export { ApiError, setAuthTokenGetter, httpClient } from './httpClient';
+export { ApiError, setAuthTokenGetter, httpClient, API_BASE_URL } from './httpClient';
 
 export { registerCustomer, registerProfessional, verifyEmail, login } from './auth';
 export type {
@@ -122,6 +122,51 @@ export type {
   CategoryWithSubServicesResponse,
   MySubServicesResponse,
 } from './professionals';
+
+export {
+  createSosRequest,
+  getMySosRequests,
+  getSosRequest,
+  getSosCandidates,
+  getSosTimeline,
+  expandSosSearch,
+  selectSosProfessional,
+  cancelSosRequest,
+  getMySosOffers,
+  getSosOffer,
+  acceptSosOffer,
+  rejectSosOffer,
+  updateSosOfferEta,
+  confirmSosRequest,
+  markSosOnTheWay,
+  markSosArrived,
+  completeSosRequest,
+  isSosTerminalStatus,
+  hasSosSelection,
+  isSosSearching,
+  isSosOfferOpen,
+  isSosOfferResolved,
+  SOS_ETA_MIN_MINUTES,
+  SOS_ETA_MAX_MINUTES,
+} from './sos';
+export type {
+  SosRequestStatus,
+  SosOfferStatus,
+  SosUrgency,
+  SosActorType,
+  CreateSosRequestPayload,
+  SosRequestResponse,
+  SosCandidate,
+  SosCandidatesResponse,
+  SosOfferResponse,
+  SosOffersListResponse,
+  SosEventType,
+  SosEventResponse,
+  SosTimelineResponse,
+  SosRequestsListResponse,
+  SosRealtimeEventType,
+  SosRealtimeMessage,
+} from './sos';
 
 export { getNotifications, markNotificationRead, markAllNotificationsRead } from './notifications';
 export type {

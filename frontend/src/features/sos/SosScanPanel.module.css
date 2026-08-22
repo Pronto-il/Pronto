@@ -1,0 +1,777 @@
+/*
+ * Pronto Scan — final visual treatment.
+ *
+ * Three soft teal rings breathing outward from a clean centre, with low-weight tool silhouettes
+ * drifting around them. No map provider, no GPS, no image asset: everything is built from the
+ * design tokens, so the surface stays in step with the rest of the product for free.
+ *
+ * What this replaced, and why: a rotating conic-gradient sweep over a map-suggestive grid. It read
+ * as a military radar, it implied the platform knows where professionals physically are (it does
+ * not), and it put continuous fast motion in front of somebody who is already anxious. Nothing here
+ * rotates or glows; the fastest thing on the surface takes four seconds to complete one cycle.
+ */
+.panel {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  /* Desktop gets the larger presentation of the two, deliberately: it has the room, and the tray
+     beside it carries the candidate cards so the surface is free to be the search itself. Capped
+     rather than left to the aspect ratio, which at a desktop content width would produce a panel
+     taller than the fold. */
+  max-height: 380px;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  /* Two stacked radial washes rather than one: the inner teal tint gives the centre a sense of
+     depth, the outer near-white keeps the edges calm enough for cards to sit on. */
+  background:
+    radial-gradient(circle at 50% 46%, rgba(15, 118, 110, 0.10) 0%, rgba(15, 118, 110, 0) 58%),
+    radial-gradient(circle at 50% 50%, var(--color-primary-light) 0%, var(--color-surface) 70%),
+    var(--color-surface);
+  box-shadow: var(--shadow-elevated);
+}
+
+/* ---- the scan ---- */
+
+/*
+ * Centred with PHYSICAL `left`, not `inset-inline-start`, and that is a fix rather than a slip.
+ * Under RTL `inset-inline-start: 50%` resolves to `right: 50%`, while `translate: -50%` always
+ * moves in the physical -X direction — so the two disagree and the whole dial lands off the panel's
+ * inline-start edge. (It did: rings, tool icons and the centre pin were all rendering at a negative
+ * x on this Hebrew-only app, which is why the surface looked empty.) A centred box has no
+ * handedness, so a physical property is the correct tool here; the candidate slots below, which
+ * genuinely must mirror, keep their logical ones.
+ */
+.scan {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  /* Bounded so the outer ring always closes inside the panel rather than being clipped by
+     `overflow: hidden` — at the desktop cap of 380px, 320px leaves the dial a clear margin. */
+  width: min(84%, 320px);
+  aspect-ratio: 1;
+}
+
+/*
+ * One ring, three sizes. Each breathes on the same slow keyframe with a staggered delay, so the
+ * three read as a single pulse travelling outward rather than as three independent animations.
+ */
+.ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  /* Placement is `transform` and motion is `scale`/`opacity`, for the same reason the decoration
+     below splits them: an animation that owned `translate` would discard this centring. */
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 1px solid var(--color-primary);
+  animation: sos-ring-breathe 6s var(--ease-in-out) infinite;
+}
+
+/*
+ * The stagger is 1.2s across a 6s cycle — a fifth of the period — so the three read as one pulse
+ * travelling outward from the pin rather than as three rings independently throbbing. Each ring
+ * also breathes a little further than the one inside it, which is what gives the movement direction.
+ */
+.ringOuter {
+  width: 100%;
+  height: 100%;
+  --sos-ring-rest: 0.16;
+  --sos-ring-peak: 0.3;
+  --sos-ring-swell: 1.05;
+  animation-delay: 2.4s;
+}
+
+.ringMiddle {
+  width: 68%;
+  height: 68%;
+  --sos-ring-rest: 0.22;
+  --sos-ring-peak: 0.38;
+  --sos-ring-swell: 1.04;
+  animation-delay: 1.2s;
+  /* A whisper of fill on the middle ring gives the dial a centre of gravity without any glow. */
+  background: radial-gradient(circle, rgba(15, 118, 110, 0.05) 0%, transparent 70%);
+}
+
+.ringInner {
+  width: 36%;
+  height: 36%;
+  --sos-ring-rest: 0.3;
+  --sos-ring-peak: 0.5;
+  --sos-ring-swell: 1.03;
+  animation-delay: 0s;
+}
+
+@keyframes sos-ring-breathe {
+  0%,
+  100% {
+    scale: 1;
+    opacity: var(--sos-ring-rest, 0.2);
+  }
+  45% {
+    scale: var(--sos-ring-swell, 1.04);
+    opacity: var(--sos-ring-peak, 0.36);
+  }
+  70% {
+    scale: calc(var(--sos-ring-swell, 1.04) - 0.01);
+    opacity: var(--sos-ring-peak, 0.36);
+  }
+}
+
+/* ---- the centre ---- */
+
+/*
+ * The customer's own location: a solid teal disc in a soft halo. It breathes on the same rhythm as
+ * the rings but half as far, so it reads as the source of the pulse.
+ */
+.core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #fff;
+  box-shadow:
+    0 0 0 8px rgba(15, 118, 110, 0.08),
+    0 4px 12px rgba(15, 118, 110, 0.22);
+  /* On the rings' own period and phase-aligned with the innermost one, so the pulse reads as
+     starting here. Half the rings' travel, deliberately — the brief's "do not let the centre
+     overpower the rings" is the difference between a search origin and a heartbeat. */
+  animation: sos-core-breathe 6s var(--ease-in-out) infinite;
+}
+
+@keyframes sos-core-breathe {
+  0%,
+  100% {
+    scale: 1;
+  }
+  45% {
+    scale: 1.05;
+  }
+}
+
+/*
+ * The halo. A separate element rather than a second shadow on `.core`, because it has to expand
+ * past the pin without dragging the icon with it.
+ */
+.coreHalo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  opacity: 0.12;
+  animation: sos-core-halo 6s var(--ease-out) infinite;
+}
+
+@keyframes sos-core-halo {
+  0% {
+    scale: 1;
+    opacity: 0.16;
+  }
+  70%,
+  100% {
+    scale: 2.2;
+    opacity: 0;
+  }
+}
+
+/* ---- discovery ripple ---- */
+
+/*
+ * "Pronto found someone." One ring leaving the pin, played once when the candidate count goes up
+ * and then unmounted — the panel keys this element on the count, so React tears the old one down
+ * and mounts a fresh one, which is what restarts a `forwards` animation without a class-toggle
+ * dance.
+ *
+ * It travels further and faster than the ambient breathing so it reads as a *reaction* rather than
+ * as the next beat, and it lands right as the new candidate's own card is finishing its entrance.
+ */
+.discoveryRipple {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--color-primary);
+  pointer-events: none;
+  animation: sos-discovery-ripple 1100ms var(--ease-out) forwards;
+}
+
+@keyframes sos-discovery-ripple {
+  from {
+    scale: 1;
+    opacity: 0.55;
+  }
+  to {
+    scale: 7;
+    opacity: 0;
+  }
+}
+
+/* ---- decoration: tools and hardware ---- */
+
+/*
+ * Two tiers of decoration drifting around the rings — six tools at a readable size, twelve much
+ * smaller pieces of hardware between them. `SosScanDecor.tsx` owns the arrangement; this owns how
+ * they are placed, how they move, and what they are allowed to sit on top of.
+ *
+ * ## The bug this layout exists to avoid
+ *
+ * The previous pass placed each icon with `translate: calc(-50% + 96px) …` and then animated
+ * `translate` — the same property. An animation wins the cascade outright, so the moment each
+ * icon's keyframe started it discarded its own placement and collapsed toward the centre. Six icons
+ * slowly piling on the pin is not "too subtle"; it is broken, and it looked like nothing was
+ * rendering.
+ *
+ * So placement and motion now use different properties on purpose:
+ *
+ *   placement -> `left`/`top` percentages + `transform: translate(-50%, -50%)` for centring
+ *   motion    -> the standalone `translate` / `rotate` / `scale` properties
+ *
+ * Those compose rather than compete: CSS Transforms Level 2 applies `translate`, `rotate` and
+ * `scale` first, in that order, and only then `transform`. An animation may own `translate`
+ * outright and the placement still holds.
+ *
+ * Percentages rather than pixels, so one table scales with the dial at every breakpoint.
+ */
+.decorLayer {
+  position: absolute;
+  inset: 0;
+  /* Decoration is never a target. Every tap belongs to a candidate card or to the panel beneath. */
+  pointer-events: none;
+}
+
+.decor {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-primary);
+  /* Centres the icon on its own `left`/`top` point. `transform`, not `translate`, so the motion
+     keyframes below are free to own `translate` — see the note at the top of this block. */
+  transform: translate(-50%, -50%);
+  animation-timing-function: var(--ease-in-out);
+  animation-iteration-count: infinite;
+  pointer-events: none;
+}
+
+/*
+ * The two tiers differ in weight as well as size. Tools carry the story and have to be legible at a
+ * glance; hardware is texture the customer notices on the second look, so it sits at roughly half
+ * the presence. Both are well under the candidate cards and the header, which is what keeps the
+ * surface calm with eighteen things moving on it.
+ *
+ * Presence is a pair of custom properties rather than a plain `opacity`, and that is load-bearing.
+ * The keyframes below breathe between the two, and an animation wins the cascade outright — so a
+ * state rule that set `opacity` directly would be silently ignored by every element whose keyframe
+ * mentions opacity, and obeyed by the rest. (It was: half the tools dimmed with the `ready` state
+ * and half carried on at full strength.) With the values behind variables, a state rule moves the
+ * range and every element follows.
+ */
+.tool {
+  --sos-decor-rest: 0.38;
+  --sos-decor-peak: 0.5;
+  opacity: var(--sos-decor-rest);
+}
+
+.part {
+  --sos-decor-rest: 0.22;
+  --sos-decor-peak: 0.32;
+  opacity: var(--sos-decor-rest);
+}
+
+/* ---- motion ----
+ *
+ * Four shapes for the tools and three for the hardware, each with a per-item duration and delay
+ * from the arrangement table. Nothing shares a period, so the set never re-synchronises into a
+ * single group pulse — which is the thing that would make it read as a loading spinner rather than
+ * as a surface with depth.
+ *
+ * Every range is small. Hardware travels less than the tools do, deliberately: small things moving
+ * far read as particles, and this is meant to read as a workshop.
+ */
+
+/* A slow rise and fall. */
+.toolFloat {
+  animation-name: sos-tool-float;
+}
+
+@keyframes sos-tool-float {
+  0%,
+  100% {
+    translate: 0 0;
+    opacity: var(--sos-decor-rest, 0.3);
+  }
+  50% {
+    translate: 0 -10px;
+    opacity: var(--sos-decor-peak, 0.42);
+  }
+}
+
+/* A shallow arc — out and back along a curve rather than a straight line. */
+.toolArc {
+  animation-name: sos-tool-arc;
+}
+
+@keyframes sos-tool-arc {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  33% {
+    translate: 7px -6px;
+  }
+  66% {
+    translate: -5px -9px;
+  }
+}
+
+/* Sideways drift with a hint of tilt. */
+.toolSway {
+  animation-name: sos-tool-sway;
+}
+
+@keyframes sos-tool-sway {
+  0%,
+  100% {
+    translate: 0 0;
+    rotate: -3deg;
+  }
+  50% {
+    translate: -9px 4px;
+    rotate: 3deg;
+  }
+}
+
+/* Almost still — a slow tip, the way a tool resting against a wall settles. */
+.toolTilt {
+  animation-name: sos-tool-tilt;
+}
+
+@keyframes sos-tool-tilt {
+  0%,
+  100% {
+    rotate: -6deg;
+    translate: 0 0;
+  }
+  50% {
+    rotate: 5deg;
+    translate: 3px -5px;
+  }
+}
+
+/* Hardware: shorter distances, longer periods, so the small pieces read as settled rather than
+   as flying about. */
+.partDrift {
+  animation-name: sos-part-drift;
+}
+
+@keyframes sos-part-drift {
+  0%,
+  100% {
+    translate: 0 0;
+    opacity: var(--sos-decor-rest, 0.16);
+  }
+  50% {
+    translate: 4px -6px;
+    opacity: var(--sos-decor-peak, 0.26);
+  }
+}
+
+/* The only rotation on the surface, and it takes the best part of twenty seconds — a nut turning
+   slowly is the one piece of hardware for which spinning is the honest gesture. */
+.partSpin {
+  animation-name: sos-part-spin;
+}
+
+@keyframes sos-part-spin {
+  0% {
+    rotate: 0deg;
+    opacity: var(--sos-decor-rest, 0.16);
+  }
+  50% {
+    opacity: var(--sos-decor-peak, 0.26);
+  }
+  100% {
+    rotate: 360deg;
+    opacity: var(--sos-decor-rest, 0.16);
+  }
+}
+
+.partSway {
+  animation-name: sos-part-sway;
+}
+
+@keyframes sos-part-sway {
+  0%,
+  100% {
+    translate: 0 0;
+    rotate: -8deg;
+  }
+  50% {
+    translate: -5px 3px;
+    rotate: 8deg;
+  }
+}
+
+/* ---- header: location + counters ---- */
+
+/*
+ * Both live at the TOP of the panel. This is the ActiveOrderIndicator fix: that control is
+ * `position: fixed` at the bottom-inline-end of the viewport, and the counters used to sit in a
+ * strip along the bottom-inline edge of this panel, so on mobile it landed straight on top of them.
+ * Moving the readable content up, and leaving the panel's lower band free of anything tappable,
+ * removes the collision at its source rather than nudging the floating button around.
+ */
+.header {
+  position: absolute;
+  inset-block-start: var(--space-3);
+  inset-inline: var(--space-3);
+  z-index: 3;
+
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.location {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(4px);
+}
+
+.locationCity {
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.locationAddress {
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(4px);
+}
+
+.statLabel {
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.statValue {
+  margin: 0;
+  font-size: var(--font-size-body-lg);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.statActive .statValue {
+  color: var(--color-primary);
+}
+
+/* ---- "מרחיבים את החיפוש" ---- */
+
+/*
+ * Only rendered while an expansion is genuinely in flight. Deliberately says nothing about a
+ * radius, a distance or a wave number: none of that is backed by real geographic data in this
+ * milestone, and a UI that quotes "15 ק״מ" it invented is worse than one that says less.
+ */
+.expandingNote {
+  position: absolute;
+  inset-block-end: var(--space-3);
+  left: 50%;
+  translate: -50% 0;
+  z-index: 3;
+
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xl);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+  animation: sos-expanding-in var(--duration-moderate) var(--ease-out) both;
+}
+
+@keyframes sos-expanding-in {
+  from {
+    opacity: 0;
+    translate: -50% 6px;
+  }
+  to {
+    opacity: 1;
+    translate: -50% 0;
+  }
+}
+
+/*
+ * While widening, the surface picks up energy — the one moment it should visibly respond, because
+ * the customer just asked it to do something. The rings breathe at half the period and the
+ * decoration doubles its pace, so "we are looking harder" is legible without anything new appearing.
+ */
+.expanding .ring,
+.expanding .coreHalo,
+.expanding .core {
+  animation-duration: 3s;
+}
+
+.expanding .decor {
+  animation-duration: 5s;
+}
+
+/* ---- state variants ---- */
+
+/*
+ * Somebody is available: the surface steps back a little so the candidate cards are the loudest
+ * thing on it.
+ *
+ * **A little.** An earlier version of this rule dropped the decoration to 0.12 and set
+ * `animation-name: none`, which froze all eighteen elements the instant the first professional
+ * answered — so the scan died exactly when the customer was most likely to be looking at it, and
+ * the surface read as a static diagram. The search genuinely is still running at this point (more
+ * professionals keep arriving, and "סרוק שוב" is right there), so it must still look like it. The
+ * step-down is presence only; nothing stops moving.
+ *
+ * Applied by lowering the two tiers' base opacity rather than by touching the keyframes, so the
+ * per-item animation still owns its own fade and the two do not fight.
+ */
+.ready .ring {
+  opacity: 0.72;
+}
+
+.ready .tool {
+  --sos-decor-rest: 0.3;
+  --sos-decor-peak: 0.4;
+}
+
+.ready .part {
+  --sos-decor-rest: 0.17;
+  --sos-decor-peak: 0.25;
+}
+
+/* Terminal without a professional — the search is genuinely over, so it stops looking alive. */
+.stopped {
+  background: var(--color-surface-secondary);
+}
+
+.stopped .ring,
+.stopped .coreHalo {
+  opacity: 0.1;
+  animation: none;
+}
+
+.stopped .decor {
+  --sos-decor-rest: 0.08;
+  opacity: 0.08;
+  animation: none;
+}
+
+.stopped .core {
+  background: var(--color-text-muted);
+  box-shadow: none;
+  animation: none;
+}
+
+/* ---- candidate mini-cards ---- */
+
+/*
+ * Desktop keeps the tray beside the panel and this surface stays a pure search visualisation;
+ * mobile drops the tray entirely and the scan becomes the whole experience, so the cards live on
+ * it. `display: contents` on the wrapper so each marker positions against `.panel` itself rather
+ * than against an intermediate box.
+ */
+.markers {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .markers {
+    display: contents;
+  }
+
+  /*
+   * The panel is the primary canvas on mobile and has to hold real cards rather than dots, so the
+   * fixed aspect ratio gives way to a minimum height. 400px is what the slot table needs: a header
+   * band at the top, three card rows below it, the centre, and a clear lower band — all without
+   * anything touching anything else at 320px.
+   */
+  .panel {
+    aspect-ratio: auto;
+    max-height: none;
+    min-height: 400px;
+
+    /*
+     * The candidate slot grid, owned here because this panel owns the header the grid has to clear.
+     * `SosCandidateMarker` supplies only a row and a column and reads these — see its stylesheet
+     * for why the offsets cannot be inline.
+     *
+     * 100px is the header's real height at 390px (a 12px inset, a two-line location chip, and the
+     * counters beside it) plus a little room. Three rows 74px apart put the last card's bottom edge
+     * at ~296px of a 400px panel, which is what leaves the lower band clear for the floating
+     * ActiveOrderIndicator to pass over without touching anything.
+     */
+    --sos-scan-header: 100px;
+    --sos-slot-row-gap: 74px;
+  }
+
+  .scan {
+    width: min(78%, 260px);
+  }
+
+  /*
+   * No per-icon mobile table any more: the decoration is placed in percentages of the dial, so it
+   * scales with `.scan` above for free. Only the sizes step down, and only enough to keep the
+   * strokes from thickening relative to a smaller ring.
+   */
+  .tool svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .part svg {
+    width: 13px;
+    height: 13px;
+  }
+}
+
+/*
+ * 360px and below: the header's two blocks stop competing for one line. The location keeps the
+ * inline start, the counters drop beneath it, and both stay inside the top band the slot table
+ * reserves for them.
+ */
+@media (max-width: 380px) {
+  /*
+   * The header stacks here, which makes it about 25px taller — and that is exactly what used to
+   * land the counters on top of the first candidate card at 320px and 360px. The grid moves down
+   * with it, and the panel grows to keep the same clear band at the bottom.
+   */
+  .panel {
+    min-height: 430px;
+    --sos-scan-header: 128px;
+  }
+
+  /*
+   * The dial drops below the stacked header and trims slightly, so no decorative element ends up
+   * behind the location chip or the counters. Measured, not guessed: at 320px the header band ends
+   * around 140px, and a 210px dial centred at 57% of a 430px panel starts at 141px.
+   */
+  .scan {
+    top: 57%;
+    width: min(72%, 210px);
+  }
+
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .stats {
+    align-self: flex-start;
+  }
+
+  .stat {
+    flex-direction: row;
+    align-items: baseline;
+    gap: var(--space-2);
+    padding-block: 2px;
+  }
+
+  .statValue {
+    font-size: var(--font-size-body);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /*
+   * Every continuous animation stops — breathing, drift, spin, halo, discovery ripple — and the
+   * surface still reads as a scan: three concentric rings around a pinned location, with tools and
+   * hardware scattered between them. Nothing here carried information that the motion was the only
+   * way to convey, which is what makes a fully static fallback honest rather than degraded.
+   *
+   * The decoration stays *visible*, per the brief. Removing it would leave a bare dial, and a bare
+   * dial is a worse experience for the reduced-motion reader rather than an equivalent one. Fixed
+   * opacities are restated here because the keyframes that would otherwise supply them are gone.
+   */
+  .ring,
+  .core,
+  .coreHalo,
+  .decor,
+  .discoveryRipple,
+  .expandingNote {
+    animation: none;
+  }
+
+  .ring,
+  .ready .ring {
+    opacity: 0.26;
+  }
+
+  /*
+   * A touch more present than in the animated version, and stated for the `ready` state too so the
+   * step-down above cannot leave a motionless surface looking washed out. With nothing moving,
+   * presence is the only thing carrying the scan.
+   */
+  .tool,
+  .ready .tool {
+    opacity: 0.4;
+  }
+
+  .part,
+  .ready .part {
+    opacity: 0.24;
+  }
+
+  /* The halo would otherwise sit frozen at its first keyframe, reading as a permanent glow around
+     the pin. The pin's own shadow already carries that job. */
+  .coreHalo,
+  .discoveryRipple {
+    display: none;
+  }
+}

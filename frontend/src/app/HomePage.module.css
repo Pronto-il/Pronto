@@ -32,23 +32,37 @@
 }
 
 /*
- * CTA panel (design doc §2.3) — a horizontal flex row: text block (title/subtitle/arrow)
- * on the inline-start side, the mascot composed in as a real flex child on the inline-end
- * side (visually left in RTL, "coming toward" the text). Replaces MS1's absolutely-positioned
- * overlay mascot placeholder.
+ * CTA panel (design doc §2.3) — a true circle at every viewport, not a rounded rectangle:
+ * `aspect-ratio: 1 / 1` + `border-radius: 50%` on a `clamp()`ed inline size, so the shape is
+ * driven by one dimension and can never drift out of round. `max-inline-size: 100%` keeps it
+ * inside the page container on narrow phones (where `clamp()`'s floor would otherwise exceed
+ * the available width).
+ *
+ * Content stacks vertically inside it — illustration, title, subtitle, arrow, top to bottom.
+ * `column-reverse` gets that order out of the existing DOM (text block first, mascot second)
+ * without touching the markup, the same trick the old mobile-only rule already used.
+ * `justify-content: center` keeps the stack vertically balanced so the curved edge clears the
+ * content evenly at both ends, and `.ctaText`'s inline-size cap keeps the text off the sides
+ * where the circle narrows.
  */
 .cta {
   position: relative;
 
   display: flex;
+  flex-direction: column-reverse;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-6);
+  justify-content: center;
+  gap: var(--space-3);
+
+  inline-size: clamp(268px, 74vw, 400px);
+  max-inline-size: 100%;
+  aspect-ratio: 1 / 1;
 
   margin-block-start: var(--space-10);
-  padding: var(--space-8);
+  margin-inline: auto;
+  padding: var(--space-6);
 
-  border-radius: var(--radius-lg);
+  border-radius: 50%;
   border: 1px solid transparent;
 
   background: var(--color-primary-light);
@@ -71,15 +85,18 @@
 .ctaText {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  text-align: start;
+  align-items: center;
+  text-align: center;
+
+  /* Held clear of the circle's curved sides. */
+  max-inline-size: 76%;
 }
 
 .ctaTitle {
   display: block;
 
-  font-size: 24px;
-  line-height: 32px;
+  font-size: 22px;
+  line-height: 30px;
   font-weight: 700;
 
   color: var(--color-primary);
@@ -87,36 +104,64 @@
 
 .ctaSubtitle {
   display: block;
-  margin-block-start: var(--space-2);
+  margin-block-start: var(--space-1);
 
-  font-size: 16px;
+  font-size: 14px;
+  line-height: 20px;
 
   color: var(--color-text-secondary);
 }
 
+/* The panel's action affordance. A large, deliberate circle rather than the small 38px icon
+   dot it used to be: this is the one dominant action on the home screen, so it needs to read
+   as a real button at a glance. Still a decorative `<span>` inside the surrounding `<Link>`
+   (`aria-hidden`) — deliberately not promoted to its own interactive element, since nesting a
+   button inside a link would split one destination into two focus stops. */
 .ctaArrow {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 
-  width: 38px;
-  height: 38px;
+  width: 72px;
+  height: 72px;
 
-  margin-block-start: var(--space-5);
+  margin-block-start: var(--space-3);
 
   border-radius: 50%;
 
   background: var(--color-primary);
-  color: white;
+  color: #ffffff;
 
-  font-size: 20px;
+  font-size: 30px;
+  line-height: 1;
   font-weight: 700;
 
-  transition: transform 180ms ease;
+  box-shadow: 0 8px 20px var(--color-focus-ring);
+
+  transition:
+          transform 180ms ease,
+          background-color 180ms ease,
+          box-shadow 180ms ease;
 }
 
 .cta:hover .ctaArrow {
-  transform: translateX(-4px);
+  /* Negative X is "forward" in RTL — the arrow leans the way it points. */
+  transform: translateX(-4px) scale(1.04);
+  background: var(--color-primary-hover);
+  box-shadow: 0 12px 26px var(--color-focus-ring);
+}
+
+.cta:active .ctaArrow {
+  transform: scale(0.96);
+  background: var(--color-primary-active);
+  box-shadow: 0 4px 12px var(--color-focus-ring-subtle);
+}
+
+/* The circle is the visual button, but the whole panel is the link — so the panel's keyboard
+   focus ring reads on the circle too, not just on the panel edge. */
+.cta:focus-visible .ctaArrow {
+  box-shadow: 0 0 0 4px var(--color-focus-ring-subtle), 0 8px 20px var(--color-focus-ring);
 }
 
 /* -------------------------
@@ -171,28 +216,29 @@
     line-height: 24px;
   }
 
-  /* CTA panel stacks vertically — mascot above text (`column-reverse` flips the DOM order,
-     text-then-mascot, back to mascot-on-top), both centered, per design doc §2.4. */
+  /* Same circle, just smaller and with the stack tightened so all four elements clear the
+     curved edge on a phone. Shape rules (`aspect-ratio`/`border-radius: 50%`) are inherited
+     from the base rule — deliberately not restated, so the circle can't be broken here. */
   .cta {
-    flex-direction: column-reverse;
-    align-items: center;
-    gap: var(--space-4);
+    gap: var(--space-2);
     margin-block-start: var(--space-6);
-    padding: var(--space-6) var(--space-4);
-  }
-
-  .ctaText {
-    align-items: center;
-    text-align: center;
+    padding: var(--space-4);
   }
 
   .ctaTitle {
-    font-size: 21px;
-    line-height: 29px;
+    font-size: 19px;
+    line-height: 26px;
+  }
+
+  .ctaSubtitle {
+    font-size: 13px;
+    line-height: 18px;
   }
 
   .ctaArrow {
-    margin-block-start: var(--space-4);
+    width: 60px;
+    height: 60px;
+    font-size: 26px;
   }
 
   /* Shrinks the mascot to `md`'s footprint (design doc §2.4) via its own CSS custom
@@ -208,6 +254,27 @@
     flex-direction: column;
     align-items: center;
     gap: var(--space-2);
+  }
+}
+
+/* Narrowest phones: the circle bottoms out at its `clamp()` floor (or the container width),
+   so the stack gives back a little more height rather than pressing against the curve. */
+@media (max-width: 360px) {
+  .ctaTitle {
+    font-size: 18px;
+    line-height: 24px;
+  }
+
+  .ctaArrow {
+    width: 54px;
+    height: 54px;
+    font-size: 24px;
+  }
+
+  .mascotArea {
+    --mascot-w: 66px;
+    --mascot-h: 84px;
+    --mascot-scale: 0.88;
   }
 }
 

@@ -237,9 +237,16 @@ class SosRealtimePublisherTest {
         assertThat(data).doesNotContainKeys("professionalId", "offerId", "professionalIds");
     }
 
-    /** Private customer detail must not travel to a professional who has not been selected. */
+    /**
+     * Private customer detail must not travel to a professional who has not been selected.
+     *
+     * <p>Street and city are the deliberate exception, and they must be here: this payload is what
+     * a professional decides on, and the REST offer view discloses exactly the same two fields.
+     * The privacy rule holding in one surface but not the other is the failure mode
+     * {@code SosAddressAccess} exists to prevent, so both are asserted at the same line.
+     */
     @Test
-    void theOfferPayloadExposesCityButNoPrivateCustomerDetail() {
+    void theOfferPayloadExposesStreetAndCityButNoPrivateCustomerDetail() {
         request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
         stubOffers(offer(201L, PRO_A, SosOfferStatus.OFFERED));
 
@@ -247,10 +254,12 @@ class SosRealtimePublisherTest {
 
         Map<String, Object> data = captureMessageTo(PRO_A_USER, SosRealtimeEventType.SOS_OFFER_RECEIVED).data();
         assertThat(data).containsEntry("serviceCity", "Tel Aviv");
+        assertThat(data).containsEntry("serviceStreet", "Dizengoff");
         assertThat(data).containsKeys("visitFee", "sosFee", "expiresAt", "urgency", "categoryId");
         assertThat(data).doesNotContainKeys(
-                "serviceStreet", "serviceHouseNumber", "serviceApartment", "customerId",
-                "customerName", "customerPhone");
+                "serviceHouseNumber", "serviceApartment", "serviceFloor", "serviceEntrance",
+                "serviceAddressNotes", "latitude", "longitude", "customerId", "customerName",
+                "customerPhone");
     }
 
     /** A re-dispatch wave must not re-notify an offer that has already been answered. */
@@ -264,6 +273,50 @@ class SosRealtimePublisherTest {
         assertThat(captureSends()).containsExactlyInAnyOrder(
                 Map.entry(CUSTOMER_USER_ID, SosRealtimeEventType.OFFERS_SENT),
                 Map.entry(PRO_B_USER, SosRealtimeEventType.SOS_OFFER_RECEIVED));
+    }
+
+    // ------------------------------------------------------------------
+    // SEARCH_EXPANDED — "סרוק שוב"
+    // ------------------------------------------------------------------
+
+    /**
+     * An expansion routes exactly like a dispatch wave, with a different word for the customer:
+     * the newly-contacted professional is offered the job, and the customer is told the search
+     * widened — not that somebody new is available, which has not happened.
+     */
+    @Test
+    void anExpansionOffersTheNewProfessionalAndTellsTheCustomerTheSearchWidened() {
+        SosRequest request = request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
+        setField(request, "searchExpansions", (short) 1);
+        stubOffers(offer(201L, PRO_A, SosOfferStatus.ACCEPTED), offer(202L, PRO_B, SosOfferStatus.OFFERED));
+
+        publisher.publish(stubEvent(SosEventType.SEARCH_EXPANDED, null, null));
+
+        assertThat(captureSends()).containsExactlyInAnyOrder(
+                Map.entry(CUSTOMER_USER_ID, SosRealtimeEventType.SEARCH_EXPANDED),
+                Map.entry(PRO_B_USER, SosRealtimeEventType.SOS_OFFER_RECEIVED));
+    }
+
+    /**
+     * The customer's expansion payload stays aggregate, and carries <b>no radius and no
+     * distance</b> — there is no real geographic data behind this expansion yet, and a wire field
+     * is exactly how invented precision reaches a UI.
+     */
+    @Test
+    void theExpansionPayloadIsAggregateAndQuotesNoDistance() {
+        SosRequest request = request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
+        setField(request, "searchExpansions", (short) 2);
+        stubOffers(offer(201L, PRO_A, SosOfferStatus.ACCEPTED), offer(202L, PRO_B, SosOfferStatus.OFFERED));
+        when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(1L);
+
+        publisher.publish(stubEvent(SosEventType.SEARCH_EXPANDED, null, null));
+
+        Map<String, Object> data =
+                captureMessageTo(CUSTOMER_USER_ID, SosRealtimeEventType.SEARCH_EXPANDED).data();
+        assertThat(data).containsEntry("offerCount", 2);
+        assertThat(data).containsEntry("availableCandidateCount", 1L);
+        assertThat(data).containsEntry("searchExpansions", 2);
+        assertThat(data).doesNotContainKeys("radiusKm", "maxRadiusKm", "distanceKm", "professionalId", "offerId");
     }
 
     // ------------------------------------------------------------------
@@ -315,17 +368,98 @@ class SosRealtimePublisherTest {
                 Map.entry(PRO_A_USER, SosRealtimeEventType.OFFER_RESPONSE_RECORDED));
     }
 
-    /** After selection, the same domain event means an ETA revision — which the customer wants. */
+    /** After selection, an ETA revision is exactly what the customer tracking an arrival wants. */
     @Test
     void anEtaRevisionAfterSelectionReachesTheCustomer() {
         request(SosRequestStatus.CONFIRMED);
         offer(201L, PRO_A, SosOfferStatus.SELECTED);
 
-        publisher.publish(stubEvent(SosEventType.PROFESSIONAL_RESPONDED, 201L, PRO_A));
+        publisher.publish(stubEvent(SosEventType.ETA_UPDATED, 201L, PRO_A));
 
         assertThat(captureSends()).containsExactlyInAnyOrder(
                 Map.entry(CUSTOMER_USER_ID, SosRealtimeEventType.ETA_UPDATED),
                 Map.entry(PRO_A_USER, SosRealtimeEventType.OFFER_RESPONSE_RECORDED));
+    }
+
+    /**
+     * <b>The regression this whole event type was introduced for.</b> A professional who is
+     * merely available — not chosen — revises their ETA, and the customer comparing candidates
+     * must be told the true thing: this offer's number changed. It previously arrived as
+     * {@code PROFESSIONAL_AVAILABLE}, i.e. "another professional is available", when no new
+     * candidate existed at all.
+     */
+    @Test
+    void anEtaRevisionBeforeSelectionReachesTheCustomerAsAnEtaUpdate() {
+        request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
+        offer(201L, PRO_A, SosOfferStatus.ACCEPTED);
+
+        publisher.publish(stubEvent(SosEventType.ETA_UPDATED, 201L, PRO_A));
+
+        assertThat(captureSends()).containsExactlyInAnyOrder(
+                Map.entry(CUSTOMER_USER_ID, SosRealtimeEventType.ETA_UPDATED),
+                Map.entry(PRO_A_USER, SosRealtimeEventType.OFFER_RESPONSE_RECORDED));
+    }
+
+    /** The payload has to name which candidate changed, and to what, or the customer cannot act. */
+    @Test
+    void anEtaUpdateNamesTheOfferAndTheNewFigure() {
+        request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
+        offer(201L, PRO_A, SosOfferStatus.ACCEPTED);
+
+        publisher.publish(stubEvent(SosEventType.ETA_UPDATED, 201L, PRO_A));
+
+        assertThat(captureMessageTo(CUSTOMER_USER_ID, SosRealtimeEventType.ETA_UPDATED).data())
+                .containsEntry("offerId", 201L)
+                .containsEntry("professionalId", PRO_A)
+                .containsEntry("estimatedArrivalMinutes", (short) 15);
+    }
+
+    /**
+     * Availability and revision must stay distinguishable in both directions: an ETA revision is
+     * never announced as a new candidate, so no candidate-arrival treatment fires on an edit.
+     */
+    @Test
+    void anEtaRevisionIsNeverAnnouncedAsANewCandidate() {
+        request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
+        offer(201L, PRO_A, SosOfferStatus.ACCEPTED);
+
+        publisher.publish(stubEvent(SosEventType.ETA_UPDATED, 201L, PRO_A));
+
+        assertThat(captureSends())
+                .extracting(Map.Entry::getValue)
+                .doesNotContain(SosRealtimeEventType.PROFESSIONAL_AVAILABLE,
+                        SosRealtimeEventType.SOS_SELECTED,
+                        SosRealtimeEventType.PROFESSIONAL_SELECTED);
+    }
+
+    /** An offer that is no longer live has no ETA worth pushing to the customer. */
+    @Test
+    void anEtaUpdateOnAClosedOfferTellsTheCustomerNothing() {
+        request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
+        offer(201L, PRO_A, SosOfferStatus.EXPIRED);
+
+        publisher.publish(stubEvent(SosEventType.ETA_UPDATED, 201L, PRO_A));
+
+        assertThat(captureSends()).containsExactly(
+                Map.entry(PRO_A_USER, SosRealtimeEventType.OFFER_RESPONSE_RECORDED));
+    }
+
+    /**
+     * The availability message carries the ETA too. The customer's card renders it on arrival, and
+     * making them wait for a follow-up refetch to learn the one number they are comparing on is a
+     * gap the payload can simply close.
+     */
+    @Test
+    void anAvailabilityMessageCarriesTheCommittedEta() {
+        request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
+        offer(201L, PRO_A, SosOfferStatus.ACCEPTED);
+        when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(1L);
+
+        publisher.publish(stubEvent(SosEventType.PROFESSIONAL_RESPONDED, 201L, PRO_A));
+
+        assertThat(captureMessageTo(CUSTOMER_USER_ID, SosRealtimeEventType.PROFESSIONAL_AVAILABLE).data())
+                .containsEntry("estimatedArrivalMinutes", (short) 15)
+                .containsEntry("offerId", 201L);
     }
 
     // ------------------------------------------------------------------

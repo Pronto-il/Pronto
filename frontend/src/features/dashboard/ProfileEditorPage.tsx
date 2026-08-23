@@ -25,8 +25,11 @@ import styles from './ProfileEditorPage.module.css';
  * (`GET /api/users/me`), which is left completely untouched.
  *
  * `categoryId`/`approvalStatus` are shown read-only or not at all: the `Update...Request`
- * DTO has no field to change either (auto-approved in v1.0, no actionable approval status
- * to surface yet).
+ * DTO has no field to change either. **MS1 (2026-08-22)**: `approvalStatus` is now a real
+ * decision (`PENDING`/`APPROVED`/`REJECTED`) and is returned here because this is the
+ * professional's own self-view — it is still not rendered as a field on this form; whether the
+ * account is visible to customers is communicated by `OnboardingStatusNotice`, mounted for
+ * every `/pro/*` screen by `ProDashboardLayout`.
  *
  * `fullName` writes to the underlying `users` row (§0 of the design doc), so a successful
  * save also calls `useAuth().refreshUser()` — otherwise the top-nav/`ProfilePage`'s cached

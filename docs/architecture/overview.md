@@ -58,8 +58,11 @@ for urgent work, pick one) → the chosen professional accepts or rejects → on
 both paths converge into the same confirmation/tracking flow with real-time status
 updates → the professional updates job status through to completion.
 
-Two user types: **Customer** and **Service Professional** (all professional accounts are
-auto-approved in v1.0 — no manual admin review gate). Booking statuses: Pending,
+Three user types: **Customer**, **Service Professional** and — since Production Roadmap MS1
+(2026-08-22) — **Operator (`ADMIN`)**. **Professional accounts are no longer auto-approved.**
+A registering professional starts `PENDING` and becomes visible to customers only when an
+operator approves them *and* their onboarding is complete; see §2's "Professional approval"
+row, §3.7, and `docs/production-roadmap/reports/MS1-report.md`. Booking statuses: Pending,
 Confirmed, On the Way, Completed, Cancelled, Rejected, Expired — **7 statuses**. Updated
 2026-08-12: this overrides the earlier settled 6-status list (which had no `Rejected`) per
 direct user instruction — `Rejected` is a distinct status from `Cancelled` so a
@@ -83,7 +86,7 @@ status-transition semantics (including exactly which actor/stage produces `Cance
 | Platform | Desktop-first responsive web (not mobile-first); no native iOS/Android, no offline mode | User decision, overriding PRD §4.1's mobile-first framing — the app should be designed primarily for desktop/laptop use, while remaining usable on mobile browsers. |
 | Real-time transport | **Short-polling** (client polls every 3–5s), not WebSocket | User decision — simpler to implement than STOMP/WebSocket; PRD's ~1s target is still reachable with short polling intervals. |
 | Notification channels | In-app (via polling) + email | User decision. Email also used for verification codes. SMS/push not requested by any source document. |
-| Professional approval | **Auto-approved in v1.0** — no manual admin review gate | User decision, overriding PRD's admin-approval requirement. Simplifies `professionals` package: no approval workflow/admin screen needed for v1.0. |
+| Professional approval | **SUPERSEDED — a real approval lifecycle exists as of Production Roadmap MS1 (2026-08-22).** The prior decision was "auto-approved in v1.0 — no manual admin review gate", justified by there being no admin screen; it is no longer in force and must not be restated anywhere. Current rule: a professional registers as `PENDING`; an operator (`ADMIN`) approves or rejects (`PENDING → APPROVED`/`REJECTED`, `REJECTED → APPROVED`; `APPROVED → REJECTED` is refused with `409 PROFESSIONAL_APPROVAL_INVALID_TRANSITION`; `DISABLED` exists in the CHECK constraint but is reserved for MS7 and unreachable — no code path can write it). **Approval alone does not make a professional bookable.** Marketplace eligibility is `approval_status = APPROVED` **AND** completed onboarding (verification document present, ≥1 enabled weekly working-hours day, ≥1 sub-service under the professional's own category), computed per query by `professionals.ProfessionalEligibility` and enforced on six backend paths — never stored, never frontend-filtered. | Playbook MS1 + governing decisions D1/D4–D7 (`Pronto_Production_Execution_Playbook.md` §0.1), which override the PRD *and* the earlier user decision recorded in this row. This restores PRD §3.2.3's admin-approval requirement and adds the onboarding-completeness half on top of it. Migration `V40__alter_professionals_approval_lifecycle.sql`; design record `docs/architecture/ms1-professional-verification-design.md`; milestone record `docs/production-roadmap/reports/MS1-report.md`. |
 | Chat between users | Out of scope for v1.0 | PRD §10.4 |
 | Additional languages | Out of scope for v1.0 | PRD §10.6 |
 | Booking statuses | 7 values: Pending, Confirmed, On the Way, Completed, Cancelled, Rejected, Expired (`Rejected` added as a 7th status) | User decision (2026-08-12), overriding the originally-settled 6-status list (PRD §3.6.1 has no "Rejected"). See `data-model.md` §2.9/§3 item 10 for the precise Rejected-vs-Cancelled-vs-Expired transition rules. |
@@ -155,9 +158,17 @@ v1.0.
 
 ### 3.7 Auth & security
 Email + password registration, email verification code (delivered via email) required
-before the account is usable. Professional accounts are **auto-approved in v1.0** — no
-manual admin review gate; a professional can receive bookings as soon as their account is
-verified. Passwords hashed (bcrypt or equivalent) — never stored in plaintext. Account
+before the account is usable. **Professional accounts go through a real approval lifecycle
+(Production Roadmap MS1, 2026-08-22)** — email verification is necessary but nowhere near
+sufficient. A professional registers as `PENDING`, may log in and finish their own setup, and
+becomes discoverable/bookable only once an operator has approved them **and** their onboarding
+is complete (`professionals.ProfessionalEligibility`, enforced backend-side on the Standard
+listing, available-windows, order creation, SOS candidate selection, SOS `selectProfessional`
+and `addFavorite`). The operator surface is `ADMIN`-only
+(`/api/admin/professionals/**`, route-gated by `RoleRequiredInterceptor` in
+`professionals.config.ProfessionalsWebConfig`); `ADMIN` is **not self-registerable** —
+`auth.service.AuthService#register` rejects `role = ADMIN` with `400 VALIDATION_ERROR` before
+any row is written. Passwords hashed (bcrypt or equivalent) — never stored in plaintext. Account
 lockout after 5 failed login attempts (PRD §5.2.3). All traffic over HTTPS/TLS 1.3,
 terminated at the load balancer/CDN layer. Account deletion / personal data management
 supported per PRD §5.2.4.
@@ -193,7 +204,7 @@ changes it, per the shared project rule.
 |---|---|
 | `auth` | Registration, login, email verification codes, password hashing, account lockout, token issuance. |
 | `users` | Shared `User` entity/profile logic used by both customer and professional roles. **As of the professional weekly availability calendar feature, M2 (2026-08-18)**: gained a `phone` column (`V28`), required at `CUSTOMER` registration, read-only, mirroring `defaultAddress`'s exact precedent. **As of MS10 — Profile UI Redesign (2026-08-19)**: `defaultAddress`/`phone` are no longer read-only — new `PUT /api/users/me` (`CUSTOMER`-only, `config.UsersWebConfig`) lets a customer edit `fullName`/`phone`/`defaultAddress`, no new migration; `ProfessionalInfo` gained `profileImageUrl` — see `users/README.md`. |
-| `professionals` | Professional profile, service area/city, standing price offer, reliability score. (No approval workflow — v1.0 auto-approves.) **As of 2026-08-15**, also owns the self-service profile layer (`GET`/`PUT /api/professionals/me`, profile-image upload, public `GET /api/professionals/{id}` detail view) — its first-ever service/controller layer, previously entity+repository only. **As of MS11 — Services & Sub-services (2026-08-19)**: also owns a new `sub_services` reference table (child of `categories`, one level down, 34 seeded rows — **placeholder product content pending real sign-off, not sourced from any product document**) and `professional_sub_services` (a professional's selected subset of their own category's sub-services), plus a new public `GET /api/categories` endpoint and a `PROFESSIONAL`-only `GET`/`PUT /api/professionals/me/sub-services` pair. Does **not** reopen the single-category-per-professional decision — see `data-model.md` §2.4's `category_id` row. See `professionals/README.md`. |
+| `professionals` | Professional profile, service area/city, standing price offer, reliability score. **As of Production Roadmap MS1 (2026-08-22): also owns the approval lifecycle and the definition of marketplace eligibility.** `entity.Professional` holds the state machine (`approve`/`reject`, `STATUS_PENDING`/`APPROVED`/`REJECTED`/`DISABLED`); `ProfessionalEligibility` is the single JPQL definition of "may be discovered and given new work" (`APPROVED` **and** completed onboarding), read by `bookings.repository.ProfessionalListingRepository`, `sos.repository.SosCandidateRepository` and `ProfessionalRepository#existsEligibleById`, and re-implemented nowhere; `service.ProfessionalApprovalService` + `controller.AdminProfessionalsController` are the `ADMIN`-only operator surface (`/api/admin/professionals/**`); `service.SubServiceSelectionValidator` is the shared category-membership check used by both registration and the self-service sub-services edit. The old "no approval workflow — v1.0 auto-approves" note that stood here is **superseded** — see §2's Professional approval row. **As of 2026-08-15**, also owns the self-service profile layer (`GET`/`PUT /api/professionals/me`, profile-image upload, public `GET /api/professionals/{id}` detail view) — its first-ever service/controller layer, previously entity+repository only. **As of MS11 — Services & Sub-services (2026-08-19)**: also owns a new `sub_services` reference table (child of `categories`, one level down, 34 seeded rows — **placeholder product content pending real sign-off, not sourced from any product document**) and `professional_sub_services` (a professional's selected subset of their own category's sub-services), plus a new public `GET /api/categories` endpoint and a `PROFESSIONAL`-only `GET`/`PUT /api/professionals/me/sub-services` pair. Does **not** reopen the single-category-per-professional decision — see `data-model.md` §2.4's `category_id` row. See `professionals/README.md`. |
 | `availability` | Two distinct concepts, not one table used two ways: `availability_slots` (Standard advance-booking calendar, now vestigial — see below) and `sos_availability` (live SOS "available for urgent work right now" on/off toggle, untouched). Decided 2026-08-12 — see `data-model.md` §2.5–§2.6 and §3 item 5. **As of the professional weekly availability calendar feature, M1 (2026-08-18)**: also owns the new weekly-working-hours/manual-block/derived-calendar model this whole feature is built around — two new tables (`professional_working_hours`, `professional_availability_blocks`), 6 new endpoints, and `AvailabilityDerivationService` (the shared read-side derivation engine, also consumed by `bookings`). The pre-existing `availability_slots` surface is kept, unmodified, but is no longer reachable from the professional-facing UI as of frontend M4 and is fully vestigial (no code path creates new rows) as of frontend M6 — left in place, not deleted. See `availability/README.md` and `docs/architecture/api-contract-availability.md`. |
 | `issues` | Issue creation, category selection, image metadata; orchestrates the `ai` package for classification. |
 | `ai` | OpenAI client wrapper + classification service, kept separate from `issues` so it's independently testable/mockable. |
@@ -203,6 +214,7 @@ changes it, per the shared project rule.
 | `reviews` | **New, 2026-08-15.** Customer reviews of a professional (1-5 star rating + optional comment), one per completed order. Full CRUD (`POST`/`GET`/`PUT`/`DELETE /api/reviews`). See `reviews/README.md`. |
 | `favorites` | **New, 2026-08-15.** A customer's bookmarked professionals — add/remove/list (`POST`/`GET /api/favorites`, `DELETE /api/favorites/{professionalId}`). See `favorites/README.md`. |
 | `matching` | **New, 2026-08-15.** Distance/ETA approximation between a professional's city and a customer's service address, plus the "fastest" sort this powers on professional-listing endpoints. Pure computation only — no table, no endpoint of its own, consumed in-process by `bookings`. Implements the ETA-scope override recorded in §2 above — see `matching/README.md`. |
+| `demo` | **New, MS1 (2026-08-22).** The TEST/DEMO environment's synthetic dataset: an explicit, off-by-default, guarded loader (`pronto.demo-data.mode`) that fills a **dedicated demo database** with a realistic marketplace across every category in the `categories` table. Data and configuration only — **no business logic differs between environments, and this package introduces no `if (demo)` branch**; it imports no service or repository (only `storage.client.StorageClient`, to write a placeholder verification document), and nothing depends on it. Demo data is deliberately **never** in a Flyway migration, because Flyway runs identically in Production. `DemoDataStartupGuard` refuses startup for three configurations: seeding outside `local`/`demo`/`test`, a production environment connected to the demo database, and seeding into any database other than `pronto.demo-data.database-name` (which is what protects the developer's LOCAL data from both seed and reset). See `demo/README.md` and the repository root `README.md`'s TEST/DEMO runbook. |
 | `common` | Shared exceptions, base entities/DTOs, config, cross-cutting utilities. |
 
 ### Frontend — `frontend/src/*`
@@ -233,7 +245,10 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
    environment (Postgres via docker-compose), DB migrations tooling, base package
    structure with stub docs.
 2. Auth & user management — registration, verification, login, professional profile,
-   account lockout. (No approval-flag step — v1.0 auto-approves professionals.)
+   account lockout. (As originally built, this milestone had no approval-flag step — v1.0
+   auto-approved professionals. **Superseded by Production Roadmap MS1, 2026-08-22**: a
+   professional now registers `PENDING`, and registration additionally requires sub-services
+   and weekly working hours. See §2's Professional approval row.)
    **Backend implemented and QA-signed-off, 2026-08-13** — see
    `implementation-plan.md`'s Milestone 1 entry for status detail. Corresponding frontend
    screens (`features/auth`) are **implemented as Frontend Milestone 1, 2026-08-15** — see
@@ -1439,6 +1454,53 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
     Flagged to `pronto-lead` rather than backfilled, since reconstructing it accurately is
     outside this pass's scope (the same handling MS2's own entry gave MS1's analogous gap).
 
+- **2026-08-22 — Production Roadmap MS1 — Professional Verification & Marketplace Eligibility.**
+  Status at the time of writing: **PARTIAL, uncommitted, on `production/ms1-professional-verification`**
+  (Lead gate held it PARTIAL for documentation Definition-of-Done failures; this entry is part of
+  the closure pass that answers them). Full record:
+  `docs/production-roadmap/reports/MS1-report.md` and
+  `docs/architecture/ms1-professional-verification-design.md`. What actually changed, verified
+  against the working tree:
+  - **Approval became a real lifecycle.** `professionals.approval_status` had been
+    `NOT NULL DEFAULT 'APPROVED'` with the value hardcoded in the entity constructor and **no
+    setter anywhere** — unwritable from row creation. It is now a state machine on
+    `entity.Professional` (`approve`/`reject`), starting at `PENDING` for every new registration.
+    `V40__alter_professionals_approval_lifecycle.sql` is purely additive (see `data-model.md`
+    §2.4): two CHECK constraints widened (`DISABLED` reserved for MS7 and unreachable; `ADMIN`
+    added to `ck_users_role`), three audit columns, one FK, one CHECK, one index. **No data
+    migration** — per D5 the 30 existing `APPROVED` rows keep their status and nothing is
+    fabricated for them.
+  - **Eligibility ≠ approval (D4).** `professionals.ProfessionalEligibility` is the one
+    definition: `APPROVED` **and** verification document present **and** ≥1 enabled working-hours
+    day **and** ≥1 sub-service under the professional's own category. Computed per query, never
+    stored, enforced on six paths (Standard listing, available-windows, order creation, SOS
+    candidate selection, SOS `selectProfessional`, `addFavorite`). Live-job paths — accept/reject/
+    on-the-way/complete/cancel, order detail/history, SOS lifecycle, SOS address grant, review
+    creation, professional self-views — are deliberately **not** gated, so an in-flight job is
+    never stranded.
+  - **Registration now collects what it always needed.** `POST /api/auth/register` requires
+    `professional.subServiceIds` (≥1, category-valid) and `professional.workingHours` (all 7
+    weekdays, ≥1 enabled) — closing MS0's "listed but structurally unbookable" finding without
+    inventing defaults for anyone. See `api-contract.md` §2.1.
+  - **Verification documents stopped being write-only** (MS0 C2). `ADMIN`-only
+    `/api/admin/professionals/**` (five endpoints, `api-contract-professionals-reviews.md` §12)
+    mints a 300-second presigned URL through a deliberately narrow, prefix-locked
+    `StorageService#getVerificationDocumentUrlForOperator`, keyed off the row rather than the
+    request — not by teaching the general ownership rule that ADMINs may read anything.
+  - **Information disclosure narrowed (D-G).** `approvalStatus` is now self-view-only on
+    `ProfessionalProfileResponse`; a neutral `bookable` boolean is what everyone else gets, and
+    was also added to `FavoriteProfessionalSummary` and `SosAvailabilityResponse`.
+  - **New `demo` package** — the TEST/DEMO synthetic dataset and its startup guard; see §4's
+    `demo` row, `demo/README.md`, and the repository `README.md` runbook.
+  - **Known gap carried forward, not hidden**: no documented procedure exists to create the
+    first `ADMIN` account outside the demo seeder. Recorded as MS1-report Known Limitation 11,
+    with a manual SQL step as the MS1 answer; MS7 owns the real mechanism.
+  - **Documentation updated in the closure pass**: §1, §2 (Professional approval row —
+    superseded, not deleted), §3.7, §4's `professionals` row, §5 item 2, this entry;
+    `data-model.md` §2.2/§2.4/§3 item 1; `api-contract.md` §2.1;
+    `api-contract-professionals-reviews.md` §4.1/§4.4/§4.11/§12;
+    `frontend/src/shared/api/README.md`.
+
 ## 7. Backend architecture reference (as-built)
 
 Merged from `backend/BACKEND_ARCHITECTURE.md` (a standalone, code-grounded reference doc,
@@ -1523,8 +1585,11 @@ above).
 
 | Variable | Purpose | Required? |
 |---|---|---|
-| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | PostgreSQL connection | no (all default to local-dev values) |
-| `PRONTO_ENVIRONMENT` | Milestone 7 addition. Selects `local` (default) vs. anything else; consumed by `auth.security.JwtSecretStartupGuard` to decide whether to fail fast on the placeholder `JWT_SECRET`. Not a general Spring-profiles system — a deliberately minimal, single-purpose substitute. | no (defaults `local`) |
+| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | PostgreSQL connection. **Also how the TEST/DEMO environment is selected** (MS1, 2026-08-22): point `DB_NAME` at the demo database — there is deliberately no second datasource block, see `com.pronto.demo`. | no (all default to local-dev values) |
+| `PRONTO_ENVIRONMENT` | Milestone 7 addition. Selects `local` (default) vs. anything else; consumed by `auth.security.JwtSecretStartupGuard` to decide whether to fail fast on the placeholder `JWT_SECRET`. Not a general Spring-profiles system — a deliberately minimal, single-purpose substitute. **Second consumer added by MS1**: `demo.DemoDataStartupGuard`, which treats `local`/`demo`/`test` as non-production and **every other value, recognised or not, as production** (allow-list, so a `prod-eu-1` cannot become a legal seeding target). | no (defaults `local`) |
+| `DEMO_DATA_MODE` | **MS1 addition.** `off` (default) \| `seed` \| `reset` — the TEST/DEMO synthetic dataset loader (`com.pronto.demo.DemoDataSeeder`). `off` does nothing at all, not even a database read, so a normal startup can never create, duplicate or delete demo data. `seed` is idempotent (skips when demo accounts already exist); `reset` truncates every application table in the demo database and rebuilds. Demo data is **never** in a Flyway migration — Flyway runs identically in Production. | no (defaults `off`) |
+| `DEMO_DATA_DATABASE_NAME` | **MS1 addition.** The only database demo data may be written to, compared at startup against `SELECT current_database()` on the open connection. Seeding while connected anywhere else is a startup failure — this is what stops a forgotten `DB_NAME` from seeding (or, with `reset`, truncating) the developer's LOCAL database, and what makes "production connected to the demo database" refuse to boot. | no (defaults `pronto_demo`) |
+| `DEMO_DATA_PASSWORD` | **MS1 addition.** Shared login password for every seeded demo account. Not a production credential: it only unlocks synthetic `@demo.pronto.invalid` accounts in a database the guard has already proven is the demo one. Same obviously-a-placeholder-default convention as `JWT_SECRET`. | no (defaults to a committed placeholder) |
 | `CORS_ALLOWED_ORIGINS` | Frontend Milestone 1 addition (2026-08-15). Comma-separated browser CORS allow-list for `/api/**`, consumed by `auth.config.SecurityConfig`'s `corsConfigurationSource()` bean. Added because cross-origin requests from the Vite dev server were being rejected on preflight before this existed. | no (defaults `http://localhost:5173`) |
 | `JWT_SECRET` | HMAC-SHA256 JWT signing key (≥32 bytes) | **yes, in any real deployment** — enforced at startup by `JwtSecretStartupGuard` when `PRONTO_ENVIRONMENT != local` |
 | `JWT_EXPIRATION_SECONDS` | Token TTL | no (defaults `86400` = 24h) |

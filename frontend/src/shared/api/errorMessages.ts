@@ -22,6 +22,12 @@ const FIELD_ERROR_MESSAGES: Record<string, string> = {
   city: 'יש להזין עיר.',
   street: 'יש להזין רחוב.',
   houseNumber: 'יש להזין מספר בית.',
+  // MS1 — professional registration's two new required groups (`professional.subServiceIds`,
+  // `professional.workingHours`); the backend also reports a bad week against the leaf names
+  // `weekday`/`startTime`/`endTime`, which stay unmapped here (they're shared with the
+  // availability-slot forms) and are attributed by the registration form itself.
+  subServiceIds: 'יש לבחור לפחות תחום אחד שבו אתה נותן שירות.',
+  workingHours: 'יש להגדיר שעות עבודה שבועיות עם לפחות יום פעיל אחד.',
 };
 
 function fieldMessage(field: string): string {

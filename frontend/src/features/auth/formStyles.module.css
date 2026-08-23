@@ -95,24 +95,45 @@
   text-align: end;
 }
 
-/* Professional wizard stage 2's honest, non-interactive sub-service preview. */
-.subServicePreview {
-  margin-block-start: var(--space-2);
+/* Professional wizard stage 3's required sub-service checklist (MS1) — same checkbox-list
+   shape the `/pro/profile` sub-services editor uses, so the two surfaces look alike. */
+.subServicesList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-block-end: var(--space-2);
 }
 
-.subServiceNote {
-  margin: 0 0 var(--space-2);
+/* Short explanatory line under a stage heading (stages 3 and 5). */
+.stepHint {
+  margin: 0 0 var(--space-3);
   font-size: 13px;
+  line-height: 18px;
   color: var(--color-text-secondary);
 }
 
+/* Stage-level (not field-level) validation message — the sub-service checklist and the
+   weekly-hours grid are field *groups*, so neither can carry `Input`'s own `error` slot. */
+.stepError {
+  margin: var(--space-2) 0 0;
+  font-size: 13px;
+  color: var(--color-error);
+}
+
+/* Selected sub-services, rendered as chips on the summary stage. */
 .subServiceChips {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+  justify-content: flex-end;
 }
 
-/* Professional wizard stage 4's honest "what's next" block — informational only, no controls. */
+/* One "day + hours" line inside the summary's working-hours cell. */
+.summaryLine {
+  display: block;
+}
+
+/* Professional wizard's final-stage honest "what's next" block — informational only, no controls. */
 .nextSteps {
   margin-block-start: var(--space-4);
   padding: var(--space-4);

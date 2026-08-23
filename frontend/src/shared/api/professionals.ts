@@ -19,7 +19,18 @@ export interface ProfessionalProfileResponse {
   profileImageUrl: string | null;
   averageRating: number | null;
   reviewCount: number;
-  approvalStatus: string;
+  /**
+   * MS1 (D-G): the professional's **self-view only** — `null` for every other caller, so a
+   * browsing customer can't learn that a named professional was rejected.
+   */
+  approvalStatus: string | null;
+  /**
+   * MS1 (D-G): the neutral flag everyone gets — is this professional marketplace-eligible
+   * (`approvalStatus === 'APPROVED'` **and** onboarding complete: category-valid sub-services,
+   * an enabled working-hours day, verification document). Backend-computed per request
+   * (`professionals.ProfessionalEligibility`); it says "not bookable right now", never why.
+   */
+  bookable: boolean;
   /** Populated only on getProfessionalProfile() for a CUSTOMER caller; null everywhere else. */
   favorited: boolean | null;
   createdAt: string;

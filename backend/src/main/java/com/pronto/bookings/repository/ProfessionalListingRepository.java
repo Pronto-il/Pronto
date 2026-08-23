@@ -1,6 +1,7 @@
 package com.pronto.bookings.repository;
 
 import com.pronto.bookings.dto.ProfessionalCard;
+import com.pronto.professionals.ProfessionalEligibility;
 import com.pronto.professionals.entity.Professional;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
@@ -42,6 +43,14 @@ public interface ProfessionalListingRepository extends Repository<Professional, 
      * §2.2 step 6: {@code professionals} joined to {@code users} where {@code category_id =
      * issue.categoryId} and {@code users.deleted_at IS NULL}, ordered by {@code base_price
      * ASC} (cheapest first — judgment call, §7 of the contract doc).
+     *
+     * <p><b>MS1:</b> additionally filtered by {@link ProfessionalEligibility#ELIGIBLE_JPQL} —
+     * approval plus completed onboarding, concatenated from the one constant that also drives
+     * {@code SosCandidateRepository.findEligible} and
+     * {@code ProfessionalRepository.existsEligibleById}. This is the customer's discovery
+     * surface, and MS0 recorded that it had no approval filter of any kind. The
+     * {@code u.deletedAt IS NULL} clause is left where it already was, outside the fragment, per
+     * that constant's alias/scope contract.
      */
     @Query("SELECT new com.pronto.bookings.dto.ProfessionalCard(p.id, u.fullName, p.serviceArea, "
             + "p.basePrice, p.reliabilityScore, p.city, p.profileImageKey, "
@@ -51,6 +60,7 @@ public interface ProfessionalListingRepository extends Repository<Professional, 
             + "WHERE f.customerId = :customerId AND f.professionalId = p.id)) "
             + "FROM Professional p, com.pronto.users.entity.User u "
             + "WHERE p.userId = u.id AND p.categoryId = :categoryId AND u.deletedAt IS NULL "
+            + "AND " + ProfessionalEligibility.ELIGIBLE_JPQL + " "
             + "ORDER BY p.basePrice ASC")
     List<ProfessionalCard> listByCategory(@Param("categoryId") Long categoryId, @Param("customerId") Long customerId);
 

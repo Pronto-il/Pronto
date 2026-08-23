@@ -116,10 +116,24 @@ graph; the state machine knows the graph but not about concurrency.
 still occasionally dispatch to somebody who should never have been asked.
 
 Eligible = correct category **and** `sos_availability.is_available` **and** not soft-deleted
-**and** `approval_status = 'APPROVED'` **and** not already offered this request **and** within
-`max-dispatch-radius-km`. Professionals already holding live offers elsewhere are also dropped —
-unless that would leave nobody, in which case they are taken back (a busy professional beats no
-professional for someone with an active leak).
+**and** `professionals.ProfessionalEligibility.ELIGIBLE_JPQL` **and** not already offered this
+request **and** within `max-dispatch-radius-km`. Professionals already holding live offers
+elsewhere are also dropped — unless that would leave nobody, in which case they are taken back
+(a busy professional beats no professional for someone with an active leak).
+
+**That fourth clause changed in Production Roadmap MS1 (2026-08-22).** It used to be a bare
+`p.approvalStatus = 'APPROVED'`, written in `SosCandidateRepository#findEligible` against an
+approval workflow that did not exist yet and therefore a no-op against a table where every row
+was `APPROVED` — kept anyway on the reasoning that "unapproved professionals were silently
+receiving urgent dispatches" is exactly the kind of bug nobody finds quickly. MS1 makes the
+workflow real and widens the clause to the full rule (D4): approval **and** completed
+onboarding, concatenated from the same `ProfessionalEligibility` constant the Standard listing
+and every single-row service guard use, so the SOS hard filter and the rest of the platform
+cannot disagree about who is real. A professional who has been approved but has no enabled
+working-hours day, no sub-service under their own category, or no verification document is not
+askable either — they would take an urgent job they cannot actually be scheduled or trusted
+for. The eligibility/ranking separation above is untouched: this is a hard SQL filter, not a
+scoring penalty.
 
 Ranking is a linear weighted sum, each component normalized to `[0,1]`:
 
@@ -436,6 +450,27 @@ bottom of this file for the full routing matrix, and `realtime/README.md` for th
 `BookingsService.SOS_SURCHARGE_AMOUNT` used to duplicate `visit-surcharge`; it went with the
 browse-and-pick flow, so `pronto.sos.visit-surcharge` is now the only SOS surcharge in the
 codebase.
+
+## Production Roadmap MS1 — where the eligibility re-check sits (2026-08-22)
+
+Beyond the dispatch-time hard filter described under *Matching and ranking*,
+`SosService#selectProfessional` now re-checks `ProfessionalRepository#existsEligibleById` at
+the last moment before an order and a priced commitment exist. Dispatch already filtered, but
+minutes can pass between dispatch and selection — long enough for an operator to reject
+someone, or for that professional to clear their working hours. The failure is mapped onto the
+existing `SOS_CANDIDATE_NOT_AVAILABLE` (`409`), which is precisely what happened and which the
+frontend already handles: this candidate cannot be taken, the others still can. **Note where
+the check deliberately is not**: `SosOfferService#accept` stays ungated. The window between
+dispatch and offer TTL is seconds, and refusing a professional for doing exactly what they were
+just asked to do explains nothing to them; selection is the moment that creates an obligation,
+so selection is where the rule belongs. Separately, `listMine`'s ternary — which sent every
+non-`PROFESSIONAL` caller down the customer query, and would therefore have quietly run "my SOS
+requests" against an operator's own user id once `UserRole.ADMIN` existed — became an explicit
+three-way branch that throws `403 FORBIDDEN`, since an operator is neither party to an SOS
+request. No migration, no new `ErrorCode`, no state-machine or timeout change. Extended
+`sos.service.SosServiceTest`; the demo dataset exercised the full expansion path under the new
+filter without weakening any SOS rule (MS1 report, Validation 25: `offers=8` → `16` → `18` →
+`409 SOS_EXPANSION_LIMIT_REACHED`).
 
 ---
 

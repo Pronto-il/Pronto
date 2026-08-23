@@ -53,7 +53,7 @@ profile, update own profile — `CUSTOMER` only, delete own account). Implements
 | Class | Role |
 |---|---|
 | `entity.User` | JPA entity for `users`. |
-| `entity.UserRole` | `CUSTOMER` \| `PROFESSIONAL` enum, `@Enumerated(STRING)`. |
+| `entity.UserRole` | `CUSTOMER` \| `PROFESSIONAL` \| `ADMIN` enum, `@Enumerated(STRING)`. `ADMIN` is new as of Production Roadmap MS1 — see the MS1 paragraph under Status. |
 | `repository.UserRepository` | `findByEmailIgnoreCase`, `existsByEmailIgnoreCase` (case-insensitive, matches `ux_users_email_lower`). |
 | `dto.UserMeResponse` / `dto.ProfessionalInfo` / `dto.DefaultAddressInfo` | `GET`/`PUT /api/users/me` response shape. `DefaultAddressInfo` is new as of the MS3/MS4 product-corrections pass. `UserMeResponse` gained a top-level `phone` field as of the professional weekly availability calendar design's M2 — no new nested DTO needed (unlike `defaultAddress`, `phone` is a plain scalar, read directly off `User.getPhone()`). `ProfessionalInfo` gained `profileImageUrl` as of MS10. |
 | `dto.UpdateUserMeRequest` | New, MS10. Request DTO for `PUT /api/users/me` — `fullName`/`phone`/`defaultAddress` (nested `Address` record, locally defined, mirrors `auth.dto.DefaultAddressRequest`'s shape without depending on it). |
@@ -132,3 +132,24 @@ defense-in-depth `403 FORBIDDEN` (and that it doesn't touch the `users` row at a
 deleted-user `401 UNAUTHORIZED` path, and both branches of the new `profileImageUrl`
 resolution (present/absent `profileImageKey`). No new migration, no new `ErrorCode`. Full
 design record: `docs/architecture/product-ms10-profile-redesign-design.md`.
+
+**Production Roadmap MS1 — a third role (2026-08-22).** `entity.UserRole` gained `ADMIN`, the
+Pronto operator, and `V40__alter_professionals_approval_lifecycle.sql` widened `ck_users_role`
+to `('CUSTOMER','PROFESSIONAL','ADMIN')` to match — the enum mirrors that constraint, which is
+why the two had to move together. This package owns the constant and nothing else about the
+role: the only surface an `ADMIN` can reach is `/api/admin/professionals/**`, gated by
+`professionals.config.ProfessionalsWebConfig` (MS7 owns the wider operations surface).
+**`ADMIN` is not self-registerable, by explicit guard, not by accident of parsing**:
+`auth.dto.RegisterRequest.role` is typed with this enum, so the mere existence of the constant
+would otherwise have made an administrator creatable by anyone who can reach the public
+registration endpoint — `auth.service.AuthService#register` rejects `role = ADMIN` with a
+`400 VALIDATION_ERROR` before any row is written, and an `ADMIN` row is created only by a
+deliberate operational step (for which this repository currently documents no procedure — a
+recorded MS1 known limitation, owned by MS7). Every role-branching service treats an `ADMIN`
+caller as **neither** a customer nor a professional: they have no orders, issues, favorites,
+SOS requests or professional profile, so `bookings.service.BookingsService#listMyOrders` and
+`sos.service.SosService#listMine` had their bare `else` branches replaced with explicit
+three-way branches that throw `403 FORBIDDEN` rather than resolving an operator into one of the
+other two roles. No change to `entity.User`, `UserRepository`, the `/api/users/me` endpoints or
+this package's DTOs. See `docs/production-roadmap/reports/MS1-report.md` and
+`professionals/README.md`.

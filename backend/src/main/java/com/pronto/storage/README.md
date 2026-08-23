@@ -94,8 +94,8 @@ reversal — this is about retrieval only. Full design record:
 | `client.StoredObject` | `(key, url, contentType, sizeBytes)` — result of a successful upload. `url` is now a presigned URL (backend MS9), not a permanent proxy URL. |
 | `client.StorageException` | Unchecked, thrown by a `StorageClient` implementation on a genuine I/O failure; callers translate it to `502 STORAGE_SERVICE_ERROR`. |
 | `ImageContentType` | The 3 accepted content-types ↔ file-extension mapping — single source of truth used both when generating an upload key and when re-deriving `Content-Type` for `GET /api/storage/images/**` (local storage doesn't separately persist content-type metadata). |
-| `ImageKeyUtils` | Parses the `customers/{callerId}/...` key format — the sole ownership mechanism (§3.3, no DB row exists to record it). Also exposes `isPubliclyReadable`, `true` for `professionals/`-prefixed keys (profile images, no ownership check — see "Role enforcement" below). Pure/stateless, used by this package, `issues`, and (indirectly, via `StorageService`) `professionals`. Unchanged by backend MS9 — this class's rules are still exactly what `StorageService#authorize` (formerly inline in `retrieve`) enforces, just invoked earlier in the request lifecycle. |
-| `service.StorageService` | Business logic for both endpoints. **As of backend MS9**: `retrieve(AuthenticatedUser, String)` is retired; replaced by `getPresignedUrl(Long/AuthenticatedUser, String)` (the general, ownership-checked path — reuses the exact `isPubliclyReadable`/`belongsTo` logic the old `retrieve` had, via a private `authorize()` helper), `getPresignedUrlAssumingCallerAuthorized(String)` (a narrow, explicitly-named bypass with **no** ownership check of its own — callable only by code that has already independently established the caller may view the key; sole approved caller today is `issues.service.IssuesService#getById`, see that package's README), `getPresignedUrls(Long, List<String>)` (the batch path backing the new endpoint, per-key failures are caught and simply omitted, never fail the whole batch), and `retrieveBySignedUrl(key, expires, sig)` (verifies the local-mode HMAC signature+expiry, then streams the bytes — this is what `GET /api/storage/images/**` now calls). |
+| `ImageKeyUtils` | Parses the owner-segment key format — the sole ownership mechanism (§3.3, no DB row exists to record it). Its `OWNER_PATTERN` covers `customers/{callerId}/...` **and** `verification-documents/{callerId}/...` (the latter predates MS1, from the registration-flow separation task; this row previously named only the first, which was stale rather than wrong-by-MS1). Also exposes `isPubliclyReadable`, `true` for `professionals/`-prefixed keys (profile images, no ownership check — see "Role enforcement" below). Pure/stateless, used by this package, `issues`, and (indirectly, via `StorageService`) `professionals`. Unchanged by backend MS9 — this class's rules are still exactly what `StorageService#authorize` (formerly inline in `retrieve`) enforces, just invoked earlier in the request lifecycle. |
+| `service.StorageService` | Business logic for both endpoints. **As of backend MS9**: `retrieve(AuthenticatedUser, String)` is retired; replaced by `getPresignedUrl(Long/AuthenticatedUser, String)` (the general, ownership-checked path — reuses the exact `isPubliclyReadable`/`belongsTo` logic the old `retrieve` had, via a private `authorize()` helper), `getPresignedUrlAssumingCallerAuthorized(String)` (a narrow, explicitly-named bypass with **no** ownership check of its own — callable only by code that has already independently established the caller may view the key; sole approved caller today is `issues.service.IssuesService#getById`, see that package's README), `getPresignedUrls(Long, List<String>)` (the batch path backing the new endpoint, per-key failures are caught and simply omitted, never fail the whole batch), and `retrieveBySignedUrl(key, expires, sig)` (verifies the local-mode HMAC signature+expiry, then streams the bytes — this is what `GET /api/storage/images/**` now calls). **As of MS1**: also `getVerificationDocumentUrlForOperator(String key)` — the prefix-locked, single-caller operator read path, see "Operator read path — verification documents" below — and `getPresignedUrlTtlSeconds()`, which exposes the configured TTL so a caller can tell its client when the URL dies instead of duplicating the property. |
 | `controller.StorageController` | `/api/storage/images` POST (upload) + `/api/storage/images/**` GET (retrieval, `permitAll()`, no `@AuthenticationPrincipal` — see "Role enforcement") + `/api/storage/images/presigned-urls` POST (new, the batch lookup). |
 | `config.StorageWebConfig` | Registers `common.security.RoleRequiredInterceptor(role = "CUSTOMER")` for exactly `POST /api/storage/images` (narrowed from a blanket `/api/storage/**` — see "Role enforcement" below). `GET /api/storage/images/**` has no route-level role gate — and, as of backend MS9, no route-level authentication requirement either (see "Role enforcement"). |
 | `dto.ImageUploadResponse` / `dto.RetrievedImage` | Response/internal-transfer shapes. |
@@ -129,6 +129,13 @@ reversal — this is about retrieval only. Full design record:
   package for `StorageService.uploadWithKey`, for its own
   `professionals/{professionalId}/profile/...` key template — see "Role enforcement" below
   for how retrieval of those keys differs from `issues`' `customers/`-prefixed keys.
+- **New, MS1**: depended on by `professionals`
+  (`service.ProfessionalApprovalService`) for `getVerificationDocumentUrlForOperator` +
+  `getPresignedUrlTtlSeconds` — the operator's read of a professional's verification document.
+  This is the *only* approved caller of that method; see "Operator read path — verification
+  documents" below. `auth.service.AuthService` remains the sole *writer* of that key namespace
+  (it uploads the document during the registration transaction, under
+  `verification-documents/{userId}/...`).
 - Depends on `common` for the error envelope (`ApiException`/`ErrorCode`) and
   `RoleGuard`/`AuthenticatedUser`.
 
@@ -203,6 +210,68 @@ to any customer browsing listings, not just their owning professional.
 **New, backend MS9**: `POST /api/storage/images/presigned-urls` — a batch counterpart to the
 single-key presign path, any authenticated caller, per-key ownership enforced the same way.
 See "Responsibilities" above and `service.StorageService#getPresignedUrls`.
+
+## Operator read path — verification documents (Production Roadmap MS1, 2026-08-22)
+
+`service.StorageService#getVerificationDocumentUrlForOperator(String key)` is a **second,
+narrower exemption** from `authorize()`, added so a Pronto operator can look at the
+verification document a professional uploaded at registration before approving or rejecting
+them. It is documented here, at package level, because the constraint it carries is one a
+future contributor must find *before* they reach for it — not only by opening the method.
+
+**Why an exemption was needed at all.** `authorize()` resolves ownership out of the key
+itself: `ImageKeyUtils`'s `OWNER_PATTERN` covers both `customers/{userId}/...` and
+`verification-documents/{userId}/...`, so a verification document is readable only by the
+user who uploaded it. That is correct, and it is exactly why it refuses an operator, who by
+construction is *not* that user. Verification documents are deliberately **not** under the
+`professionals/` public prefix — a profile image is meant to be seen by anyone browsing
+listings; a compliance document is not.
+
+**The rejected alternative**, stated so nobody re-proposes it: teaching `authorize()` that an
+`ADMIN` may read anything. That would silently widen access to every private key in the
+system — including customers' issue photos — on the strength of a role check made in a class
+that has no idea what it is being asked to unlock.
+
+**Three independent narrowings instead**, each of which alone would be insufficient:
+
+1. **Prefix-locked.** Only keys beginning `verification-documents/`; anything else is
+   `403 FORBIDDEN` outright. It therefore cannot be turned into a general read primitive for
+   `customers/`-prefixed issue images even by a caller who gets to choose the key.
+2. **Reachable only from the `ADMIN` route.** Its sole caller is
+   `professionals.service.ProfessionalApprovalService#getVerificationDocumentUrl`, behind
+   `/api/admin/professionals/**`, which `common.security.RoleRequiredInterceptor` gates on
+   `ADMIN` in `preHandle` — before argument resolution.
+3. **The key is never client-supplied.** That caller reads it off the `professionals` row it
+   just loaded by id (`Professional#getVerificationDocumentKey`); no request field reaches this
+   parameter. A professional with no document at all is a `404` from the caller, before this
+   method is entered.
+
+**Do not add a third caller** without a justification of the same kind, written down. The
+method's own Javadoc says so, and this section exists so the rule is visible from the package
+doc rather than only from the method body. The same standing constraint already applies to
+`#getPresignedUrlAssumingCallerAuthorized` (sole approved caller:
+`issues.service.IssuesService#getById`) — this method is deliberately *not* a second caller of
+that one, precisely because that Javadoc forbids it without re-justification.
+
+**The minted URL is a bearer capability**, valid for `pronto.storage.presigned-url-ttl-seconds`
+(300 by default): anyone holding it can fetch a private compliance document without
+authenticating. It **must never be logged, cached in a shared store, or included in an error
+message** — and neither must the key, which is the durable half of the same secret. Nothing in
+this method or its caller logs either; the caller's audit line records *that* an operator
+viewed a professional's document (which operator, whose document) and nothing that would let a
+log reader fetch it. QA grepped the logs after exercising the flow and found zero occurrences
+of the key, the `verification-documents/` prefix, or the signature/expiry query parameters
+(`docs/production-roadmap/reports/MS1-report.md`, Validation 31).
+
+`#getPresignedUrlTtlSeconds()` was added alongside it, so a caller can tell its own client when
+to stop relying on a URL (`professionals.dto.VerificationDocumentUrlResponse.expiresInSeconds`)
+rather than duplicating the property.
+
+**Known gap, recorded not hidden**: the `403` prefix-lock branch has no unit test —
+`grep -rn "ForOperator" backend/src/test/` returns no matches (MS1 report, Validation 33 /
+Known Limitation 12). The route-level `ADMIN` gate *is* tested
+(`common.security.AdminRouteGatingTest`) and the end-to-end operator flow was live-verified,
+but the prefix lock itself is currently proven only by reading it.
 
 **Ordering bug, fixed (QA-reported, post-Milestone-2):** the role check originally lived as
 the first line of each controller method body (`RoleGuard.requireRole` called directly),
@@ -348,3 +417,17 @@ endpoint (see "Responsibilities" above). Full design record:
 `docs/architecture/backend-ms9-presigned-image-urls-design.md`. Not yet committed at the
 time this doc was written — branch `frontend/MS9-gap-fixes`, pending the user's own git
 operations.
+
+**Production Roadmap MS1 — operator verification-document access (2026-08-22).** One method
+added to `service.StorageService` (`getVerificationDocumentUrlForOperator`) plus one accessor
+(`getPresignedUrlTtlSeconds`), described in full under "Operator read path — verification
+documents" above. **No `StorageClient` change, no new endpoint in this package, no config
+change, no migration, no new `ErrorCode`** — the new method reuses `presignUrl` and the
+existing `pronto.storage.presigned-url-ttl-seconds`, and the operator-facing route it serves
+lives in `professionals`. Live-verified as part of MS1: the operator gets a `200` with
+`expiresInSeconds: 300`, a customer gets `403`, an unauthenticated caller gets `401`, the
+browser opens the document in a new tab with **no presigned URL in the DOM**, and a log grep
+after the flow found zero occurrences of the key, the prefix, or the signature/expiry
+parameters (MS1 report, Validations 16, 21 and 31). **Not verified**: the `403` prefix-lock
+branch has no unit test (Known Limitation 12). Branch
+`production/ms1-professional-verification`, uncommitted at the time this doc was written.

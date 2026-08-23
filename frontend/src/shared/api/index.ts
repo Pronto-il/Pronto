@@ -3,6 +3,7 @@ export { ApiError, setAuthTokenGetter, httpClient, API_BASE_URL } from './httpCl
 export { registerCustomer, registerProfessional, verifyEmail, login } from './auth';
 export type {
   UserRole,
+  RegisterableRole,
   UserSummary,
   RegisterCustomerPayload,
   RegisterProfessionalPayload,
@@ -175,3 +176,19 @@ export type {
   NotificationsListResponse,
   MarkAllReadResponse,
 } from './notifications';
+
+export {
+  listProfessionalsForReview,
+  getProfessionalReviewDetail,
+  getVerificationDocumentUrl,
+  approveProfessional,
+  rejectProfessional,
+  REJECTION_REASON_MAX_LENGTH,
+} from './adminProfessionals';
+export type {
+  ProfessionalApprovalStatus,
+  ProfessionalApprovalSummary,
+  ProfessionalApprovalListResponse,
+  ProfessionalReviewDetail,
+  VerificationDocumentUrlResponse,
+} from './adminProfessionals';

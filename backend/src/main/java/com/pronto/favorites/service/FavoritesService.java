@@ -58,12 +58,20 @@ public class FavoritesService {
      * uses). Idempotent: insert, and a PK-violation race (already favorited) is treated as
      * success too — this endpoint always ends in "favorited," never an error for a caller who
      * just double-clicked.
+     *
+     * <p><b>MS1 (D-B):</b> the existence check becomes an eligibility check. Favoriting is a
+     * creation path — it is how a customer builds the shortlist they will book from later — so an
+     * unapproved or half-onboarded professional must not be addable to it, and the ineligible
+     * professional's id must not become a way to confirm they exist. Note the deliberate
+     * asymmetry with {@link #listFavorites}, which never deletes anything: adding is gated,
+     * keeping is not.
      */
     @Transactional
     public void addFavorite(AuthenticatedUser caller, AddFavoriteRequest request) {
-        if (!professionalRepository.existsById(request.professionalId())) {
+        if (!professionalRepository.existsEligibleById(request.professionalId())) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
-                    List.of(new FieldError("professionalId", "must reference an existing professional")));
+                    List.of(new FieldError("professionalId",
+                            "must reference an existing, bookable professional")));
         }
         if (favoriteRepository.existsByCustomerIdAndProfessionalId(caller.id(), request.professionalId())) {
             return;
@@ -83,7 +91,16 @@ public class FavoritesService {
         favoriteRepository.deleteByCustomerIdAndProfessionalId(caller.id(), professionalId);
     }
 
-    /** CUSTOMER only. */
+    /**
+     * CUSTOMER only.
+     *
+     * <p><b>MS1 (D-G):</b> a professional who has become ineligible stays in the list, carrying
+     * {@code bookable = false}. Silently dropping them would be a worse answer to the same
+     * question: the customer chose to save that person, the row is theirs, and a favorites list
+     * that quietly shrinks reads as data loss rather than as "this one is not available right
+     * now". Nothing here deletes a {@code favorites} row — an ineligible professional who
+     * finishes onboarding simply becomes bookable again, with the customer's shortlist intact.
+     */
     @Transactional(readOnly = true)
     public FavoritesListResponse listFavorites(AuthenticatedUser caller) {
         List<Favorite> favorites = favoriteRepository.findByCustomerIdOrderByCreatedAtDesc(caller.id());
@@ -121,6 +138,6 @@ public class FavoritesService {
 
         return new FavoriteProfessionalSummary(professional.getId(), fullName, professional.getServiceArea(),
                 professional.getCity(), professional.getBasePrice(), profileImageUrl, averageRating, reviewCount,
-                favorite.getCreatedAt());
+                favorite.getCreatedAt(), professionalRepository.existsEligibleById(professional.getId()));
     }
 }

@@ -2,6 +2,10 @@
   display: flex;
   flex-direction: column; /* mobile (<640px): nav stays a top tab bar */
   gap: var(--space-6);
+  /* Replaces the block spacing the removed "לוח בקרה לבעלי מקצוע" `PageHeader` used to
+     contribute (its own `margin-block-end: var(--space-6)`). `.page-container` sets inline
+     padding only, so without this the tab strip would sit flush against the app header. */
+  padding-block: var(--space-8);
 }
 
 @media (min-width: 640px) {

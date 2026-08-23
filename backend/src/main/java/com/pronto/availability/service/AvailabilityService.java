@@ -191,7 +191,15 @@ public class AvailabilityService {
         return new SlotListResponse(slots);
     }
 
-    /** §2.14. */
+    /**
+     * §2.14.
+     *
+     * <p><b>MS1 (D-G):</b> the toggle is deliberately <em>not</em> blocked for an ineligible
+     * professional. D4 requires availability to stay editable while they finish onboarding or
+     * wait for review, and refusing the switch would strand them with no way to be ready the
+     * moment they are approved. The response carries {@code bookable} instead, so the dashboard
+     * can stop claiming they are live without the backend pretending the toggle failed.
+     */
     @Transactional
     public SosAvailabilityResponse updateSosAvailability(Long callerId, SosAvailabilityRequest request) {
         Long professionalId = resolveProfessionalId(callerId);
@@ -204,10 +212,11 @@ public class AvailabilityService {
             log.warn("sos_availability row missing for professionalId={} on toggle attempt", professionalId);
             throw new ApiException(ErrorCode.INTERNAL_ERROR, "SOS availability record not found.");
         }
-        return new SosAvailabilityResponse(professionalId, request.isAvailable(), now);
+        return new SosAvailabilityResponse(professionalId, request.isAvailable(), now,
+                professionalRepository.existsEligibleById(professionalId));
     }
 
-    /** §2.15. */
+    /** §2.15. Carries the same MS1 {@code bookable} signal — see {@link #updateSosAvailability}. */
     @Transactional(readOnly = true)
     public SosAvailabilityResponse getSosAvailability(Long callerId) {
         Long professionalId = resolveProfessionalId(callerId);
@@ -218,7 +227,7 @@ public class AvailabilityService {
                     return new ApiException(ErrorCode.INTERNAL_ERROR, "SOS availability record not found.");
                 });
         return new SosAvailabilityResponse(sosAvailability.getProfessionalId(), sosAvailability.isAvailable(),
-                sosAvailability.getUpdatedAt());
+                sosAvailability.getUpdatedAt(), professionalRepository.existsEligibleById(professionalId));
     }
 
     // ---- Weekly availability calendar (M1), design §3/§4 ----
@@ -241,7 +250,10 @@ public class AvailabilityService {
      */
     @Transactional
     public WorkingHoursListResponse updateWorkingHours(Long callerId, WorkingHoursUpdateRequest request) {
-        validateWorkingHoursRequest(request);
+        // MS1: moved verbatim into WorkingHoursValidator so professional registration validates
+        // the identical week. Rules and error codes unchanged. Note that "at least one enabled
+        // day" is NOT applied here -- see WorkingHoursValidator#requireAtLeastOneEnabledDay.
+        WorkingHoursValidator.validateWeek(request.workingHours());
 
         Long professionalId = resolveProfessionalId(callerId);
         Map<Integer, ProfessionalWorkingHours> existingByWeekday = workingHoursRepository
@@ -266,48 +278,6 @@ public class AvailabilityService {
 
         result.sort(Comparator.comparingInt(WorkingHoursItem::weekday));
         return new WorkingHoursListResponse(result);
-    }
-
-    /**
-     * §4.2 request validation: exactly 7 entries, weekdays 0-6 each exactly once, and
-     * {@code startTime}/{@code endTime} required (with {@code endTime > startTime}) whenever
-     * {@code enabled = true}.
-     */
-    private void validateWorkingHoursRequest(WorkingHoursUpdateRequest request) {
-        List<WorkingHoursItemRequest> items = request.workingHours();
-        if (items == null || items.size() != 7) {
-            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
-                    List.of(new FieldError("workingHours", "must contain exactly 7 entries, one per weekday 0-6")));
-        }
-
-        Set<Integer> seenWeekdays = new HashSet<>();
-        for (WorkingHoursItemRequest item : items) {
-            if (item.weekday() == null || item.weekday() < 0 || item.weekday() > 6) {
-                throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
-                        List.of(new FieldError("weekday", "must be between 0 and 6")));
-            }
-            if (!seenWeekdays.add(item.weekday())) {
-                throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
-                        List.of(new FieldError("weekday", "duplicate weekday " + item.weekday())));
-            }
-            if (item.enabled() == null) {
-                throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
-                        List.of(new FieldError("enabled", "must not be null")));
-            }
-            if (item.enabled()) {
-                if (item.startTime() == null || item.endTime() == null) {
-                    throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
-                            List.of(new FieldError("startTime", "startTime and endTime are required when enabled = true")));
-                }
-                if (!item.endTime().isAfter(item.startTime())) {
-                    throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
-                            List.of(new FieldError("endTime", "must be after startTime")));
-                }
-            }
-        }
-        // seenWeekdays now has exactly 7 unique values, each already range-checked to [0,6] --
-        // structurally forces the set to be exactly {0,1,2,3,4,5,6}, so no separate gap check
-        // is needed.
     }
 
     private List<WorkingHoursItem> loadWorkingHoursItems(Long professionalId) {

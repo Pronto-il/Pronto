@@ -16,6 +16,8 @@ Implements `docs/architecture/api-contract.md` §2.1–2.3 and §3.1–3.3.
   plus a `sos_availability` row defaulting to `isAvailable = false` (via
   `availability.repository.SosAvailabilityRepository`, added when the `V13` migration
   closed the previously-flagged schema gap — see `docs/architecture/data-model.md` §2.6).
+  **As of Production Roadmap MS1, professional registration requires complete onboarding**
+  — see the MS1 paragraph under Status.
 - `POST /api/auth/verify` — consumes a 6-digit `verification_codes` row, sets
   `users.email_verified = true`.
 - `POST /api/auth/login` — bcrypt password check, the exact ordered lockout logic from
@@ -182,3 +184,40 @@ attempts each correctly returned `401 INVALID_CREDENTIALS` with a persisted, inc
 persisted; a 6th attempt with the *correct* password still returned `423` while locked;
 and a successful login on an unlocked account still resets both columns and issues a JWT.
 Full milestone QA sign-off is `pronto-qa`'s call, not asserted here.
+
+**Production Roadmap MS1 — registration now requires complete onboarding, and refuses
+`ADMIN` (2026-08-22).** `POST /api/auth/register` reuses the existing surface (D7) rather
+than gaining a second one, but its professional payload changed in a breaking way:
+`ProfessionalRegistrationData` gained two required fields, `subServiceIds` (at least one, each
+proven to exist and to belong to the declared `categoryId` by
+`professionals.service.SubServiceSelectionValidator` — the same component the self-service
+edit endpoint calls, not a second copy of the rule) and `workingHours` (the full 7-day week,
+typed as `availability.dto.WorkingHoursItemRequest` so the two surfaces cannot drift, validated
+by the extracted `availability.service.WorkingHoursValidator` plus a registration-only
+"at least one enabled day"). MS0 had recorded that registration wrote zero
+`professional_sub_services` and zero `professional_working_hours` rows, so a brand-new
+professional was listed to customers while deriving an empty calendar and the customer hit the
+dead end at step 3 of 4; the fix collects the two missing pieces at the only moment the
+platform has the registrant's attention, and **fabricates nothing** — `validateRoleSpecificFields`
+runs every one of these checks before the `users` row is written, so a rejected submission
+leaves no half-created account behind, and `persistSubServices`/`persistWorkingHours` insert
+inside the same transaction without inventing a default. The `Professional` row is now created
+**`PENDING`** (MS1 replaces v1.0's auto-approval outright), which is not a limbo: the
+registrant can log in and edit their profile, sub-services, working hours and SOS toggle — what
+they cannot do until an operator approves them is appear to customers or receive work.
+Separately, `register` now **rejects `role = ADMIN` with `400 VALIDATION_ERROR` before any row
+is written**: `RegisterRequest.role` is typed as `users.entity.UserRole`, so the moment MS1
+added the `ADMIN` constant Jackson would bind `"ADMIN"` from a public, unauthenticated request
+and the operator role that approves professionals would have been self-issuable by anyone who
+can reach this endpoint. The guard is checked first and thrown immediately rather than
+collected alongside other field errors — there is nothing else worth telling a caller who just
+tried to make themselves an administrator. This package gained three constructor dependencies
+(`SubServiceSelectionValidator`, `ProfessionalSubServiceRepository`,
+`ProfessionalWorkingHoursRepository`) and no new `ErrorCode`. Unit-tested via the extended
+`auth.service.AuthServiceTest`; live-validated end to end, including every negative
+(both fields omitted, empty `subServiceIds`, a cross-category id → `CATEGORY_MISMATCH`, all
+days disabled, six entries instead of seven, `endTime` before `startTime`, `role = ADMIN`) —
+see `docs/production-roadmap/reports/MS1-report.md`, Validations 12–14. **Known limitation
+carried by this package's change**: there is no documented procedure anywhere in this
+repository for creating the first `ADMIN` account, precisely because registration refuses to —
+recorded in the MS1 report and owned by MS7.

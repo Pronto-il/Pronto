@@ -222,11 +222,28 @@ the caller's own `User`/`Professional` rows → build response.
   "averageRating": 4.60,
   "reviewCount": 12,
   "approvalStatus": "APPROVED",
+  "bookable": true,
   "favorited": null,
   "createdAt": "2026-08-01T09:00:00Z",
   "updatedAt": "2026-08-15T10:00:00Z"
 }
 ```
+
+**`approvalStatus` / `bookable` — changed by Production Roadmap MS1 (2026-08-22, design
+§D-G).** Both fields matter here because §4.4 shares this shape:
+
+- **`approvalStatus` is populated on this self-view only.** It is `null` for every other
+  caller (§4.4). It used to be returned to any authenticated caller, which was harmless only
+  for as long as the column was permanently `APPROVED`; now that it carries a real operator
+  decision, returning it to a browsing customer would disclose "this named professional was
+  rejected" to someone with no business knowing it. The professional themself must see it.
+- **`bookable` (new, `boolean`, never `null`) is the neutral replacement everyone gets**: is
+  this professional marketplace-eligible — `approvalStatus = APPROVED` **and** completed
+  onboarding, computed per request by `professionals.ProfessionalEligibility` (see
+  `data-model.md` §2.4). Enough for a UI to withhold a booking affordance that would dead-end,
+  and it reveals nothing about which of several possible reasons applies. **`approvalStatus =
+  "APPROVED"` with `bookable: false` is a normal, expected combination** — an approved
+  professional whose onboarding is still incomplete.
 
 **Status codes**: `200` · `401 UNAUTHORIZED` · `403 FORBIDDEN`.
 
@@ -302,9 +319,26 @@ of either role, no ownership check — see `storage/README.md`'s "Role enforceme
 Auth: **yes**. Role: **either** (no route-level gate — same "route-level gate abstains,
 service layer authorizes what it needs to" precedent as `GET /api/issues/{id}`).
 
-Public professional detail view — same response shape as §4.1, but `favorited` is populated
-only when the caller's role is `CUSTOMER` (a `PROFESSIONAL` caller, including the
-professional viewing their own card by id, always gets `favorited: null`).
+Public professional detail view — same response *shape* as §4.1, with two fields that differ
+by caller:
+
+- `favorited` is populated only when the caller's role is `CUSTOMER` (a `PROFESSIONAL` caller,
+  including the professional viewing their own card by id, always gets `favorited: null`).
+- **`approvalStatus` is always `null` on this endpoint** — Production Roadmap MS1, design
+  §D-G. This is the third-party view, and a professional's approval decision is not disclosed
+  to third parties. Measured in MS1 QA: `null` for a customer viewing any professional,
+  `APPROVED` only on the §4.1 self-view. **`bookable` is populated for everyone** and is what a
+  caller should branch on. This supersedes this doc's earlier "same response shape as §4.1"
+  wording, which was written when `approvalStatus` was a permanently-`APPROVED` column and
+  therefore carried no information.
+
+> **Frontend note (accurate as of the MS1 closure pass):** `ProfessionalProfileDisplay.tsx`'s
+> verification badge renders on `approvalStatus === 'APPROVED'`, so on this third-party view it
+> now correctly renders for nobody rather than — as MS0 measured — for 100% of professionals.
+> The customer-facing select CTA on `ProfessionalProfilePage.tsx` does **not** yet read
+> `bookable`; see `docs/production-roadmap/reports/MS1-report.md` Known Limitation 9. The
+> backend still refuses the booking with `400`, so this is a stale-state dead end, not a
+> bypass.
 
 **Behavior**: load professional by path id → `404 NOT_FOUND` if missing → if caller role is
 `CUSTOMER`, resolve `favorited` via `FavoriteRepository.existsByCustomerIdAndProfessionalId`
@@ -462,11 +496,19 @@ filtered out of the response rather than causing a `500`.
       "profileImageUrl": "https://.../professionals/43/profile/....jpg",
       "averageRating": 4.60,
       "reviewCount": 12,
-      "favoritedAt": "2026-08-10T08:00:00Z"
+      "favoritedAt": "2026-08-10T08:00:00Z",
+      "bookable": true
     }
   ]
 }
 ```
+
+**`bookable` — new, Production Roadmap MS1 (2026-08-22, design §D-G).** Same neutral
+eligibility flag as §4.1/§4.4. **Ineligible favorites are still listed, never removed** — a
+customer's own saved list is theirs, and silently deleting entries would be both surprising
+and a weak side-channel about the professional's status. Consumers must therefore expect
+`bookable: false` rows in a normal response. `FavoriteProfessionalSummary` still carries **no**
+distance/ETA fields (§6.5, §8 item 5) — `bookable` does not change that.
 
 **Status codes**: `200` · `401 UNAUTHORIZED` · `403 FORBIDDEN`.
 
@@ -938,3 +980,222 @@ inside one `@Transactional` method.
 - `professionals.category_id`, `UpdateProfessionalProfileRequest`, and `PUT
   /api/professionals/me`'s existing behavior are all unchanged — sub-service selection is a
   fully separate endpoint pair.
+
+---
+
+## 12. `/api/admin/professionals/**` — operator approval surface (Production Roadmap MS1, 2026-08-22)
+
+**As-built.** Verified against
+`backend/src/main/java/com/pronto/professionals/{controller/AdminProfessionalsController,
+service/ProfessionalApprovalService,dto/*}.java` and
+`V40__alter_professionals_approval_lifecycle.sql`, not from a plan. Design record:
+`docs/architecture/ms1-professional-verification-design.md` §D-F/§D-G; milestone record:
+`docs/production-roadmap/reports/MS1-report.md`. Lifecycle semantics and the eligibility rule
+these endpoints operate on: `data-model.md` §2.4.
+
+Documented here rather than in a new file because these endpoints read and write the
+`professionals` table this doc already specifies. They are the **minimum operator capability**
+without which MS1's lifecycle would have nobody able to drive it and every registration would
+sit at `PENDING` forever. The wider admin/operations surface is **MS7's** and is not in this
+contract.
+
+### 12.0 Conventions specific to this surface
+
+| Aspect | Choice |
+|---|---|
+| Base path | `/api/admin/professionals` — its own prefix, **not** under `/api/professionals/*` |
+| Auth | **yes**. Role: **`ADMIN`** on every route, no exceptions |
+| Gate | route-level only: `RoleRequiredInterceptor(ADMIN)` registered in `professionals.config.ProfessionalsWebConfig` for `"/api/admin/professionals"` **and** `"/api/admin/professionals/**"` (both patterns, deliberately — the collection route has no trailing segment). `ProfessionalApprovalService` does **not** re-check the role; a second, divergent copy of a gate is how one of them ends up wrong |
+| Non-`ADMIN` caller | `403 FORBIDDEN`, always — including on `POST .../reject` with a malformed body, because `preHandle` runs **before** Spring resolves the `@Valid` body, so a probe cannot get a `400` that would confirm the endpoint exists and describe its shape |
+| Path id | non-numeric or `<= 0` → `404 NOT_FOUND` (same convention as `ProfessionalsController`) |
+| Error envelope | reused verbatim from `api-contract.md` §1 |
+
+**Why a separate prefix:** `/api/professionals/*` already mixes a `PROFESSIONAL`-only surface
+with an either-role one, so its interceptor must use a literal path list. Hanging an
+`ADMIN`-only third audience off that same prefix would make that literal list the only thing
+standing between three audiences. A prefix with exactly one audience is what makes the blanket
+`/**` pattern safe to write here.
+
+### 12.1 `GET /api/admin/professionals[?approvalStatus=]`
+
+The review queue, **`created_at ASC`** — whoever has waited longest is first.
+
+`approvalStatus` is optional; missing/blank means no filter. Accepted values: `PENDING` ·
+`APPROVED` · `REJECTED` · `DISABLED` (`DISABLED` is accepted as a *filter* even though MS1 can
+never produce a row holding it — filtering an empty set is harmless, whereas rejecting a value
+the database's own CHECK permits would be a second, narrower definition of the same
+enumeration). An **unrecognized value is `400 VALIDATION_ERROR`, not an empty list**: silently
+returning nothing for a typo reads as "nobody is waiting", the one wrong answer this screen can
+give.
+
+**Response `200`:**
+```json
+{
+  "professionals": [
+    {
+      "professionalId": 43,
+      "userId": 42,
+      "fullName": "דוד כהן",
+      "email": "david@example.com",
+      "categoryId": 1,
+      "serviceArea": "תל אביב",
+      "city": "תל אביב",
+      "approvalStatus": "PENDING",
+      "onboardingComplete": false,
+      "registeredAt": "2026-08-20T09:00:00Z",
+      "approvalReviewedAt": null
+    }
+  ]
+}
+```
+
+Deliberately lean: enough to decide which application to open next, and nothing that would turn
+the list itself into a bulk export of professional data. `onboardingComplete` is on the summary
+so an operator can see *before* spending a decision that approving this person would still
+leave them non-bookable. The verification document is **not** referenced here in any form.
+
+**Status codes**: `200` · `400 VALIDATION_ERROR` · `401 UNAUTHORIZED` · `403 FORBIDDEN`.
+
+### 12.2 `GET /api/admin/professionals/{professionalId}`
+
+Everything needed to decide, on one screen.
+
+**Response `200`:**
+```json
+{
+  "professionalId": 43,
+  "userId": 42,
+  "fullName": "דוד כהן",
+  "email": "david@example.com",
+  "categoryId": 1,
+  "serviceArea": "תל אביב",
+  "city": "תל אביב",
+  "bio": "אינסטלטור עם 10 שנות ניסיון",
+  "basePrice": 150.00,
+  "approvalStatus": "PENDING",
+  "bookable": false,
+  "hasVerificationDocument": true,
+  "subServiceIds": [3, 7],
+  "onboardingComplete": true,
+  "registeredAt": "2026-08-20T09:00:00Z",
+  "approvalReviewedAt": null,
+  "approvalReviewedBy": null,
+  "approvalRejectionReason": null
+}
+```
+
+- `bookable` comes from `ProfessionalRepository#existsEligibleById` and `onboardingComplete`
+  from `#hasCompleteOnboarding` — both built from
+  `ProfessionalEligibility.ELIGIBLE_JPQL`/`ONBOARDING_COMPLETE_JPQL`, so this screen and the
+  gate cannot disagree. Neither is re-derived in Java from the other fields.
+- The onboarding **breakdown** (`hasVerificationDocument`, `subServiceIds`) is the point of this
+  DTO: `onboardingComplete: false` alone turns "approve or reject" into guesswork and makes an
+  honest rejection reason impossible to write. The third component — an enabled working-hours
+  day — is deliberately **not** queried here, because `professionals` must not take a
+  Java-level dependency on `availability` (which already depends on it); with the other two
+  visible an operator can tell the remaining case apart. Consequence, stated rather than hidden:
+  **the operator cannot see the actual working hours**, and the review screen says so in Hebrew.
+- `approvalRejectionReason` is the reason **currently in force** — non-`null` only while
+  `approvalStatus = REJECTED` (`ck_professionals_rejection_reason`).
+- **No verification-document key and no URL appear in this response** — see §12.3.
+
+**Status codes**: `200` · `401 UNAUTHORIZED` · `403 FORBIDDEN` · `404 NOT_FOUND`.
+
+### 12.3 `GET /api/admin/professionals/{professionalId}/verification-document`
+
+Mints a short-lived URL for the one private document this operator is entitled to see. This is
+the endpoint that closes MS0 blocker **C2** ("verification documents are write-only" — uploaded
+at registration since `V21` and read back by nothing, not even by the owner).
+
+**Response `200`:**
+```json
+{
+  "professionalId": 43,
+  "url": "https://.../api/storage/images/verification-documents/42/9f1c....pdf?...",
+  "expiresInSeconds": 300
+}
+```
+
+**The `url` is a bearer capability**: anyone holding it can fetch a private compliance document
+without authenticating, until it expires (`pronto.storage.presigned-url-ttl-seconds`, default
+300). That is why it is minted on demand rather than embedded in §12.2 — embedding it would mint
+one on every list-then-open traversal whether or not anyone looked, and put it into every
+intermediate cache and browser history on the way — and why **neither the URL nor the underlying
+object key is ever logged**. The object key is deliberately not a field: an operator has no use
+for it, and it is the durable half of the secret. The audit line
+`professional.verification-document.viewed professionalId=… operatorUserId=…` records who looked
+at whose, and nothing that would let a log reader fetch it.
+
+Authorization is a **narrow exemption**, not a widening: the key is read off the `professionals`
+row loaded by path id (**never from the request**) and handed to
+`StorageService#getVerificationDocumentUrlForOperator`, which refuses any key outside the
+`verification-documents/` prefix with `403 FORBIDDEN`. Teaching the general ownership rule
+(`StorageService#authorize`) that ADMINs may read anything was considered and rejected — it
+would have silently widened access to every private key in the system, customers' issue photos
+included. See that method's Javadoc and `storage/README.md`.
+
+**Status codes**: `200` · `401 UNAUTHORIZED` · `403 FORBIDDEN` · `404 NOT_FOUND` (unknown
+professional, or the professional has no `verification_document_key`).
+
+### 12.4 `POST /api/admin/professionals/{professionalId}/approve`
+
+No request body. **Response `200`**: the §12.2 shape, re-read after the write (so the caller
+gets the canonical post-decision state, including a freshly recomputed `bookable`).
+
+Legal from `PENDING` (ordinary review) and from `REJECTED` (someone who fixed what was wrong and
+was re-reviewed). **Illegal from `APPROVED`** → `409` — which is what turns a double-submitted
+decision into a reported conflict instead of a silent second write under a new reviewer's name.
+Writes `approval_reviewed_by`/`approval_reviewed_at` and **clears**
+`approval_rejection_reason`.
+
+**Approval is deliberately not refused for incomplete onboarding.** The two judgments are
+different: "is this a real, verified tradesperson" belongs to the operator; "have they finished
+setting up their calendar" belongs to the professional and self-heals the moment they do it.
+Coupling them would either block a legitimate approval or invite an operator to fill in someone
+else's availability to unblock it. The professional therefore stays non-bookable, the outcome is
+logged (`professional.approved … onboardingComplete=false`), and **no missing data is ever
+fabricated** (D4).
+
+**Status codes**: `200` · `401 UNAUTHORIZED` · `403 FORBIDDEN` · `404 NOT_FOUND` ·
+`409 PROFESSIONAL_APPROVAL_INVALID_TRANSITION`.
+
+### 12.5 `POST /api/admin/professionals/{professionalId}/reject`
+
+**Request:**
+```json
+{ "reason": "המסמך שהועלה אינו קריא" }
+```
+
+`reason` is **required** (`@NotBlank`, ≤500 chars — the width of
+`professionals.approval_rejection_reason`), not optional: a rejection with no recorded reason is
+a decision nobody — not the next operator, not the professional, not an audit — can account for
+later. It is **stored, not logged**: a judgment about a named person belongs in the row an
+operator can see, not in an application log stream.
+
+**Response `200`**: the §12.2 shape, re-read after the write.
+
+Legal **only from `PENDING`**. `APPROVED → REJECTED` is refused with `409`, because that is a
+suspension, and suspension is MS7's `DISABLED` — not something this endpoint may quietly stand
+in for. The practical consequence is recorded honestly as an MS1 limitation: **an operator who
+approves in error has no undo in MS1.**
+
+**Status codes**: `200` · `400 VALIDATION_ERROR` · `401 UNAUTHORIZED` · `403 FORBIDDEN` ·
+`404 NOT_FOUND` · `409 PROFESSIONAL_APPROVAL_INVALID_TRANSITION`.
+
+### 12.6 Concurrency
+
+Load-mutate-save on a single row — the same pattern as `ProfessionalsService#updateMyProfile`
+and `UsersService#deleteMe`, not the guarded atomic `UPDATE … WHERE <state>` reserved for
+genuinely contended state machines (`orders`, SOS requests, slots). Approval is a human queue
+worked by a handful of operators. The transition rules live in
+`Professional#approve`/`#reject` and throw on an illegal transition. MS1 QA measured four
+simultaneous approves of the same professional: **exactly one `200` and three `409`**, one
+reviewer recorded.
+
+### 12.7 New error code
+
+`PROFESSIONAL_APPROVAL_INVALID_TRANSITION` → HTTP `409`
+(`common.exception.ErrorCode`). Its own code rather than a generic `VALIDATION_ERROR` for the
+same reason every other `*_INVALID_STATE` code in that enum exists: nothing about the request
+was malformed, the world simply moved, and an operator UI must tell that apart from "you sent
+nonsense."

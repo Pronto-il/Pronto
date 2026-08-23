@@ -313,3 +313,14 @@ in `shared/components/`.
 in `features/dashboard/ProDashboardLayout.tsx`, not `App.tsx` — deliberately scoped to the
 `/pro/*` subtree only, unlike every other provider in this file. Full design record:
 `docs/architecture/frontend-ms6-professional-command-center-design.md` §3.3.
+
+**MS1 finalization — `useNotifications` becomes an unread-only feed (2026-08-22)**: the hook now
+polls `getNotifications(true)` (`?unreadOnly=true`, a parameter the backend already supported — no
+backend change), and `markAsRead`/`markAllAsRead` **remove** rows from local state instead of
+stamping `readAt` on them. `unreadCount` therefore derives from `notifications.length`. A new
+`dismissedIds` ref filters incoming poll data so a row cannot flash back during the window between
+the optimistic removal and the `POST` landing; it is a render-time filter only, never sent anywhere,
+and deliberately not persisted — the server's own `readAt` is what makes the removal survive a
+reload. The optimistic contract is otherwise unchanged: the `POST` is fired and not awaited, and a
+failure self-corrects on the next tick with no error toast. Nothing is deleted server-side. Full
+rationale and the consumer-side consequence: `features/notifications/README.md`.

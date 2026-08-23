@@ -27,6 +27,7 @@ import {
 } from '../features/dashboard';
 import { ProfessionalProfilePage } from '../features/professionals';
 import { FavoritesPage } from '../features/favorites';
+import { ProfessionalReviewQueuePage, ProfessionalReviewPage } from '../features/admin';
 import DesignSystemPage from './DesignSystemPage';
 import type { RouteObject } from 'react-router-dom';
 
@@ -84,6 +85,19 @@ import type { RouteObject } from 'react-router-dom';
  * where "אישור" would mean something different from what it means on an SOS offer. Discovery does
  * not depend on being on this route: `ProSosProvider` is mounted on the layout, so the tab badge
  * and the new-offer toast reach a professional anywhere under `/pro/*`.
+ *
+ * **MS1 professional verification (production roadmap, 2026-08-22)**: `/admin/professionals` and
+ * `/admin/professionals/:professionalId` join the tree behind a third `RequireAuth` group,
+ * `role="ADMIN"` — the operator surface for the approval lifecycle MS1 introduces (design
+ * `docs/architecture/ms1-professional-verification-design.md` D-F). Its own top-level path prefix
+ * rather than a section of `/pro/*` or `/profile`, mirroring the backend's own split: the
+ * `/api/admin/professionals/**` routes are the only `ADMIN`-gated ones in the app, and a distinct
+ * prefix keeps "which routes have which audience" answerable by reading the path. **The guard here
+ * is UX, not security** — `professionals.config.ProfessionalsWebConfig` answers `403` to a
+ * non-`ADMIN` caller regardless of which screen asked, and a `CUSTOMER`/`PROFESSIONAL` who types
+ * the URL is bounced to `/` by `RequireAuth` before any request is made. This is the minimal
+ * operator capability, not MS7's admin console: no user management, no order management, no
+ * analytics.
  */
 const designSystemRoutes: RouteObject[] = import.meta.env.DEV
   ? [{ path: '/__design', element: <DesignSystemPage /> }]
@@ -119,6 +133,13 @@ export const router = createBrowserRouter([
           { path: 'orders', element: <MyOrdersPage /> },
           { path: 'orders/:orderId/review', element: <CompletionReviewPage /> },
           { path: 'favorites', element: <FavoritesPage /> },
+        ],
+      },
+      {
+        element: <RequireAuth role="ADMIN" />,
+        children: [
+          { path: 'admin/professionals', element: <ProfessionalReviewQueuePage /> },
+          { path: 'admin/professionals/:professionalId', element: <ProfessionalReviewPage /> },
         ],
       },
       {

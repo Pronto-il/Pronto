@@ -79,9 +79,13 @@ class ProfessionalsServiceTest {
         storageService = Mockito.mock(StorageService.class);
         subServiceRepository = Mockito.mock(SubServiceRepository.class);
         professionalSubServiceRepository = Mockito.mock(ProfessionalSubServiceRepository.class);
+        // A real SubServiceSelectionValidator over the same mocked SubServiceRepository these
+        // tests already stub: MS1 moved the existence/cross-category rule into it, and this suite
+        // is where that rule's coverage lives, so it must stay exercised for real rather than
+        // being mocked away.
         professionalsService = new ProfessionalsService(professionalRepository, userRepository,
-                reviewAggregateRepository, favoriteRepository, storageService, subServiceRepository,
-                professionalSubServiceRepository);
+                reviewAggregateRepository, favoriteRepository, storageService,
+                new SubServiceSelectionValidator(subServiceRepository), professionalSubServiceRepository);
         when(reviewAggregateRepository.getRatingAggregate(PROFESSIONAL_ID))
                 .thenReturn(new ProfessionalRatingAggregate(null, 0L));
 
@@ -255,5 +259,110 @@ class ProfessionalsServiceTest {
         verify(professionalSubServiceRepository, never()).save(any());
         // subServiceRepository is never even queried when the request has no ids to validate.
         verify(subServiceRepository, never()).findAllById(anyIterable());
+    }
+
+    // ---- MS1 (D-G): who is allowed to learn a professional's approval status ----
+
+    private Professional rejectedProfessional() {
+        Professional professional = new Professional(CALLER_ID, CATEGORY_ID, "Tel Aviv", BigDecimal.TEN);
+        setField(professional, "id", PROFESSIONAL_ID);
+        professional.reject(7L, java.time.Instant.now(), "Verification document is illegible.");
+        return professional;
+    }
+
+    private void stubProfileLookup(Professional professional) {
+        User user = new User("Dana Cohen", "dana@example.com", "hash", UserRole.PROFESSIONAL);
+        setField(user, "id", CALLER_ID);
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
+        when(userRepository.findById(CALLER_ID)).thenReturn(Optional.of(user));
+    }
+
+    @Test
+    void getProfile_customerCaller_neverSeesApprovalStatus() {
+        // Once the column carries a real decision, returning it to a browsing customer discloses
+        // "this named person was rejected" to someone with no business knowing it.
+        stubProfileLookup(rejectedProfessional());
+        AuthenticatedUser customer = new AuthenticatedUser(999L, UserRole.CUSTOMER.name());
+        when(favoriteRepository.existsByCustomerIdAndProfessionalId(999L, PROFESSIONAL_ID)).thenReturn(false);
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(false);
+
+        ProfessionalProfileResponse response = professionalsService.getProfile(PROFESSIONAL_ID, customer);
+
+        assertThat(response.approvalStatus()).isNull();
+        // ...and the neutral replacement is what the UI actually needs: do not offer a booking.
+        assertThat(response.bookable()).isFalse();
+    }
+
+    @Test
+    void getProfile_otherProfessionalCaller_neverSeesApprovalStatus() {
+        stubProfileLookup(rejectedProfessional());
+        AuthenticatedUser otherProfessional = new AuthenticatedUser(888L, UserRole.PROFESSIONAL.name());
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(false);
+
+        ProfessionalProfileResponse response = professionalsService.getProfile(PROFESSIONAL_ID, otherProfessional);
+
+        assertThat(response.approvalStatus()).isNull();
+    }
+
+    @Test
+    void getMyProfile_selfView_doesSeeApprovalStatus() {
+        // The professional must be able to see where their own application stands.
+        Professional professional = rejectedProfessional();
+        User user = new User("Dana Cohen", "dana@example.com", "hash", UserRole.PROFESSIONAL);
+        setField(user, "id", CALLER_ID);
+        when(professionalRepository.findByUserId(CALLER_ID)).thenReturn(Optional.of(professional));
+        when(userRepository.findById(CALLER_ID)).thenReturn(Optional.of(user));
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(false);
+
+        ProfessionalProfileResponse response = professionalsService.getMyProfile(professionalCaller);
+
+        assertThat(response.approvalStatus()).isEqualTo(Professional.STATUS_REJECTED);
+        assertThat(response.bookable()).isFalse();
+    }
+
+    @Test
+    void getProfile_professionalViewingTheirOwnCardById_alsoSeesApprovalStatus() {
+        // Self-view is decided from the row's own userId, not from which endpoint was called, so
+        // the answer is the same whichever way the professional arrives at their own profile.
+        stubProfileLookup(rejectedProfessional());
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(false);
+
+        ProfessionalProfileResponse response =
+                professionalsService.getProfile(PROFESSIONAL_ID, professionalCaller);
+
+        assertThat(response.approvalStatus()).isEqualTo(Professional.STATUS_REJECTED);
+    }
+
+    @Test
+    void getProfile_approvedButIncompleteOnboarding_isNotBookable() {
+        // D4's core rule as the customer's client sees it: APPROVED is not the same as bookable,
+        // and the flag the UI branches on is the eligibility answer, never the status.
+        Professional professional = new Professional(CALLER_ID, CATEGORY_ID, "Tel Aviv", BigDecimal.TEN);
+        setField(professional, "id", PROFESSIONAL_ID);
+        professional.approve(7L, java.time.Instant.now());
+        stubProfileLookup(professional);
+        AuthenticatedUser customer = new AuthenticatedUser(999L, UserRole.CUSTOMER.name());
+        when(favoriteRepository.existsByCustomerIdAndProfessionalId(999L, PROFESSIONAL_ID)).thenReturn(false);
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(false);
+
+        ProfessionalProfileResponse response = professionalsService.getProfile(PROFESSIONAL_ID, customer);
+
+        assertThat(professional.getApprovalStatus()).isEqualTo(Professional.STATUS_APPROVED);
+        assertThat(response.bookable()).isFalse();
+    }
+
+    @Test
+    void getProfile_approvedAndCompleteOnboarding_isBookable() {
+        Professional professional = new Professional(CALLER_ID, CATEGORY_ID, "Tel Aviv", BigDecimal.TEN);
+        setField(professional, "id", PROFESSIONAL_ID);
+        professional.approve(7L, java.time.Instant.now());
+        stubProfileLookup(professional);
+        AuthenticatedUser customer = new AuthenticatedUser(999L, UserRole.CUSTOMER.name());
+        when(favoriteRepository.existsByCustomerIdAndProfessionalId(999L, PROFESSIONAL_ID)).thenReturn(false);
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(true);
+
+        ProfessionalProfileResponse response = professionalsService.getProfile(PROFESSIONAL_ID, customer);
+
+        assertThat(response.bookable()).isTrue();
     }
 }

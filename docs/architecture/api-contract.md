@@ -146,10 +146,39 @@ number is not an address component). **Not** collected for `PROFESSIONAL` regist
   "professional": {
     "categoryId": 1,
     "serviceArea": "תל אביב",
-    "basePrice": 150.00
+    "basePrice": 150.00,
+    "subServiceIds": [3, 7],
+    "workingHours": [
+      { "weekday": 0, "enabled": true,  "startTime": "08:00", "endTime": "18:00" },
+      { "weekday": 1, "enabled": true,  "startTime": "08:00", "endTime": "18:00" },
+      { "weekday": 2, "enabled": true,  "startTime": "08:00", "endTime": "18:00" },
+      { "weekday": 3, "enabled": true,  "startTime": "08:00", "endTime": "18:00" },
+      { "weekday": 4, "enabled": true,  "startTime": "08:00", "endTime": "14:00" },
+      { "weekday": 5, "enabled": false, "startTime": null,    "endTime": null },
+      { "weekday": 6, "enabled": false, "startTime": null,    "endTime": null }
+    ]
   }
 }
 ```
+
+**`professional.subServiceIds` / `professional.workingHours` — new and both required, added by
+Production Roadmap MS1 (2026-08-22, governing decisions D4/D7).** This is a **breaking change**
+to the professional registration payload: a request omitting either field is now `400`.
+
+MS0 recorded the concrete defect this closes: registration created zero
+`professional_sub_services` rows and zero `professional_working_hours` rows, so a professional
+who had just registered was listed to customers while deriving an empty calendar — the customer
+discovered the dead end at step 3 of 4. The fix collects the two missing pieces at the only
+moment the platform has the registrant's attention. **Nothing is fabricated**: no default
+working hours are invented and no sub-services are guessed (D4/D5). Both remain editable
+afterwards through `PUT /api/professionals/me/sub-services`
+(`api-contract-professionals-reviews.md` §11.3) and `PUT /api/availability/working-hours`
+(`api-contract-availability.md`).
+
+`workingHours` uses the **identical** `availability.dto.WorkingHoursItemRequest` record as the
+edit endpoint — the same Java type, so the two surfaces cannot drift — and the identical
+`WorkingHoursValidator.validateWeek` rules. `subServiceIds` is validated by the identical
+`professionals.service.SubServiceSelectionValidator` the edit endpoint uses.
 
 `confirmPassword` is deliberately not a field anywhere in this contract — it's
 frontend-only validation (`password == confirmPassword` before submitting), never sent
@@ -159,7 +188,7 @@ to or persisted by the backend.
 
 | Field | Rule |
 |---|---|
-| `role` | required, one of `CUSTOMER` \| `PROFESSIONAL`. Any other value is unparseable JSON to this enum → `400 VALIDATION_ERROR` before the service layer runs at all; there is no way for a client to register as `ADMIN` or any other role. |
+| `role` | required, one of `CUSTOMER` \| `PROFESSIONAL`. **Changed by Production Roadmap MS1 (2026-08-22).** `ADMIN` is now a real `users.role` value and a real `UserRole` enum constant (`V40`), so it **does** parse — the earlier "unparseable to this enum" argument no longer holds and must not be relied on. What blocks it now is an **explicit guard**: `auth.service.AuthService#validateRoleSpecificFields` checks `role == ADMIN` first and throws `400 VALIDATION_ERROR` (field `role`, "must be CUSTOMER or PROFESSIONAL") immediately, before any other validation and before any row is written. Without that guard the operator role that approves professionals would be self-issuable by anyone able to reach this public, unauthenticated endpoint. Any *other* unknown value is still unparseable → `400 VALIDATION_ERROR`. |
 | `fullName` | required, 2–150 chars (matches `users.full_name VARCHAR(150)`). |
 | `email` | required, valid email format, ≤255 chars. Uniqueness checked case-insensitively against `ux_users_email_lower`. |
 | `password` | required, **min 8 characters**. Same MVP-default judgment call as before, unchanged. |
@@ -170,6 +199,8 @@ to or persisted by the backend.
 | `professional.categoryId` | required *iff* `role = PROFESSIONAL`; must reference an existing `categories.id` (1–8, per the seeded `V10` list). Absent/invalid → `VALIDATION_ERROR`. |
 | `professional.serviceArea` | required *iff* `role = PROFESSIONAL`; 1–150 chars. |
 | `professional.basePrice` | required *iff* `role = PROFESSIONAL`; `> 0`, ≤2 decimal places. Same judgment call as before (PRD §1/§7.3/§7.4 price-on-card requirement), unchanged. |
+| `professional.subServiceIds` | **New, MS1.** Required *iff* `role = PROFESSIONAL`; non-empty, no `null` entries, duplicates de-duplicated. Every id must exist **and belong to `professional.categoryId`'s own category** — a cross-category id is `400 CATEGORY_MISMATCH`, not a silent drop. Enforced by `professionals.service.SubServiceSelectionValidator`, the same component `PUT /api/professionals/me/sub-services` uses, reporting against the field path `professional.subServiceIds`. |
+| `professional.workingHours` | **New, MS1.** Required *iff* `role = PROFESSIONAL`. **Exactly 7 entries**, weekdays `0`–`6` each present exactly once (`0` = Sunday, per `professional-weekly-calendar-design.md` §4.2); `enabled` non-null on every entry; when `enabled = true`, `startTime`/`endTime` are required and `endTime > startTime`; when `enabled = false`, times must be `null` (not `""`). **At least one enabled day** — an all-disabled week is `400`, because onboarding is not complete without a bookable week (D4). Enforced by `availability.service.WorkingHoursValidator.validateWeek` + `requireAtLeastOneEnabledDay`. Note the asymmetry, deliberate: the *edit* endpoint does **not** apply the at-least-one-enabled-day rule — an established professional switching every day off is going on holiday, a legitimate act the platform must not block; they simply stop being eligible until they switch a day back on. |
 | `verificationDocument` (multipart part) | required *iff* `role = PROFESSIONAL`; absent/empty → `VALIDATION_ERROR`; unsupported content-type → `400 UNSUPPORTED_DOCUMENT_TYPE`; >8MB → `413 IMAGE_TOO_LARGE` (shared error code with image uploads). |
 | `profilePhoto` (multipart part) | always optional; unsupported content-type → `400 UNSUPPORTED_IMAGE_TYPE`; >8MB → `413 IMAGE_TOO_LARGE`. |
 
@@ -185,8 +216,15 @@ to or persisted by the backend.
    columns (added by `V20__alter_users_add_default_address.sql`) are populated in the
    same insert.
 4. If `role = PROFESSIONAL`: also insert the `professionals` row
-   (`category_id`, `service_area`, `base_price`, `approval_status` defaults to
-   `'APPROVED'` per the inert-column decision — nothing else to do, no workflow step),
+   (`category_id`, `service_area`, `base_price`, and — **changed by Production Roadmap MS1,
+   2026-08-22** — `approval_status = 'PENDING'`, set explicitly by
+   `professionals.entity.Professional`'s constructor rather than left to the column DEFAULT.
+   The previous text here, "`approval_status` defaults to `'APPROVED'` per the inert-column
+   decision — nothing else to do, no workflow step", is **superseded and no longer true**: the
+   account is now genuinely awaiting an operator decision and is invisible to customers until
+   it gets one. No client-supplied field anywhere in `RegisterRequest` can influence this
+   value), insert one `professional_sub_services` row per distinct `subServiceIds` entry and
+   all 7 `professional_working_hours` rows from `workingHours` (MS1 — same transaction),
    upload `verificationDocument` and persist its key to
    `verification_document_key` (added by
    `V21__alter_professionals_add_verification_document.sql`), upload `profilePhoto` if
@@ -213,8 +251,17 @@ to or persisted by the backend.
 }
 ```
 
-**Status codes**: `201` success · `400 VALIDATION_ERROR` · `400 UNSUPPORTED_DOCUMENT_TYPE`
-· `400 UNSUPPORTED_IMAGE_TYPE` · `413 IMAGE_TOO_LARGE` · `409 DUPLICATE_EMAIL`.
+**Status codes**: `201` success · `400 VALIDATION_ERROR` · `400 CATEGORY_MISMATCH` (MS1 —
+a `subServiceIds` entry outside `professional.categoryId`'s category) ·
+`400 UNSUPPORTED_DOCUMENT_TYPE` · `400 UNSUPPORTED_IMAGE_TYPE` · `413 IMAGE_TOO_LARGE` ·
+`409 DUPLICATE_EMAIL`.
+
+**What a professional can do after a `201` (MS1).** They verify their email and log in
+normally; `PENDING` is not a limbo. They may edit their profile, sub-services, working hours
+and SOS-availability toggle. What they cannot do until an operator approves them — and until
+their onboarding is complete — is appear in customer matching, receive Standard or SOS
+requests, or be presented as bookable. See `api-contract-professionals-reviews.md` §12 for the
+operator side and `data-model.md` §2.4 for the eligibility rule.
 
 ---
 

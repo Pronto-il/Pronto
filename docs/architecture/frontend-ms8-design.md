@@ -432,6 +432,11 @@ screen" pattern `features/notifications`/`features/dashboard` already follow)
   `updateMyProfessionalProfile()`. `approvalStatus` is **not** rendered — auto-approved in
   v1.0 (project-wide confirmed rule), so it carries no actionable information for the
   professional to see today; trivial to add later if that changes.
+  **That changed — Production Roadmap MS1 (2026-08-22).** Auto-approval is superseded
+  (`overview.md` §2's Professional approval row), and this package now carries
+  `features/dashboard/OnboardingStatusNotice.tsx`, which renders whenever the backend reports
+  `bookable: false` and links to the surfaces that fix it. This paragraph is kept as the record
+  of the original design decision, not as a description of current behaviour.
 - **`ProfessionalProfileImageField.tsx`** (new, thin wrapper) — composes the existing
   `shared/components/ImageUploadField.tsx` (per the task's own instruction: reuse it, don't
   invent a new upload pattern) for the pick/preview/remove UI, but — mirroring

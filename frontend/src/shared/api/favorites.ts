@@ -17,6 +17,21 @@ export interface FavoriteProfessionalSummary {
   averageRating: number | null;
   reviewCount: number;
   favoritedAt: string;
+  /**
+   * Production Roadmap MS1 (design §D-G). Whether this saved professional is currently
+   * marketplace-eligible — `approval_status = APPROVED` **and** completed onboarding, computed
+   * per request by `professionals.ProfessionalEligibility`. Mirrors
+   * `favorites.dto.FavoriteProfessionalSummary#bookable`.
+   *
+   * Neutral by design: it says "you cannot book this person right now", never *why*, so a
+   * favorites list cannot become a channel for learning that a named professional was rejected.
+   * Ineligible favorites are still listed, never deleted (`FavoritesService#listFavorites`).
+   *
+   * **Not yet consumed by any component** — `FavoriteProfessionalCard.tsx` does not read it.
+   * Wiring it into a customer-facing affordance is deliberately outside MS1's frontend scope;
+   * see `docs/production-roadmap/reports/MS1-report.md` Known Limitation 9.
+   */
+  bookable: boolean;
 }
 
 export interface FavoritesListResponse {

@@ -84,7 +84,7 @@ class FavoritesServiceTest {
 
     @Test
     void addFavorite_happyPath_savesRow() {
-        when(professionalRepository.existsById(PROFESSIONAL_ID)).thenReturn(true);
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(true);
         when(favoriteRepository.existsByCustomerIdAndProfessionalId(CUSTOMER_ID, PROFESSIONAL_ID)).thenReturn(false);
 
         favoritesService.addFavorite(customer, new AddFavoriteRequest(PROFESSIONAL_ID));
@@ -93,8 +93,8 @@ class FavoritesServiceTest {
     }
 
     @Test
-    void addFavorite_nonexistentProfessional_returnsValidationError() {
-        when(professionalRepository.existsById(PROFESSIONAL_ID)).thenReturn(false);
+    void addFavorite_nonexistentOrIneligibleProfessional_returnsValidationError() {
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(false);
 
         assertThatThrownBy(() -> favoritesService.addFavorite(customer, new AddFavoriteRequest(PROFESSIONAL_ID)))
                 .isInstanceOf(ApiException.class)
@@ -104,7 +104,7 @@ class FavoritesServiceTest {
 
     @Test
     void addFavorite_alreadyFavorited_isIdempotentNotError() {
-        when(professionalRepository.existsById(PROFESSIONAL_ID)).thenReturn(true);
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(true);
         when(favoriteRepository.existsByCustomerIdAndProfessionalId(CUSTOMER_ID, PROFESSIONAL_ID)).thenReturn(true);
 
         favoritesService.addFavorite(customer, new AddFavoriteRequest(PROFESSIONAL_ID));
@@ -114,7 +114,7 @@ class FavoritesServiceTest {
 
     @Test
     void addFavorite_uniqueConstraintRace_isTreatedAsSuccess() {
-        when(professionalRepository.existsById(PROFESSIONAL_ID)).thenReturn(true);
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(true);
         when(favoriteRepository.existsByCustomerIdAndProfessionalId(CUSTOMER_ID, PROFESSIONAL_ID)).thenReturn(false);
         when(favoriteRepository.save(any(Favorite.class))).thenThrow(new DataIntegrityViolationException("pk_favorites"));
 
@@ -158,6 +158,58 @@ class FavoritesServiceTest {
         assertThat(response.favorites().get(0).professionalId()).isEqualTo(PROFESSIONAL_ID);
         assertThat(response.favorites().get(0).averageRating()).isEqualByComparingTo("4.50");
         assertThat(response.favorites().get(0).reviewCount()).isEqualTo(2);
+    }
+
+    // ---- MS1: eligibility (D-B gating on add, D-G signalling on list) ----
+
+    @Test
+    void addFavorite_ineligibleProfessional_isRefusedAndNothingSaved() {
+        // Favoriting builds the shortlist a customer books from, so it is a creation path and is
+        // gated. Same VALIDATION_ERROR a nonexistent id produces, deliberately: the response must
+        // not distinguish "not verified" from "not there".
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(false);
+
+        assertThatThrownBy(() -> favoritesService.addFavorite(customer, new AddFavoriteRequest(PROFESSIONAL_ID)))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+        verify(favoriteRepository, never()).save(any());
+    }
+
+    @Test
+    void listFavorites_ineligibleProfessional_stillListedButNotBookable() {
+        // D-G: the row is never deleted and the professional never disappears from the list -- the
+        // customer saved them, and a list that silently shrinks reads as data loss. What changes
+        // is the neutral bookable flag.
+        Favorite favorite = new Favorite(CUSTOMER_ID, PROFESSIONAL_ID);
+        when(favoriteRepository.findByCustomerIdOrderByCreatedAtDesc(CUSTOMER_ID)).thenReturn(List.of(favorite));
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional()));
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(false);
+        when(userRepository.findById(1L)).thenReturn(Optional.of(
+                new User("Dana Cohen", "dana@example.com", "hash", UserRole.PROFESSIONAL)));
+        when(reviewAggregateRepository.getRatingAggregate(PROFESSIONAL_ID))
+                .thenReturn(new ProfessionalRatingAggregate(null, 0L));
+
+        FavoritesListResponse response = favoritesService.listFavorites(customer);
+
+        assertThat(response.favorites()).hasSize(1);
+        assertThat(response.favorites().get(0).bookable()).isFalse();
+        verify(favoriteRepository, never()).deleteByCustomerIdAndProfessionalId(any(), any());
+    }
+
+    @Test
+    void listFavorites_eligibleProfessional_isBookable() {
+        Favorite favorite = new Favorite(CUSTOMER_ID, PROFESSIONAL_ID);
+        when(favoriteRepository.findByCustomerIdOrderByCreatedAtDesc(CUSTOMER_ID)).thenReturn(List.of(favorite));
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional()));
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(true);
+        when(userRepository.findById(1L)).thenReturn(Optional.of(
+                new User("Dana Cohen", "dana@example.com", "hash", UserRole.PROFESSIONAL)));
+        when(reviewAggregateRepository.getRatingAggregate(PROFESSIONAL_ID))
+                .thenReturn(new ProfessionalRatingAggregate(null, 0L));
+
+        FavoritesListResponse response = favoritesService.listFavorites(customer);
+
+        assertThat(response.favorites().get(0).bookable()).isTrue();
     }
 
     @Test

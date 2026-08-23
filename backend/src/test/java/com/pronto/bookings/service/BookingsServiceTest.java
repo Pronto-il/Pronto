@@ -7,6 +7,7 @@ import com.pronto.bookings.dto.AvailableWindowsResponse;
 import com.pronto.bookings.dto.CreateOrderRequest;
 import com.pronto.bookings.dto.OrderDetailResponse;
 import com.pronto.bookings.dto.OrderResponse;
+import com.pronto.bookings.dto.OrdersListResponse;
 import com.pronto.bookings.dto.ProfessionalCard;
 import com.pronto.bookings.dto.ProfessionalListingResponse;
 import com.pronto.bookings.entity.Order;
@@ -779,6 +780,44 @@ class BookingsServiceTest {
         when(orderRepository.acceptIfPending(eq(ORDER_ID), any())).thenReturn(1);
 
         assertThatCode(() -> bookingsService.accept(PROFESSIONAL_USER_ID, ORDER_ID)).doesNotThrowAnyException();
+    }
+
+    // ---- listMine: the professional behind each order (customer "my orders" list) ----
+
+    @Test
+    void listMine_carriesProfessionalIdAndNameOnEverySummary() {
+        // Regression guard for the orders list: it used to show a date, a price and a status but
+        // never who the order was with, so the customer could not identify -- let alone open --
+        // the professional without navigating into each order.
+        when(orderRepository.findByCustomerIdOrderByCreatedAtDesc(CUSTOMER_ID))
+                .thenReturn(List.of(confirmedOrder()));
+        when(professionalRepository.findAllById(List.of(PROFESSIONAL_ID)))
+                .thenReturn(List.of(activeProfessional()));
+        when(userRepository.findAllById(List.of(PROFESSIONAL_USER_ID)))
+                .thenReturn(List.of(activeUser(PROFESSIONAL_USER_ID)));
+
+        OrdersListResponse response = bookingsService.listMine(CUSTOMER_ID, UserRole.CUSTOMER.name(), null);
+
+        assertThat(response.orders()).singleElement().satisfies(summary -> {
+            assertThat(summary.professionalId()).isEqualTo(PROFESSIONAL_ID);
+            assertThat(summary.professionalName()).isEqualTo("Some User");
+        });
+    }
+
+    @Test
+    void listMine_leavesProfessionalNameNullWhenItCannotBeResolved() {
+        // Same tolerance the single-order detail DTO already has: a professional/user row that no
+        // longer resolves must not blow up the whole list.
+        when(orderRepository.findByCustomerIdOrderByCreatedAtDesc(CUSTOMER_ID))
+                .thenReturn(List.of(confirmedOrder()));
+        when(professionalRepository.findAllById(List.of(PROFESSIONAL_ID))).thenReturn(List.of());
+
+        OrdersListResponse response = bookingsService.listMine(CUSTOMER_ID, UserRole.CUSTOMER.name(), null);
+
+        assertThat(response.orders()).singleElement().satisfies(summary -> {
+            assertThat(summary.professionalId()).isEqualTo(PROFESSIONAL_ID);
+            assertThat(summary.professionalName()).isNull();
+        });
     }
 
     private static ApiException catchApiException(Runnable action) {

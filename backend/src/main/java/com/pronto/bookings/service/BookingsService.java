@@ -46,8 +46,12 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * {@code /api/bookings/*} — Standard and SOS booking flows (professional listing, slot
@@ -516,8 +520,11 @@ public class BookingsService {
             throw forbidden();
         }
 
+        Map<Long, String> namesByProfessionalId = resolveProfessionalNames(orders);
+
         List<OrderSummaryResponse> summaries = orders.stream()
-                .map(o -> new OrderSummaryResponse(o.getId(), o.getIssueId(), o.getOrderStatus(),
+                .map(o -> new OrderSummaryResponse(o.getId(), o.getIssueId(), o.getProfessionalId(),
+                        namesByProfessionalId.get(o.getProfessionalId()), o.getOrderStatus(),
                         o.getBookedStart(), o.getBookedEnd(), o.getExpectedArrivalAt(), o.getFinalPrice(),
                         o.getCreatedAt(), o.getUpdatedAt()))
                 .toList();
@@ -608,6 +615,43 @@ public class BookingsService {
                 .map(u -> u.getDeletedAt() == null)
                 .orElse(false);
         return accountActive && professionalRepository.existsEligibleById(professional.getId());
+    }
+
+    /**
+     * The single-row {@link #resolveProfessionalName} applied to a whole list, in two batched
+     * queries instead of two per order: professionals by id, then their users by id. Orders in a
+     * customer's list very often share professionals, and even when they don't, a list of N orders
+     * must not cost 2N round trips.
+     *
+     * <p>Ids that resolve to no professional, or to a professional whose user row is gone, are
+     * simply absent from the map — callers read {@code null}, exactly as the single-row form
+     * returns {@code null}.
+     */
+    private Map<Long, String> resolveProfessionalNames(List<Order> orders) {
+        List<Long> professionalIds = orders.stream()
+                .map(Order::getProfessionalId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (professionalIds.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Professional> professionals = professionalRepository.findAllById(professionalIds);
+        Map<Long, String> namesByUserId = userRepository
+                .findAllById(professionals.stream().map(Professional::getUserId).filter(Objects::nonNull).toList())
+                .stream()
+                .filter(user -> user.getFullName() != null)
+                .collect(Collectors.toMap(User::getId, User::getFullName));
+
+        Map<Long, String> namesByProfessionalId = new HashMap<>();
+        for (Professional professional : professionals) {
+            String fullName = professional.getUserId() == null ? null : namesByUserId.get(professional.getUserId());
+            if (fullName != null) {
+                namesByProfessionalId.put(professional.getId(), fullName);
+            }
+        }
+        return namesByProfessionalId;
     }
 
     private String resolveProfessionalName(Long professionalId) {

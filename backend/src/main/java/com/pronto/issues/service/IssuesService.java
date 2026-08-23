@@ -21,11 +21,14 @@ import com.pronto.issues.dto.IssueImageResponse;
 import com.pronto.issues.dto.IssueResponse;
 import com.pronto.issues.dto.LatestOrderSummary;
 import com.pronto.issues.dto.ProntoAnalysisResponse;
+import com.pronto.issues.dto.UpdateIssueCategoryRequest;
 import com.pronto.issues.entity.Issue;
 import com.pronto.issues.entity.IssueBrief;
 import com.pronto.issues.entity.IssueClarification;
 import com.pronto.issues.entity.IssueClassification;
 import com.pronto.issues.entity.IssueImage;
+import com.pronto.issues.entity.IssueStatus;
+import com.pronto.issues.event.IssueCategoryChangedEvent;
 import com.pronto.issues.event.IssueCreatedEvent;
 import com.pronto.issues.repository.IssueBriefRepository;
 import com.pronto.issues.repository.IssueClarificationRepository;
@@ -48,6 +51,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -171,6 +175,76 @@ public class IssuesService {
         eventPublisher.publishEvent(new IssueCreatedEvent(issue.getId()));
 
         return toResponse(callerId, issue, images);
+    }
+
+    /**
+     * {@code PATCH /api/issues/{id}/category} — the customer overruling Pronto's classification on
+     * an issue that already exists.
+     *
+     * <p><b>Why this endpoint exists.</b> The classification screen is reachable *backwards*: a
+     * customer who has gone on to pick a service address can return to it and change the trade.
+     * Before this, the only way to record that was to create a second issue, which left the first
+     * one sitting {@code OPEN} — an orphan carrying the same description, the same photos and the
+     * same clarification answers, indistinguishable from a real un-booked request. One reported
+     * fault is one issue, for its whole life; this is how the category changes on it.
+     *
+     * <p><b>Rules, in the order they are checked.</b> The issue must exist ({@code 404}); the
+     * caller must be its own customer ({@code 403} — not {@code 404}, matching
+     * {@link #getById}'s treatment of the same question); the category must be a real row in
+     * {@code categories} ({@code 400}, same check and same field error {@link #create} applies);
+     * and the issue must still be {@code OPEN} ({@code 409 ISSUE_NOT_EDITABLE}), which is what
+     * keeps booked, completed and cancelled issues immutable here. The state guard is applied
+     * twice on purpose: once on the loaded row so the caller gets the specific error, and again
+     * inside {@code updateCategoryIfOpen}'s {@code WHERE} clause, which is what actually makes it
+     * safe against a booking landing in between.
+     *
+     * <p>A no-op change (same category re-confirmed) writes nothing at all and publishes nothing —
+     * it just answers with the issue as it stands. That is the common path: the customer walked
+     * back to look at the classification and agreed with it.
+     */
+    @Transactional
+    public IssueResponse updateCategory(Long callerId, Long issueId, UpdateIssueCategoryRequest request) {
+        Issue issue = issueRepository.findById(issueId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Issue " + issueId + " not found."));
+
+        if (!issue.getCustomerId().equals(callerId)) {
+            throw new ApiException(ErrorCode.FORBIDDEN, "You are not authorized to modify this issue.");
+        }
+        if (!categoryRepository.existsById(request.categoryId())) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
+                    List.of(new FieldError("categoryId", "must reference an existing category")));
+        }
+        if (issue.getStatus() != IssueStatus.OPEN) {
+            throw notEditable(issueId);
+        }
+
+        if (issue.getCategoryId().equals(request.categoryId())) {
+            return toResponse(callerId, issue, issueImageRepository.findByIssueId(issueId));
+        }
+
+        int affected = issueRepository.updateCategoryIfOpen(issueId, request.categoryId(), Instant.now());
+        if (affected == 0) {
+            // Booked by a concurrent request between the read above and this write.
+            throw notEditable(issueId);
+        }
+
+        // The brief is written for a named trade, so the one generated for the old category is now
+        // wrong rather than merely stale. Same after-commit, off-the-critical-path treatment as
+        // creation: the correction is durable before any model call starts, and a failed
+        // regeneration downgrades the brief, never the issue.
+        eventPublisher.publishEvent(new IssueCategoryChangedEvent(issueId));
+
+        // Re-read rather than mutating the detached entity: `updateCategoryIfOpen` is a bulk JPQL
+        // update with `clearAutomatically`, so the version in the persistence context is stale by
+        // definition.
+        Issue updated = issueRepository.findById(issueId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Issue " + issueId + " not found."));
+        return toResponse(callerId, updated, issueImageRepository.findByIssueId(issueId));
+    }
+
+    private ApiException notEditable(Long issueId) {
+        return new ApiException(ErrorCode.ISSUE_NOT_EDITABLE,
+                "Issue " + issueId + " can no longer be edited.");
     }
 
     /**

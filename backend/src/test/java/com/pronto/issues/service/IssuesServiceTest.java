@@ -7,16 +7,22 @@ import com.pronto.ai.dto.ClassificationStatus;
 import com.pronto.ai.dto.ClassificationSuggestion;
 import com.pronto.ai.service.ClassificationService;
 import com.pronto.bookings.repository.OrderRepository;
+import com.pronto.common.dto.FieldError;
+import com.pronto.common.exception.ApiException;
+import com.pronto.common.exception.ErrorCode;
 import com.pronto.issues.dto.ClarificationAnswerRequest;
 import com.pronto.issues.dto.ClassifyRequest;
 import com.pronto.issues.dto.ClassifyResponse;
 import com.pronto.issues.dto.CreateIssueRequest;
+import com.pronto.issues.dto.UpdateIssueCategoryRequest;
 import com.pronto.issues.entity.Issue;
 import com.pronto.issues.entity.IssueBrief;
 import com.pronto.issues.entity.IssueBriefStatus;
 import com.pronto.issues.entity.IssueClarification;
 import com.pronto.issues.entity.IssueClassification;
+import com.pronto.issues.entity.IssueStatus;
 import com.pronto.issues.entity.IssueUrgencyType;
+import com.pronto.issues.event.IssueCategoryChangedEvent;
 import com.pronto.issues.event.IssueCreatedEvent;
 import com.pronto.issues.repository.IssueBriefRepository;
 import com.pronto.issues.repository.IssueClarificationRepository;
@@ -37,6 +43,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.InstanceOfAssertFactories.list;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -323,5 +330,164 @@ class IssuesServiceTest {
         Mockito.verify(classificationRepository).save(any());
         Mockito.verify(briefRepository).save(any());
         Mockito.verify(eventPublisher).publishEvent(new IssueCreatedEvent(78L));
+    }
+
+    // -- updateCategory ----------------------------------------------------------------------
+
+    /**
+     * Builds an issue the customer 42 owns, sitting in the state this endpoint is for.
+     */
+    private Issue editableIssue(Long categoryId) {
+        Issue issue = Mockito.mock(Issue.class);
+        when(issue.getId()).thenReturn(77L);
+        when(issue.getCustomerId()).thenReturn(42L);
+        when(issue.getCategoryId()).thenReturn(categoryId);
+        Mockito.lenient().when(issue.getStatus()).thenReturn(IssueStatus.OPEN);
+        Mockito.lenient().when(issue.getDescription()).thenReturn("water leaking under the sink");
+        Mockito.lenient().when(issue.getUrgencyType()).thenReturn(IssueUrgencyType.STANDARD);
+        return issue;
+    }
+
+    @Test
+    void reConfirmingTheSameCategoryChangesNothingAtAll() {
+        // The common path: the customer walked back to the classification screen, agreed with it
+        // and continued. No write, no brief regeneration -- and the same issue comes back.
+        Issue issue = editableIssue(1L);
+        when(issueRepository.findById(77L)).thenReturn(java.util.Optional.of(issue));
+        when(categoryRepository.existsById(1L)).thenReturn(true);
+        when(issueImageRepository.findByIssueId(77L)).thenReturn(List.of());
+
+        var response = issuesService.updateCategory(42L, 77L, new UpdateIssueCategoryRequest(1L));
+
+        assertThat(response.id()).isEqualTo(77L);
+        assertThat(response.categoryId()).isEqualTo(1L);
+        Mockito.verify(issueRepository, Mockito.never()).updateCategoryIfOpen(anyLong(), anyLong(), any());
+        Mockito.verify(issueRepository, Mockito.never()).save(any());
+        Mockito.verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void changingTheCategoryUpdatesTheSameIssueAndNeverCreatesASecondOne() {
+        // The bug this endpoint exists for: correcting the category used to POST a brand new issue
+        // and leave the original behind as an OPEN orphan.
+        Issue before = editableIssue(1L);
+        Issue after = editableIssue(2L);
+        when(issueRepository.findById(77L))
+                .thenReturn(java.util.Optional.of(before), java.util.Optional.of(after));
+        when(categoryRepository.existsById(2L)).thenReturn(true);
+        when(issueRepository.updateCategoryIfOpen(eq(77L), eq(2L), any())).thenReturn(1);
+        when(issueImageRepository.findByIssueId(77L)).thenReturn(List.of());
+
+        var response = issuesService.updateCategory(42L, 77L, new UpdateIssueCategoryRequest(2L));
+
+        assertThat(response.id()).isEqualTo(77L);
+        assertThat(response.categoryId()).isEqualTo(2L);
+        Mockito.verify(issueRepository).updateCategoryIfOpen(eq(77L), eq(2L), any());
+        // No second issue, by either route into existence.
+        Mockito.verify(issueRepository, Mockito.never()).save(any());
+        Mockito.verify(eventPublisher, Mockito.never()).publishEvent(any(IssueCreatedEvent.class));
+        // The brief is written for a named trade, so it has to be regenerated for the new one.
+        Mockito.verify(eventPublisher).publishEvent(new IssueCategoryChangedEvent(77L));
+    }
+
+    @Test
+    void changingTheCategoryLeavesTheRestOfTheIssueAlone() {
+        // The endpoint takes a category and nothing else, and the update touches one column, so
+        // the description/photos/answers cannot be disturbed by this call.
+        // Both mocks are built before any stubbing call starts — building one inside a `when(...)`
+        // argument list is nested stubbing, which Mockito rejects.
+        Issue before = editableIssue(1L);
+        Issue after = editableIssue(2L);
+        when(issueRepository.findById(77L))
+                .thenReturn(java.util.Optional.of(before), java.util.Optional.of(after));
+        when(categoryRepository.existsById(2L)).thenReturn(true);
+        when(issueRepository.updateCategoryIfOpen(eq(77L), eq(2L), any())).thenReturn(1);
+        when(issueImageRepository.findByIssueId(77L)).thenReturn(List.of());
+
+        issuesService.updateCategory(42L, 77L, new UpdateIssueCategoryRequest(2L));
+
+        Mockito.verifyNoInteractions(clarificationRepository);
+        Mockito.verify(issueImageRepository, Mockito.never()).save(any());
+        Mockito.verify(issueImageRepository, Mockito.never()).deleteAll(any());
+    }
+
+    @Test
+    void aCustomerCannotChangeSomebodyElsesIssue() {
+        Issue issue = editableIssue(1L);
+        when(issueRepository.findById(77L)).thenReturn(java.util.Optional.of(issue));
+
+        ApiException thrown = catchApiException(
+                () -> issuesService.updateCategory(999L, 77L, new UpdateIssueCategoryRequest(2L)));
+
+        assertThat(thrown.getCode()).isEqualTo(ErrorCode.FORBIDDEN);
+        Mockito.verify(issueRepository, Mockito.never()).updateCategoryIfOpen(anyLong(), anyLong(), any());
+        Mockito.verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void anIssueThatIsNoLongerOpenCannotBeChanged() {
+        // Already dispatched: somebody is preparing for the trade this issue currently names.
+        Issue issue = editableIssue(1L);
+        when(issue.getStatus()).thenReturn(IssueStatus.BOOKED);
+        when(issueRepository.findById(77L)).thenReturn(java.util.Optional.of(issue));
+        when(categoryRepository.existsById(2L)).thenReturn(true);
+
+        ApiException thrown = catchApiException(
+                () -> issuesService.updateCategory(42L, 77L, new UpdateIssueCategoryRequest(2L)));
+
+        assertThat(thrown.getCode()).isEqualTo(ErrorCode.ISSUE_NOT_EDITABLE);
+        Mockito.verify(issueRepository, Mockito.never()).updateCategoryIfOpen(anyLong(), anyLong(), any());
+        Mockito.verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void aBookingThatLandsMidRequestLosesTheUpdateRatherThanOverwritingIt() {
+        // The read said OPEN, the guarded UPDATE disagreed -- that is the race the WHERE clause
+        // exists for, and it is reported, not ignored.
+        Issue issue = editableIssue(1L);
+        when(issueRepository.findById(77L)).thenReturn(java.util.Optional.of(issue));
+        when(categoryRepository.existsById(2L)).thenReturn(true);
+        when(issueRepository.updateCategoryIfOpen(eq(77L), eq(2L), any())).thenReturn(0);
+
+        ApiException thrown = catchApiException(
+                () -> issuesService.updateCategory(42L, 77L, new UpdateIssueCategoryRequest(2L)));
+
+        assertThat(thrown.getCode()).isEqualTo(ErrorCode.ISSUE_NOT_EDITABLE);
+        Mockito.verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void aCategoryThatDoesNotExistIsRejected() {
+        Issue issue = editableIssue(1L);
+        when(issueRepository.findById(77L)).thenReturn(java.util.Optional.of(issue));
+        when(categoryRepository.existsById(4242L)).thenReturn(false);
+
+        ApiException thrown = catchApiException(
+                () -> issuesService.updateCategory(42L, 77L, new UpdateIssueCategoryRequest(4242L)));
+
+        assertThat(thrown.getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR);
+        assertThat(thrown.getDetails()).asInstanceOf(list(FieldError.class))
+                .extracting(FieldError::field).containsExactly("categoryId");
+        Mockito.verify(issueRepository, Mockito.never()).updateCategoryIfOpen(anyLong(), anyLong(), any());
+        Mockito.verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void anIssueThatDoesNotExistIsANotFound() {
+        when(issueRepository.findById(77L)).thenReturn(java.util.Optional.empty());
+
+        ApiException thrown = catchApiException(
+                () -> issuesService.updateCategory(42L, 77L, new UpdateIssueCategoryRequest(2L)));
+
+        assertThat(thrown.getCode()).isEqualTo(ErrorCode.NOT_FOUND);
+    }
+
+    private static ApiException catchApiException(Runnable action) {
+        try {
+            action.run();
+        } catch (ApiException e) {
+            return e;
+        }
+        throw new AssertionError("expected an ApiException");
     }
 }

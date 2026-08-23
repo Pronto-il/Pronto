@@ -33,6 +33,14 @@ export const ActiveOrderContext = createContext<ActiveOrderContextValue | undefi
  * document) -- flagged as such, easy to change: soonest-arriving first for ON_THE_WAY
  * (most useful to surface), most-recently-created first for PENDING/CONFIRMED, most-
  * recently-completed (updatedAt) first for COMPLETED_UNACKNOWLEDGED.
+ *
+ * **Review-prompt scope fix**: the COMPLETED tier now considers *only the single most recently
+ * completed order*, and yields nothing when that one has been acknowledged. It used to filter the
+ * acknowledged ones out first and then take the most recent of whatever remained, which meant
+ * dismissing the latest visit promoted the one before it, then the one before that — the customer
+ * was walked backwards through their history one prompt at a time. Asking about the visit that
+ * just happened is useful; re-asking about a job from three months ago because it was never rated
+ * is not, and that is the persistence being removed here.
  */
 export function selectActiveOrder(
   orders: OrderSummary[],
@@ -52,20 +60,28 @@ export function selectActiveOrder(
     return { order: mostRecent, state: 'PENDING_CONFIRMED' };
   }
 
-  const unacknowledgedCompleted = orders.filter(
-    (o) => o.orderStatus === 'COMPLETED' && !acknowledgedOrderIds.includes(o.id),
-  );
-  if (unacknowledgedCompleted.length > 0) {
-    const mostRecentlyCompleted = [...unacknowledgedCompleted].sort((a, b) =>
-      b.updatedAt.localeCompare(a.updatedAt),
-    )[0];
-    return { order: mostRecentlyCompleted, state: 'COMPLETED_UNACKNOWLEDGED' };
+  const completed = orders.filter((o) => o.orderStatus === 'COMPLETED');
+  if (completed.length > 0) {
+    const latestCompleted = [...completed].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    // Acknowledged (reviewed, or explicitly dismissed with "לא עכשיו") -> no prompt at all. The
+    // older completed orders are deliberately NOT considered as fallbacks.
+    if (!acknowledgedOrderIds.includes(latestCompleted.id)) {
+      return { order: latestCompleted, state: 'COMPLETED_UNACKNOWLEDGED' };
+    }
   }
 
   return null;
 }
 
-/** Click-through route for the indicator's currently-selected order (§8). */
+/**
+ * Click-through route for the indicator's currently-selected order (§8).
+ *
+ * The `COMPLETED_UNACKNOWLEDGED` branch is no longer what the floating indicator does on click —
+ * that state now opens `ReviewPromptModal` in place (see `ActiveOrderIndicator`) instead of
+ * navigating. The mapping is kept because `/orders/:id/review` is still a real, reachable screen
+ * (order tracking and the SOS completion screen both link to it), so "where does this order's
+ * review live" stays answerable in one place.
+ */
 export function resolveActiveOrderRoute(selection: ActiveOrderSelection): string {
   if (selection.state === 'COMPLETED_UNACKNOWLEDGED') {
     return `/orders/${selection.order.id}/review`;

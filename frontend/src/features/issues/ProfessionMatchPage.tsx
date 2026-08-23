@@ -114,6 +114,30 @@ export default function ProfessionMatchPage() {
   });
   const [addressErrors, setAddressErrors] = useState<Partial<Record<keyof AddressValue, string>>>({});
 
+  /**
+   * Back from the address step returns to the **AI classification** screen it was reached from,
+   * not to the home page (which is what this button used to do — the customer's only way back to
+   * the classification was to restart the whole issue flow, losing the description and photos).
+   *
+   * `NewIssuePage` navigated here with `replace: true`, so there is no history entry to pop; the
+   * route back is the booking draft, rewound one stage. Everything the classification screen
+   * needs is already in it — description, photos, clarification answers and the confirmed
+   * category — so `NewIssuePage` re-hydrates straight onto its review step. `issueId` is
+   * deliberately left in place: the issue already exists, and keeping it lets that screen
+   * continue with the same issue when the category comes back unchanged instead of creating a
+   * duplicate (`ReviewStep`'s `existingIssue`). The chosen address stays in the draft too, so a
+   * customer who just wanted to re-check the classification isn't asked for it twice.
+   */
+  function handleAddressBack() {
+    updateDraft({
+      stage: 'ISSUE_REVIEW',
+      ...(resolved ? { urgencyType: resolved.urgencyType, categoryId: resolved.categoryId } : {}),
+      addressMode,
+      address,
+    });
+    navigate('/issues/new');
+  }
+
   /** Same required-field check the booking flow's own address step applies. */
   function handleAddressContinue() {
     const errors: Partial<Record<keyof AddressValue, string>> = {};
@@ -275,7 +299,7 @@ export default function ProfessionMatchPage() {
         <PageHeader
           title="לאן שנגיע?"
           description="נשתמש בכתובת הזו כדי למצוא בעלי מקצוע קרובים אליך."
-          onBack={() => navigate('/')}
+          onBack={handleAddressBack}
         />
         <AddressSelectionStep
           value={address}

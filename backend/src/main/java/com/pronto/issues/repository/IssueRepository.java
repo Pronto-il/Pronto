@@ -76,4 +76,28 @@ public interface IssueRepository extends JpaRepository<Issue, Long> {
     @Query("UPDATE Issue i SET i.status = com.pronto.issues.entity.IssueStatus.COMPLETED, i.updatedAt = :now "
             + "WHERE i.id = :issueId AND i.status = com.pronto.issues.entity.IssueStatus.BOOKED")
     int completeIfBooked(@Param("issueId") Long issueId, @Param("now") Instant now);
+
+    /**
+     * The customer correcting Pronto's classification on an issue they have already created
+     * ({@code PATCH /api/issues/{id}/category}) — the only write in this application that changes
+     * {@code issues.category_id} after creation.
+     *
+     * <p>Same {@code UPDATE ... WHERE <current-state-guard>} shape as every method above, guarded
+     * on {@code OPEN}: an issue is editable only while nobody has been dispatched against it.
+     * {@code OPEN} is exactly that condition and not merely a proxy for it — {@link #bookIfOpen}
+     * is the only exit from {@code OPEN}, and it is what order creation runs, so an issue in this
+     * state provably has no active order (§3.3's single-active-order-per-issue invariant). A
+     * booked, completed or cancelled issue is refused, and so is one that a concurrent booking
+     * won between the caller's read and this write: {@code 0} affected rows is a real outcome
+     * here, reported as {@code ISSUE_NOT_EDITABLE}, not an assertion failure.
+     *
+     * <p>Deliberately narrow. It touches one column, so nothing else on the issue — the
+     * customer's own words, their photos, the clarification answers, the urgency, the status —
+     * can be altered through this path, and there is exactly one issue row throughout.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE Issue i SET i.categoryId = :categoryId, i.updatedAt = :now "
+            + "WHERE i.id = :issueId AND i.status = com.pronto.issues.entity.IssueStatus.OPEN")
+    int updateCategoryIfOpen(@Param("issueId") Long issueId, @Param("categoryId") Long categoryId,
+                              @Param("now") Instant now);
 }

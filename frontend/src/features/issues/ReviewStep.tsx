@@ -1,14 +1,25 @@
 import { useState } from 'react';
 import { Button, Card, Select } from '../../shared/components';
 import type { UploadedPhoto } from '../../shared/components';
-import { createIssue, GENERIC_ERROR_MESSAGE, CATEGORIES, getCategoryNameHe } from '../../shared/api';
-import type {
-  ClarificationAnswer,
-  ClassifyIssueResponse,
-  IssueResponse,
-  IssueUrgencyType,
+import {
+  ApiError,
+  createIssue,
+  updateIssueCategory,
+  GENERIC_ERROR_MESSAGE,
+  CATEGORIES,
+  getCategoryNameHe,
+  getProfessionalNameHe,
 } from '../../shared/api';
+import type { ClarificationAnswer, ClassifyIssueResponse, IssueUrgencyType } from '../../shared/api';
 import styles from './ReviewStep.module.css';
+
+/** The subset of `IssueResponse` the flow actually carries forward once an issue exists — see
+ *  `ReviewStepProps.existingIssue` for why confirming doesn't always produce a full one. */
+export interface ConfirmedIssue {
+  id: number;
+  categoryId: number;
+  urgencyType: IssueUrgencyType;
+}
 
 export interface ReviewStepProps {
   classification: ClassifyIssueResponse;
@@ -18,7 +29,16 @@ export interface ReviewStepProps {
   /** Sent with the issue so the conversation is persisted rather than discarded at this
    *  boundary — it is what Pronto's brief for the professional is built from. */
   clarificationAnswers: ClarificationAnswer[];
-  onConfirmed: (issue: IssueResponse) => void;
+  /**
+   * An issue this exact description/photo set already produced, when the customer came *back*
+   * here from the address step to re-check the classification (`ProfessionMatchPage`'s back
+   * button). When it is set, confirming never creates an issue: an unchanged category reuses it
+   * as-is, and a changed one `PATCH`es that same issue's category. Cleared by `NewIssuePage` the
+   * moment anything upstream is re-classified, so it can never point at an issue whose text no
+   * longer matches.
+   */
+  existingIssue?: { id: number; categoryId: number };
+  onConfirmed: (issue: ConfirmedIssue) => void;
 }
 
 const CATEGORY_OPTIONS = CATEGORIES.map((category) => ({ value: String(category.id), label: category.nameHe }));
@@ -42,6 +62,7 @@ export function ReviewStep({
   photos,
   urgencyType,
   clarificationAnswers,
+  existingIssue,
   onConfirmed,
 }: ReviewStepProps) {
   const [categoryId, setCategoryId] = useState(String(classification.suggestedCategoryId ?? ''));
@@ -50,25 +71,50 @@ export function ReviewStep({
   const [bannerError, setBannerError] = useState<string | null>(null);
 
   async function handleConfirm() {
+    const chosenCategoryId = Number(categoryId);
+
+    // Came back to look, changed nothing: the issue that already exists for this exact report is
+    // still the right one, so nothing is written and the flow simply continues with it.
+    if (existingIssue && existingIssue.categoryId === chosenCategoryId) {
+      onConfirmed({ id: existingIssue.id, categoryId: existingIssue.categoryId, urgencyType });
+      return;
+    }
+
     setBannerError(null);
     setIsSubmitting(true);
     try {
-      const issue = await createIssue({
-        categoryId: Number(categoryId),
-        description,
-        urgencyType,
-        imageKeys: photos.map((photo) => photo.imageKey),
-        clarificationAnswers,
-      });
+      // Came back and corrected the category: the issue is *updated*, never re-created. Creating a
+      // second one here is what used to strand the first as an `OPEN` orphan carrying the same
+      // description, photos and answers — one reported fault stays one issue, and all of that
+      // content stays attached to it (the endpoint takes a category and nothing else).
+      const issue = existingIssue
+        ? await updateIssueCategory(existingIssue.id, chosenCategoryId)
+        : await createIssue({
+            categoryId: chosenCategoryId,
+            description,
+            urgencyType,
+            imageKeys: photos.map((photo) => photo.imageKey),
+            clarificationAnswers,
+          });
       onConfirmed(issue);
-    } catch {
-      setBannerError(GENERIC_ERROR_MESSAGE);
+    } catch (error) {
+      // The issue was booked from somewhere else while this screen was open, so the category can
+      // no longer be corrected — said plainly, rather than as a generic failure the customer would
+      // reasonably retry.
+      setBannerError(
+        error instanceof ApiError && error.code === 'ISSUE_NOT_EDITABLE'
+          ? 'הבקשה הזו כבר בטיפול, ולכן לא ניתן לשנות את תחום השירות שלה.'
+          : GENERIC_ERROR_MESSAGE,
+      );
     } finally {
       setIsSubmitting(false);
     }
   }
 
   const categoryName = getCategoryNameHe(Number(categoryId));
+  // Both lines follow the customer's current pick, not the AI's original suggestion — overriding
+  // the category re-words the whole card.
+  const professionalName = getProfessionalNameHe(Number(categoryId));
 
   return (
     <div className={styles.wrapper}>
@@ -89,15 +135,21 @@ export function ReviewStep({
         ) : (
           <>
             <div className={styles.headlineRow}>
-              <h2 className={styles.headline}>נראה שמדובר בתקלה ב־{categoryName}</h2>
+              <h2 className={styles.headline}>ה־AI שלנו סיווג את התקלה כ{categoryName}</h2>
               {urgencyType === 'SOS' && <span className={styles.sosBadge}>דחוף — SOS</span>}
             </div>
-            <p className={styles.reassurance}>כך נמצא לך את בעל המקצוע הכי מתאים.</p>
+            <p className={styles.reassurance}>
+              לפי המידע שסיפקת, נראה ש{professionalName} הוא בעל המקצוע המתאים.
+            </p>
+            {/* §44/FRONTEND_AGENT.md §14: the classification is an estimate the customer can
+                overrule (the link below), and the screen has to say so rather than present it as
+                a settled diagnosis. */}
+            <p className={styles.disclaimer}>הסיווג הוא הערכה ראשונית ולא אבחון סופי.</p>
           </>
         )}
         {!isChangingCategory && (
           <button type="button" className={styles.changeLink} onClick={() => setIsChangingCategory(true)}>
-            זה לא נכון? שינוי תחום
+            זה לא נראה נכון? שינוי תחום
           </button>
         )}
       </Card>

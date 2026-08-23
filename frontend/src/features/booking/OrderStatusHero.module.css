@@ -49,6 +49,15 @@
   max-width: 34ch;
 }
 
+/* The professional the customer is waiting on, while the order is PENDING. Capped to the hero's
+   readable column and start-aligned — the card is a left-to-right identity row, so it opts out of
+   the hero's centred text alignment rather than inheriting it. */
+.professionalCard {
+  width: 100%;
+  max-width: 420px;
+  text-align: start;
+}
+
 /* §75/§76/§79: the ETA is the most important figure on this screen while the professional is
    on the way, so it carries more weight than any price on the page. */
 .eta {

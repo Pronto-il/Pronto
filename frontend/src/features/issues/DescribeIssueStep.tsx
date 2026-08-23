@@ -100,8 +100,10 @@ export function DescribeIssueStep({
               <p>{bannerError}</p>
             </div>
           )}
+          {/* The page heading above already says "ספר לי מה קרה"; the field asks the narrower
+              question, so the same sentence isn't printed twice on one screen. */}
           <Textarea
-            label="ספר לי מה קרה"
+            label="מה הבעיה?"
             placeholder="לדוגמה: יש נזילת מים מתחת לכיור במטבח"
             value={description}
             onChange={(event) => onDescriptionChange(event.target.value)}
@@ -151,10 +153,14 @@ export function DescribeIssueStep({
                 onClick={() => onUrgencyChange('SOS')}
               >
                 <Zap size={22} aria-hidden="true" className={styles.urgencyIcon} />
-                <span className={styles.urgencyTitle}>SOS — דחוף</span>
+                <span className={styles.urgencyTitle}>דחוף? אנחנו על זה.</span>
                 <span className={styles.urgencySubcopy}>
-                  נעדיף בעלי מקצוע שיכולים להגיע אליך במהירות. ייתכן חיוב נוסף.
+                  נחפש עבורך בעל מקצוע זמין שיוכל להגיע בהקדם.
                 </span>
+                {/* Pricing clarification, deliberately its own quieter line rather than a tail on
+                    the description — it is the one thing on this card the customer is agreeing to
+                    pay for. Selection behavior is untouched. */}
+                <span className={styles.urgencyNote}>שירות SOS כולל תוספת עבור קריאה דחופה.</span>
               </button>
             </div>
           </div>

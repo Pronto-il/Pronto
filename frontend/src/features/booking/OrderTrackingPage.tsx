@@ -4,9 +4,18 @@ import { PageHeader, Card, Button, StatusBadge, Skeleton, Modal } from '../../sh
 import { OrderStatusHero } from './OrderStatusHero';
 import { OrderProgressStepper } from './OrderProgressStepper';
 import { ProntoAnalysisCard } from './ProntoAnalysisCard';
-import { useAuth, useOrderStatus, useEtaCountdown } from '../../shared/hooks';
-import { cancelOrder, markOnTheWay, completeOrder, getIssue, getCategoryNameHe, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
-import type { OrderStatus, IssueDetailResponse } from '../../shared/api';
+import { useAuth, useOrderStatus, useEtaCountdown, useActiveOrder } from '../../shared/hooks';
+import {
+  cancelOrder,
+  markOnTheWay,
+  completeOrder,
+  getIssue,
+  getCategoryNameHe,
+  getProfessionalProfile,
+  ApiError,
+  GENERIC_ERROR_MESSAGE,
+} from '../../shared/api';
+import type { OrderStatus, IssueDetailResponse, ProfessionalProfileResponse } from '../../shared/api';
 import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
 import styles from './OrderTrackingPage.module.css';
 
@@ -55,7 +64,9 @@ export default function OrderTrackingPage() {
   const orderId = Number(orderIdParam);
 
   const { order, error, isLoading, refetch } = useOrderStatus(orderId);
+  const { acknowledgeOrder } = useActiveOrder();
   const [issue, setIssue] = useState<IssueDetailResponse | undefined>(undefined);
+  const [professional, setProfessional] = useState<ProfessionalProfileResponse | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
@@ -90,6 +101,32 @@ export default function OrderTrackingPage() {
       cancelled = true;
     };
   }, [issueId]);
+
+  // The assigned professional's public profile, for the customer's status hero (who am I waiting
+  // for?). Keyed on `professionalId` alone — like the issue fetch above — so the status poll's
+  // new `order` identity every few seconds never re-triggers it. `GET /api/professionals/{id}` is
+  // an existing either-role endpoint; nothing new was added for this. Best-effort: a failure
+  // leaves `professional` null and the hero falls back to its name-only headline.
+  const professionalId = order?.professionalId;
+  const isCustomerViewer = user?.role === 'CUSTOMER';
+  useEffect(() => {
+    if (!professionalId || !isCustomerViewer) {
+      return;
+    }
+    let cancelled = false;
+    getProfessionalProfile(professionalId)
+      .then((result) => {
+        if (!cancelled) {
+          setProfessional(result);
+        }
+      })
+      .catch(() => {
+        // Non-blocking enrichment — see above.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [professionalId, isCustomerViewer]);
 
   async function handleCancel() {
     setCancelError(null);
@@ -217,7 +254,17 @@ export default function OrderTrackingPage() {
           <Button onClick={() => navigate(`/orders/${orderId}/review`)} fullWidth>
             השארת ביקורת
           </Button>
-          <Button variant="ghost" onClick={() => navigate('/orders')} fullWidth>
+          {/* "לא עכשיו" now actually dismisses: it acknowledges the order, so the floating review
+              prompt stops offering this one too, instead of navigating away and leaving the
+              bubble on screen. */}
+          <Button
+            variant="ghost"
+            onClick={() => {
+              acknowledgeOrder(orderId);
+              navigate('/orders');
+            }}
+            fullWidth
+          >
             לא עכשיו
           </Button>
         </>
@@ -248,6 +295,7 @@ export default function OrderTrackingPage() {
                 remainingMinutes={remainingMinutes}
                 isArriving={isArriving}
                 bookedLabel={bookedLabel}
+                professional={professional}
                 action={renderHeroAction()}
               />
               <OrderProgressStepper status={order.orderStatus} />

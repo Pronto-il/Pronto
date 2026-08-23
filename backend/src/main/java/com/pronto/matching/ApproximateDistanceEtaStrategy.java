@@ -35,8 +35,21 @@ public class ApproximateDistanceEtaStrategy implements DistanceEtaStrategy {
     private static final LocalTime AFTERNOON_PEAK_START = LocalTime.of(15, 0);
     private static final LocalTime AFTERNOON_PEAK_END = LocalTime.of(18, 0);
 
-    /** Approximation/placeholder base travel time when professional and customer share a city. */
-    static final int BASE_TRAVEL_TIME_SAME_CITY_MIN = 15;
+    /**
+     * Approximation/placeholder base travel time when professional and customer share a city.
+     *
+     * <p>This is the single origin of the "same city, off-peak" figure every customer-facing ETA
+     * is built from — the listing card's "יכול להגיע תוך כ־N דקות", the {@code FASTEST} sort key,
+     * the SOS ranking's ETA component, and the {@code expectedArrivalAt} instant persisted at the
+     * {@code ON_THE_WAY} transition (and therefore the live countdown on the tracking screen and
+     * the floating indicator). Nothing downstream hardcodes a copy of it.
+     *
+     * <p><b>Temporarily raised 15 -&gt; 34</b> as a product placeholder. Peak-hour behaviour is
+     * unchanged and still additive ({@link #TRAFFIC_ADJUSTMENT_PEAK_SAME_CITY_MIN}), so a
+     * same-city peak call now reads 54, not 34 — the estimate stays a coarse approximation, as
+     * the class Javadoc says, and no part of the algorithm was redesigned here.
+     */
+    static final int BASE_TRAVEL_TIME_SAME_CITY_MIN = 34;
 
     /** Approximation/placeholder base travel time when professional and customer are in different cities. */
     static final int BASE_TRAVEL_TIME_DIFFERENT_CITY_MIN = 40;

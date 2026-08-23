@@ -38,9 +38,9 @@ class ApproximateDistanceEtaStrategyTest {
 
         assertThat(result.sameCity()).isTrue();
         assertThat(result.distanceKm()).isEqualByComparingTo("8.0");
-        assertThat(result.baseTravelTimeMinutes()).isEqualTo(15);
+        assertThat(result.baseTravelTimeMinutes()).isEqualTo(34);
         assertThat(result.trafficAdjustmentMinutes()).isEqualTo(0);
-        assertThat(result.etaMinutes()).isEqualTo(15);
+        assertThat(result.etaMinutes()).isEqualTo(34);
     }
 
     @Test
@@ -59,9 +59,9 @@ class ApproximateDistanceEtaStrategyTest {
         EtaResult result = strategy.calculate("Haifa", location("Haifa"), at(LocalTime.of(9, 0)));
 
         assertThat(result.sameCity()).isTrue();
-        assertThat(result.baseTravelTimeMinutes()).isEqualTo(15);
+        assertThat(result.baseTravelTimeMinutes()).isEqualTo(34);
         assertThat(result.trafficAdjustmentMinutes()).isEqualTo(20);
-        assertThat(result.etaMinutes()).isEqualTo(35);
+        assertThat(result.etaMinutes()).isEqualTo(54);
     }
 
     @Test

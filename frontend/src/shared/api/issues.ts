@@ -85,6 +85,23 @@ export function createIssue(payload: CreateIssueRequest): Promise<IssueResponse>
 }
 
 /**
+ * `PATCH /api/issues/{issueId}/category` — CUSTOMER only, own issue only, and only while the
+ * issue is still `OPEN`. The single mutation this API allows on an issue that already exists.
+ *
+ * It is what makes "go back from the address step and correct the classification" keep one issue:
+ * the alternative was `POST /api/issues` again, which left the first issue behind as an `OPEN`
+ * orphan holding the same description, photos and clarification answers. Everything except
+ * `categoryId` is preserved server-side — this endpoint has no shape to send anything else in.
+ *
+ * Errors: `404 NOT_FOUND` (no such issue), `403 FORBIDDEN` (not the caller's issue),
+ * `400 VALIDATION_ERROR` (`categoryId` is not a real category), `409 ISSUE_NOT_EDITABLE` (the
+ * issue is no longer `OPEN` — typically booked from another tab while this screen was open).
+ */
+export function updateIssueCategory(issueId: number, categoryId: number): Promise<IssueResponse> {
+  return httpClient.patch<IssueResponse>(`/api/issues/${issueId}/category`, { categoryId });
+}
+
+/**
  * Milestone 3 addition, per `docs/architecture/api-contract-bookings.md` §2.1 — this DTO,
  * unlike the `bookings` package's own DTOs, was NOT touched by the Milestone 8 merge, so it
  * matches that doc's §2.1 prose exactly.

@@ -304,6 +304,12 @@ export function getOrder(orderId: number): Promise<OrderDetailResponse> {
 export interface OrderSummary {
   id: number;
   issueId: number;
+  /** Additive extension of api-contract-bookings.md §2.9's shape — see
+   *  `bookings.dto.OrderSummaryResponse`'s Javadoc. Lets the orders list identify (and open) the
+   *  professional without a per-row detail fetch. */
+  professionalId: number;
+  /** `null` only when the professional's user row can no longer be resolved server-side. */
+  professionalName: string | null;
   orderStatus: OrderStatus;
   bookedStart: string;
   bookedEnd: string | null;

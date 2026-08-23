@@ -105,7 +105,12 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(corsAllowedOrigins);
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        // PATCH was missing here until PATCH /api/issues/{id}/category was added and every
+        // cross-origin call to it failed preflight. It is not specific to that route: PATCH
+        // /api/availability/blocks/{blockId} has existed since the weekly-calendar work and was
+        // unreachable from any browser on a different origin for the same reason. The list is the
+        // set of verbs this API actually answers, so PATCH belongs in it.
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Content-Type", "Authorization"));
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

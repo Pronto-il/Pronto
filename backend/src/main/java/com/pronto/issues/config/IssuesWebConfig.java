@@ -38,9 +38,17 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class IssuesWebConfig implements WebMvcConfigurer {
 
+    /**
+     * {@code /api/issues/*}{@code /category} ({@code PATCH}, the customer's classification
+     * correction) joins the two literal Milestone 2 paths. It is the one pattern here that is not
+     * literal, because the path carries an id — but it is still precise: the single {@code *}
+     * matches exactly one segment, so it covers {@code /api/issues/{id}/category} and nothing
+     * else, and in particular it does not swallow the either-role {@code GET /api/issues/{id}}
+     * that the Milestone 3 narrowing above deliberately left ungated.
+     */
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.CUSTOMER.name()))
-                .addPathPatterns("/api/issues/classify", "/api/issues");
+                .addPathPatterns("/api/issues/classify", "/api/issues", "/api/issues/*/category");
     }
 }

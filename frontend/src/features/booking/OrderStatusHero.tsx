@@ -3,7 +3,8 @@ import { motion, useReducedMotion } from 'framer-motion';
 import type { TargetAndTransition } from 'framer-motion';
 import { Mascot } from '../../shared/components';
 import type { MascotState } from '../../shared/components';
-import type { OrderStatus } from '../../shared/api';
+import { ProfessionalSummaryCard } from '../professionals';
+import type { OrderStatus, ProfessionalProfileResponse } from '../../shared/api';
 import { listStagger, pageTransition } from '../../shared/motion/variants';
 import styles from './OrderStatusHero.module.css';
 
@@ -18,6 +19,13 @@ export interface OrderStatusHeroProps {
   isArriving: boolean;
   /** Booked date/time, pre-formatted by the caller (this component does no formatting). */
   bookedLabel: string;
+  /**
+   * The professional's real profile, when the page has already fetched it. While the order is
+   * `PENDING` this is rendered as `ProfessionalSummaryCard` — who the customer is waiting for is
+   * the substance of that screen, and a name in a headline is not it. `null`/absent (a slow or
+   * failed profile fetch) simply falls back to the name-only headline; nothing is fabricated.
+   */
+  professional?: ProfessionalProfileResponse | null;
   /** Rendered under the copy — the status-appropriate call to action, owned by the page. */
   action?: ReactNode;
 }
@@ -49,6 +57,7 @@ export function OrderStatusHero({
   remainingMinutes,
   isArriving,
   bookedLabel,
+  professional,
   action,
 }: OrderStatusHeroProps) {
   const shouldReduceMotion = useReducedMotion();
@@ -62,7 +71,11 @@ export function OrderStatusHero({
     ? { ...(pageTransition.animate as TargetAndTransition), transition: { duration: 0 } }
     : 'animate';
 
-  const content = describe(status, professionalName, bookedLabel);
+  // While waiting for a professional to answer, the card *is* the content: the headline drops the
+  // name (it's on the card, in context, with their photo, profession and rating) and states the
+  // situation instead.
+  const showProfessionalCard = status === 'PENDING' && Boolean(professional);
+  const content = describe(status, professionalName, bookedLabel, showProfessionalCard);
   const showEta = status === 'ON_THE_WAY' && remainingMinutes !== null;
 
   return (
@@ -73,6 +86,12 @@ export function OrderStatusHero({
         <motion.h2 className={styles.headline} variants={pageTransition} animate={itemAnimate}>
           {content.headline}
         </motion.h2>
+
+        {showProfessionalCard && professional && (
+          <motion.div className={styles.professionalCard} variants={pageTransition} animate={itemAnimate}>
+            <ProfessionalSummaryCard professional={professional} />
+          </motion.div>
+        )}
 
         {showEta ? (
           // §76/§79: while the professional is on the way this is the single most important
@@ -101,11 +120,18 @@ export function OrderStatusHero({
   );
 }
 
-function describe(status: OrderStatus, professionalName: string, bookedLabel: string): HeroContent {
+function describe(
+  status: OrderStatus,
+  professionalName: string,
+  bookedLabel: string,
+  hasProfessionalCard: boolean,
+): HeroContent {
   switch (status) {
     case 'PENDING':
       return {
-        headline: `ממתינים לאישור של ${professionalName}`,
+        // With the card on screen the name would be printed twice, once as a headline about a
+        // person the customer can't see and once on the card that actually shows them.
+        headline: hasProfessionalCard ? 'ממתינים לאישור בעל המקצוע' : `ממתינים לאישור של ${professionalName}`,
         support: `שמרנו לך את המועד ${bookedLabel}. נעדכן אותך ברגע שתתקבל תשובה.`,
         mascot: 'thinking',
         tone: 'neutral',

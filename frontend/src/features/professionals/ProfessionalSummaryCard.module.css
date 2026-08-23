@@ -1,0 +1,91 @@
+/* Horizontal counterpart to `ProfessionalProfileDisplay`'s centred identity block — same
+   signals, laid out beside the photo instead of under it. */
+.card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  text-align: start;
+}
+
+.photo {
+  flex-shrink: 0;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--color-surface-secondary);
+}
+
+.photoFallback {
+  flex-shrink: 0;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.name {
+  margin: 0;
+  font-size: 17px;
+  line-height: 24px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.category {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--color-text-secondary);
+}
+
+.signals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  margin-block-start: var(--space-1);
+}
+
+.rating {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.ratingStar {
+  color: var(--color-warning);
+}
+
+.reviewCount {
+  color: var(--color-text-secondary);
+  font-weight: 400;
+}
+
+.noRating {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.since {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}

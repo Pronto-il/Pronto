@@ -14,6 +14,7 @@ import com.pronto.issues.entity.IssueBrief;
 import com.pronto.issues.entity.IssueClarification;
 import com.pronto.issues.entity.IssueClassification;
 import com.pronto.issues.entity.IssueImage;
+import com.pronto.issues.event.IssueCategoryChangedEvent;
 import com.pronto.issues.event.IssueCreatedEvent;
 import com.pronto.issues.repository.IssueBriefRepository;
 import com.pronto.issues.repository.IssueClarificationRepository;
@@ -94,6 +95,23 @@ public class IssueBriefService {
     @TransactionalEventListener
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onIssueCreated(IssueCreatedEvent event) {
+        generateFor(event.issueId());
+    }
+
+    /**
+     * The customer re-routed their own issue to a different trade, so the brief has to be written
+     * again: {@link com.pronto.ai.prompt.ProfessionalBriefPromptBuilder} states the confirmed
+     * routing category outright and writes the whole brief for it, which makes a brief produced
+     * for the old category actively misleading rather than merely stale.
+     *
+     * <p>Same after-commit, own-transaction, own-thread treatment as {@link #onIssueCreated}, and
+     * {@code generateFor} reuses the existing {@code issue_briefs} row — so this overwrites the
+     * brief in place rather than accumulating one per correction.
+     */
+    @Async(AiAsyncConfig.AI_TASK_EXECUTOR)
+    @TransactionalEventListener
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onIssueCategoryChanged(IssueCategoryChangedEvent event) {
         generateFor(event.issueId());
     }
 

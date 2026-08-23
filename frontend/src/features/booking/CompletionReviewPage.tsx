@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Star } from 'lucide-react';
 import { PageHeader, Card, Button, Textarea, Skeleton, Mascot } from '../../shared/components';
+import { StarRatingInput } from './StarRatingInput';
 import { useActiveOrder } from '../../shared/hooks';
 import { getOrder, createReview, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { OrderDetailResponse } from '../../shared/api';
@@ -10,16 +10,6 @@ import styles from './CompletionReviewPage.module.css';
 
 const SUBMIT_ERROR_MESSAGES: Record<string, string> = {
   REVIEW_ORDER_NOT_COMPLETED: 'לא ניתן להשאיר ביקורת על הזמנה שטרם הושלמה.',
-};
-
-/** Doubles as each star's accessible name and as the visible label under the row — a bare
- *  "3 כוכבים" says nothing about what three stars means. */
-const RATING_LABELS: Record<number, string> = {
-  1: 'לא טוב',
-  2: 'בסדר',
-  3: 'טוב',
-  4: 'טוב מאוד',
-  5: 'מצוין',
 };
 
 /**
@@ -46,7 +36,6 @@ export default function CompletionReviewPage() {
   const [loadError, setLoadError] = useState(false);
 
   const [rating, setRating] = useState(0);
-  const [hoverRating, setHoverRating] = useState(0);
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -109,6 +98,14 @@ export default function CompletionReviewPage() {
     }
   }
 
+  /** "לא עכשיו" — dismiss without reviewing. The order is acknowledged (it already is, on
+   *  mount, but this keeps the intent explicit) so the floating prompt does not re-offer it, and
+   *  the customer is returned to their orders instead of having to use the back button. */
+  function handleNotNow() {
+    acknowledgeOrder(orderId);
+    navigate('/orders');
+  }
+
   const showForm = !isLoading && order && order.orderStatus === 'COMPLETED' && !submitted && !alreadyReviewed;
   const showDone = !isLoading && order && order.orderStatus === 'COMPLETED' && (submitted || alreadyReviewed);
 
@@ -162,34 +159,7 @@ export default function CompletionReviewPage() {
             </p>
           </div>
 
-          <div className={styles.ratingBlock}>
-            <div className={styles.stars} role="radiogroup" aria-label="דירוג">
-              {[1, 2, 3, 4, 5].map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={styles.starButton}
-                  style={{ color: (hoverRating || rating) >= value ? 'var(--color-warning)' : undefined }}
-                  aria-label={RATING_LABELS[value]}
-                  aria-pressed={rating === value}
-                  onMouseEnter={() => setHoverRating(value)}
-                  onMouseLeave={() => setHoverRating(0)}
-                  onClick={() => setRating(value)}
-                >
-                  <Star
-                    size={36}
-                    className={styles.star}
-                    fill={(hoverRating || rating) >= value ? 'currentColor' : 'none'}
-                    aria-hidden="true"
-                  />
-                </button>
-              ))}
-            </div>
-            {/* Names the scale as it's used, so five identical stars aren't the only feedback
-                the customer gets for what they just picked. Reserves its own line either way,
-                so choosing a rating doesn't shift the form below it. */}
-            <p className={styles.ratingLabel}>{RATING_LABELS[hoverRating || rating] ?? ' '}</p>
-          </div>
+          <StarRatingInput value={rating} onChange={setRating} />
 
           <Textarea
             label="הערות (לא חובה)"
@@ -204,9 +174,17 @@ export default function CompletionReviewPage() {
             </div>
           )}
 
-          <Button onClick={handleSubmit} loading={isSubmitting} disabled={rating < 1} fullWidth>
-            שליחת ביקורת
-          </Button>
+          <div className={styles.formActions}>
+            <Button onClick={handleSubmit} loading={isSubmitting} disabled={rating < 1} fullWidth>
+              שליחת ביקורת
+            </Button>
+            {/* Leaving without rating is a first-class outcome, not something reached only by
+                backing out of the screen. Acknowledging on the way out is what stops the
+                floating prompt from re-offering this same order. */}
+            <Button variant="ghost" onClick={handleNotNow} disabled={isSubmitting} fullWidth>
+              לא עכשיו
+            </Button>
+          </div>
         </div>
       )}
     </div>

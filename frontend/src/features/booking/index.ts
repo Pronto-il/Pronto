@@ -10,3 +10,7 @@ export { default as CompletionReviewPage } from './CompletionReviewPage';
 // booking flow ask for the address in exactly one way.
 export { AddressSelectionStep } from './AddressSelectionStep';
 export type { AddressSelectionStepProps, AddressMode } from './AddressSelectionStep';
+
+// The review prompt itself (rendered by the app shell's floating indicator, `src/app`).
+export { ReviewPromptModal } from './ReviewPromptModal';
+export type { ReviewPromptModalProps } from './ReviewPromptModal';

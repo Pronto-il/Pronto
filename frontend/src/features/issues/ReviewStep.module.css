@@ -61,7 +61,16 @@
   font-size: 15px;
   line-height: 22px;
   color: var(--color-text-secondary);
-  margin: 0 0 var(--space-3);
+  margin: 0;
+}
+
+/* The "this is an estimate, not a final diagnosis" line — quieter than `.reassurance`, but
+   deliberately still plain body text rather than fine print. */
+.disclaimer {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--color-text-muted);
+  margin: var(--space-2) 0 0;
 }
 
 .changeLink {

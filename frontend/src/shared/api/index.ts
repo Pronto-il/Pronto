@@ -17,7 +17,7 @@ export type {
 export { getMe, deleteMe, updateMe } from './users';
 export type { ProfessionalInfo, UserMeResponse, UserMeDefaultAddress, UpdateUserMeRequest } from './users';
 
-export { CATEGORIES, getCategoryNameHe } from './categories';
+export { CATEGORIES, getCategoryNameHe, getProfessionalNameHe } from './categories';
 export type { Category } from './categories';
 
 export { GENERIC_ERROR_MESSAGE, getFieldErrorMessages } from './errorMessages';
@@ -25,7 +25,7 @@ export { GENERIC_ERROR_MESSAGE, getFieldErrorMessages } from './errorMessages';
 export { uploadImage, getPresignedImageUrls } from './storage';
 export type { UploadImageResponse, PresignedImageUrlEntry, PresignedImageUrlsResponse } from './storage';
 
-export { classifyIssue, createIssue, getIssue } from './issues';
+export { classifyIssue, createIssue, getIssue, updateIssueCategory } from './issues';
 export type {
   IssueUrgencyType,
   ClarificationAnswer,

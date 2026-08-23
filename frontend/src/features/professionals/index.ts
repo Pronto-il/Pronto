@@ -8,3 +8,9 @@ export { default as ProfessionalProfilePage } from './ProfessionalProfilePage';
 
 export { ProfessionalProfileDisplay } from './ProfessionalProfileDisplay';
 export type { ProfessionalProfileDisplayProps } from './ProfessionalProfileDisplay';
+
+export { ProfessionalSummaryCard } from './ProfessionalSummaryCard';
+export type { ProfessionalSummaryCardProps } from './ProfessionalSummaryCard';
+
+export { ProfessionalProfileModal } from './ProfessionalProfileModal';
+export type { ProfessionalProfileModalProps } from './ProfessionalProfileModal';

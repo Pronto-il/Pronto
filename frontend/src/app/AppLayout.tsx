@@ -1,5 +1,5 @@
 import { Link, Outlet } from 'react-router-dom';
-import { LogOut, User, ClipboardList, LayoutDashboard, ShieldCheck } from 'lucide-react';
+import { LogOut, User, ClipboardList, LayoutDashboard, ShieldCheck, Wrench } from 'lucide-react';
 import { useAuth } from '../shared/hooks';
 import { BookingDraftIndicator } from './BookingDraftIndicator';
 import { ActiveOrderIndicator } from './ActiveOrderIndicator';
@@ -73,6 +73,22 @@ export default function AppLayout() {
           <Link to={brandTarget} className={styles.brand} aria-label="Pronto">
             <span className={styles.logo} style={{ backgroundImage: `url(${logoUrl})` }} />
           </Link>
+
+          {/* The customer's primary action, in the chrome rather than on one page: reporting a
+              fault is what this product is for, and it should be one tap away from wherever the
+              customer already is. `CUSTOMER`-only — `/issues/new` is behind `RequireAuth
+              role="CUSTOMER"`, so offering it to a guest, a professional or an operator would be
+              a link to a bounce. One element at every width: on desktop it sits inline in the bar
+              between the brand and the nav actions; under 640px `.headerInner` wraps and it
+              becomes a full-width row directly under them (see the stylesheet), which is what
+              keeps the full sentence readable on a phone instead of truncating it. */}
+          {user?.role === 'CUSTOMER' && (
+            <Link to="/issues/new" className={styles.issueCta}>
+              <Wrench size={18} aria-hidden="true" />
+              <span>יש לך תקלה? בוא נטפל בזה</span>
+            </Link>
+          )}
+
           <nav className={styles.nav}>
             {user ? (
               <>

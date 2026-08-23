@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { ChevronLeft } from 'lucide-react';
 import { StatusBadge, Button, EmptyState, Skeleton } from '../../shared/components';
+import { ProfessionalProfileModal } from '../professionals';
 import { useEtaCountdown } from '../../shared/hooks';
 import { getMyOrders, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { OrderSummary, OrderStatus } from '../../shared/api';
@@ -73,7 +75,20 @@ function bucketOrders(orders: OrderSummary[]): OrderSections {
   return { active, history };
 }
 
-function OrderRow({ order }: { order: OrderSummary }) {
+function initials(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  const first = parts[0]?.[0] ?? '';
+  const last = parts.length > 1 ? parts[parts.length - 1][0] : '';
+  return (first + last).toUpperCase();
+}
+
+function OrderRow({
+  order,
+  onOpenProfessional,
+}: {
+  order: OrderSummary;
+  onOpenProfessional: (professionalId: number) => void;
+}) {
   // MS5 §3.H: the one figure a customer scanning this list actually wants is how far away a
   // professional already on the way is. `expectedArrivalAt` is already on `OrderSummary`, so
   // this needs no extra request — same hook the tracking screen and the floating indicator use.
@@ -82,20 +97,43 @@ function OrderRow({ order }: { order: OrderSummary }) {
   );
 
   return (
-    <Link to={`/orders/${order.id}`} className={styles.row}>
-      <div className={styles.rowMain}>
-        <span className={styles.rowDate}>
-          {formatDateLabel(order.bookedStart)}, {formatTimeLabel(order.bookedStart)}
-        </span>
-        <span className={styles.rowPrice}>₪{order.finalPrice}</span>
-      </div>
-      <div className={styles.rowSide}>
-        <StatusBadge status={order.orderStatus} />
-        {remainingMinutes !== null && (
-          <span className={styles.rowEta}>{isArriving ? 'מגיע/ה עכשיו' : `בעוד ${remainingMinutes} דק׳`}</span>
-        )}
-      </div>
-    </Link>
+    // A wrapper, not a bigger link: the professional's identity below is its own control, and an
+    // interactive element cannot be nested inside an `<a>`. The order link keeps its exact former
+    // content, so tapping anywhere on the date/price/status still opens tracking.
+    <div className={styles.rowGroup}>
+      <Link to={`/orders/${order.id}`} className={styles.row}>
+        <div className={styles.rowMain}>
+          <span className={styles.rowDate}>
+            {formatDateLabel(order.bookedStart)}, {formatTimeLabel(order.bookedStart)}
+          </span>
+          <span className={styles.rowPrice}>₪{order.finalPrice}</span>
+        </div>
+        <div className={styles.rowSide}>
+          <StatusBadge status={order.orderStatus} />
+          {remainingMinutes !== null && (
+            <span className={styles.rowEta}>{isArriving ? 'מגיע/ה עכשיו' : `בעוד ${remainingMinutes} דק׳`}</span>
+          )}
+        </div>
+      </Link>
+
+      {/* Opens the profile in place (`ProfessionalProfileModal`) rather than navigating — a
+          customer checking who a past order was with shouldn't lose their place in the list.
+          Rendered only when the name actually resolved; nothing is invented for a missing one. */}
+      {order.professionalName && (
+        <button
+          type="button"
+          className={styles.professionalButton}
+          onClick={() => onOpenProfessional(order.professionalId)}
+          aria-label={`צפייה בפרופיל של ${order.professionalName}`}
+        >
+          <span className={styles.professionalAvatar} aria-hidden="true">
+            {initials(order.professionalName)}
+          </span>
+          <span className={styles.professionalName}>{order.professionalName}</span>
+          <ChevronLeft size={16} aria-hidden="true" className={styles.professionalChevron} />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -114,6 +152,8 @@ export default function MyOrdersPage() {
   const navigate = useNavigate();
   const [orders, setOrders] = useState<OrderSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** The professional whose profile is open in the in-page modal, if any. */
+  const [openProfessionalId, setOpenProfessionalId] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -179,7 +219,7 @@ export default function MyOrdersPage() {
             ) : (
               <div className={styles.list}>
                 {sections.active.map((order) => (
-                  <OrderRow key={order.id} order={order} />
+                  <OrderRow key={order.id} order={order} onOpenProfessional={setOpenProfessionalId} />
                 ))}
               </div>
             )}
@@ -195,13 +235,19 @@ export default function MyOrdersPage() {
             ) : (
               <div className={styles.list}>
                 {sections.history.map((order) => (
-                  <OrderRow key={order.id} order={order} />
+                  <OrderRow key={order.id} order={order} onOpenProfessional={setOpenProfessionalId} />
                 ))}
               </div>
             )}
           </section>
         </div>
       )}
+
+      <ProfessionalProfileModal
+        professionalId={openProfessionalId}
+        isOpen={openProfessionalId !== null}
+        onClose={() => setOpenProfessionalId(null)}
+      />
     </div>
   );
 }

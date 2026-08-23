@@ -8,12 +8,14 @@ import com.pronto.issues.dto.ClassifyResponse;
 import com.pronto.issues.dto.CreateIssueRequest;
 import com.pronto.issues.dto.IssueDetailResponse;
 import com.pronto.issues.dto.IssueResponse;
+import com.pronto.issues.dto.UpdateIssueCategoryRequest;
 import com.pronto.issues.service.IssuesService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -70,6 +72,28 @@ public class IssuesController {
                                                          @PathVariable("id") String idRaw) {
         Long id = parsePathId(idRaw);
         return ResponseEntity.ok(issuesService.getById(principal.id(), principal.role(), id));
+    }
+
+    /**
+     * The customer correcting Pronto's classification on an issue that already exists — see
+     * {@code IssuesService.updateCategory} for the rules and for why this endpoint exists at all.
+     * {@code CUSTOMER}-only, registered as {@code /api/issues/*&#47;category} in
+     * {@code issues.config.IssuesWebConfig} (a new route needs its own entry there — that class's
+     * javadoc explains why the patterns are precise rather than a wildcard).
+     *
+     * <p>A sub-resource path rather than {@code PATCH /api/issues/{id}} with a partial body: this
+     * API lets a customer change exactly one thing about a created issue, and a route that names
+     * that thing cannot quietly grow into a general-purpose issue mutator. Same reasoning as
+     * {@code PUT /api/professionals/me/sub-services} next door.
+     *
+     * <p>{@code id} is parsed the same way {@link #getById} parses it, for the same reason.
+     */
+    @PatchMapping("/{id}/category")
+    public ResponseEntity<IssueResponse> updateCategory(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                         @PathVariable("id") String idRaw,
+                                                         @Valid @RequestBody UpdateIssueCategoryRequest request) {
+        Long id = parsePathId(idRaw);
+        return ResponseEntity.ok(issuesService.updateCategory(principal.id(), id, request));
     }
 
     private Long parsePathId(String raw) {

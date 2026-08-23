@@ -2,7 +2,12 @@
 <html lang="he" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Character only, not the full lockup: at tab size (16-32px) the "pronto" wordmark is
+         unreadable and the mascot beside it collapses to a few pixels, so the icon is the running
+         professional on its own. `src/assets/pronto-mark.png` is that character reframed for a
+         square canvas — see its derivation note in `src/assets/README.md`. Referenced through
+         Vite's index.html asset pipeline, so it is hashed/emitted like every other asset. -->
+    <link rel="icon" type="image/png" href="/src/assets/pronto-mark.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

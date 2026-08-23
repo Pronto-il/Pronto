@@ -30,17 +30,78 @@
  * Logo asset (src/assets/pronto-logo.jpg) is a 1024x1024 square dominated by
  * whitespace around the actual wordmark+mascot. Cropped via background-image
  * sizing/position rather than shipping a pre-cropped asset, so the source file
- * can be swapped without recomputing layout. MS2 (design doc §3.1) scales the
- * crop up proportionally (96x32 -> 112x38, ~1.167x) for stronger desktop brand
- * presence; the mobile media query below scales it back down (~0.875x, ->84x28).
+ * can be swapped without recomputing layout.
+ *
+ * The crop is now expressed once, as source-pixel coordinates of the lockup inside
+ * that square (`--logo-crop-*`), and every derived length is computed from a single
+ * `--logo-height`. Two things were wrong with the previous hand-tuned numbers, and
+ * both are fixed by getting the crop right rather than by nudging position:
+ *   1. the old window (source y 391-688) carried ~100px of empty source rows *below*
+ *      the lockup, so with `align-items: center` on `.headerInner` the visible wordmark
+ *      always rendered above the header's optical centre — it "sat too high";
+ *   2. that dead space also meant the box was much taller than the mark inside it, so
+ *      the mark rendered far smaller than its 38px box suggested.
+ * With a tight crop the box *is* the mark, so centring the box centres the mark (it
+ * settles slightly lower, and balanced) and the same box height buys a visibly bigger
+ * logo. Resizing for another breakpoint is now a one-line `--logo-height` override.
  */
 .logo {
+  --logo-crop-x: 180;
+  --logo-crop-y: 360;
+  --logo-crop-w: 716;
+  --logo-crop-h: 245;
+  --logo-height: 46px;
+  /* Source-pixel -> CSS-pixel scale. A length (e.g. 0.1878px), so every `N * var(--logo-unit)`
+     below is a valid calc() length. */
+  --logo-unit: calc(var(--logo-height) / var(--logo-crop-h));
+
   display: block;
-  width: 112px;
-  height: 38px;
-  background-size: 131px 131px;
-  background-position: -9px -50px;
+  width: calc(var(--logo-crop-w) * var(--logo-unit));
+  height: var(--logo-height);
+  background-size: calc(1024 * var(--logo-unit)) calc(1024 * var(--logo-unit));
+  background-position: calc(var(--logo-crop-x) * var(--logo-unit) * -1)
+    calc(var(--logo-crop-y) * var(--logo-unit) * -1);
   background-repeat: no-repeat;
+}
+
+/*
+ * Customer primary action in the header (`AppLayout.tsx`'s `.issueCta` link). Uses `Button`'s
+ * primary treatment — §15-21's height/radius/weight and the same primary/hover/active tokens —
+ * rather than the `Button` component itself, because this is a navigation destination: a real
+ * `<a>` keeps middle-click and open-in-new-tab, which a button that navigates does not.
+ *
+ * `margin-inline-end: auto` is what positions it: `.headerInner` is `space-between` over three
+ * children, so without it the CTA would float to the middle of the bar. With it, the CTA sits
+ * next to the brand and the nav actions stay pinned to the far edge.
+ */
+.issueCta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 44px;
+  padding-inline: var(--space-5);
+  margin-inline-end: auto;
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.issueCta:hover {
+  background: var(--color-primary-hover);
+}
+
+.issueCta:active {
+  background: var(--color-primary-active);
+}
+
+.issueCta:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
 }
 
 .nav {
@@ -145,20 +206,38 @@
 }
 
 @media (max-width: 640px) {
+  /* The bar wraps instead of shrinking: brand + nav actions keep the 56px row they already had,
+     and the CTA takes a full-width row of its own underneath (`order`/`flex-basis` below). The
+     alternative — squeezing a full Hebrew sentence into the same row as four icon buttons — would
+     have meant truncating the one string this action is supposed to say. `height` becomes `auto`
+     because the element is now two rows tall; the 56px is preserved as a `min-height` on the
+     first row's own children, which already sit at that size. */
   .headerInner {
-    height: 56px;
+    height: auto;
+    min-height: 56px;
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
     padding-inline: var(--space-4);
+    padding-block-end: var(--space-3);
   }
 
   .brand {
+    order: 1;
+    min-height: 56px;
     padding-inline-end: var(--space-2);
   }
 
+  .issueCta {
+    order: 3;
+    flex-basis: 100%;
+    justify-content: center;
+    margin-inline-end: 0;
+  }
+
+  /* One value, not a re-derived crop: the 56px mobile bar carries up to four actions next to
+     the brand, so the lockup steps down proportionally and stays centred there too. */
   .logo {
-    width: 84px;
-    height: 28px;
-    background-size: 98px 98px;
-    background-position: -7px -38px;
+    --logo-height: 34px;
   }
 
   .desktopOnlyNav {
@@ -172,6 +251,8 @@
   /* The compact 56px bar now carries up to four actions (draft indicator, bell, profile,
      logout), so it tightens its own gap rather than letting them crowd each other. */
   .nav {
+    order: 2;
+    min-height: 56px;
     gap: var(--space-2);
   }
 

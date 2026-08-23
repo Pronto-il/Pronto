@@ -8,7 +8,6 @@ import { classifyIssue, getPresignedImageUrls, GENERIC_ERROR_MESSAGE } from '../
 import type {
   ClarificationAnswer,
   ClassifyIssueResponse,
-  IssueResponse,
   IssueUrgencyType,
   PresignedImageUrlsResponse,
 } from '../../shared/api';
@@ -18,6 +17,7 @@ import { stepTransition } from '../../shared/motion/variants';
 import { DescribeIssueStep } from './DescribeIssueStep';
 import { ClarifyQuestionsStep } from './ClarifyQuestionsStep';
 import { ReviewStep } from './ReviewStep';
+import type { ConfirmedIssue } from './ReviewStep';
 import { AiAnalyzingOverlay } from './AiAnalyzingOverlay';
 import styles from './NewIssuePage.module.css';
 
@@ -92,6 +92,21 @@ export default function NewIssuePage() {
   // also what gets persisted with the issue on confirm.
   const [clarificationAnswers, setClarificationAnswers] = useState<ClarificationAnswer[]>(() =>
     canHydrate ? (initialDraft!.clarificationAnswers ?? []) : [],
+  );
+  /**
+   * The issue this draft already produced, when the customer stepped *back* into this flow from
+   * the address step to re-check the classification (`ProfessionMatchPage`'s back button rewinds
+   * the draft to `ISSUE_REVIEW` while keeping `issueId`). While it is set, confirming can only
+   * ever continue with *that* issue — unchanged category reuses it, changed category updates it
+   * (`PATCH /api/issues/{id}/category`) — so walking back into this step can never leave a second,
+   * orphaned issue behind. See `ReviewStep`'s `existingIssue` prop. Dropped as soon as anything is
+   * re-classified (`handleClassified`), since the stored issue's text would no longer be what's on
+   * screen.
+   */
+  const [reusableIssue, setReusableIssue] = useState<{ id: number; categoryId: number } | undefined>(() =>
+    canHydrate && initialDraft!.issueId !== undefined && initialDraft!.categoryId !== undefined
+      ? { id: initialDraft!.issueId, categoryId: initialDraft!.categoryId }
+      : undefined,
   );
   const [isResuming, setIsResuming] = useState(() => canHydrate && initialDraft!.stage !== 'ISSUE_DESCRIBE');
   const [resumeError, setResumeError] = useState<string | null>(null);
@@ -210,6 +225,9 @@ export default function NewIssuePage() {
     setDirection(1);
     setClarificationAnswers(answers);
     setStep(nextStep);
+    // A live re-classification means the report itself moved on, so any previously-created issue
+    // for this draft is no longer the same report and must not be reused.
+    setReusableIssue(undefined);
     updateDraft({
       stage: nextStep.name === 'clarify' ? 'ISSUE_CLARIFY' : 'ISSUE_REVIEW',
       urgencyType,
@@ -240,7 +258,7 @@ export default function NewIssuePage() {
     }
   }
 
-  function handleConfirmed(issue: IssueResponse) {
+  function handleConfirmed(issue: ConfirmedIssue) {
     // Issue creation is explicitly NOT a clear-trigger (§4.5.1) — the draft moves forward into
     // the booking flow instead of being discarded.
     updateDraft({
@@ -360,6 +378,7 @@ export default function NewIssuePage() {
                   photos={photos}
                   urgencyType={urgencyType}
                   clarificationAnswers={clarificationAnswers}
+                  existingIssue={reusableIssue}
                   onConfirmed={handleConfirmed}
                 />
               )}

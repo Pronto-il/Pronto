@@ -23,20 +23,6 @@
   color: var(--color-text-secondary);
 }
 
-.ratingBlock {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.ratingLabel {
-  min-height: 20px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-
 .doneWrapper {
   display: flex;
   flex-direction: column;
@@ -71,27 +57,6 @@
   margin-inline: auto;
 }
 
-.stars {
-  display: flex;
-  justify-content: center;
-  gap: var(--space-2);
-}
-
-.starButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-1);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  color: var(--color-border-strong);
-}
-
-.star {
-  pointer-events: none;
-}
-
 .notice {
   display: flex;
   flex-direction: column;
@@ -112,4 +77,11 @@
 
 .banner p {
   margin: 0;
+}
+
+/* Submit + "not now", stacked: dismissing is a real, visible option, not an absence. */
+.formActions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }

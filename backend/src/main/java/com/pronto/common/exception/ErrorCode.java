@@ -158,7 +158,20 @@ public enum ErrorCode {
      * simply moved. The realistic cause is a double-submitted decision or two operators opening the
      * same queue, and an operator UI needs to tell those apart from "you sent nonsense."
      */
-    PROFESSIONAL_APPROVAL_INVALID_TRANSITION(HttpStatus.CONFLICT);
+    PROFESSIONAL_APPROVAL_INVALID_TRANSITION(HttpStatus.CONFLICT),
+
+    /**
+     * The issue is past the point where the customer may still correct what they reported —
+     * anything other than {@code OPEN}: booked, completed, cancelled. Raised by
+     * {@code PATCH /api/issues/{id}/category}.
+     *
+     * <p>Its own code rather than {@code ISSUE_NOT_BOOKABLE} (which answers a different question,
+     * "can an order be created against this issue") and rather than {@code VALIDATION_ERROR}: the
+     * request is well-formed and the caller does own the issue, the issue has simply moved on. The
+     * realistic cause is a stale tab — a professional accepted while the customer was still looking
+     * at the classification screen — and the UI needs to tell that apart from a bad request.
+     */
+    ISSUE_NOT_EDITABLE(HttpStatus.CONFLICT);
 
     private final HttpStatus httpStatus;
 

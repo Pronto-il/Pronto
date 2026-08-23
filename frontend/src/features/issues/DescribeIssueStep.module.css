@@ -138,6 +138,14 @@
   color: var(--color-text-secondary);
 }
 
+/* Secondary clarification under the SOS description (the surcharge note) — one step quieter
+   than `.urgencySubcopy` so the card still reads title -> what happens -> the caveat. */
+.urgencyNote {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--color-text-muted);
+}
+
 .urgencyCardActive {
   border: 2px solid var(--color-primary);
   background: var(--color-primary-light);

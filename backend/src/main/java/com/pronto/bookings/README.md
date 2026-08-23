@@ -821,3 +821,40 @@ project has been held to. See `docs/architecture/implementation-plan.md`'s "Prof
 Weekly Availability Calendar" entry for the consolidated M1-M6 QA record across both
 `backend` and `frontend`, and `availability/README.md`'s own QA sign-off note for the M1
 slice.
+
+## Production Roadmap MS1 — the eligibility gate on this package's paths (2026-08-22)
+
+Three of MS1's six gated paths are here, and all three read the *same* rule —
+`professionals.ProfessionalEligibility` — rather than expressing it themselves; if either
+side re-implemented it in Java, the listing and the booking guard could disagree about the
+same person, which is worse than either being wrong consistently. (1) **The Standard listing**:
+`repository.ProfessionalListingRepository#listByCategory` concatenates
+`ProfessionalEligibility.ELIGIBLE_JPQL` into its `WHERE`. This is the customer's discovery
+surface and MS0 recorded that it had no approval filter of any kind — the pre-existing
+`u.deletedAt IS NULL` clause stays outside the fragment, per that constant's alias/scope
+contract. (2) **`GET .../professionals/{id}/available-windows`** and (3) **`POST
+/api/bookings/orders`** both now go through the renamed `isProfessionalBookable` (formerly
+`isProfessionalActive`), which ANDs the pre-existing soft-delete check with
+`ProfessionalRepository#existsEligibleById`; available-windows previously called *neither*, so
+a customer could page through the calendar of a deleted or unverified professional right up to
+the moment the order was refused. Order creation reports the failure as `400 VALIDATION_ERROR`
+on `professionalId` ("must reference an existing, bookable professional"), the same
+body-field-reference convention it already used; available-windows reports it as
+`404 NOT_FOUND` through the new `professionalNotBookable` helper — **identical code and
+identical message for a nonexistent id and for an existing-but-ineligible one**, so the
+endpoint cannot be used to learn that a particular professional exists but was rejected or has
+not been verified, and the eligibility check deliberately runs *before* the category
+comparison for the same reason. `404` rather than a new `409` because from the booking flow's
+point of view there is nothing at that id to show a calendar for; the customer-facing "why"
+belongs on the professional's profile response, which carries the neutral `bookable` flag
+(D-G). Separately, `listMyOrders`'s bare `else` branch — which would have resolved every
+non-`CUSTOMER` caller down the professional path once `UserRole.ADMIN` existed, refusing an
+operator only incidentally by their having no professional profile — became an explicit
+three-way branch that throws `403 FORBIDDEN`: "my orders" is meaningless for an operator, so
+say so. **Live-flowing work is deliberately left ungated**: nothing here re-checks eligibility
+on an order that already exists, so a professional who is rejected mid-job is not stranded
+with an obligation they cannot complete. No migration, no new `ErrorCode`, no DTO shape change
+in this package. Extended `bookings.service.BookingsServiceTest`; live-validated (MS1 report,
+Validations 7–9: the Standard listing dropped from 30-of-30 professionals to 1-of-30 against
+real baseline data, an `APPROVED`-but-incomplete professional is refused `400`, and
+available-windows for an ineligible professional returns `404`).

@@ -268,3 +268,39 @@ but a document-outline/accessibility cleanliness nit (multiple `<h1>`s per page 
 HTML-outline practice), worth a fast-follow, e.g. giving `ProfessionalProfileDisplay` a
 heading-level prop (`h1`/non-heading `<p>`, chosen by the consumer) so only one real
 page-level `<h1>` exists at a time. Flagged, not fixed, by MS6.
+
+## MS1 finalization — the select CTA follows `bookable` (2026-08-22)
+
+`ProfessionalProfilePage` rendered its `בחירת בעל מקצוע` CTA on `hasSelectContext` alone. It now
+requires `hasSelectContext` **and** `professional.bookable`, and renders a neutral unavailable
+notice in the CTA's place otherwise.
+
+This closes MS1's own D-G decision on the customer side. `bookable` exists precisely so the UI
+cannot offer a booking affordance to a professional the backend will refuse; the backend had been
+delivering it on three DTOs since the implementation pass with no customer-facing component reading
+it.
+
+**The reachable case is a stale one.** The listing that produced the link is eligibility-filtered
+(`ProfessionalListingRepository`), but an operator can reject someone — or the professional can
+clear their own working hours — in the seconds between that listing and this view. Backend
+enforcement already held: `createOrder` answers `400`. What this fixes is the dead end, not the
+enforcement.
+
+**The notice never says why.** Pending, rejected, disabled and every incomplete-onboarding case
+collapse into one indistinguishable message, mirroring `bookable`'s own contract on the wire —
+saying more would leak a judgment about a named individual to a browsing customer, which is the
+disclosure D-G exists to prevent. This page renders the backend's value and re-derives nothing.
+
+Unchanged: a direct visit or a `/favorites` click-through still passes no router state and is still
+correctly view-only. `features/favorites`' `FavoriteProfessionalCard` was re-read during this pass
+and needed **no** change — it has no booking or select action at all, only an identity link and a
+remove button.
+
+Validated live in both directions through the real matching flow (MS1 report, Validation 53): CTA
+present for a bookable professional, CTA absent plus the notice when the backend reports
+`bookable: false`, and no status vocabulary in the notice text.
+
+**Note on the multi-`<h1>` nit flagged above:** the MS1 finalization pass removed
+`ProDashboardLayout`'s `לוח בקרה לבעלי מקצוע` title, so `/pro/profile` is down from three `<h1>`
+elements to two. The underlying suggestion (a heading-level prop on `ProfessionalProfileDisplay`)
+is still open and still not this pass's scope.

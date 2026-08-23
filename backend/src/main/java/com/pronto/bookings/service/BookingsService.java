@@ -178,8 +178,14 @@ public class BookingsService {
             throw notBookable(issue.getId());
         }
         Professional professional = professionalRepository.findById(professionalId)
-                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND,
-                        "Professional " + professionalId + " not found."));
+                .orElseThrow(() -> professionalNotBookable(professionalId));
+        // MS1: an ineligible (or soft-deleted) professional is refused with the SAME 404 and the
+        // SAME message a nonexistent id produces -- see professionalNotBookable. This check runs
+        // before the category comparison deliberately: which category an unverified professional
+        // claims is not information this endpoint should be confirming.
+        if (!isProfessionalBookable(professional)) {
+            throw professionalNotBookable(professionalId);
+        }
         if (!professional.getCategoryId().equals(issue.getCategoryId())) {
             throw categoryMismatch();
         }
@@ -231,9 +237,10 @@ public class BookingsService {
         }
 
         Professional professional = professionalRepository.findById(request.professionalId()).orElse(null);
-        if (professional == null || !isProfessionalActive(professional)) {
+        if (professional == null || !isProfessionalBookable(professional)) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
-                    List.of(new FieldError("professionalId", "must reference an existing, active professional")));
+                    List.of(new FieldError("professionalId",
+                            "must reference an existing, bookable professional")));
         }
         if (!professional.getCategoryId().equals(issue.getCategoryId())) {
             throw categoryMismatch();
@@ -496,11 +503,17 @@ public class BookingsService {
             orders = status == null
                     ? orderRepository.findByCustomerIdOrderByCreatedAtDesc(callerId)
                     : orderRepository.findByCustomerIdAndOrderStatusOrderByCreatedAtDesc(callerId, status);
-        } else {
+        } else if (UserRole.PROFESSIONAL.name().equals(callerRole)) {
             Long professionalId = resolveProfessionalId(callerId);
             orders = status == null
                     ? orderRepository.findByProfessionalIdOrderByCreatedAtDesc(professionalId)
                     : orderRepository.findByProfessionalIdAndOrderStatusOrderByCreatedAtDesc(professionalId, status);
+        } else {
+            // MS1: this used to be a bare `else`, which resolved every non-CUSTOMER caller down
+            // the professional branch. With UserRole.ADMIN existing, an operator would have been
+            // silently treated as a professional and refused only incidentally, by having no
+            // professional profile. "My orders" is meaningless for an operator; say so.
+            throw forbidden();
         }
 
         List<OrderSummaryResponse> summaries = orders.stream()
@@ -568,10 +581,33 @@ public class BookingsService {
                 .orElseThrow(this::forbidden);
     }
 
-    private boolean isProfessionalActive(Professional professional) {
-        return userRepository.findById(professional.getUserId())
+    /**
+     * <b>May this professional be given new work?</b> Two independent conditions, deliberately
+     * kept separate:
+     *
+     * <ul>
+     *   <li>the owning account is not soft-deleted — the pre-existing check, unchanged;</li>
+     *   <li><b>MS1:</b> the professional is marketplace-eligible, delegated to
+     *       {@code ProfessionalRepository#existsEligibleById}, which is built from the same
+     *       {@link com.pronto.professionals.ProfessionalEligibility#ELIGIBLE_JPQL} constant the
+     *       listing query filters on. Nothing about the rule is re-expressed in Java here; if it
+     *       were, the listing and the booking guard could disagree about the same person, which
+     *       is worse than either being wrong consistently.</li>
+     * </ul>
+     *
+     * <p>The soft-delete half stays outside the eligibility predicate on purpose — see that
+     * constant's Javadoc.
+     *
+     * <p>Used by {@link #createOrder} (which already called the soft-delete half) and by
+     * {@link #listAvailableWindows} (which called neither: MS0 recorded that a customer could
+     * page through the calendar of a deleted or unverified professional right up to the moment
+     * the order was refused).
+     */
+    private boolean isProfessionalBookable(Professional professional) {
+        boolean accountActive = userRepository.findById(professional.getUserId())
                 .map(u -> u.getDeletedAt() == null)
                 .orElse(false);
+        return accountActive && professionalRepository.existsEligibleById(professional.getId());
     }
 
     private String resolveProfessionalName(Long professionalId) {
@@ -719,6 +755,23 @@ public class BookingsService {
     private ApiException categoryMismatch() {
         return new ApiException(ErrorCode.CATEGORY_MISMATCH,
                 "The professional's category does not match the issue's category.");
+    }
+
+    /**
+     * MS1: {@code GET .../{professionalId}/available-windows}'s single refusal for "this
+     * professional cannot be booked", covering both a nonexistent id and an existing but
+     * ineligible/soft-deleted one — <b>identical code and identical message</b>, so the endpoint
+     * cannot be used to learn that a particular professional exists but was rejected or has not
+     * been verified. Same anti-enumeration convention {@code storage.service.StorageService}
+     * already applies ("always 403, never 404, on an ownership mismatch") and the same reasoning
+     * {@code AuthService#login} uses for its deliberately generic invalid-credentials error.
+     *
+     * <p>{@code 404} rather than a new 409: from the booking flow's point of view there is
+     * nothing at that id to show a calendar for. The customer-facing "why" belongs on the
+     * professional's profile response, which carries the neutral {@code bookable} flag (D-G).
+     */
+    private ApiException professionalNotBookable(Long professionalId) {
+        return new ApiException(ErrorCode.NOT_FOUND, "Professional " + professionalId + " not found.");
     }
 
     /**

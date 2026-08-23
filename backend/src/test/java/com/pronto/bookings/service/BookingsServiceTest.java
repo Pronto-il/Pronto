@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -94,6 +95,17 @@ class BookingsServiceTest {
         bookingsService = new BookingsService(issueRepository, professionalRepository, professionalListingRepository,
                 availabilitySlotRepository, orderRepository, userRepository,
                 notificationService, distanceEtaStrategy, storageService, availabilityDerivationService);
+        // MS1: every pre-existing test in this class describes a world of ordinary, verified
+        // professionals, so eligibility is stubbed true by default. The MS1 tests at the bottom of
+        // the class override it per-test -- lenient() because most tests here never reach the
+        // check at all (they fail earlier on ownership, urgency or issue status).
+        Mockito.lenient().when(professionalRepository.existsEligibleById(anyLong())).thenReturn(true);
+        // The other half of isProfessionalBookable: the owning account is not soft-deleted.
+        // listAvailableWindows now runs that check too (MS1 -- it previously ran neither), so the
+        // default professional's user row has to resolve for the pre-existing tests to describe
+        // the world they were written about.
+        Mockito.lenient().when(userRepository.findById(PROFESSIONAL_USER_ID))
+                .thenReturn(Optional.of(activeUser(PROFESSIONAL_USER_ID)));
     }
 
     /**
@@ -674,5 +686,107 @@ class BookingsServiceTest {
         setField(order, "id", ORDER_ID);
         setField(order, "orderStatus", OrderStatus.PENDING);
         return order;
+    }
+
+    // ---- MS1: marketplace eligibility (D-B) ----
+
+    @Test
+    void createOrder_ineligibleProfessional_isRefusedAndNothingIsBooked() {
+        // The Playbook's "pending professional cannot receive a Standard booking". The issue must
+        // come through untouched: no bookIfOpen, no order row. A customer whose chosen
+        // professional stopped being bookable has to be able to pick somebody else for the same
+        // problem, which is only possible if the issue is still OPEN.
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(activeProfessional()));
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(false);
+
+        CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID,
+                Instant.now().plus(1, ChronoUnit.DAYS), "Tel Aviv", "Herzl", "10", null, null, null, null);
+        assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+
+        verify(issueRepository, never()).bookIfOpen(any(), any());
+        verify(orderRepository, never()).saveAndFlush(any(Order.class));
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    void createOrder_softDeletedProfessionalAccount_isStillRefusedEvenWhenOtherwiseEligible() {
+        // The soft-delete half of the guard is independent of the eligibility predicate, which
+        // deliberately does not carry it -- so it has to be asserted independently too.
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(activeProfessional()));
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(true);
+        User deleted = activeUser(PROFESSIONAL_USER_ID);
+        deleted.setDeletedAt(Instant.now());
+        when(userRepository.findById(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(deleted));
+
+        CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID,
+                Instant.now().plus(1, ChronoUnit.DAYS), "Tel Aviv", "Herzl", "10", null, null, null, null);
+        assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+        verify(issueRepository, never()).bookIfOpen(any(), any());
+    }
+
+    @Test
+    void listAvailableWindows_ineligibleProfessional_isIndistinguishableFromNotFound() {
+        // Anti-enumeration: the calendar endpoint must not become a way to learn that a given
+        // professional exists but was rejected or never verified. Identical code AND identical
+        // message to the nonexistent-id case.
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(activeProfessional()));
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(false);
+
+        ApiException ineligible = catchApiException(
+                () -> bookingsService.listAvailableWindows(CUSTOMER_ID, PROFESSIONAL_ID, ISSUE_ID));
+
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.empty());
+        ApiException missing = catchApiException(
+                () -> bookingsService.listAvailableWindows(CUSTOMER_ID, PROFESSIONAL_ID, ISSUE_ID));
+
+        assertThat(ineligible.getCode()).isEqualTo(ErrorCode.NOT_FOUND);
+        assertThat(ineligible.getCode()).isEqualTo(missing.getCode());
+        assertThat(ineligible.getMessage()).isEqualTo(missing.getMessage());
+    }
+
+    @Test
+    void listAvailableWindows_ineligibleProfessional_neverDerivesACalendar() {
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(activeProfessional()));
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(false);
+
+        catchApiException(() -> bookingsService.listAvailableWindows(CUSTOMER_ID, PROFESSIONAL_ID, ISSUE_ID));
+
+        verify(availabilityDerivationService, never()).deriveAvailableWindows(any(), any(), any(), any());
+    }
+
+    @Test
+    void completionOfExistingWorkIsNeverGatedOnEligibility() {
+        // D-B's load-bearing exclusion, and the reason the gate is on creation only: the
+        // professional holding a live job may have become ineligible mid-job, and the only exit
+        // from a gated accept/complete would be a cancel that reopens the customer's issue while
+        // somebody is on their way to them.
+        when(professionalRepository.existsEligibleById(anyLong())).thenReturn(false);
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(pendingOrder()));
+        when(professionalRepository.findByUserId(PROFESSIONAL_USER_ID))
+                .thenReturn(Optional.of(activeProfessional()));
+        when(orderRepository.acceptIfPending(eq(ORDER_ID), any())).thenReturn(1);
+
+        assertThatCode(() -> bookingsService.accept(PROFESSIONAL_USER_ID, ORDER_ID)).doesNotThrowAnyException();
+    }
+
+    private static ApiException catchApiException(Runnable action) {
+        try {
+            action.run();
+        } catch (ApiException e) {
+            return e;
+        }
+        throw new AssertionError("expected an ApiException");
     }
 }

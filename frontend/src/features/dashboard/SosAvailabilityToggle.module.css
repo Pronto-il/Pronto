@@ -49,6 +49,15 @@
   margin-block-start: var(--space-1);
 }
 
+/* MS1: shown under "פעיל" when the professional is switched on but not marketplace-eligible. */
+.notEligible {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--color-text-secondary);
+  margin: var(--space-1) 0 0;
+  max-width: 46ch;
+}
+
 .switch {
   flex-shrink: 0;
   width: 44px;

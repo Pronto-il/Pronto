@@ -8,13 +8,21 @@ import com.pronto.auth.dto.RegisterResponse;
 import com.pronto.auth.email.EmailSender;
 import com.pronto.auth.repository.VerificationCodeRepository;
 import com.pronto.auth.security.JwtService;
+import com.pronto.availability.dto.WorkingHoursItemRequest;
+import com.pronto.availability.entity.ProfessionalWorkingHours;
 import com.pronto.availability.entity.SosAvailability;
+import com.pronto.availability.repository.ProfessionalWorkingHoursRepository;
 import com.pronto.availability.repository.SosAvailabilityRepository;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.professionals.entity.Professional;
+import com.pronto.professionals.entity.ProfessionalSubService;
+import com.pronto.professionals.entity.SubService;
 import com.pronto.professionals.repository.CategoryRepository;
 import com.pronto.professionals.repository.ProfessionalRepository;
+import com.pronto.professionals.repository.ProfessionalSubServiceRepository;
+import com.pronto.professionals.repository.SubServiceRepository;
+import com.pronto.professionals.service.SubServiceSelectionValidator;
 import com.pronto.storage.client.StorageClient;
 import com.pronto.storage.client.StorageException;
 import com.pronto.storage.service.StorageService;
@@ -30,6 +38,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
+import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -56,6 +67,9 @@ import static org.mockito.Mockito.when;
 class AuthServiceTest {
 
     private static final Long CATEGORY_ID = 3L;
+    private static final Long OTHER_CATEGORY_ID = 4L;
+    private static final Long SUB_SERVICE_ID = 55L;
+    private static final Long CROSS_CATEGORY_SUB_SERVICE_ID = 66L;
 
     private UserRepository userRepository;
     private ProfessionalRepository professionalRepository;
@@ -67,6 +81,9 @@ class AuthServiceTest {
     private JwtService jwtService;
     private LoginAttemptRecorder loginAttemptRecorder;
     private StorageService storageService;
+    private SubServiceRepository subServiceRepository;
+    private ProfessionalSubServiceRepository professionalSubServiceRepository;
+    private ProfessionalWorkingHoursRepository professionalWorkingHoursRepository;
     private AuthService authService;
 
     @BeforeEach
@@ -90,9 +107,30 @@ class AuthServiceTest {
                 new com.pronto.storage.client.StoredObject(
                         inv.getArgument(0), "http://localhost/x", inv.getArgument(2), 5));
 
+        subServiceRepository = Mockito.mock(SubServiceRepository.class);
+        professionalSubServiceRepository = Mockito.mock(ProfessionalSubServiceRepository.class);
+        professionalWorkingHoursRepository = Mockito.mock(ProfessionalWorkingHoursRepository.class);
+        // A real validator over a mocked repository, same "real collaborator over the client
+        // boundary" choice this class already makes for StorageService -- so these tests exercise
+        // the actual cross-category rule registration now shares with the edit endpoint.
+        SubServiceSelectionValidator subServiceSelectionValidator =
+                new SubServiceSelectionValidator(subServiceRepository);
+        when(subServiceRepository.findAllById(any())).thenAnswer(inv -> {
+            List<SubService> found = new ArrayList<>();
+            for (Long id : (Iterable<Long>) inv.getArgument(0)) {
+                if (SUB_SERVICE_ID.equals(id)) {
+                    found.add(subService(SUB_SERVICE_ID, CATEGORY_ID));
+                } else if (CROSS_CATEGORY_SUB_SERVICE_ID.equals(id)) {
+                    found.add(subService(CROSS_CATEGORY_SUB_SERVICE_ID, OTHER_CATEGORY_ID));
+                }
+            }
+            return found;
+        });
+
         authService = new AuthService(userRepository, professionalRepository, sosAvailabilityRepository,
                 categoryRepository, verificationCodeRepository, passwordEncoder, emailSender, jwtService,
-                loginAttemptRecorder, storageService);
+                loginAttemptRecorder, storageService, subServiceSelectionValidator,
+                professionalSubServiceRepository, professionalWorkingHoursRepository);
 
         when(userRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
         when(passwordEncoder.encode(anyString())).thenReturn("hashed");
@@ -131,6 +169,21 @@ class AuthServiceTest {
         }
     }
 
+    /** {@code SubService} has no public constructor (read-only reference entity). */
+    private static SubService subService(Long id, Long categoryId) {
+        SubService subService;
+        try {
+            var constructor = SubService.class.getDeclaredConstructor();
+            constructor.setAccessible(true);
+            subService = constructor.newInstance();
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+        setField(subService, "id", id);
+        setField(subService, "categoryId", categoryId);
+        return subService;
+    }
+
     private static final String VALID_PHONE = "0501234567";
 
     private static RegisterRequest customerRequest(DefaultAddressRequest address) {
@@ -152,7 +205,23 @@ class AuthServiceTest {
     }
 
     private static ProfessionalRegistrationData validProfessionalData() {
-        return new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv", new BigDecimal("250.00"));
+        return new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv", new BigDecimal("250.00"),
+                List.of(SUB_SERVICE_ID), fullWeek(true));
+    }
+
+    /**
+     * MS1: all 7 weekdays, as {@code PUT /api/availability/working-hours} takes them.
+     * {@code sundayEnabled} controls whether ANY day is on — the all-disabled week is what the
+     * "at least one enabled day" rule has to refuse.
+     */
+    private static List<WorkingHoursItemRequest> fullWeek(boolean sundayEnabled) {
+        List<WorkingHoursItemRequest> week = new ArrayList<>();
+        week.add(new WorkingHoursItemRequest(0, sundayEnabled,
+                sundayEnabled ? LocalTime.of(8, 0) : null, sundayEnabled ? LocalTime.of(17, 0) : null));
+        for (int weekday = 1; weekday <= 6; weekday++) {
+            week.add(new WorkingHoursItemRequest(weekday, false, null, null));
+        }
+        return week;
     }
 
     private static MockMultipartFile pdfDocument() {
@@ -244,7 +313,7 @@ class AuthServiceTest {
         Professional saved = professionalCaptor.getValue();
         assertThat(saved.getUserId()).isEqualTo(100L);
         assertThat(saved.getCategoryId()).isEqualTo(CATEGORY_ID);
-        assertThat(saved.getApprovalStatus()).isEqualTo("APPROVED");
+        assertThat(saved.getApprovalStatus()).isEqualTo(Professional.STATUS_PENDING);
     }
 
     @Test
@@ -294,7 +363,7 @@ class AuthServiceTest {
 
     @Test
     void register_professional_missingCategoryId_rejected() {
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(null, "Tel Aviv", BigDecimal.TEN);
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(null, "Tel Aviv", BigDecimal.TEN, List.of(SUB_SERVICE_ID), fullWeek(true));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -304,7 +373,7 @@ class AuthServiceTest {
     @Test
     void register_professional_invalidCategoryId_rejected() {
         when(categoryRepository.existsById(999L)).thenReturn(false);
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(999L, "Tel Aviv", BigDecimal.TEN);
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(999L, "Tel Aviv", BigDecimal.TEN, List.of(SUB_SERVICE_ID), fullWeek(true));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -314,7 +383,7 @@ class AuthServiceTest {
 
     @Test
     void register_professional_missingServiceArea_rejected() {
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "  ", BigDecimal.TEN);
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "  ", BigDecimal.TEN, List.of(SUB_SERVICE_ID), fullWeek(true));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -323,7 +392,7 @@ class AuthServiceTest {
 
     @Test
     void register_professional_missingBasePrice_rejected() {
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv", null);
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv", null, List.of(SUB_SERVICE_ID), fullWeek(true));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -332,7 +401,7 @@ class AuthServiceTest {
 
     @Test
     void register_professional_negativeBasePrice_rejected() {
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv", new BigDecimal("-5"));
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv", new BigDecimal("-5"), List.of(SUB_SERVICE_ID), fullWeek(true));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -368,7 +437,9 @@ class AuthServiceTest {
         StorageService failingStorageService = new StorageService(failingClient, Optional.empty(), 300L);
         AuthService serviceWithFailingStorage = new AuthService(userRepository, professionalRepository,
                 sosAvailabilityRepository, categoryRepository, verificationCodeRepository, passwordEncoder,
-                emailSender, jwtService, loginAttemptRecorder, failingStorageService);
+                emailSender, jwtService, loginAttemptRecorder, failingStorageService,
+                new SubServiceSelectionValidator(subServiceRepository), professionalSubServiceRepository,
+                professionalWorkingHoursRepository);
 
         assertThatThrownBy(() -> serviceWithFailingStorage.register(
                 professionalRequest(validProfessionalData()), pdfDocument(), null))
@@ -387,13 +458,35 @@ class AuthServiceTest {
     // --- Security --------------------------------------------------------------
 
     @Test
-    void userRole_hasOnlyCustomerAndProfessional_noPubliclyRegisterableAdminRole() {
-        // POST /api/auth/register's `role` field is typed as UserRole -- Jackson rejects
-        // any JSON value outside this enum's constants as a malformed request body
-        // (common.exception.GlobalExceptionHandler#handleUnreadable -> 400
-        // VALIDATION_ERROR), before AuthService is ever invoked. This asserts the enum
-        // itself carries no ADMIN/privileged constant a client could ever supply.
-        assertThat(UserRole.values()).containsExactlyInAnyOrder(UserRole.CUSTOMER, UserRole.PROFESSIONAL);
+    void register_admin_rejected_adminIsNotSelfRegisterable() {
+        // MS1 replaces the old "the enum has no ADMIN constant" test, which stopped being the
+        // protection the moment UserRole.ADMIN existed. POST /api/auth/register's `role` field is
+        // typed as the enum, so Jackson now binds "ADMIN" from a public, unauthenticated request
+        // quite happily -- AuthService's explicit guard is the only thing between that request and
+        // an operator account able to approve professionals. Refused before any row is written.
+        RegisterRequest request = new RegisterRequest(UserRole.ADMIN, "Sneaky Admin", "admin@example.com",
+                "StrongPassword123!", null, null);
+
+        assertThatThrownBy(() -> authService.register(request, null, null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+        verify(userRepository, never()).save(any());
+        verify(professionalRepository, never()).save(any());
+        verify(verificationCodeRepository, never()).save(any());
+        verify(emailSender, never()).sendVerificationCode(anyString(), anyString());
+    }
+
+    @Test
+    void register_admin_rejectedEvenWithAnOtherwiseValidCustomerPayload() {
+        // The guard must not be reachable-around by making the rest of the body look legitimate:
+        // it is checked before, and independently of, every role-conditional field rule.
+        RegisterRequest request = new RegisterRequest(UserRole.ADMIN, "Sneaky Admin", "admin@example.com",
+                "StrongPassword123!", new CustomerRegistrationData(fullAddress(), VALID_PHONE), null);
+
+        assertThatThrownBy(() -> authService.register(request, null, null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+        verify(userRepository, never()).save(any());
     }
 
     @Test
@@ -409,15 +502,150 @@ class AuthServiceTest {
     }
 
     @Test
-    void register_professional_alwaysStartsApproved_noClientSuppliedApprovalStatus() {
-        // v1.0 has no approval workflow (see Professional's own Javadoc) -- registration
-        // always hardcodes APPROVED regardless of anything the client sends (there is no
-        // field for it to send in the first place, see the DTO-shape test above).
+    void register_professional_alwaysStartsPending_noClientSuppliedApprovalStatus() {
+        // MS1: registration hardcodes PENDING regardless of anything the client sends (there is
+        // no field for it to send in the first place -- see the DTO-shape test above). This is
+        // the Playbook's "new professional defaults to pending" required test.
         stubValidCategory();
         authService.register(professionalRequest(validProfessionalData()), pdfDocument(), null);
 
         ArgumentCaptor<Professional> captor = ArgumentCaptor.forClass(Professional.class);
         verify(professionalRepository, times(2)).save(captor.capture());
-        assertThat(captor.getValue().getApprovalStatus()).isEqualTo("APPROVED");
+        assertThat(captor.getValue().getApprovalStatus()).isEqualTo(Professional.STATUS_PENDING);
+        assertThat(captor.getValue().getApprovalReviewedAt()).isNull();
+        assertThat(captor.getValue().getApprovalReviewedBy()).isNull();
+    }
+
+    // --- MS1: registration onboarding completeness (D4/D7) ---------------------------
+
+    @Test
+    void register_professional_persistsSelectedSubServices() {
+        stubValidCategory();
+        authService.register(professionalRequest(validProfessionalData()), pdfDocument(), null);
+
+        ArgumentCaptor<ProfessionalSubService> captor = ArgumentCaptor.forClass(ProfessionalSubService.class);
+        verify(professionalSubServiceRepository).save(captor.capture());
+        assertThat(captor.getValue().getProfessionalId()).isEqualTo(200L);
+        assertThat(captor.getValue().getSubServiceId()).isEqualTo(SUB_SERVICE_ID);
+    }
+
+    @Test
+    void register_professional_persistsAllSevenWeekdays_disabledDaysCarryNoTimes() {
+        stubValidCategory();
+        authService.register(professionalRequest(validProfessionalData()), pdfDocument(), null);
+
+        ArgumentCaptor<ProfessionalWorkingHours> captor =
+                ArgumentCaptor.forClass(ProfessionalWorkingHours.class);
+        verify(professionalWorkingHoursRepository, times(7)).save(captor.capture());
+        List<ProfessionalWorkingHours> saved = captor.getAllValues();
+        assertThat(saved).hasSize(7);
+        assertThat(saved.get(0).isEnabled()).isTrue();
+        assertThat(saved.get(0).getStartTime()).isEqualTo(LocalTime.of(8, 0));
+        assertThat(saved.get(0).getEndTime()).isEqualTo(LocalTime.of(17, 0));
+        // ck_professional_working_hours_times requires NULL times on a disabled day.
+        assertThat(saved.subList(1, 7)).allSatisfy(row -> {
+            assertThat(row.isEnabled()).isFalse();
+            assertThat(row.getStartTime()).isNull();
+            assertThat(row.getEndTime()).isNull();
+        });
+    }
+
+    @Test
+    void register_professional_noSubServices_rejected() {
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
+                new BigDecimal("250.00"), List.of(), fullWeek(true));
+
+        assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void register_professional_nullSubServices_rejected() {
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
+                new BigDecimal("250.00"), null, fullWeek(true));
+
+        assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void register_professional_crossCategorySubService_rejected() {
+        // The rule the backend must own rather than trust the UI with: a sub-service belonging to
+        // another category. Same CATEGORY_MISMATCH the edit endpoint raises -- one validator.
+        stubValidCategory();
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
+                new BigDecimal("250.00"), List.of(CROSS_CATEGORY_SUB_SERVICE_ID), fullWeek(true));
+
+        assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.CATEGORY_MISMATCH));
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void register_professional_unknownSubService_rejected() {
+        stubValidCategory();
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
+                new BigDecimal("250.00"), List.of(9999L), fullWeek(true));
+
+        assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void register_professional_missingWorkingHours_rejected() {
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
+                new BigDecimal("250.00"), List.of(SUB_SERVICE_ID), null);
+
+        assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void register_professional_allDaysDisabled_rejected() {
+        // The whole point of D4's working-hours rule: a professional with a week of switched-off
+        // days derives an empty calendar and can never actually be booked.
+        stubValidCategory();
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
+                new BigDecimal("250.00"), List.of(SUB_SERVICE_ID), fullWeek(false));
+
+        assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void register_professional_partialWeek_rejected() {
+        stubValidCategory();
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
+                new BigDecimal("250.00"), List.of(SUB_SERVICE_ID),
+                List.of(new WorkingHoursItemRequest(0, true, LocalTime.of(8, 0), LocalTime.of(17, 0))));
+
+        assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void register_professional_duplicateSubServiceIds_insertedOnce() {
+        // A duplicate id in the payload must not become a primary-key violation on
+        // professional_sub_services.
+        stubValidCategory();
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
+                new BigDecimal("250.00"), List.of(SUB_SERVICE_ID, SUB_SERVICE_ID), fullWeek(true));
+
+        authService.register(professionalRequest(data), pdfDocument(), null);
+
+        verify(professionalSubServiceRepository, times(1)).save(any(ProfessionalSubService.class));
     }
 }

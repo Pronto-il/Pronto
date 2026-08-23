@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { PageHeader, StatusBadge, Button, EmptyState, Skeleton } from '../../shared/components';
+import { StatusBadge, Button, EmptyState, Skeleton } from '../../shared/components';
 import { useEtaCountdown } from '../../shared/hooks';
 import { getMyOrders, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { OrderSummary, OrderStatus } from '../../shared/api';
@@ -8,14 +8,33 @@ import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateT
 import styles from './MyOrdersPage.module.css';
 
 /**
- * Terminal-for-sectioning statuses (mirrors `features/dashboard/MyJobsPage.tsx`'s
- * `HISTORY_STATUSES`, MS4 design doc §4 Q1's resolved decision): a literal reading of
- * "History" would only include `COMPLETED`, but `CANCELLED`/`REJECTED`/`EXPIRED` orders were
- * already visible on this page before this milestone (no status filter) — dropping them from
- * a sectioned page would silently remove functionality that exists today. All four fold into
- * History instead, each still carrying its own accurate `StatusBadge`.
+ * What "History" means on a customer-facing screen: an order that actually happened, or one
+ * somebody deliberately called off.
+ *
+ * <p>This deliberately **narrowed** in the MS1 finalization pass. It previously also carried
+ * `REJECTED` and `EXPIRED` — the MS4 reasoning being that both were already visible before that
+ * milestone added sectioning, so folding them in removed nothing. That reasoning was about not
+ * regressing a list; it was never an argument that they belong in a customer's history. They do
+ * not: an order that timed out with no professional response, or that a professional declined, is
+ * a record of the platform failing to find someone, not of a service the customer received. See
+ * {@link HIDDEN_STATUSES}.
  */
-const HISTORY_STATUSES: readonly OrderStatus[] = ['COMPLETED', 'CANCELLED', 'REJECTED', 'EXPIRED'];
+const HISTORY_STATUSES: readonly OrderStatus[] = ['COMPLETED', 'CANCELLED'];
+
+/**
+ * Terminal statuses excluded from this screen altogether — **presentation only**. The rows are
+ * untouched server-side: `getMyOrders()` still returns them, nothing is deleted, and no backend
+ * filter was added.
+ *
+ * <p>They must be named explicitly rather than left to fall through, because the bucketing below
+ * is an if/else: anything not recognised as History lands in **Active**, and an expired order
+ * displayed under פעילות וקרובות is a worse bug than the one this change fixes.
+ *
+ * <p>`EXPIRED` is the expiry/time-out/no-response flow this pass was asked to hide. `REJECTED` —
+ * a professional declining — is excluded on the same principle: it is terminal, so it can never be
+ * Active, and it is not a service the customer received, so it is not History either.
+ */
+const HIDDEN_STATUSES: readonly OrderStatus[] = ['REJECTED', 'EXPIRED'];
 
 interface OrderSections {
   active: OrderSummary[];
@@ -26,14 +45,21 @@ interface OrderSections {
  * Pure client-side bucketing over the page's already-fetched, unfiltered `OrderSummary[]` — no
  * new endpoint, no change to `getMyOrders()` (MS4 design doc §4 Q1). Unlike the professional
  * side's `MyJobsPage.tsx` (three sections: today/upcoming/history), this page uses exactly two
- * sections per this milestone's decision — everything not in `HISTORY_STATUSES` is a single
+ * *rendered* sections — everything not in `HISTORY_STATUSES` or `HIDDEN_STATUSES` is a single
  * combined "Active/Upcoming" bucket, sorted soonest-first.
+ *
+ * This affects only what this screen lists. The active-order surfaces elsewhere in the app
+ * (`useActiveOrder`, `ActiveOrderIndicator`, `/orders/:id` tracking) read the API directly and
+ * are untouched — a hidden order is still reachable at its own URL.
  */
 function bucketOrders(orders: OrderSummary[]): OrderSections {
   const active: OrderSummary[] = [];
   const history: OrderSummary[] = [];
 
   for (const order of orders) {
+    if (HIDDEN_STATUSES.includes(order.orderStatus)) {
+      continue;
+    }
     if (HISTORY_STATUSES.includes(order.orderStatus)) {
       history.push(order);
     } else {
@@ -111,8 +137,10 @@ export default function MyOrdersPage() {
 
   return (
     <div className="focused-page">
-      <PageHeader title="ההזמנות שלי" />
-
+      {/* No page title: "ההזמנות שלי" repeated the nav label of the link that got you here
+          verbatim — it is in the desktop nav and in `BottomNav` on mobile, so the current screen
+          is already marked `aria-current="page"` there. The two section headings
+          (פעילות וקרובות / היסטוריה) carry the structure this screen actually needs. */}
       {error && (
         <div className={styles.banner} role="alert">
           <p>{error}</p>
@@ -127,7 +155,11 @@ export default function MyOrdersPage() {
         </div>
       )}
 
-      {orders !== null && orders.length === 0 && (
+      {/* Gated on what this screen actually *shows*, not on the raw fetch: a customer whose only
+          orders are hidden (expired/rejected) has, as far as this screen is concerned, no orders
+          — and the honest response to that is the same "get started" empty state a brand-new
+          customer sees, not two sections that are each separately empty. */}
+      {orders !== null && sections.active.length + sections.history.length === 0 && (
         <EmptyState
           title="אין עדיין הזמנות"
           description="כשאתם מזמינים בעל מקצוע, ההזמנות שלכם יופיעו כאן."
@@ -135,7 +167,7 @@ export default function MyOrdersPage() {
         />
       )}
 
-      {orders !== null && orders.length > 0 && (
+      {orders !== null && sections.active.length + sections.history.length > 0 && (
         <div className={styles.sections}>
           <section>
             <p className={styles.sectionTitle}>פעילות וקרובות</p>
@@ -158,7 +190,7 @@ export default function MyOrdersPage() {
             {sections.history.length === 0 ? (
               <EmptyState
                 title="אין עדיין היסטוריית הזמנות"
-                description="הזמנות שהושלמו, בוטלו או פג תוקפן יופיעו כאן."
+                description="הזמנות שהושלמו או בוטלו יופיעו כאן."
               />
             ) : (
               <div className={styles.list}>

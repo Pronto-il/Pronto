@@ -59,7 +59,17 @@ API described in `docs/architecture/overview.md` §3.2.
   `Blob`, `application/json`, matching `RegisterRequest.java`'s nested
   `customer`/`professional` shape) plus, for professionals, `verificationDocument`
   (required) and `profilePhoto` (optional) file parts. See
-  `docs/architecture/api-contract.md` §2.1.
+  `docs/architecture/api-contract.md` §2.1. **As of Production Roadmap MS1 (2026-08-22,
+  decisions D4/D7)**: `RegisterProfessionalPayload` and the `data` part's `professional` object
+  gained two required fields, matching `auth.dto.ProfessionalRegistrationData` exactly —
+  `subServiceIds: number[]` (≥1, every id belonging to `categoryId`'s own category; a
+  cross-category id is refused with `400 CATEGORY_MISMATCH`) and `workingHours:
+  WorkingHoursItemRequest[]` (the same record `PUT /api/availability/working-hours` takes:
+  exactly 7 entries, weekday 0-6, ≥1 enabled day, `endTime > startTime` on an enabled day).
+  This is a **breaking request-contract change** — registration returns `400` without them —
+  and `features/auth/ProfessionalRegisterForm.tsx` is the only caller. A successful response now
+  means `approval_status = PENDING`, i.e. an application submitted for review, not a live
+  marketplace listing.
 - `users.ts` — `getMe` (`GET /api/users/me`). **As of the MS3/MS4 product-corrections pass**:
   `UserMeResponse` gained a nested `defaultAddress` (`UserMeDefaultAddress | null`) field —
   `null` for a `PROFESSIONAL` caller or a pre-`V20` `CUSTOMER` with no recorded default
@@ -83,7 +93,11 @@ API described in `docs/architecture/overview.md` §3.2.
   `V10__seed_categories.sql` (no public categories endpoint exists yet).
 - `errorMessages.ts` — `GENERIC_ERROR_MESSAGE` fallback copy, and
   `getFieldErrorMessages` which maps a `400 VALIDATION_ERROR`'s `details` array to
-  `{ field: hebrewMessage }` so forms can attribute errors per-field.
+  `{ field: hebrewMessage }` so forms can attribute errors per-field. MS1 added copy for
+  registration's two new leaf fields (`subServiceIds`, `workingHours`); the backend's per-row
+  week errors (`weekday`/`startTime`/`endTime`) are deliberately **not** mapped here — those
+  leaf names are shared with the availability-slot forms, so `ProfessionalRegisterForm`
+  attributes them to its working-hours stage itself.
 - `storage.ts` — `uploadImage(file)` (`POST /api/storage/images`, Milestone 2). **As of
   backend MS9 (presigned image URLs, 2026-08-18)**: gained `getPresignedImageUrls(imageKeys)`
   (`POST /api/storage/images/presigned-urls`), a batch key-to-presigned-URL lookup used
@@ -227,8 +241,60 @@ API described in `docs/architecture/overview.md` §3.2.
   `UpdateSubServicesRequest`. **Note**: `categories.ts`'s pre-existing static `CATEGORIES`
   mirror is deliberately left untouched by this addition, not migrated to the new endpoint —
   see that file's own header comment and the design doc §3.3/§6 item 5 for the full
-  proportionality reasoning. First and only consumer of all three new functions:
-  `features/dashboard/ProfileEditorPage.tsx`'s new sub-services checklist section.
+  proportionality reasoning; note its header comment's "there is no public
+  `GET /api/categories`-style endpoint" claim has been stale since MS11 built exactly that, so
+  **new code must use `getCategoriesWithSubServices()`**, and the static mirror must not be
+  extended. Consumers of the three functions: `features/dashboard/ProfileEditorPage.tsx`'s
+  sub-services checklist and, since Production Roadmap MS1,
+  `features/auth/ProfessionalRegisterForm.tsx` (which builds both its category `Select` and its
+  required sub-services checklist from the single `getCategoriesWithSubServices()` fetch).
+
+  **As of Production Roadmap MS1 (2026-08-22, design §D-G)**, `ProfessionalProfileResponse`
+  carries two field-level changes: `approvalStatus` is now `string | null` — disclosed on the
+  **self-view only**, `null` for every other caller, so a browsing customer can't learn that a
+  named professional was rejected — and a new `bookable: boolean` everyone gets, the neutral
+  "is this professional marketplace-eligible" flag (approved **and** onboarding complete,
+  computed per request by `professionals.ProfessionalEligibility`). `availability.ts`'s
+  `SosAvailabilityResponse` gained the same `bookable` flag, independent of `isAvailable` (which
+  is only the professional's own intent). `favorites.ts`'s `FavoriteProfessionalSummary` also
+  carries `bookable` — **the type was added in the MS1 closure pass**, closing a real drift
+  (the backend record `favorites.dto.FavoriteProfessionalSummary` has had the field since the
+  implementation pass, while this file's own header comment claimed the shapes were verified
+  against that DTO). Adding the field is a **type-only** change: no component reads it.
+  `FavoriteProfessionalCard.tsx` deliberately still destructures every field except `bookable`,
+  and rendering a customer-side "can't book right now" affordance is outside MS1's frontend
+  scope — see `docs/production-roadmap/reports/MS1-report.md` Known Limitation 9 for the exact
+  status of that gap (an incomplete implementation of MS1's own D-G decision, not a defect in
+  the backend).
+
+- `adminProfessionals.ts` — **new, Production Roadmap MS1 (2026-08-22, design §D-F)** — the
+  client for `/api/admin/professionals/**`, the `ADMIN`-only operator surface behind professional
+  verification: `listProfessionalsForReview(approvalStatus?)`, `getProfessionalReviewDetail(id)`,
+  `getVerificationDocumentUrl(id)`, `approveProfessional(id)`, `rejectProfessional(id, reason)`,
+  plus `REJECTION_REASON_MAX_LENGTH` (mirrors `RejectProfessionalRequest`'s `@Size(max = 500)`).
+  Every shape read off `professionals.dto.*` directly.
+
+  **Its own file rather than more functions in `professionals.ts`**, mirroring the backend's own
+  prefix split — `professionals.ts` is what customer/professional screens call, this is what only
+  an operator screen may call. One file to read to answer "what can an operator do", and no
+  ordinary screen reaches an operator call by autocomplete.
+
+  Two contract details that matter to callers. `approvalStatus` fields are typed **`string`, not
+  the `ProfessionalApprovalStatus` union**: they carry whatever the column holds, and an operator
+  screen must render an unrecognized value as "unknown" rather than crash or print the raw code
+  (`features/admin/approvalPresentation.ts` owns that mapping). And
+  `VerificationDocumentUrlResponse.url` is a **bearer capability** — anyone holding it can fetch a
+  private compliance document without authenticating until it expires — so it is never logged,
+  never stored, and never rendered into the DOM; see
+  `features/admin/VerificationDocumentAction.tsx`.
+
+- `auth.ts`'s `UserRole` — **as of Production Roadmap MS1 (2026-08-22, design §D-F)** — gained a
+  third member, `'ADMIN'` (`ck_users_role` permits it as of `V40`). A new
+  `RegisterableRole = Exclude<UserRole, 'ADMIN'>` narrows the register request's `role` field to
+  the two self-service roles, matching `AuthService`'s explicit refusal of `role = ADMIN` at
+  registration — an operator account is created by a deliberate operational step, never through
+  the public API. Widening the union touched one exhaustive map, `app/ProfilePage.tsx`'s
+  `ROLE_LABELS`.
 
 **As of the Active Booking Floating Indicator feature**: `bookings.ts` also gained
 `expectedArrivalAt: string | null` on `OrderResponse`/`OrderDetailResponse`/`OrderSummary`

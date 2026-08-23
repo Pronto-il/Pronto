@@ -1,6 +1,5 @@
 package com.pronto.professionals.service;
 
-import com.pronto.common.dto.FieldError;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
@@ -13,12 +12,10 @@ import com.pronto.professionals.dto.UpdateSubServicesRequest;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.entity.ProfessionalSubService;
 import com.pronto.professionals.entity.ProfessionalSubServiceId;
-import com.pronto.professionals.entity.SubService;
 import com.pronto.professionals.repository.ProfessionalRatingAggregate;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.professionals.repository.ProfessionalSubServiceRepository;
 import com.pronto.professionals.repository.ReviewAggregateRepository;
-import com.pronto.professionals.repository.SubServiceRepository;
 import com.pronto.storage.ImageContentType;
 import com.pronto.storage.client.StoredObject;
 import com.pronto.storage.service.StorageService;
@@ -33,7 +30,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -56,7 +52,7 @@ public class ProfessionalsService {
     private final ReviewAggregateRepository reviewAggregateRepository;
     private final FavoriteRepository favoriteRepository;
     private final StorageService storageService;
-    private final SubServiceRepository subServiceRepository;
+    private final SubServiceSelectionValidator subServiceSelectionValidator;
     private final ProfessionalSubServiceRepository professionalSubServiceRepository;
 
     public ProfessionalsService(ProfessionalRepository professionalRepository,
@@ -64,14 +60,14 @@ public class ProfessionalsService {
                                  ReviewAggregateRepository reviewAggregateRepository,
                                  FavoriteRepository favoriteRepository,
                                  StorageService storageService,
-                                 SubServiceRepository subServiceRepository,
+                                 SubServiceSelectionValidator subServiceSelectionValidator,
                                  ProfessionalSubServiceRepository professionalSubServiceRepository) {
         this.professionalRepository = professionalRepository;
         this.userRepository = userRepository;
         this.reviewAggregateRepository = reviewAggregateRepository;
         this.favoriteRepository = favoriteRepository;
         this.storageService = storageService;
-        this.subServiceRepository = subServiceRepository;
+        this.subServiceSelectionValidator = subServiceSelectionValidator;
         this.professionalSubServiceRepository = professionalSubServiceRepository;
     }
 
@@ -183,22 +179,9 @@ public class ProfessionalsService {
         // the endpoint shouldn't rely on that.
         Set<Long> requestedIds = new HashSet<>(request.subServiceIds());
 
-        if (!requestedIds.isEmpty()) {
-            Map<Long, SubService> subServicesById = subServiceRepository.findAllById(requestedIds).stream()
-                    .collect(Collectors.toMap(SubService::getId, s -> s));
-
-            for (Long id : requestedIds) {
-                SubService subService = subServicesById.get(id);
-                if (subService == null) {
-                    throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
-                            List.of(new FieldError("subServiceIds", "unknown sub-service id " + id)));
-                }
-                if (!subService.getCategoryId().equals(professional.getCategoryId())) {
-                    throw new ApiException(ErrorCode.CATEGORY_MISMATCH,
-                            "Sub-service " + id + " does not belong to the caller's own category.");
-                }
-            }
-        }
+        // MS1: the existence/cross-category rule moved verbatim into SubServiceSelectionValidator
+        // so registration enforces the identical one. Behavior and both error codes unchanged.
+        subServiceSelectionValidator.validate(professional.getCategoryId(), requestedIds, "subServiceIds");
 
         Set<Long> existingIds = professionalSubServiceRepository.findByProfessionalId(professional.getId())
                 .stream()
@@ -229,6 +212,14 @@ public class ProfessionalsService {
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User " + userId + " not found."));
     }
 
+    /**
+     * <b>MS1 (D-G): {@code approvalStatus} is disclosed on the self-view only.</b> Whether the
+     * caller <em>is</em> this professional is decided here, from the loaded row's own
+     * {@code userId} rather than from which endpoint was called — so the professional gets the
+     * same honest answer whether they open {@code /me} or their own public card by id, and a
+     * customer gets {@code null} from either. Everyone, including the professional, gets the
+     * neutral {@code bookable} flag; see {@link ProfessionalProfileResponse}.
+     */
     private ProfessionalProfileResponse toResponse(Professional professional, User user, Boolean favorited,
                                                      Long callerId) {
         String profileImageUrl = professional.getProfileImageKey() == null
@@ -241,9 +232,13 @@ public class ProfessionalsService {
                 : BigDecimal.valueOf(aggregate.averageRating()).setScale(2, RoundingMode.HALF_UP);
         long reviewCount = aggregate.reviewCount() == null ? 0 : aggregate.reviewCount();
 
+        boolean selfView = professional.getUserId().equals(callerId);
+        String approvalStatus = selfView ? professional.getApprovalStatus() : null;
+        boolean bookable = professionalRepository.existsEligibleById(professional.getId());
+
         return new ProfessionalProfileResponse(professional.getId(), professional.getCategoryId(),
                 user.getFullName(), professional.getServiceArea(), professional.getCity(), professional.getBio(),
                 professional.getBasePrice(), profileImageUrl, averageRating, reviewCount,
-                professional.getApprovalStatus(), favorited, professional.getCreatedAt(), professional.getUpdatedAt());
+                approvalStatus, bookable, favorited, professional.getCreatedAt(), professional.getUpdatedAt());
     }
 }

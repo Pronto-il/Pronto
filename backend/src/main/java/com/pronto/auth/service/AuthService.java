@@ -14,15 +14,22 @@ import com.pronto.auth.email.EmailSender;
 import com.pronto.auth.entity.VerificationCode;
 import com.pronto.auth.repository.VerificationCodeRepository;
 import com.pronto.auth.security.JwtService;
+import com.pronto.availability.dto.WorkingHoursItemRequest;
+import com.pronto.availability.entity.ProfessionalWorkingHours;
 import com.pronto.availability.entity.SosAvailability;
+import com.pronto.availability.repository.ProfessionalWorkingHoursRepository;
 import com.pronto.availability.repository.SosAvailabilityRepository;
+import com.pronto.availability.service.WorkingHoursValidator;
 import com.pronto.common.dto.FieldError;
 import com.pronto.common.dto.LockedDetails;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.professionals.entity.Professional;
+import com.pronto.professionals.entity.ProfessionalSubService;
 import com.pronto.professionals.repository.CategoryRepository;
 import com.pronto.professionals.repository.ProfessionalRepository;
+import com.pronto.professionals.repository.ProfessionalSubServiceRepository;
+import com.pronto.professionals.service.SubServiceSelectionValidator;
 import com.pronto.storage.DocumentContentType;
 import com.pronto.storage.ImageContentType;
 import com.pronto.storage.client.StoredObject;
@@ -40,7 +47,9 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -69,6 +78,9 @@ public class AuthService {
     private final JwtService jwtService;
     private final LoginAttemptRecorder loginAttemptRecorder;
     private final StorageService storageService;
+    private final SubServiceSelectionValidator subServiceSelectionValidator;
+    private final ProfessionalSubServiceRepository professionalSubServiceRepository;
+    private final ProfessionalWorkingHoursRepository professionalWorkingHoursRepository;
 
     public AuthService(UserRepository userRepository,
                         ProfessionalRepository professionalRepository,
@@ -79,7 +91,10 @@ public class AuthService {
                         EmailSender emailSender,
                         JwtService jwtService,
                         LoginAttemptRecorder loginAttemptRecorder,
-                        StorageService storageService) {
+                        StorageService storageService,
+                        SubServiceSelectionValidator subServiceSelectionValidator,
+                        ProfessionalSubServiceRepository professionalSubServiceRepository,
+                        ProfessionalWorkingHoursRepository professionalWorkingHoursRepository) {
         this.userRepository = userRepository;
         this.professionalRepository = professionalRepository;
         this.sosAvailabilityRepository = sosAvailabilityRepository;
@@ -90,6 +105,9 @@ public class AuthService {
         this.jwtService = jwtService;
         this.loginAttemptRecorder = loginAttemptRecorder;
         this.storageService = storageService;
+        this.subServiceSelectionValidator = subServiceSelectionValidator;
+        this.professionalSubServiceRepository = professionalSubServiceRepository;
+        this.professionalWorkingHoursRepository = professionalWorkingHoursRepository;
     }
 
     /**
@@ -152,6 +170,14 @@ public class AuthService {
             // professional from creation, defaulting to isAvailable = false, so a future
             // SOS-matching query needs no NULL-handling for professionals who never toggled it.
             sosAvailabilityRepository.save(new SosAvailability(professional.getId()));
+
+            // MS1 (D4/D7): persist the onboarding the registrant actually supplied. Validated in
+            // full by validateRoleSpecificFields above, before the users row was written -- these
+            // two loops insert, they do not decide. Nothing is defaulted or invented here: a
+            // registration that reaches this point carries at least one category-valid
+            // sub-service and a 7-day week with at least one enabled day.
+            persistSubServices(professional.getId(), professionalData.subServiceIds());
+            persistWorkingHours(professional.getId(), professionalData.workingHours());
         }
 
         String code = generateVerificationCode();
@@ -161,6 +187,32 @@ public class AuthService {
         emailSender.sendVerificationCode(user.getEmail(), code);
 
         return new RegisterResponse(user.getId(), user.getRole(), user.getEmail(), user.isEmailVerified());
+    }
+
+    /**
+     * MS1: the registrant's sub-service selection, deduplicated while preserving the order they
+     * sent (so a duplicate id in the payload cannot become a primary-key violation on
+     * {@code professional_sub_services}). Every id was proven to exist and to belong to this
+     * professional's own category before the {@code users} row was written.
+     */
+    private void persistSubServices(Long professionalId, List<Long> subServiceIds) {
+        for (Long subServiceId : new LinkedHashSet<>(subServiceIds)) {
+            professionalSubServiceRepository.save(new ProfessionalSubService(professionalId, subServiceId));
+        }
+    }
+
+    /**
+     * MS1: the registrant's weekly working hours — all 7 weekdays, exactly as
+     * {@code AvailabilityService#updateWorkingHours} writes them, including the
+     * "{@code startTime}/{@code endTime} are {@code null} on a disabled day" rule that
+     * {@code ck_professional_working_hours_times} enforces at the database.
+     */
+    private void persistWorkingHours(Long professionalId, List<WorkingHoursItemRequest> workingHours) {
+        for (WorkingHoursItemRequest item : workingHours) {
+            professionalWorkingHoursRepository.save(new ProfessionalWorkingHours(professionalId, item.weekday(),
+                    item.enabled(), item.enabled() ? item.startTime() : null,
+                    item.enabled() ? item.endTime() : null));
+        }
     }
 
     /**
@@ -284,9 +336,27 @@ public class AuthService {
      * (city/street/houseNumber non-blank, sizes) are instead enforced by {@code @Valid}
      * cascading from {@link RegisterRequest}, since that nested object is unconditionally
      * required once present.
+     *
+     * <p><b>MS1 additions.</b> {@code role = ADMIN} is refused outright — see the guard below. A
+     * Professional registration additionally requires at least one category-valid sub-service and
+     * a full week of working hours with at least one enabled day (D4/D7); both are validated
+     * here, i.e. before any row is written, so a submission missing either leaves no half-created
+     * account behind.
      */
     private void validateRoleSpecificFields(RegisterRequest request, MultipartFile verificationDocument) {
         List<FieldError> errors = new ArrayList<>();
+
+        // The security-critical half of adding UserRole.ADMIN. `role` is typed as the enum, so
+        // Jackson binds "ADMIN" from a public, unauthenticated request the moment the constant
+        // exists -- without this guard the operator role that approves professionals would be
+        // self-issuable by anyone who can reach POST /api/auth/register. Checked first and thrown
+        // immediately rather than collected alongside field errors: there is nothing else worth
+        // telling a caller who just tried to make themselves an administrator. An ADMIN row is
+        // created only by a deliberate operational step.
+        if (request.role() == UserRole.ADMIN) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
+                    List.of(new FieldError("role", "must be CUSTOMER or PROFESSIONAL")));
+        }
 
         if (request.role() == UserRole.CUSTOMER) {
             if (request.customer() == null || request.customer().defaultAddress() == null) {
@@ -316,6 +386,20 @@ public class AuthService {
                 } else if (professional.basePrice().scale() > 2) {
                     errors.add(new FieldError("professional.basePrice", "must have at most 2 decimal places"));
                 }
+
+                // MS1 (D4): onboarding is not complete without these, so registration is not
+                // complete without them either. Presence/shape is collected alongside every other
+                // field error; the deeper rules (existence, cross-category, the 7-day week) run
+                // after the collected throw below, since they only make sense once the payload is
+                // structurally sound.
+                if (professional.subServiceIds() == null || professional.subServiceIds().isEmpty()) {
+                    errors.add(new FieldError("professional.subServiceIds",
+                            "at least one sub-service is required for professional registration"));
+                }
+                if (professional.workingHours() == null || professional.workingHours().isEmpty()) {
+                    errors.add(new FieldError("professional.workingHours",
+                            "weekly working hours are required for professional registration"));
+                }
             }
 
             if (verificationDocument == null || verificationDocument.isEmpty()) {
@@ -326,6 +410,46 @@ public class AuthService {
         if (!errors.isEmpty()) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.", errors);
         }
+
+        if (request.role() == UserRole.PROFESSIONAL) {
+            validateProfessionalOnboarding(request.professional());
+        }
+    }
+
+    /**
+     * MS1 (D4/D7): the two onboarding requirements registration now enforces, each delegated to
+     * the component that already owns the rule rather than reimplemented here — a second copy of
+     * "this sub-service belongs to your category" is precisely how a backend ends up enforcing it
+     * on the edit endpoint and not on the one that creates the account.
+     *
+     * <ul>
+     *   <li>Sub-services — {@code SubServiceSelectionValidator}, the same component
+     *       {@code ProfessionalsService#updateMySubServices} calls, with the same
+     *       {@code VALIDATION_ERROR}/{@code CATEGORY_MISMATCH} outcomes.</li>
+     *   <li>Working hours — {@code WorkingHoursValidator}, the same rules
+     *       {@code PUT /api/availability/working-hours} applies, plus the registration-only
+     *       "at least one enabled day". {@code ck_professional_working_hours_times} already
+     *       guarantees an enabled row carries valid non-null times with {@code end > start}, so
+     *       one enabled day is a sufficient test for "this week can actually be booked" — no
+     *       further time re-validation is needed.</li>
+     * </ul>
+     *
+     * <p>Runs before any row is written. Deliberately no sub-service <em>count</em> ceiling and no
+     * opinion about which days a professional works: the platform requires that onboarding be
+     * complete, not that it look a particular way.
+     */
+    private void validateProfessionalOnboarding(ProfessionalRegistrationData professional) {
+        Set<Long> subServiceIds = new LinkedHashSet<>(professional.subServiceIds());
+        if (subServiceIds.contains(null)) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
+                    List.of(new FieldError("professional.subServiceIds", "must not contain null ids")));
+        }
+        subServiceSelectionValidator.validate(professional.categoryId(), subServiceIds,
+                "professional.subServiceIds");
+
+        WorkingHoursValidator.validateWeek(professional.workingHours());
+        WorkingHoursValidator.requireAtLeastOneEnabledDay(professional.workingHours(),
+                "professional.workingHours");
     }
 
     private String generateVerificationCode() {

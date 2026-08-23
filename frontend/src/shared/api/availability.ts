@@ -64,6 +64,13 @@ export interface SosAvailabilityResponse {
   professionalId: number;
   isAvailable: boolean;
   updatedAt: string;
+  /**
+   * MS1 (D-G): whether the professional is actually marketplace-eligible — approved *and*
+   * onboarding complete. Independent of `isAvailable`, which is only their own intent: a
+   * professional whose toggle is on but who is `bookable: false` is never dispatched an SOS
+   * offer, so the dashboard must not render them as live.
+   */
+  bookable: boolean;
 }
 
 /** `GET /api/availability/sos-availability` — PROFESSIONAL only, reads the caller's current toggle state. */

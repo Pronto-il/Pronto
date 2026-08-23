@@ -191,13 +191,33 @@ export default function ProfessionalProfilePage() {
             <ReviewList reviews={reviews} isLoading={isLoadingReviews} error={reviewsError} />
           </section>
 
-          {hasSelectContext && (
-            <div className={styles.ctaBar}>
-              <Button onClick={handleSelectProfessional} fullWidth>
-                בחירת בעל מקצוע
-              </Button>
-            </div>
-          )}
+          {/* MS1 (D-G): the CTA needs the flow context *and* backend-confirmed eligibility.
+              `bookable` is the single neutral flag the backend computes from
+              `professionals.ProfessionalEligibility`; this page renders it, never re-derives it.
+
+              The reachable case is a stale one: the listing that produced this link was
+              eligibility-filtered, but an operator can reject someone — or the professional can
+              clear their own working hours — in the seconds between that listing and this view.
+              Backend enforcement already holds (`createOrder` refuses with `400`), so what this
+              fixes is the dead end: offering a button whose only possible outcome is an error at
+              the end of a booking flow.
+
+              The notice says the professional cannot be booked right now and deliberately never
+              says why — pending, rejected, disabled and every incomplete-onboarding case collapse
+              into one indistinguishable value, exactly as `bookable` does on the wire. */}
+          {hasSelectContext &&
+            (professional.bookable ? (
+              <div className={styles.ctaBar}>
+                <Button onClick={handleSelectProfessional} fullWidth>
+                  בחירת בעל מקצוע
+                </Button>
+              </div>
+            ) : (
+              <div className={styles.unavailableNotice} role="status">
+                <p>בעל המקצוע הזה אינו זמין להזמנה כרגע.</p>
+                <p className={styles.unavailableHint}>אפשר לחזור לרשימה ולבחור בעל מקצוע אחר.</p>
+              </div>
+            ))}
         </>
       )}
     </div>

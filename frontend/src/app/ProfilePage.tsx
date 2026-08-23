@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Heart } from 'lucide-react';
-import { PageHeader, Card, Button, Input, AddressFormFields, EMPTY_ADDRESS, ProfilePhoto } from '../shared/components';
+import { Card, Button, Input, AddressFormFields, EMPTY_ADDRESS, ProfilePhoto } from '../shared/components';
 import type { AddressValue } from '../shared/components';
 import { useAuth } from '../shared/hooks';
 import {
@@ -16,9 +16,24 @@ import {
 } from '../shared/api';
 import styles from './ProfilePage.module.css';
 
-const ROLE_LABELS: Record<UserRole, string> = {
-  CUSTOMER: 'לקוח',
-  PROFESSIONAL: 'בעל מקצוע',
+/**
+ * **Operator label only.** This screen used to render a "סוג משתמש" row for every role. It no
+ * longer does for end users: a customer being told they are a `לקוח`, or a professional that they
+ * are a `בעל מקצוע`, is the system describing its own `users.role` column back at someone who
+ * cannot act on it and did not ask. It is internal vocabulary on a personal-details screen.
+ *
+ * Presentation only — `role` itself is untouched, and so is every authorization decision that
+ * reads it. `useAuth().user.role` still drives this component's own customer/professional branch
+ * below, `RequireAuth`, and the nav.
+ *
+ * `ADMIN` keeps the row, because for an operator it is not trivia: an operator's screen is
+ * otherwise near-identical to a professional's read-only one, and confirming which account a
+ * privileged session is actually on is operationally useful. Hence `Partial` — the two end-user
+ * roles have deliberately no entry, so re-adding one is a visible edit rather than a lookup that
+ * quietly starts resolving again.
+ */
+const ROLE_LABELS: Partial<Record<UserRole, string>> = {
+  ADMIN: 'מפעיל מערכת',
 };
 
 const ADDRESS_FIELD_KEYS: (keyof AddressValue)[] = [
@@ -163,7 +178,9 @@ export default function ProfilePage() {
 
   return (
     <div className="focused-page">
-      <PageHeader title="הפרופיל שלי" />
+      {/* No page title: "הפרופיל שלי" repeated, word for word, the nav link that got you here —
+          present in the desktop nav, and as the mobile top-bar profile icon whose `aria-label`
+          carries the same string. `ProfilePhoto` and the user's own name open the screen. */}
       <Card className={styles.card}>
         <ProfilePhoto
           imageUrl={isCustomer ? null : user.professional?.profileImageUrl ?? null}
@@ -188,14 +205,11 @@ export default function ProfilePage() {
             />
             <AddressFormFields value={address} onChange={setAddress} errors={addressErrors} />
 
+            {/* Email only. The "סוג משתמש" row was removed here — see ROLE_LABELS. */}
             <dl className={`${styles.details} ${styles.readonlySection}`}>
               <div className={styles.row}>
                 <dt>אימייל</dt>
                 <dd>{user.email}</dd>
-              </div>
-              <div className={styles.row}>
-                <dt>סוג משתמש</dt>
-                <dd>{ROLE_LABELS[user.role]}</dd>
               </div>
             </dl>
 
@@ -224,10 +238,14 @@ export default function ProfilePage() {
               <dt>אימייל</dt>
               <dd>{user.email}</dd>
             </div>
-            <div className={styles.row}>
-              <dt>סוג משתמש</dt>
-              <dd>{ROLE_LABELS[user.role]}</dd>
-            </div>
+            {/* Operators only — a `PROFESSIONAL` falls through this and sees their business
+                details instead. See ROLE_LABELS. */}
+            {user.role === 'ADMIN' && (
+              <div className={styles.row}>
+                <dt>סוג משתמש</dt>
+                <dd>{ROLE_LABELS.ADMIN}</dd>
+              </div>
+            )}
             {user.professional && (
               <>
                 <div className={styles.row}>

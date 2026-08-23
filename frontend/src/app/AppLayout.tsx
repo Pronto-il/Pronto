@@ -1,5 +1,5 @@
 import { Link, Outlet } from 'react-router-dom';
-import { LogOut, User, ClipboardList, LayoutDashboard } from 'lucide-react';
+import { LogOut, User, ClipboardList, LayoutDashboard, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../shared/hooks';
 import { BookingDraftIndicator } from './BookingDraftIndicator';
 import { ActiveOrderIndicator } from './ActiveOrderIndicator';
@@ -51,15 +51,26 @@ import styles from './AppLayout.module.css';
  * `/pro/availability`, their dashboard home), matching the existing "לוח בקרה" nav link right
  * next to it, which already targets `/pro` for exactly this reason. `CUSTOMER`/logged-out
  * stay `/`.
+ *
+ * **MS1 professional verification (2026-08-22)**: an `ADMIN` gets one nav destination,
+ * "אימות בעלי מקצוע" (`/admin/professionals`), and the brand logo takes them there too — the same
+ * role-aware treatment `PROFESSIONAL` already has. It renders for that role only, so no customer
+ * or professional ever sees a link to an operator screen. That is discoverability, not access
+ * control: `RequireAuth role="ADMIN"` bounces the other roles off the route and the backend
+ * answers `403` regardless of what the UI shows. `ActiveOrderIndicator`/`BottomNav` stay
+ * `CUSTOMER`-only and are therefore already correct for the new role.
  */
 export default function AppLayout() {
   const { user, logout } = useAuth();
+
+  const brandTarget =
+    user?.role === 'PROFESSIONAL' ? '/pro' : user?.role === 'ADMIN' ? '/admin/professionals' : '/';
 
   return (
     <div className={styles.shell}>
       <header className={styles.header}>
         <div className={styles.headerInner}>
-          <Link to={user?.role === 'PROFESSIONAL' ? '/pro' : '/'} className={styles.brand} aria-label="Pronto">
+          <Link to={brandTarget} className={styles.brand} aria-label="Pronto">
             <span className={styles.logo} style={{ backgroundImage: `url(${logoUrl})` }} />
           </Link>
           <nav className={styles.nav}>
@@ -78,6 +89,12 @@ export default function AppLayout() {
                     <Link to="/pro" className={styles.navLink}>
                       <LayoutDashboard size={18} aria-hidden="true" />
                       <span>לוח בקרה</span>
+                    </Link>
+                  )}
+                  {user.role === 'ADMIN' && (
+                    <Link to="/admin/professionals" className={styles.navLink}>
+                      <ShieldCheck size={18} aria-hidden="true" />
+                      <span>אימות בעלי מקצוע</span>
                     </Link>
                   )}
                   <Link to="/profile" className={styles.navLink}>

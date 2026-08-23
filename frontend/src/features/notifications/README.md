@@ -64,3 +64,33 @@ separately by `features/booking`'s `OrderTrackingPage` (`shared/hooks/useOrderSt
 module is only the notification feed/bell, per its original stub description. The mobile
 dropdown-overflow bugfix above landed as a QA-driven correction during **Frontend MS2 — Home
 + Authentication Experience** (the regression's actual cause), not separate scope.
+
+## MS1 finalization — the bell is a self-cleaning inbox (2026-08-22)
+
+`Unread → user reads/opens → marked READ → disappears from the visible list`, with the badge
+dropping on the click rather than on the next poll tick.
+
+The rule lives in `shared/hooks/useNotifications.ts`, not here. Two halves, and both are needed:
+
+- **The feed request is `GET /api/notifications?unreadOnly=true`.** That parameter already existed
+  server-side, so **no backend change was made** — this package previously passed no filter because
+  the panel was designed as a full feed. Requesting only unread is what makes a refresh, a remount
+  or a new tab never resurrect a row somebody already read.
+- **`markAsRead` removes the row from local state immediately**, preserving the existing optimistic
+  contract: the `POST` is fired and not awaited, and a failure self-corrects on a later tick. A
+  `dismissedIds` ref filters incoming poll data for the ~4 s window in which an in-flight poll could
+  still be carrying the just-read row and flash it back for one tick.
+
+**Nothing is deleted.** `readAt` is set, not removed; the row survives for operational/debug/audit
+purposes. No destructive delete and no background cleanup service was introduced — both were
+explicitly out of scope for this pass.
+
+Consequence for `NotificationBell.tsx`: **every row it renders is unread by construction**, so the
+row style is unconditional (it previously branched on `readAt === null`) and the existing
+`אין התראות חדשות` empty state is now literally accurate rather than approximately so. Nothing else
+in this component changed — routing, deep links, click-outside and the mark-all button are
+untouched.
+
+Validated live (MS1 report, Validations 47-48): panel rendered only unread rows, list 2 → 1 and
+badge 2 → 1 on a single click, and after a full poll tick plus a hard reload the read row did not
+come back.

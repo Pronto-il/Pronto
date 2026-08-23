@@ -57,7 +57,11 @@ export function LoginForm({ initialEmail = '' }: LoginFormProps) {
     setIsSubmitting(true);
     try {
       const user = await login(trimmedEmail, password);
-      navigate(user.role === 'PROFESSIONAL' ? '/pro' : '/', { replace: true });
+      // MS1: an ADMIN lands on the operator review queue — the only screen their role can reach.
+      // Sending them to `/` would show a customer-facing home page with nothing on it for them.
+      const landing =
+        user.role === 'PROFESSIONAL' ? '/pro' : user.role === 'ADMIN' ? '/admin/professionals' : '/';
+      navigate(landing, { replace: true });
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.code === 'ACCOUNT_LOCKED') {

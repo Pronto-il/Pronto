@@ -89,7 +89,11 @@ feature modules together into the single-page app described in
   to spare.
 - `RequireAuth.tsx` — route guard. Redirects to `/login` when not authenticated (after
   the auth provider's initial rehydration finishes); supports an optional `role` prop to
-  gate a route to one role.
+  gate a route to one role. **This is UX, not security** — it decides which screen a browser
+  shows and protects no data; every gated API route is enforced backend-side by
+  `common.security.RoleRequiredInterceptor`, which answers `403 FORBIDDEN` however the request
+  was made. Stated explicitly in the file as of Production Roadmap MS1, which added the first
+  `role="ADMIN"` routes.
 - `HomePage.tsx` — placeholder home route (unchanged content since Milestone 0; only its
   wrapping element changed from `<main>` to `<div>` since `AppLayout` now owns the page's
   `<main>` landmark). **As of MS1 (Visual Foundation & Motion System, 2026-08-20)**: the
@@ -217,6 +221,26 @@ feature modules together into the single-page app described in
   reason. `CUSTOMER`/logged-out still go to `/`. One-line change, no other `AppLayout`/router
   change from this milestone (its other work is entirely inside `features/dashboard`/
   `features/professionals` — see those packages' READMEs).
+
+- `router.tsx`/`AppLayout.tsx`/`ProfilePage.tsx` — **Production Roadmap MS1, professional
+  verification (2026-08-22, `docs/architecture/ms1-professional-verification-design.md` §D-F)**:
+  a third `RequireAuth` group, `role="ADMIN"`, wrapping two new routes —
+  `/admin/professionals` (the operator review queue) and
+  `/admin/professionals/:professionalId` (one application + approve/reject). Both render
+  `features/admin`; see that package's README. Own top-level path prefix rather than a section
+  of `/pro/*` or `/profile`, mirroring the backend's own split — `/api/admin/professionals/**`
+  are the only `ADMIN`-gated routes in the app, and a distinct prefix keeps "which routes have
+  which audience" answerable by reading the path. `AppLayout.tsx` gained one `ADMIN`-only nav
+  link ("אימות בעלי מקצוע", `ShieldCheck`) inside `.desktopOnlyNav`, and its role-aware brand
+  link now sends an `ADMIN` to `/admin/professionals` (the same treatment `PROFESSIONAL` already
+  had for `/pro`) — that link is also the operator's only nav route into the surface below
+  640px, where `.desktopOnlyNav` is hidden; acceptable for a desktop-first operator tool.
+  `features/auth/LoginForm.tsx` lands an `ADMIN` on the queue after login rather than the
+  customer home page. `ProfilePage.tsx`'s `ROLE_LABELS` gained `ADMIN: 'מפעיל מערכת'` (required
+  — the map is `Record<UserRole, string>` and `UserRole` gained a third member); that page's
+  existing read-only branch already renders correctly for the role with no other change.
+  `ActiveOrderIndicator`/`BottomNav` are `CUSTOMER`-gated and were therefore already correct.
+  **The route guard is UX, not security** — see `RequireAuth.tsx` above.
 
 ## Known issues
 - **`AppLayout.tsx`'s global header nav causes page-level horizontal overflow at narrow
@@ -367,3 +391,34 @@ of this same milestone (not new scope):
 Both verified with real Playwright runs against the dev server + a live backend/Postgres
 account (build and lint also re-run clean); see `features/auth/README.md`/
 `features/notifications/README.md` for the per-package fix detail.
+
+## MS1 finalization — profile screen cleanup (2026-08-22)
+
+Two presentation-only changes to `ProfilePage.tsx`, both scoped to what the screen *shows*.
+
+**1. The internal user role is no longer shown to end users.** The `סוג משתמש` row rendered `לקוח`
+to a customer and `בעל מקצוע` to a professional — the system describing its own `users.role` column
+back at someone who cannot act on it and did not ask. Removed for both.
+
+`ADMIN` **keeps** the row: an operator's profile is otherwise near-identical to a professional's
+read-only one, and confirming which account a privileged session is on is operationally useful.
+`ROLE_LABELS` is now a `Partial<Record<UserRole, string>>` holding only the `ADMIN` entry, so
+re-adding an end-user label is a visible edit rather than a lookup that quietly starts resolving
+again.
+
+This changes **nothing** about authorization. `users.role` is untouched, no DTO or schema changed,
+registration is untouched, and every decision that reads the role still reads it — this component's
+own customer/professional branch, `RequireAuth`, and `AppLayout`'s nav all still switch on
+`user.role`.
+
+**2. The `הפרופיל שלי` `PageHeader` is removed.** It repeated, word for word, the nav link that
+opens this screen — present in `AppLayout`'s desktop nav and as the mobile top-bar profile icon,
+whose `aria-label`/`title` carry that exact string. `ProfilePhoto` and the user's own name open the
+screen instead. `.focused-page` already supplies block padding, so no CSS change was needed here;
+measured top spacing after the change is 32 px with 0 px horizontal overflow at 1440 px and 390 px.
+
+The equivalent title removals on `features/booking/MyOrdersPage` and
+`features/dashboard/ProDashboardLayout` are recorded in those packages' own READMEs. Flow screens
+deliberately keep their titles — they have a back button and no persistent nav, so the title *is*
+the context — and `features/favorites`' `מועדפים` keeps its title because it has no desktop nav
+entry at all.

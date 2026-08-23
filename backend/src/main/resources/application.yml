@@ -57,8 +57,39 @@ pronto:
   # profile system. Default "local" covers every local/QA/dev startup path today (none of
   # them set PRONTO_ENVIRONMENT). A real deployment sets this to anything other than
   # "local" (e.g. "production") as part of its own config, alongside a real JWT_SECRET.
-  # Consumed by auth.security.JwtSecretStartupGuard.
+  # Consumed by auth.security.JwtSecretStartupGuard and by demo.DemoDataStartupGuard, which
+  # treats "local", "demo" and "test" as non-production and EVERY other value -- including
+  # every value nobody has thought of yet -- as production.
   environment: ${PRONTO_ENVIRONMENT:local}
+
+  demo-data:
+    # TEST/DEMO synthetic dataset (com.pronto.demo). Off by default and off in every
+    # environment except a deliberately-configured TEST/DEMO one; a normal startup never
+    # touches demo data.
+    #
+    # There is no separate TEST/DEMO datasource: the environment is chosen with the same five
+    # DB_* variables above (point DB_NAME at the demo database). A second datasource block
+    # would mean two connections and a runtime switch between them, which is exactly the
+    # environment-conditional this feature exists to avoid. See DemoDataProperties.
+    #
+    # off | seed | reset
+    #   off    do nothing (default)
+    #   seed   build the dataset unless demo accounts already exist -- safe to leave on
+    #   reset  TRUNCATE every application table in the demo database, then rebuild
+    mode: ${DEMO_DATA_MODE:off}
+    # The ONLY database demo data may be written to, compared at startup against
+    # SELECT current_database(). Seeding while connected to anything else is a startup
+    # failure, which is what stops a forgotten DB_NAME from writing synthetic professionals
+    # into the developer's LOCAL database (or, with mode=reset, truncating it). A production
+    # deployment leaves this alone; if it is ever mispointed at a database with this name,
+    # the same guard refuses to start.
+    database-name: ${DEMO_DATA_DATABASE_NAME:pronto_demo}
+    # Shared login password for every seeded demo account, so any of them can be demonstrated.
+    # Not a production credential and not a secret: it only unlocks synthetic accounts on
+    # @demo.pronto.invalid addresses, in a database the guard has already proven is the demo
+    # one. Same obviously-a-placeholder convention as pronto.jwt.secret -- override via
+    # DEMO_DATA_PASSWORD for any TEST/DEMO instance reachable outside the team.
+    password: ${DEMO_DATA_PASSWORD:ProntoDemo!2026}
 
   cors:
     # Browser CORS allow-list for /api/**, see auth.config.SecurityConfig's Javadoc on

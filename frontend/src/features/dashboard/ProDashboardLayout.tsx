@@ -1,7 +1,8 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { Inbox, ClipboardList, CalendarDays, Siren, User } from 'lucide-react';
-import { PageHeader, Badge } from '../../shared/components';
+import { Badge } from '../../shared/components';
 import { PendingRequestsProvider, ProSosProvider, useProSos, usePendingRequests } from '../../shared/hooks';
+import { OnboardingStatusNotice } from './OnboardingStatusNotice';
 import styles from './ProDashboardLayout.module.css';
 
 /**
@@ -39,10 +40,20 @@ export default function ProDashboardLayout() {
     <PendingRequestsProvider>
       <ProSosProvider>
         <div className="page-container">
-          <PageHeader title="לוח בקרה לבעלי מקצוע" />
+          {/* No page title. "לוח בקרה לבעלי מקצוע" was a full-width `PageHeader` above the nav —
+              an internal-dashboard label that named the shell rather than the screen, and said
+              nothing the tab strip below it (and the "לוח בקרה" nav link that got you here)
+              doesn't already say. The nav *is* the context; each screen keeps its own section
+              headings. `.wrapper` now owns the block spacing the header's margin used to
+              provide — `.page-container` has inline padding only. */}
           <div className={styles.wrapper}>
             <NavTabs />
             <div className={styles.content}>
+              {/* MS1 (D5): rendered above every `/pro/*` screen, not just the profile/
+                  availability pages — a professional who is no longer bookable is most likely
+                  to notice it on the screen where the work isn't arriving. Renders nothing at
+                  all once the account is eligible. */}
+              <OnboardingStatusNotice />
               <Outlet />
             </div>
           </div>

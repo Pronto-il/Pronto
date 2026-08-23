@@ -145,7 +145,20 @@ public enum ErrorCode {
      * platform will take it, every candidate found so far is still selectable, and the customer
      * needs to be told that specific thing rather than "something went wrong".
      */
-    SOS_EXPANSION_LIMIT_REACHED(HttpStatus.CONFLICT);
+    SOS_EXPANSION_LIMIT_REACHED(HttpStatus.CONFLICT),
+
+    // MS1 (professional verification & approval). See
+    // docs/architecture/ms1-professional-verification-design.md D-F.
+    /**
+     * The requested approval decision is not legal from the professional's current status —
+     * approving someone already {@code APPROVED}, or rejecting someone who is not {@code PENDING}.
+     *
+     * <p>Its own code rather than a generic {@code VALIDATION_ERROR}, for the reason every other
+     * {@code *_INVALID_STATE} code here exists: nothing about the request was malformed, the world
+     * simply moved. The realistic cause is a double-submitted decision or two operators opening the
+     * same queue, and an operator UI needs to tell those apart from "you sent nonsense."
+     */
+    PROFESSIONAL_APPROVAL_INVALID_TRANSITION(HttpStatus.CONFLICT);
 
     private final HttpStatus httpStatus;
 

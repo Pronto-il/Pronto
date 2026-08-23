@@ -34,21 +34,22 @@ Feature components (composed by the pages below):
   (`DUPLICATE_EMAIL`, or a `VALIDATION_ERROR`'s field-level messages) routes the wizard back
   to whichever stage owns the offending field (design doc §6.3) rather than only setting
   local state on stage 3, where the submit button lives.
-- `ProfessionalRegisterForm` — a **4-stage** wizard (design doc §6.5-6.6 — a deliberate,
-  approved deviation from a literal 6-stage ask; see "Why 4 stages, not 6" below): (1)
-  personal details — full name, email, password, confirm password, **no phone** (not a
-  backend field for `PROFESSIONAL`); (2) profession + service area — service category
-  (`Select`), service area (`Input`), plus an honest, non-interactive sub-service preview
-  once a category is chosen (fetches `getCategoriesWithSubServices()`, shows that category's
-  sub-service names as preview chips with an explicit "you'll be able to choose from these on
-  your profile page once your account is approved" line — never implies a selection is being
-  saved; `Skeleton` while loading, silently omitted on fetch failure, never blocks
-  registration); (3) pricing + documents — base price, optional profile photo
-  (`ImageUploadField`), required verification document (`DocumentUploadField`); (4) read-only
-  summary + the real submit (`registerProfessional()`, unchanged) + an honest "what's next"
-  block (email verification → login → completing sub-services/availability on the profile
-  page later — informational only, no controls). Same submit-time error routing principle as
-  the customer wizard.
+- `ProfessionalRegisterForm` — a **6-stage** wizard (MS1; see "MS1: sub-services and working
+  hours are now collected at registration" below): (1) personal details — full name, email,
+  password, confirm password, **no phone** (not a backend field for `PROFESSIONAL`); (2)
+  profession + service area — service category (`Select`, options built from the fetched
+  catalog, not from `shared/api/categories.ts`'s static mirror), service area (`Input`); (3)
+  **sub-services** — "באילו תחומים אתה נותן שירות?", a required multi-select `Checkbox` list
+  showing only the selected category's sub-services, at least one required; (4) pricing +
+  documents — base price, optional profile photo (`ImageUploadField`), required verification
+  document (`DocumentUploadField`); (5) **weekly working hours** — "באילו ימים ושעות תרצה לקבל
+  הזמנות?", the shared `WeeklyHoursFields` editor starting from a completely blank week, at
+  least one enabled day required; (6) read-only summary (including the chosen sub-services and
+  each enabled day's hours) + the real submit (`registerProfessional()`) + an honest "what's
+  next" block. Same submit-time error routing principle as the customer wizard, extended: a
+  `CATEGORY_MISMATCH` clears the sub-service selection and routes back to stage 3, and the
+  backend's per-row week errors (`weekday`/`startTime`/`endTime`) fold into stage 5's single
+  error slot.
 - `VerifyCodeForm` — single 6-digit numeric input, submits to `POST /api/auth/verify`; on
   success routes to `/login` (verify does not issue a JWT, so no auto-login).
 - `LoginForm` — email + password; maps `401 INVALID_CREDENTIALS`/`403
@@ -86,7 +87,45 @@ required, non-blank client validation only — no format regex, matching this co
 existing minimal-validation style, e.g. `ProfilePage.tsx`'s own phone field), and wired into
 the final `registerCustomer()` payload.
 
-## Why 4 stages, not 6 (professional wizard)
+## MS1: sub-services and working hours are now collected at registration (2026-08-22)
+This supersedes "Why 4 stages, not 6" below, whose audit was correct at the time: back then
+`ProfessionalRegistrationData` had exactly three fields and neither sub-services nor working
+hours were writable at registration time, so the wizard covered them as honest informational
+content rather than collecting data it would have to discard.
+
+MS1 (Playbook §MS1, decisions D4/D7; `docs/architecture/ms1-professional-verification-design.md`
+§D-C) changed the backend contract: `professional.subServiceIds` and `professional.workingHours`
+are **required** on `POST /api/auth/register`, persisted by `AuthService` in the same
+transaction as the professional row, and a professional is marketplace-eligible only when
+approved **and** onboarding is complete. Registration without them now returns `400` with both
+fields flagged. So the two informational placeholders became two real stages:
+
+- **Stage 3 — sub-services.** One `getCategoriesWithSubServices()` fetch (public
+  `GET /api/categories`) backs both the stage-2 category `Select` and this checklist, so a
+  category and its sub-services can never disagree, and `shared/api/categories.ts`'s static
+  `CATEGORIES` mirror is no longer used by this form. Only the selected category's sub-services
+  are offered, and **changing the main category clears the selection** — the backend refuses a
+  cross-category id with `400 CATEGORY_MISMATCH`
+  (`professionals.service.SubServiceSelectionValidator`), so carrying stale ids forward would
+  guarantee a failed submit. Because sub-services are required, a catalog fetch failure is a
+  real blocking error with a retry action, not a silently omitted extra.
+- **Stage 5 — weekly working hours.** Renders `shared/components`' `WeeklyHoursFields` — the
+  same editor `/pro/availability`'s `WorkingHoursForm` renders — and serializes with the same
+  `toWeeklyHoursRequest()`, so registration always sends exactly the 7-entry shape
+  `availability.service.WorkingHoursValidator` demands. The week starts **completely blank**:
+  no day enabled, no times pre-filled (Playbook MS1: "do not invent default working hours"),
+  unlike the dashboard's edit surface which seeds 08:00-18:00 into a weekday the server hasn't
+  configured. Client-side validation (times required on an enabled day, end after start, at
+  least one enabled day) is UX only — the backend re-runs all of it, and the database
+  `CHECK` forbids an overnight range, which is why no UI here implies 22:00→02:00 is possible.
+
+The result state is honest about what registration produced: a successful submit creates a
+**`PENDING`** professional, so the primary button reads "שליחת הבקשה" and the final stage's
+"what's next" block says the application is awaiting review and that the account is not shown to
+customers until it is approved — it no longer tells the registrant to go complete sub-services
+and availability later (they just did), and it never says they are live.
+
+## Why 4 stages, not 6 (professional wizard) — superseded by MS1, kept for the audit trail
 The milestone dispatch originally asked for 6 stages (personal details, profession/
 sub-services, service area, pricing, availability, profile completion). Verified directly
 against source rather than assumed: `ProfessionalRegistrationData` has exactly 3 fields
@@ -141,4 +180,7 @@ backend packages. Visual/UX redesign into progressive multi-stage wizards, the `
 and the `RegistrationWizardShell` shared component landed in **Frontend MS2 — Home +
 Authentication Experience** (`docs/architecture/frontend-ms2-home-auth-design.md`). The
 reduced-motion bugfix above landed in the same MS2 pass, as a QA-driven correction, not
-separate scope.
+separate scope. The professional wizard's two new required stages (sub-services, weekly working
+hours) and the `PENDING` result copy landed in **Production Roadmap MS1 — Professional
+Verification & Marketplace Eligibility**
+(`docs/architecture/ms1-professional-verification-design.md`).

@@ -1,0 +1,51 @@
+/* Informational, not an error: the professional hasn't done anything wrong, they have
+   something left to finish — so this uses the neutral primary tint rather than the error
+   palette the dashboard's real failure banners use. */
+.notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-block-end: var(--space-4);
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--color-text-secondary);
+}
+
+.list {
+  margin: 0;
+  padding-inline-start: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.link {
+  color: var(--color-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.footnote {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}

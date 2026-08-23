@@ -23,6 +23,12 @@ const MAX_BADGE_COUNT = 9;
  * listener on `document`, scoped to while the panel is open) or a second bell click closes
  * the panel; clicking a row marks it read optimistically and navigates to
  * `/orders/{relatedOrderId}` (added in Frontend Milestone 3, works for either role).
+ *
+ * **The panel shows unread notifications only** — reading one removes it here and from the badge
+ * immediately, and it does not come back on refresh. That rule lives entirely in
+ * `useNotifications`; see its doc comment for why the row is dropped from the feed rather than
+ * deleted server-side. Every row this component renders is therefore unread by construction,
+ * which is why the row style is unconditional and the empty state reads אין התראות חדשות.
  */
 export function NotificationBell() {
   const navigate = useNavigate();
@@ -125,7 +131,7 @@ export function NotificationBell() {
                 <li key={notification.id}>
                   <button
                     type="button"
-                    className={`${styles.row} ${notification.readAt === null ? styles.unread : ''}`}
+                    className={`${styles.row} ${styles.unread}`}
                     onClick={() => handleRowClick(notification)}
                   >
                     <span className={styles.rowLabel}>{getMessageTypeLabel(notification.messageType)}</span>

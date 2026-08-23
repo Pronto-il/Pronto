@@ -13,13 +13,17 @@ import styles from './SosAvailabilityToggle.module.css';
  */
 export function SosAvailabilityToggle() {
   const [isAvailable, setIsAvailable] = useState<boolean | null>(null);
+  const [isBookable, setIsBookable] = useState<boolean | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isToggling, setIsToggling] = useState(false);
   const [toggleError, setToggleError] = useState<string | null>(null);
 
   useEffect(() => {
     getSosAvailability()
-      .then((result) => setIsAvailable(result.isAvailable))
+      .then((result) => {
+        setIsAvailable(result.isAvailable);
+        setIsBookable(result.bookable);
+      })
       .catch(() => setLoadError(GENERIC_ERROR_MESSAGE));
   }, []);
 
@@ -32,6 +36,7 @@ export function SosAvailabilityToggle() {
     try {
       const result = await updateSosAvailability(!isAvailable);
       setIsAvailable(result.isAvailable);
+      setIsBookable(result.bookable);
     } catch {
       setToggleError(GENERIC_ERROR_MESSAGE);
     } finally {
@@ -57,6 +62,12 @@ export function SosAvailabilityToggle() {
           <p className={isAvailable ? styles.stateOn : styles.stateOff}>
             {isAvailable === null ? 'טוען…' : isAvailable ? 'פעיל' : 'כבוי'}
           </p>
+          {/* MS1 (D-G): the toggle is the professional's *intent*; `bookable` is whether the
+              platform can actually dispatch to them. Saying "פעיל" while they are ineligible
+              would claim they're live when no SOS offer can ever reach them. */}
+          {isAvailable && isBookable === false && (
+            <p className={styles.notEligible}>לא יישלחו אליך קריאות SOS עד להשלמת פרטי החשבון ואישורו.</p>
+          )}
         </div>
         <button
           type="button"

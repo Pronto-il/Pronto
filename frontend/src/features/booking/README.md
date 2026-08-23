@@ -684,3 +684,36 @@ professional-side cancellation (Frontend Milestone 6 did not extend `canCancel` 
 PROFESSIONAL role — out of that milestone's scope, an explicit decision, not an oversight;
 see the Frontend Milestone 6 section above). Job-status action buttons beyond cancel
 (on-the-way/complete) **are now built**, as of Frontend Milestone 6 — see above.
+
+## MS1 finalization — My Orders history is COMPLETED/CANCELLED only (2026-08-22)
+
+`MyOrdersPage`'s `HISTORY_STATUSES` **narrowed** from four statuses to two: `COMPLETED` and
+`CANCELLED`. `EXPIRED` and `REJECTED` are now excluded from the screen entirely.
+
+This reverses part of MS4 §4 Q1's decision, deliberately and with the reason recorded in the file.
+That decision folded all four terminal statuses into History because all four were already visible
+before MS4 added sectioning, so folding them in removed nothing. That was an argument about not
+regressing a list — it was never an argument that they *belong* in a customer's history. An order
+that timed out with no professional response, or that a professional declined, is a record of the
+platform failing to find someone, not of a service the customer received.
+
+Two things about the implementation are load-bearing:
+
+- **`HIDDEN_STATUSES` is an explicit list, not a fall-through.** The bucketing is an if/else, so
+  anything not recognised as History lands in **Active** — an expired order rendered under
+  `פעילות וקרובות` would be a worse bug than the one being fixed. `REJECTED` is hidden on the same
+  principle as `EXPIRED`: terminal, so never Active; not a service received, so not History.
+- **The empty state is gated on what the screen actually shows**, not on the raw fetch. A customer
+  whose only orders are hidden gets the same "get started" empty state a brand-new customer sees,
+  rather than two separately-empty sections.
+
+**Presentation only.** `getMyOrders()` is unchanged, no backend filter was added, and nothing is
+deleted — a hidden order is still served at its own URL and still reachable at `/orders/:id`.
+Verified: `GET /api/bookings/orders/12` (an `EXPIRED` order) returns `200` while that order is
+absent from the list. Active-order behaviour elsewhere (`useActiveOrder`, `ActiveOrderIndicator`,
+the tracking screen) is untouched.
+
+Also removed here: the `ההזמנות שלי` `PageHeader`. It repeated, word for word, the nav label of the
+link that opens this screen — present in the desktop nav and in `BottomNav`, both of which already
+mark it `aria-current="page"`. The two section headings carry the structure this screen needs. The
+history empty-state copy no longer promises that expired orders will appear.

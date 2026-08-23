@@ -12,6 +12,13 @@ import java.time.Instant;
  * fields on this response or a confusing partially-populated card. See
  * {@code docs/architecture} design notes on the reviews/favorites/matching feature for the
  * "your call, favor the simpler option" judgment call this resolves.
+ *
+ * @param bookable MS1 (D-G): whether this saved professional is currently marketplace-eligible
+ *                 ({@link com.pronto.professionals.ProfessionalEligibility}). Neutral by design —
+ *                 it says "you cannot book this person right now", never <em>why</em>, so a
+ *                 customer's favorites list cannot become a channel for learning that a
+ *                 particular professional was rejected. Ineligible favorites are listed, not
+ *                 deleted; see {@code FavoritesService#listFavorites}.
  */
 public record FavoriteProfessionalSummary(
         Long professionalId,
@@ -22,6 +29,7 @@ public record FavoriteProfessionalSummary(
         String profileImageUrl,
         BigDecimal averageRating,
         long reviewCount,
-        Instant favoritedAt
+        Instant favoritedAt,
+        boolean bookable
 ) {
 }

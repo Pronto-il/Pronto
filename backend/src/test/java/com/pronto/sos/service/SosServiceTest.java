@@ -92,6 +92,11 @@ class SosServiceTest {
 
         when(assembler.toRequestResponse(any(), any()))
                 .thenAnswer(inv -> stubResponse(inv.getArgument(0), inv.getArgument(1)));
+        // MS1: selectProfessional re-checks eligibility immediately before creating the order.
+        // Every pre-existing test here describes a professional who is still perfectly eligible at
+        // that moment, so it is stubbed true by default; selectRefusesACandidateWhoBecameIneligible
+        // overrides it. lenient() because most tests in this class never reach selection.
+        Mockito.lenient().when(professionalRepository.existsEligibleById(anyLong())).thenReturn(true);
     }
 
     // ---- fixtures ----
@@ -494,6 +499,49 @@ class SosServiceTest {
         assertThatThrownBy(() -> service.selectProfessional(CUSTOMER_ID, REQUEST_ID, OFFER_ID))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.SOS_ALREADY_SELECTED));
+    }
+
+    @Test
+    void selectRefusesACandidateWhoBecameIneligibleSinceDispatch() {
+        // MS1 (D-B): the last check before an order and a priced commitment exist. Minutes can
+        // pass between dispatch and selection -- long enough for an operator to reject this
+        // professional, or for them to clear their working hours. Mapped onto the EXISTING
+        // SOS_CANDIDATE_NOT_AVAILABLE, which is exactly what happened and what the customer's
+        // client already knows how to render: this one cannot be taken, the others still can.
+        stubSelectableRequest();
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.selectProfessional(CUSTOMER_ID, REQUEST_ID, OFFER_ID))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode())
+                        .isEqualTo(ErrorCode.SOS_CANDIDATE_NOT_AVAILABLE));
+    }
+
+    @Test
+    void selectRefusingAnIneligibleCandidateCreatesNoOrderAndClaimsNothing() {
+        // The refusal must land before any of the state changes selection makes -- no order row,
+        // no claim on the request, no closing of the other candidates' offers. The customer's
+        // remaining options have to survive intact.
+        stubSelectableRequest();
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.selectProfessional(CUSTOMER_ID, REQUEST_ID, OFFER_ID))
+                .isInstanceOf(ApiException.class);
+
+        verify(orderRepository, never()).saveAndFlush(any(Order.class));
+        verify(sosRequestRepository, never()).selectProfessional(anyLong(), anyLong(), anyLong(), anyLong(), any());
+        verify(sosOfferRepository, never()).markSelected(anyLong(), any());
+        verify(sosOfferRepository, never()).closeLosingOffers(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    void selectStillWorksForACandidateWhoIsStillEligible() {
+        stubSelectableRequest();
+        when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(true);
+
+        service.selectProfessional(CUSTOMER_ID, REQUEST_ID, OFFER_ID);
+
+        verify(orderRepository).saveAndFlush(any(Order.class));
     }
 
     /** 0 rows with nobody selected means the deadline lapsed between the read and the write. */

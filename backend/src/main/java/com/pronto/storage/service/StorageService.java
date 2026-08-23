@@ -46,6 +46,13 @@ public class StorageService {
      *  {@code PhotoUploader}'s own {@code maxCount} default of 6. */
     static final int MAX_BATCH_SIZE = 20;
 
+    /**
+     * The key namespace {@code auth.service.AuthService#register} writes a professional's
+     * verification document into, and the only namespace
+     * {@link #getVerificationDocumentUrlForOperator} will unlock.
+     */
+    private static final String VERIFICATION_DOCUMENT_PREFIX = "verification-documents/";
+
     private final StorageClient storageClient;
     private final Optional<LocalHmacUrlSigner> localHmacUrlSigner;
     private final Duration presignedUrlTtl;
@@ -56,6 +63,15 @@ public class StorageService {
         this.storageClient = storageClient;
         this.localHmacUrlSigner = localHmacUrlSigner;
         this.presignedUrlTtl = Duration.ofSeconds(presignedUrlTtlSeconds);
+    }
+
+    /**
+     * How long a URL minted by this service stays valid. Exposed so a caller can tell its own
+     * client ({@code VerificationDocumentUrlResponse}) when to stop relying on one, rather than
+     * duplicating the {@code pronto.storage.presigned-url-ttl-seconds} property.
+     */
+    public long getPresignedUrlTtlSeconds() {
+        return presignedUrlTtl.toSeconds();
     }
 
     public ImageUploadResponse upload(AuthenticatedUser caller, MultipartFile file) {
@@ -131,6 +147,54 @@ public class StorageService {
      * {@link #authorize} check above, not as a general escape hatch.
      */
     public String getPresignedUrlAssumingCallerAuthorized(String key) {
+        return storageClient.presignUrl(key, presignedUrlTtl);
+    }
+
+    /**
+     * <b>MS1 (D-F): the operator's read of a professional's verification document.</b>
+     *
+     * <p>This is a second, narrower exemption from {@link #authorize}, and it is deliberately not
+     * a second caller of {@link #getPresignedUrlAssumingCallerAuthorized} — whose Javadoc forbids
+     * exactly that without re-justification. Here is the justification, and the alternative that
+     * was rejected.
+     *
+     * <p>{@link #authorize} resolves ownership out of the key itself: a
+     * {@code verification-documents/{userId}/...} key is readable only by that {@code userId}. An
+     * operator reviewing a professional is by construction <em>not</em> that user, so the general
+     * rule refuses them — correctly. The obvious fix, teaching {@link #authorize} that ADMINs may
+     * read anything, was rejected: it would silently widen access to every private key in the
+     * system, including customers' issue photos, on the strength of a role check made in a class
+     * that has no idea what it is being asked to unlock. This method instead stays narrow in
+     * three independent ways:
+     *
+     * <ul>
+     *   <li><b>Prefix-locked.</b> Only {@code verification-documents/} keys. It cannot be turned
+     *       into a general read primitive for {@code customers/} issue images even by a caller
+     *       who can choose the key, because it refuses everything else outright.</li>
+     *   <li><b>Reachable only from the ADMIN route.</b> Its sole caller is
+     *       {@code professionals.service.ProfessionalApprovalService}, behind
+     *       {@code /api/admin/professionals/**}, which {@code RoleRequiredInterceptor} gates on
+     *       {@code ADMIN} before argument resolution.</li>
+     *   <li><b>Key never client-supplied.</b> That caller reads the key off the
+     *       {@code professionals} row it just loaded by id. No request field reaches this
+     *       parameter.</li>
+     * </ul>
+     *
+     * <p><b>The returned URL is a bearer capability</b> valid for
+     * {@code pronto.storage.presigned-url-ttl-seconds} (300 by default): anyone holding it can
+     * fetch a private compliance document without authenticating. It must never be logged, cached
+     * in a shared store, or included in an error message — and neither must {@code key}. Nothing
+     * in this method or its caller logs either, which is why neither does any logging at all.
+     *
+     * <p>Do not add a third caller without the same kind of justification.
+     *
+     * @throws ApiException {@code 403 FORBIDDEN} for any key outside the verification-document
+     *         namespace
+     */
+    public String getVerificationDocumentUrlForOperator(String key) {
+        if (key == null || !key.startsWith(VERIFICATION_DOCUMENT_PREFIX)) {
+            throw new ApiException(ErrorCode.FORBIDDEN, "This document is not an operator-reviewable document.");
+        }
         return storageClient.presignUrl(key, presignedUrlTtl);
     }
 

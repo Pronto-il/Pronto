@@ -104,3 +104,27 @@ substantive fix (permanent proxy URLs replaced by time-limited presigned URLs) l
 `storage` — see that package's README and
 `docs/architecture/backend-ms9-presigned-image-urls-design.md` for the full record.
 Backend: 163/163 tests pass.
+
+**Production Roadmap MS1 — eligibility on add, annotation on list (2026-08-22).**
+`addFavorite`'s existence check became an eligibility check:
+`professionalRepository.existsById` → `existsEligibleById` (the single-row form of
+`professionals.ProfessionalEligibility`), still a `400 VALIDATION_ERROR` on `professionalId`,
+message now "must reference an existing, bookable professional". Favoriting is a *creation*
+path — it is how a customer builds the shortlist they will book from later — so an unapproved
+or half-onboarded professional must not be addable to it, and an ineligible professional's id
+must not become a way to confirm they exist. `listFavorites` is deliberately asymmetric with
+that: it **never deletes anything**, and an already-saved professional who has become
+ineligible stays in the list carrying the new `bookable = false` on
+`dto.FavoriteProfessionalSummary`. Silently dropping them would be a worse answer to the same
+question — the customer chose to save that person, the row is theirs, and a favorites list that
+quietly shrinks reads as data loss rather than "this one is not available right now"; an
+ineligible professional who finishes onboarding simply becomes bookable again with the
+shortlist intact. `bookable` is neutral by design: it says the customer cannot book this person
+right now and never *why*, so a favorites list cannot become a channel for learning that a
+particular professional was rejected. Adding it made this package's dependency on
+`professionals.repository.ProfessionalRepository` slightly wider (`toSummary` now calls
+`existsEligibleById` per entry) but introduced no new package dependency, no migration and no
+new `ErrorCode`. Extended `favorites.service.FavoritesServiceTest`; live-validated (MS1
+report, Validation 10: favoriting an ineligible professional returns `400`). See
+`professionals/README.md`'s "Approval lifecycle and marketplace eligibility" section and
+`docs/production-roadmap/reports/MS1-report.md`.

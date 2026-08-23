@@ -785,3 +785,73 @@ frontend milestone) — verification beyond build/lint was a full manual code re
 the design doc, confirming §10's preserved-behavior list (accept/reject logic, booking-conflict
 logic, job-status-transition logic, `WeeklyCalendarGrid`'s own polling/click-routing) holds
 unchanged in every file this pass touched.
+
+## Production Roadmap MS1 — marketplace eligibility surfaced to the professional (2026-08-22)
+
+Design record: `docs/architecture/ms1-professional-verification-design.md` (§D-D, §D-G) and
+Playbook §MS1 decision **D5**. Frontend-only changes; the eligibility rule itself is computed and
+enforced entirely on the backend.
+
+MS1 makes a professional bookable only when `approval_status = APPROVED` **and** onboarding is
+complete (a category-valid sub-service, an enabled working-hours day, a verification document).
+Existing professionals were never asked for sub-services or working hours at registration, so
+most of them stop being listed the moment the rule takes effect. D5 forbids fabricating that data
+or bulk-flipping approval states, so the product answer is discovery, not repair: tell the
+professional plainly, and point them at the surfaces that already own the missing pieces.
+
+- **`OnboardingStatusNotice.tsx` (new)** — rendered by `ProDashboardLayout` above `<Outlet />`,
+  so it appears on every `/pro/*` screen (including `/pro/requests`, where a professional is most
+  likely to wonder why no work is arriving). Renders **nothing at all** when the account is
+  eligible. Everything it says is backend truth: `bookable` + `approvalStatus` from
+  `GET /api/professionals/me` (`approvalStatus` is self-view-only per §D-G — this caller is the
+  self-view), and, only when `bookable` is false, which piece is missing from
+  `GET /api/professionals/me/sub-services` and `GET /api/availability/working-hours`. It links to
+  the existing `/pro/profile` sub-services checklist and `/pro/availability` working-hours editor
+  — **no parallel onboarding flow was built**, per D5. `usePolling` at 60s, deliberately slow and
+  deliberately never disabled: it re-appears without a reload if the professional later clears
+  their own sub-services (the edit endpoint allows an empty list). Rejected and
+  approved-but-still-not-bookable cases state the fact without inventing a cause — a missing
+  verification document is not exposed on the profile response, so the notice does not claim to
+  know one.
+- **`SosAvailabilityToggle.tsx`** — now reads `SosAvailabilityResponse.bookable` and, when the
+  professional has the toggle on but is not eligible, adds one quiet line under "פעיל" saying no
+  SOS calls will be sent until the account is completed and approved. The toggle stays fully
+  usable (D4 requires ineligible professionals to keep editing everything); what changed is that
+  the dashboard no longer implies they are live when `SosCandidateRepository.findEligible` can
+  never select them.
+- **`WorkingHoursForm.tsx` / `WorkingHoursForm.module.css`** — the 7 weekday rows, their
+  validation and their request serialization moved into `shared/components`' `WeeklyHoursFields`
+  + `weeklyHoursTypes` so professional registration (`features/auth`) collects the identical week
+  through the identical code instead of a second copy. Markup and styles moved verbatim; this
+  form's behavior, props, validation rules and `PUT /api/availability/working-hours` call are
+  unchanged, including the 08:00-18:00 seed for a weekday the server hasn't configured (now
+  passed explicitly as `buildWeeklyHoursRows`' `unconfiguredTimes` — registration passes nothing,
+  because MS1 forbids inventing default working hours).
+
+**Not changed, deliberately**: `ProfileEditorPage`'s sub-services checklist and
+`WeeklyAvailabilityPage`'s working-hours flow are already the "complete your onboarding"
+surfaces D5 asks for and needed no modification; the profile editor's doc comment note that
+`approvalStatus` is "auto-approved in v1.0, no actionable approval status to surface yet" is now
+stale — the live preview still passes the (self-view, therefore populated) value straight to
+`ProfessionalProfileDisplay`, whose trust badge already required `=== 'APPROVED'` and so becomes
+correct on its own.
+
+## MS1 finalization — the dashboard title is gone (2026-08-22)
+
+`ProDashboardLayout` no longer renders `<PageHeader title="לוח בקרה לבעלי מקצוע" />`. It was a
+full-width title that named the *shell* rather than the screen, and it said nothing the tab strip
+directly below it — or the `לוח בקרה` nav link that got you there — does not already say. The nav is
+the context; each screen keeps its own section headings (`WeeklyAvailabilityPage`'s
+`יומן זמינות שבועי` and `עבודות דחופות (SOS)`, and so on).
+
+**Nothing else was removed.** No route, no nav item, no sidebar entry, no badge, no authorization
+rule, and no provider mounting. `PendingRequestsProvider`/`ProSosProvider` and
+`OnboardingStatusNotice` are all mounted exactly as before, and all five tabs still navigate.
+
+**One CSS change was required and is not cosmetic drift.** `.page-container` sets *inline* padding
+only — the removed `PageHeader`'s own `margin-block-end` was the sole thing separating this
+dashboard from the app header. `.wrapper` now carries `padding-block: var(--space-8)`. Measured
+after the change: 32 px of top spacing, 0 px horizontal overflow at 1440 px and 390 px, and the RTL
+sidebar still resolving to the physical right of its content.
+
+Validated live (MS1 report, Validations 54-56), including a screenshot review at both widths.

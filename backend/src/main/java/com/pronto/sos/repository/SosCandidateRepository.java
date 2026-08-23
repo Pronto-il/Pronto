@@ -1,5 +1,6 @@
 package com.pronto.sos.repository;
 
+import com.pronto.professionals.ProfessionalEligibility;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.sos.dto.EligibleProfessional;
 import org.springframework.data.repository.Repository;
@@ -38,11 +39,16 @@ public interface SosCandidateRepository extends Repository<Professional, Long> {
      *       treated as available.</li>
      *   <li><b>{@code u.deletedAt IS NULL}</b> — soft-deleted accounts, the same exclusion
      *       every other professional-facing query in this codebase applies.</li>
-     *   <li><b>{@code p.approvalStatus = 'APPROVED'}</b> — v1.0 has no approval workflow and
-     *       every row is {@code APPROVED} today, so this is currently a no-op. It is included
-     *       anyway because the day that workflow arrives, "unapproved professionals were
-     *       silently receiving urgent dispatches" is exactly the kind of bug nobody finds
-     *       quickly.</li>
+     *   <li><b>{@link ProfessionalEligibility#ELIGIBLE_JPQL}</b> — approval <em>and</em>
+     *       completed onboarding. This clause used to be a bare {@code p.approvalStatus =
+     *       'APPROVED'}, written against a workflow that did not exist yet and therefore a no-op
+     *       against a table where every row was {@code APPROVED}. MS1 makes the workflow real and
+     *       widens the clause to the full rule (D4): a professional who has been approved but has
+     *       no enabled working-hours day, no sub-service under their own category, or no
+     *       verification document is not askable either — they would take an urgent job they
+     *       cannot actually be scheduled or trusted for. Concatenated from the same constant the
+     *       Standard listing and the single-row service guards use, so the SOS hard filter and
+     *       the rest of the platform cannot disagree about who is real.</li>
      *   <li><b>{@code p.id NOT IN :excludedProfessionalIds}</b> — the caller's exclusion set
      *       (professionals already juggling live offers, and any already offered this same
      *       request on an earlier dispatch wave). Passed in rather than expressed as a
@@ -69,7 +75,7 @@ public interface SosCandidateRepository extends Repository<Professional, Long> {
             + "com.pronto.availability.entity.SosAvailability s "
             + "WHERE p.userId = u.id AND p.id = s.professionalId "
             + "AND p.categoryId = :categoryId AND s.isAvailable = true AND u.deletedAt IS NULL "
-            + "AND p.approvalStatus = 'APPROVED' "
+            + "AND " + ProfessionalEligibility.ELIGIBLE_JPQL + " "
             + "AND p.id NOT IN :excludedProfessionalIds")
     List<EligibleProfessional> findEligible(@Param("categoryId") Long categoryId,
                                               @Param("excludedProfessionalIds") List<Long> excludedProfessionalIds);

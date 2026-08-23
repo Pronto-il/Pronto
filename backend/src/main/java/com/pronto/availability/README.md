@@ -171,7 +171,8 @@ blocks, derived calendar — M1, backend-only; frontend consumption is M3-M6, no
 | `dto.SlotResponse` | `POST /api/availability/slots`'s response shape (includes `professionalId`). |
 | `dto.SlotListItem` / `dto.SlotListResponse` | `GET /api/availability/slots/me`'s response shape — deliberately omits `professionalId` (every entry is implicitly the caller's own), matching the contract doc's §2.11 example exactly. |
 | `dto.SosAvailabilityRequest` | `PUT /api/availability/sos-availability` wire shape (new, Milestone 4). Single `Boolean isAvailable` field (boxed, not primitive, so a missing field is distinguishable from `false` at `@NotNull` validation time); pinned to `StrictBooleanDeserializer` via `@JsonDeserialize`. |
-| `dto.SosAvailabilityResponse` | Shared response shape for both `PUT` and `GET /api/availability/sos-availability` (new, Milestone 4) — `professionalId`, `isAvailable`, `updatedAt`. |
+| `dto.SosAvailabilityResponse` | Shared response shape for both `PUT` and `GET /api/availability/sos-availability` (new, Milestone 4) — `professionalId`, `isAvailable`, `updatedAt`, and, **as of Production Roadmap MS1**, `bookable`. |
+| `service.WorkingHoursValidator` | **New, Production Roadmap MS1.** The weekly-week request rules, lifted verbatim out of `AvailabilityService`: `validateWeek(items)` (exactly 7 entries, weekdays 0-6 each present once, `startTime`/`endTime` required with `endTime > startTime` on an enabled day) and `requireAtLeastOneEnabledDay(items, fieldPath)`. Stateless and `static` with a private constructor — pure input validation with no collaborator, so `auth`'s registration flow does not have to inject the whole `AvailabilityService` (seven collaborators, none of which it needs) to reach the same rules. See the MS1 paragraph under Status for the deliberate asymmetry between the two methods' call sites. |
 | `dto.StrictBooleanDeserializer` | Custom Jackson `JsonDeserializer<Boolean>` (new, Milestone 4, package-private) — rejects any non-boolean-literal JSON token instead of Jackson's default lenient numeric-to-boolean coercion. Scoped to `SosAvailabilityRequest.isAvailable` only via `@JsonDeserialize`; see its Javadoc and the QA bug writeup below for why it isn't a global `ObjectMapper` config change. |
 | `dto.WorkingHoursItem` | **New, M1.** One weekday's row — `weekday`, `enabled`, `startTime`/`endTime` (`LocalTime`, `null` when disabled). Shared by `GET`/`PUT /working-hours`'s response and `GET /calendar`'s `workingHours` array. `@JsonFormat(pattern = "HH:mm")` on both time fields — **verified live during manual QA that this is needed**: Jackson's default `LocalTime` serializer emits seconds (`"08:00:00"`), which doesn't match the design doc's documented `"08:00"` wire-format examples; pinned explicitly rather than left silently mismatched. |
 | `dto.WorkingHoursItemRequest` / `dto.WorkingHoursUpdateRequest` | **New, M1.** `PUT /working-hours`'s request shape — `WorkingHoursUpdateRequest` wraps exactly 7 `WorkingHoursItemRequest`s (`@Size(min=7,max=7)`); per-field Bean Validation only (weekday range, non-null `enabled`) — the cross-field "no duplicate/missing weekday" and "times required when enabled" rules live in `AvailabilityService`, same split `CreateSlotRequest`'s own field-ordering rules already use. |
@@ -511,3 +512,25 @@ fix above after it landed — **full sign-off, zero known open bugs**, consisten
 "zero known open bugs" bar every prior milestone in this project has been held to. See
 `docs/architecture/implementation-plan.md`'s "Professional Weekly Availability Calendar"
 entry for the consolidated M1-M6 QA record across both `backend` and `frontend`.
+
+**Production Roadmap MS1 — shared week validation and the `bookable` signal (2026-08-22).**
+`AvailabilityService#validateWorkingHoursRequest` was extracted verbatim into the new
+`service.WorkingHoursValidator` so that professional registration (`auth.service.AuthService`)
+validates the identical week — rules, order and error codes unchanged, `updateWorkingHours`
+now simply calls `WorkingHoursValidator.validateWeek(request.workingHours())`. The validator
+also carries a second rule, `requireAtLeastOneEnabledDay`, and the **asymmetry between the two
+call sites is deliberate, not an oversight**: registration refuses an all-disabled week because
+onboarding is not complete without a bookable one (D4), while `PUT
+/api/availability/working-hours` does **not** apply that rule — an established professional
+switching every day off is a professional going on holiday, a legitimate thing the platform
+must not block. They simply stop satisfying
+`professionals.ProfessionalEligibility` until they switch a day back on, with no state to
+repair and no support ticket to open. Separately, `SosAvailabilityResponse` gained `bookable`
+(from `ProfessionalRepository#existsEligibleById`), returned by both `PUT` and `GET
+/api/availability/sos-availability`; the toggle itself is deliberately **not** gated on
+eligibility, because D4 requires availability to stay editable while a professional finishes
+onboarding or waits for review — refusing the switch would strand them with no way to be ready
+the moment they are approved, so the response tells the dashboard to stop claiming they are
+live instead of the backend pretending the write failed. No migration, no new endpoint, no new
+`ErrorCode` in this package. See `docs/production-roadmap/reports/MS1-report.md` and
+`professionals/README.md`'s "Approval lifecycle and marketplace eligibility" section.

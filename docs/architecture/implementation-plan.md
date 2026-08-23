@@ -38,6 +38,14 @@ closed).
   oversight — the user has not yet finalized the frontend design system, and building auth
   screens ahead of that decision was explicitly deprioritized. Do not read the absence of
   frontend auth work as a gap in this milestone's backend completion.
+> **SUPERSEDED IN PART by Production Roadmap MS1 (2026-08-22).** The auto-approval statements
+> in this entry are an accurate record of what Milestone 1 built and are kept as history, but
+> they no longer describe the system. A professional now registers `PENDING` and is bookable
+> only once an operator approves them **and** their onboarding is complete
+> (`professionals.ProfessionalEligibility`, migration `V40`). Registration also now requires
+> sub-services and weekly working hours. See `docs/production-roadmap/reports/MS1-report.md`,
+> `docs/architecture/overview.md` §2's Professional approval row, and `data-model.md` §2.4.
+
 - **Scope**: `auth`, `users`, `professionals` (profile only — no approval workflow, v1.0
   auto-approves professional accounts). Registration, email verification code, login,
   password hashing, account lockout after 5 failed attempts, account deletion endpoint.
@@ -1247,7 +1255,9 @@ merged content.
      business-listing data), and `DESIGN_SYSTEM.md` §53's own sidebar mockup already lists
      `▢ פרופיל` as a dashboard item, the closest concrete precedent. `categoryId` is
      read-only (no field in the update DTO to change it); `approvalStatus` isn't rendered
-     (auto-approved in v1.0, no actionable meaning yet). Because `fullName` writes to the
+     (auto-approved in v1.0, no actionable meaning yet — **superseded by Production Roadmap
+     MS1, 2026-08-22**: approval is now a real decision, and this screen's package gained
+     `OnboardingStatusNotice`, which surfaces the backend's `bookable` flag instead). Because `fullName` writes to the
      underlying `users` row, `shared/hooks/AuthProvider.tsx` gained a new
      `refreshUser(): Promise<void>` method, called by `ProfileEditorPage` after every
      successful save, so the top-nav's cached display name doesn't go stale until the next
@@ -2574,6 +2584,25 @@ passes on every changed file across all six milestones.
   `frontend/src/features/issues/README.md`, `frontend/src/shared/components/README.md` (the
   full category → illustration table), and `frontend/src/shared/api/README.md` (the prefetch
   cache's semantics).
+
+## Production Roadmap (MS0–MS10) — tracked elsewhere
+
+From 2026-08-22 the project executes the **Production Roadmap** defined by
+`Pronto_Production_Execution_Playbook.md` (repository root). Those milestones are numbered
+MS0–MS10 and are **not** entries in this document — their tracker and per-milestone reports live
+in `docs/production-roadmap/` (`README.md` plus `reports/MSX-report.md`), in the Playbook §9
+structure. This note exists so a reader of this file is not left thinking MS12 was the last thing
+that happened.
+
+Beware the numbering collision: the `MS2`–`MS5` entries above belong to the **frontend redesign**
+series and are unrelated to Production Roadmap MS2–MS5.
+
+Status as of 2026-08-22: **MS0 PARTIAL** (baseline audit — 13 Critical, 19 High findings, all
+routed, none fixed; MS0 is product-read-only), **MS1 PARTIAL** (professional verification and
+marketplace eligibility — implemented, QA'd and live-validated, currently at the Lead re-gate
+after a documentation closure pass; uncommitted). MS1 is the milestone that **supersedes v1.0
+professional auto-approval** — see the supersession notes in the Milestone 1 and Frontend
+Milestone 8 entries above, `overview.md` §2 and §6, and `data-model.md` §2.4.
 
 ## Cross-cutting rules for every milestone
 

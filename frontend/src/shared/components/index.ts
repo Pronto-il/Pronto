@@ -34,6 +34,23 @@ export type { AddressFormFieldsProps } from './AddressFormFields';
 export { EMPTY_ADDRESS, toAddressValue } from './addressTypes';
 export type { AddressValue, SavedDefaultAddress } from './addressTypes';
 
+export { WeeklyHoursFields } from './WeeklyHoursFields';
+export type { WeeklyHoursFieldsProps } from './WeeklyHoursFields';
+
+export {
+  WEEKDAY_LABELS_HE,
+  buildWeeklyHoursRows,
+  validateWeeklyHoursRows,
+  hasEnabledWeekday,
+  toWeeklyHoursRequest,
+} from './weeklyHoursTypes';
+export type {
+  WeeklyHoursRow,
+  WeeklyHoursRequestItem,
+  SavedWeeklyHoursItem,
+  BuildWeeklyHoursRowsOptions,
+} from './weeklyHoursTypes';
+
 export { StatusBadge } from './StatusBadge';
 export type { StatusBadgeProps } from './StatusBadge';
 

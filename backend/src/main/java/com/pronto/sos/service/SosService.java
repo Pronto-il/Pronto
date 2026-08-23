@@ -244,10 +244,19 @@ public class SosService {
      */
     @Transactional(readOnly = true)
     public SosRequestsListResponse listMine(Long callerId, String callerRole) {
-        List<SosRequest> requests = UserRole.PROFESSIONAL.name().equals(callerRole)
-                ? sosRequestRepository.findBySelectedProfessionalIdOrderByCreatedAtDesc(
-                        resolveProfessionalId(callerId))
-                : sosRequestRepository.findByCustomerIdOrderByCreatedAtDesc(callerId);
+        // MS1: explicit three-way branch. The ternary this replaced sent every non-PROFESSIONAL
+        // caller down the customer query, which with UserRole.ADMIN in existence would have meant
+        // an operator quietly running "my SOS requests" against their own user id. Refuse instead
+        // -- an operator is neither party to an SOS request.
+        List<SosRequest> requests;
+        if (UserRole.PROFESSIONAL.name().equals(callerRole)) {
+            requests = sosRequestRepository.findBySelectedProfessionalIdOrderByCreatedAtDesc(
+                    resolveProfessionalId(callerId));
+        } else if (UserRole.CUSTOMER.name().equals(callerRole)) {
+            requests = sosRequestRepository.findByCustomerIdOrderByCreatedAtDesc(callerId);
+        } else {
+            throw forbidden();
+        }
         // FULL for both roles, and safe for both: a customer only ever sees their own rows, and
         // the professional query is filtered on selected_professional_id -- so a professional
         // reaches this list only for jobs they were actually chosen for. An offered-but-not-
@@ -402,6 +411,22 @@ public class SosService {
         Professional professional = professionalRepository.findById(offer.getProfessionalId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND,
                         "Professional " + offer.getProfessionalId() + " not found."));
+
+        // MS1 (D-B): re-check eligibility at the last moment before an order and a priced
+        // commitment exist. SosCandidateRepository.findEligible already filtered at dispatch, but
+        // minutes can pass between dispatch and selection -- long enough for an operator to reject
+        // someone, or for that professional to clear their working hours. Mapped onto the existing
+        // SOS_CANDIDATE_NOT_AVAILABLE (409), which is exactly what happened and which the frontend
+        // already handles: this candidate cannot be taken; the others still can.
+        //
+        // Note where this check is NOT: SosOfferService#accept stays ungated deliberately. The
+        // window between dispatch and offer TTL is seconds, and refusing a professional for doing
+        // precisely what they were just asked to do explains nothing to them. Selection is the
+        // moment that creates an obligation, so selection is where the rule belongs.
+        if (!professionalRepository.existsEligibleById(professional.getId())) {
+            throw new ApiException(ErrorCode.SOS_CANDIDATE_NOT_AVAILABLE,
+                    "Offer " + offerId + " is no longer available.");
+        }
 
         Instant now = Instant.now();
 

@@ -94,3 +94,13 @@ Extended in **Milestone 7** (`docs/architecture/hardening-plan.md` §5.2) with `
 (`429`) and `dto.RateLimitDetails`, consumed by `auth.security.AuthRateLimitInterceptor` —
 the same `ApiException`/`GlobalExceptionHandler` envelope mechanism as every other error,
 no new pattern introduced.
+
+Extended in **Production Roadmap MS1** (2026-08-22) with exactly one `ErrorCode`,
+`PROFESSIONAL_APPROVAL_INVALID_TRANSITION` (`409`) — thrown by
+`professionals.service.ProfessionalApprovalService` when an approval decision is not legal from
+the professional's current status; its own code rather than a generic `VALIDATION_ERROR` for
+the same reason every other `*_INVALID_STATE` code here exists (nothing about the request was
+malformed, the world moved). No other change to this package: MS1's `ADMIN` route gate reuses
+the existing `security.RoleRequiredInterceptor` unmodified, registered by
+`professionals.config.ProfessionalsWebConfig` — the route-to-role knowledge stays out of
+`common`, as designed.

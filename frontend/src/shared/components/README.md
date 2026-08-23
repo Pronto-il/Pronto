@@ -21,8 +21,10 @@ primitives, etc.) — not feature-specific components, which live under their ow
   Sub-services, 2026-08-19; `docs/architecture/product-ms11-sub-services-design.md` §5.1) —
   the first-ever consumer of the `Checkbox` primitive `DESIGN_SYSTEM.md` §85 had listed by
   name but left unbuilt. No `error`/`hint` props (unlike `Input`/`Textarea`) — the sub-services
-  checklist it was built for has no per-item validation, only a list-level save error. First
-  and only consumer: `features/dashboard/ProfileEditorPage.tsx`'s sub-services checklist.
+  checklist it was built for has no per-item validation, only a list-level save error.
+  Consumers: `features/dashboard/ProfileEditorPage.tsx`'s sub-services checklist and, since
+  Production Roadmap MS1, `features/auth/ProfessionalRegisterForm.tsx`'s required sub-services
+  stage — both list-level, so the missing `error` prop is still not a gap.
 - `Select` — labeled select with the same states as `Input`; used for service category.
 - `Card` — base card (white surface, border, `--radius-lg`, no heavy shadow).
 - `PageHeader` — page title + optional description + optional back action (back arrow
@@ -38,6 +40,26 @@ primitives, etc.) — not feature-specific components, which live under their ow
   `DefaultAddressRequest.java` exactly. Not coupled to "registration" — built for reuse by
   a later milestone's per-request service address field; that reuse landed in Frontend
   Milestone 3 (`features/booking/BookingFlowPage.tsx`'s service-address step).
+- `WeeklyHoursFields` — the 7-row weekday editor for a professional's weekly working hours
+  (one row per weekday, Sunday=0 first: an enable/disable `role="switch"` toggle plus start/end
+  `type="time"` inputs, hidden while the day is off), driven by a `rows`/`onChange` pair plus
+  an optional per-weekday `errors` map. Purely presentational — no API call, no submit button,
+  no validation trigger — so both consumers wrap it in whatever their surface needs. Its value
+  type and helpers live in `weeklyHoursTypes.ts` (`WeeklyHoursRow`, `buildWeeklyHoursRows()`,
+  `validateWeeklyHoursRows()`, `hasEnabledWeekday()`, `toWeeklyHoursRequest()`,
+  `WEEKDAY_LABELS_HE`), exactly the `AddressFormFields`/`addressTypes.ts` split, and like that
+  module it stays free of any dependency on `shared/api` — the request shape is declared
+  structurally so `toWeeklyHoursRequest()`'s result is assignable to `WorkingHoursItemRequest[]`
+  without importing it. Extracted in Production Roadmap MS1 from
+  `features/dashboard/WorkingHoursForm.tsx` (markup and styles moved verbatim) once professional
+  registration had to collect the same week; two consumers today:
+  `features/dashboard/WorkingHoursForm.tsx` (`PUT /api/availability/working-hours`) and
+  `features/auth/ProfessionalRegisterForm.tsx` (stage 5 of registration). Two rules the
+  component encodes rather than leaves to callers: an overnight range is not expressible
+  (`ck_professional_working_hours_times` requires `end_time > start_time`), and default times
+  for an unconfigured weekday are **opt-in** via `buildWeeklyHoursRows`'
+  `unconfiguredTimes` — the dashboard passes 08:00-18:00 so toggling a fresh row on isn't
+  blank, registration passes nothing because MS1 forbids inventing default working hours.
 - `StatusBadge` — maps an `OrderStatus` (`shared/api/bookings.ts`) to a Hebrew label +
   color, per DESIGN_SYSTEM.md §56 ("use consistent statuses globally... do not assign new
   colors independently on different pages"). Covers all 7 statuses (`PENDING`,

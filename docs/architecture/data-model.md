@@ -119,10 +119,10 @@ lockout, account deletion — PRD §3.2, §5.2.3, §5.2.4).
 | `full_name` | `VARCHAR(150)` | NO | — | |
 | `email` | `VARCHAR(255)` | NO | — | Uniqueness enforced via a functional unique index on `lower(email)` (see Indexes) rather than a plain `UNIQUE` on the raw column, to reject case-variant duplicates (`Foo@x.com` vs `foo@x.com`). |
 | `password_hash` | `VARCHAR(255)` | NO | — | bcrypt (or equivalent) hash; 255 gives headroom beyond bcrypt's ~60 chars for algorithm flexibility. Never plaintext (PRD §5.2.2). |
-| `role` | `VARCHAR(20)` | NO | — | `CHECK (role IN ('CUSTOMER','PROFESSIONAL'))`. |
+| `role` | `VARCHAR(20)` | NO | — | `CHECK (role IN ('CUSTOMER','PROFESSIONAL','ADMIN'))`. **`ADMIN` added by `V40__alter_professionals_approval_lifecycle.sql`** (Production Roadmap MS1, 2026-08-22) — the operator who makes approval decisions; `ck_users_role` previously permitted only the first two, so an approval decision had nobody who could legally make it. Mirrored by `users.entity.UserRole`. **Not self-registerable**: `POST /api/auth/register`'s body is typed with that enum, so `auth.service.AuthService#register` explicitly rejects `role = ADMIN` with `400 VALIDATION_ERROR` before any row is written — that guard, not this constraint, is the security-relevant half of the change (this constraint only makes the row storable). MS1 ships **no** documented procedure for creating the first `ADMIN` row outside the demo seeder — see `docs/production-roadmap/reports/MS1-report.md` Known Limitation 11. |
 | `email_verified` | `BOOLEAN` | NO | `false` | **Addition** — PRD §3.2.2 requires a verification code after registration and the account should not be usable until verified; this flag makes that check cheap at login time without joining `verification_codes`. |
 | `failed_login_attempts` | `SMALLINT` | NO | `0` | PRD §5.2.3 (lockout after 5 failed attempts). Reset to 0 on successful login. |
-| `locked_until` | `TIMESTAMPTZ` | YES | `NULL` | Set when `failed_login_attempts` hits 5. **Open question** — see §4: the PRD doesn't say whether lockout is time-based (auto-expires) or requires manual unlock, and v1.0 has no admin panel (auto-approval, no admin screens designed). This column supports a time-based lockout (recommended default, e.g. 15–30 min); needs sign-off. |
+| `locked_until` | `TIMESTAMPTZ` | YES | `NULL` | Set when `failed_login_attempts` hits 5. **Open question** — see §4: the PRD doesn't say whether lockout is time-based (auto-expires) or requires manual unlock, and there is still no operator surface that can unlock an account (MS1 built an `ADMIN` role and a professional-approval screen only; account unlock is MS7's). This column supports a time-based lockout (recommended default, e.g. 15–30 min); needs sign-off. |
 | `deleted_at` | `TIMESTAMPTZ` | YES | `NULL` | Soft delete, supporting PRD §5.2.4 (account deletion / personal data management). See §3 item 6 for why this is soft- not hard-delete. |
 | `default_city` | `VARCHAR(100)` | YES | `NULL` | **New column, added by `V20__alter_users_add_default_address.sql`** (backend registration flow separation task). A Customer's default address, collected at registration; always `NULL` for a `PROFESSIONAL` row. Nullable at the DB level (no backfillable source of truth for pre-existing rows), enforced required at the API layer for new `CUSTOMER` registrations — see `api-contract.md` §2.1. |
 | `default_street` | `VARCHAR(150)` | YES | `NULL` | Same migration/feature as `default_city`. Required at the API layer for new `CUSTOMER` registrations. |
@@ -179,7 +179,10 @@ sign-off in §3 — summary here, detail there.
 | `user_id` | `BIGINT` | NO | — | FK → `users(id)` `ON DELETE RESTRICT`. `UNIQUE` — one professional profile per user account (see §3 item 3 for the limitation this implies). |
 | `category_id` | `BIGINT` | NO | — | **Reinterprets PRD's `profession_type` (free text) as a FK into `categories`.** FK → `categories(id)` `ON DELETE RESTRICT`. Flagged for sign-off, §3 item 2. **Still a single FK, unchanged by MS11 (2026-08-19, §2.15/§2.16 below)** — the new `sub_services`/`professional_sub_services` tables add a finer-grained "which of this one category's sub-services do I offer" attribute *within* the one category a professional already has; they do **not** add a second `category_id`-like column or a `professional_categories` many-to-many join, and a future reader should not infer multi-category support from their existence. The `professional_categories` extension flagged as a possible future extension in §3 item 2 remains unbuilt and is a separate, unrelated question from MS11. See `docs/architecture/product-ms11-sub-services-design.md` §1 for the full reasoning. |
 | `service_area` | `VARCHAR(150)` | NO | — | Free text (e.g. city/region name) — kept as PRD implies (no fixed-list source document exists for areas, unlike categories, so no lookup table invented here). |
-| `approval_status` | `VARCHAR(20)` | NO | `'APPROVED'` | `CHECK (approval_status IN ('PENDING','APPROVED','REJECTED'))`. **Column is kept but functionally inert in v1.0** — every insert defaults to and stays `'APPROVED'`, no query/workflow gates on it. See §3 item 1 for the keep-vs-drop reasoning. |
+| `approval_status` | `VARCHAR(20)` | NO | `'APPROVED'` | `CHECK (approval_status IN ('PENDING','APPROVED','REJECTED','DISABLED'))` — widened from three values by `V40__alter_professionals_approval_lifecycle.sql` (Production Roadmap MS1, 2026-08-22). **The "functionally inert in v1.0" description that stood here is superseded and is now false.** This is a real lifecycle: `PENDING → APPROVED`/`REJECTED`, and `REJECTED → APPROVED`; `APPROVED → REJECTED` is refused with `409 PROFESSIONAL_APPROVAL_INVALID_TRANSITION` (that is a suspension, which is MS7's job). `'DISABLED'` is **reserved for MS7 and unreachable in MS1** — `entity.Professional#approve`/`#reject` are the only writers of this column and neither targets it, and no suspend endpoint exists; it is in the constraint now purely so MS7 does not need a second lifecycle migration against a live column. The **column DEFAULT is deliberately left at `'APPROVED'`** (changing it would be a schema change with no behavioural effect) — the application never relies on it: `entity.Professional`'s constructor sets `PENDING` explicitly for every new registration, and registration is the only path that inserts a row. **`APPROVED` alone does not mean bookable** — marketplace eligibility is `APPROVED` **AND** completed onboarding, computed per query by `professionals.ProfessionalEligibility`; see the note under Indexes below. §3 item 1's keep-vs-drop reasoning is now historical only. |
+| `approval_reviewed_at` | `TIMESTAMPTZ` | YES | `NULL` | **New column, `V40`** (MS1). When an operator last decided this professional's approval. `NULL` means never reviewed — true for every row predating `V40`, deliberately (nobody reviewed them, and inventing a reviewer would fabricate the record this trail exists to make trustworthy). |
+| `approval_reviewed_by` | `BIGINT` | YES | `NULL` | **New column, `V40`** (MS1). FK → `users(id)` `ON DELETE RESTRICT` (`fk_professionals_approval_reviewer`) — the `users.id` of the `ADMIN` who made that decision. `RESTRICT` rather than `SET NULL` on purpose: the whole value of this column is accountability, and an audit pointer the database will silently blank is a weaker record than one it refuses to orphan. The usual operational cost of `RESTRICT` does not apply, because this application soft-deletes users (`users.deleted_at`) and hard-deletes none, so the constraint is inert in every flow that exists today. |
+| `approval_rejection_reason` | `VARCHAR(500)` | YES | `NULL` | **New column, `V40`** (MS1). Why the professional was rejected; required on the reject endpoint (`RejectProfessionalRequest.reason`, `@NotBlank @Size(max = 500)` — same width as this column). Guarded by `ck_professionals_rejection_reason` (see Constraints) so it can exist only while the row is actually `REJECTED`; `#approve` clears it. **These three columns record the decision currently *in force*, not a history** — a superseded rejection reason is lost on a later approval. A full `professional_approval_events` log is additive (a new table, not another constraint change) and belongs with MS7. |
 | `reliability_score` | `NUMERIC(3,2)` | YES | `NULL` | `CHECK (reliability_score IS NULL OR (reliability_score BETWEEN 0 AND 5))`. Nullable until a score exists. **Open question, §4** — no rating/review submission mechanism exists anywhere in the PRD or wireframes, so the source of this score is undefined. |
 | `base_price` | `NUMERIC(10,2)` | YES | `NULL` | **New column, not in PRD §6.** The professional's standing/current price offer, shown on their card in the Standard and SOS professional-list screens *before* any request is sent (PRD §1, §2, §3.4.2, §7.3, §7.4: "each professional presents their own price offer" / professional capability "provide price offers"). See §3 item 4 for the full reasoning — this fills a genuine gap between PRD §6 (schema) and PRD §1–3/§7 (flows/wireframes), flagged for sign-off. |
 | `bio` | `TEXT` | YES | `NULL` | **New column, added by `V15__alter_professionals_add_profile_fields.sql`** (professional-profile/reviews/favorites/matching feature set, 2026-08-15). Free-text self-description, editable via `PUT /api/professionals/me`. Not backfilled — no source of truth existed for existing rows, so it's simply `NULL` until a professional sets it. |
@@ -190,12 +193,45 @@ sign-off in §3 — summary here, detail there.
 | `updated_at` | `TIMESTAMPTZ` | NO | `now()` | Bumped when the professional edits `base_price`, `service_area`, `city`, `bio`, etc. |
 
 **Constraints**: PK(`id`); `UNIQUE(user_id)`; FK(`user_id`) → `users(id)` `ON DELETE
-RESTRICT`; FK(`category_id`) → `categories(id)` `ON DELETE RESTRICT`.
+RESTRICT`; FK(`category_id`) → `categories(id)` `ON DELETE RESTRICT`;
+`ck_professionals_approval_status` (four values, see the column note); **`V40` additions**:
+FK(`approval_reviewed_by`) → `users(id)` `ON DELETE RESTRICT`
+(`fk_professionals_approval_reviewer`) and
+`ck_professionals_rejection_reason CHECK (approval_rejection_reason IS NULL OR
+approval_status = 'REJECTED')` — the invariant's home is the database, the same reasoning
+`V39` states for `ck_sos_requests_search_expansions`; it is what guarantees a rejection reason
+can never be left dangling on an `APPROVED` row where an operator would read it as current.
+Holds for every pre-existing row (all `APPROVED`, all `NULL` reason).
 **Indexes**: `idx_professionals_category ON (category_id)` (primary filter for Standard/SOS
-listings — who offers this issue's category). `service_area`/`city` are not indexed in v1.0
+listings — who offers this issue's category); **`idx_professionals_approval_status ON
+(approval_status)` (new, `V40`)** — the operator queue is "everyone awaiting review, oldest
+first", filtered on a column whose selectivity runs the wrong way (almost every row is
+`APPROVED`; the slice an operator opens all day is the small `PENDING` one).
+`service_area`/`city` are not indexed in v1.0
 (no area-based search/filter UX is specified yet beyond the same-city/different-city ETA
 comparison, which reads full table scans of already-category-filtered result sets, not an
 independent city-indexed query; revisit if a dedicated city-filter UX is added).
+
+**Marketplace eligibility is not a column** (Production Roadmap MS1, governing decision D4).
+There is no `is_eligible`/`is_bookable` flag and there must not be one: such a flag would have
+five writers (sub-services update, working-hours update, registration, a future category change,
+the approval transition itself) and its failure mode is a stale `true` — an incomplete
+professional who is bookable, which is the exact defect MS1 exists to close. Eligibility is
+recomputed per query from one JPQL definition,
+`com.pronto.professionals.ProfessionalEligibility`:
+
+```text
+eligible(p) := p.approval_status = 'APPROVED'
+           AND p.verification_document_key IS NOT NULL
+           AND EXISTS an enabled professional_working_hours row for p
+           AND EXISTS a professional_sub_services row for p whose sub_service
+                      belongs to p's own category_id
+```
+
+Read by `bookings.repository.ProfessionalListingRepository`,
+`sos.repository.SosCandidateRepository` and `ProfessionalRepository#existsEligibleById`
+(the single-row check every service guard delegates to). `users.deleted_at IS NULL` stays
+*adjacent* to the predicate rather than inside it, because not every consumer joins `users`.
 
 ---
 
@@ -699,6 +735,16 @@ task brief's instruction not to silently pick an interpretation.
    migration + backfill of every existing professional row to `'APPROVED'` if/when an
    approval workflow returns in a later version. Alternative: drop it entirely for v1.0
    and re-add later — simpler now, more migration work later. **Needs your call.**
+
+   > **RESOLVED, and the recommendation paid off — Production Roadmap MS1, 2026-08-22.**
+   > The column was kept, and the approval workflow did return: `V40__alter_professionals_
+   > approval_lifecycle.sql` turned it into a live state machine with no backfill of any
+   > existing row, exactly the migration this item's recommendation was written to avoid.
+   > `overview.md`'s "auto-approved in v1.0" override is **superseded** (see that doc's §2
+   > Professional approval row), which also resolves the tension this item recorded with
+   > PRD §3.2.3 — in the PRD's favour, plus an onboarding-completeness requirement the PRD
+   > never asked for (governing decision D4). Everything above this note is historical
+   > context; the current schema and semantics are in §2.4's column notes.
 
 2. **`professionals.profession_type` reinterpreted as `category_id` (FK), not free text.**
    PRD §6 lists `profession_type` as a bare field; `overview.md` §3.8 only says

@@ -496,3 +496,34 @@ limitations and what was **not** verified:
 `docs/architecture/ms1-professional-verification-design.md`. **Status at the time of writing:
 uncommitted on branch `production/ms1-professional-verification`, pending the Lead gate and
 the user's own git operations.**
+
+## MS4 (2026-08-24) — multiple categories, controlled service coverage
+
+Three columns left `professionals` and became relations. See `docs/architecture/data-model.md`
+§2.4's MS4 note and §2.20–2.23 for the schema; the code consequences are:
+
+- **`entity/ProfessionalCategory`** (+ `ProfessionalCategoryId`) maps
+  `professional_categories`. `professionals.category_id` is gone. There is no "primary category"
+  flag — ordering on `categories.display_order` is what makes "the first one" mean the same thing
+  on every surface.
+- **`entity/ProfessionalServiceCity`** (+ id class) maps `professional_service_cities`.
+  `Professional.baseCityId` is the single city ETA is measured from, and is always a member of
+  that set.
+- **`service/ProfessionalCoverageService` is the only reader and writer of both relations.** Six
+  services need to read some part of this back (the profile endpoints, favourites, the operator
+  review screen, `GET /api/users/me`, the SOS candidate assembler, the booking listing) and two
+  need to write it (registration and the profile edit). Left alone, each would grow its own
+  two-repository join and its own idea of ordering. Writes are diff-based, never
+  delete-all-then-reinsert — the same semantics `updateMySubServices` already established.
+- **`ProfessionalCategoryMatch.SERVES_CATEGORY_JPQL`** is the single definition of "this
+  professional serves that category", concatenated into both `bookings`' listing query and the
+  SOS hard filter. Before MS4 the rule was three tokens written out twice, which was survivable;
+  a membership test over a relation written out twice is not — the failure mode is a professional
+  a customer can find by browsing but SOS will never dispatch to.
+- **`ProfessionalEligibility`** widened its sub-service clause from "under p's own category" to
+  "under one of p's own categories". Unchanged in outcome for every single-category professional.
+- **`SubServiceSelectionValidator.validate`** now takes a *collection* of category ids. Same rule,
+  same two error codes.
+- Region/city validation is **not** here: it lives in `com.pronto.locations`, which this package
+  depends on. See that package's README.
+

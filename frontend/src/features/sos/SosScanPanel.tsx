@@ -31,10 +31,14 @@ export interface SosScanPanelProps {
   /** Opens the details surface. **Never selects** — see `SosCandidateMarker`. */
   onOpenCandidate?: (candidate: SosCandidate) => void;
   /**
-   * True while a "סרוק שוב" request is in flight. The surface says so — widening the search is
-   * the one moment the scan should visibly do something rather than idle.
+   * How many times the search has widened by itself so far (`sos_requests.search_expansions`).
+   * The surface says so once it is above zero — the customer never asked for it, so if the
+   * platform quietly went further afield it should say that rather than look idle.
    */
-  isExpanding?: boolean;
+  searchExpansions?: number;
+  /** Server-derived: is anybody new still being contacted? Drives what the panel *says*, never
+   *  what the customer may do. */
+  stillSearching?: boolean;
 }
 
 /**
@@ -75,7 +79,8 @@ export function SosScanPanel({
   availableCount,
   candidates = [],
   onOpenCandidate,
-  isExpanding = false,
+  searchExpansions = 0,
+  stillSearching = true,
 }: SosScanPanelProps) {
   /**
    * Slot assignment, by ascending offer id rather than by array index.
@@ -98,7 +103,7 @@ export function SosScanPanel({
 
   return (
     <section
-      className={`${styles.panel} ${styles[state]} ${isExpanding ? styles.expanding : ''}`}
+      className={`${styles.panel} ${styles[state]}`}
       aria-label="חיפוש בעל מקצוע"
     >
       {/* The scan itself. Entirely decorative — everything it represents is stated in words by the
@@ -167,10 +172,26 @@ export function SosScanPanel({
         </div>
       )}
 
-      {/* Shown only while an expansion is actually in flight. Says what is happening in the
-          customer's own terms and quotes no radius, no distance and no wave number — none of which
-          is backed by real data in this milestone. */}
-      {isExpanding && <p className={styles.expandingNote}>מרחיבים את החיפוש…</p>}
+      {/* What the scan is actually doing, in the customer's terms. Only professionals who
+          confirm they can come appear here, and each brings an arrival time — saying so is what
+          stops "נשלחו קריאות 8 / אישרו זמינות 0" reading as a failure thirty seconds in. No
+          radius, no distance and no wave number: none of that is backed by real data yet. */}
+      {isSearching && (
+        <div className={styles.notes}>
+          {/* The platform went further afield on its own. Stated plainly rather than left to look
+              like nothing is happening — the customer pressed nothing and should still know. */}
+          {searchExpansions > 0 && (
+            <p className={styles.expandingNote}>הרחבנו את החיפוש כדי למצוא עוד בעלי מקצוע</p>
+          )}
+          <p className={styles.searchNote}>
+            {!stillSearching
+              ? 'סיימנו לפנות לבעלי מקצוע. מי שאישר זמינות נשאר זמין לבחירה.'
+              : state === 'scanning'
+                ? 'פונים לבעלי מקצוע מתאימים באזור. רק מי שמאשר שהוא יכול להגיע יופיע כאן, עם זמן ההגעה שלו.'
+                : 'ממשיכים לפנות לבעלי מקצוע נוספים. אפשר לבחור כבר עכשיו מבין מי שאישר.'}
+          </p>
+        </div>
+      )}
     </section>
   );
 }

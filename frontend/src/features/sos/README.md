@@ -147,9 +147,9 @@ screen following each transition. A second scenario let an offer lapse unanswere
 card stops being actionable and settles into the backend's `EXPIRED`.
 
 ## Known gaps (backend contract)
-- **No confirmation deadline on any DTO.** `SosRequestResponse` carries `matchingExpiresAt` and
-  `selectionExpiresAt` but not the confirmation grace deadline, so the one operational state with a
-  real countdown behind it cannot show one. Adding `confirmationExpiresAt` would close it.
+- **No confirmation deadline on any DTO.** `SosRequestResponse` carries `matchingExpiresAt` (when
+  scanning stops) but not the confirmation grace deadline, so the one operational state with a real
+  countdown behind it cannot show one. Adding `confirmationExpiresAt` would close it.
 - **No customer phone on the professional's SOS surface.** It exists on `OrderDetailResponse` for a
   party to the order, so it is reachable via `orderId` — not wired up this milestone.
 
@@ -157,3 +157,50 @@ card stops being actionable and settles into the backend's `EXPIRED`.
 Advanced scan/radar motion; live GPS or any map provider; chat; push notifications; event replay
 (`GET .../events` has a client but no screen). The scan panel is a first visual pass and is
 deliberately CSS-only.
+
+## MS3 — the SOS flow the customer actually gets now (2026-08-24)
+
+Three changes to this feature, all of which delete something.
+
+**1. There is no activation confirmation.** `ProntoSosEntryPage` used to render a card asking
+"להפעיל חיפוש דחוף עכשיו?" with a `הפעלת SOS` button. Choosing SOS and pressing Continue is the
+decision; being asked to confirm it a second time, while something is leaking, was a step that
+existed only because the page had somewhere to put one. Arriving with a usable address (the
+booking draft's, or the profile default) now activates immediately — once, guarded by a ref — and
+hands straight over to `ProntoSosScreen`. The address step still appears when there is genuinely
+nothing to send, and answering it activates as well. A failed activation is the one screen left
+with a button on it, and it is a real retry, not a confirmation.
+
+**2. There is no "סרוק שוב".** `SosScanAgainControl.tsx` is deleted, and `useSosRequest` no longer
+exposes `expandSearch`/`isExpanding`/`expandError`. The search widens by itself every two minutes
+for as long as the scan window is open, on a schedule the backend owns, so there was nothing left
+for the control to do except let the customer ask for something that was already happening.
+`SosScanPanel` says so when it has happened (`searchExpansions > 0`) rather than leaving the
+surface looking idle.
+
+**3. The professional's ETA is a commitment, not a draft.** `SosEtaModal` lost its `revise` mode,
+`SosOfferCard`/`SosJobPanel` lost their "עדכון זמן הגעה" actions, and `shared/api/sos.ts` lost
+`updateSosOfferEta`. The backend refuses a revision outright (`409 SOS_ETA_LOCKED`); the frontend
+not offering one is the honest front of that rule rather than its enforcement. The accept sheet
+now says the time is final, because it is.
+
+**What the customer sees while searching** is unchanged in structure and clearer in words: the
+scan surface, the two honest counters (how many were contacted, how many confirmed), one sentence
+saying that only professionals who confirm will appear and that each brings an arrival time, and
+`ביטול הקריאה` — always available while the request is theirs to call off. Candidates appear one
+by one as professionals accept; nobody waits for the scan to finish.
+
+## MS3 follow-up — the customer's choice does not expire (2026-08-24)
+
+The tray no longer shows a countdown, because there is no longer anything to count down to. The
+customer's decision window — ten minutes from the first acceptance, after which the request
+expired and every professional who had committed to come disappeared — was removed backend-side,
+column and all. `SosCandidateTray` lost its `selectionExpiresAt`/`matchingExpiresAt` props and its
+timer chip; `SosRequestResponse`/`SosCandidatesResponse` lost the field entirely.
+
+What the customer sees instead: "אפשר לבחור בכל רגע — הבחירה נשארת פתוחה". `selectionOpen` still
+comes from the server on every read and is still the only authority on whether a selection will be
+accepted; it simply never flips back on a clock.
+
+The countdown that remains is the professional's own (`SosOfferCard`, `useCountdown` on
+`offer.expiresAt`) — that deadline is real, is per professional, and is enforced by the database.

@@ -1,5 +1,3 @@
-import { Timer } from 'lucide-react';
-import { useCountdown } from '../../shared/hooks';
 import type { SosCandidate } from '../../shared/api';
 import { SosCandidateCard } from './SosCandidateCard';
 import { SOS_SELECTION_PENDING_HINT } from './sosUiState';
@@ -9,10 +7,9 @@ export interface SosCandidateTrayProps {
   candidates: SosCandidate[];
   /** The backend's authority on whether a selection posted right now would be accepted. */
   selectionOpen: boolean;
-  /** Absolute deadline for the choosing window. Drives the countdown; `null` before it opens. */
-  selectionExpiresAt: string | null;
-  /** Absolute deadline of the professional-response window, used to say how long the wait can last. */
-  matchingExpiresAt: string | null;
+  /** Server-derived: is anybody new still being contacted? Only changes what the hint *says* —
+   *  the choice is open either way. */
+  stillSearching: boolean;
   isSubmitting: boolean;
   pendingOfferId: number | null;
   onSelect: (candidate: SosCandidate) => void;
@@ -35,26 +32,28 @@ export interface SosCandidateTrayProps {
  * Earlier candidates are never hidden to make room for later ones.
  *
  * What the tray does **not** decide is whether the customer may commit. `selectionOpen` comes
- * from the server on every read: the window opens once the target count is reached, or when the
- * response window closes with at least one professional available. Until then the cards are fully
- * readable and comparable but their CTA is disabled, with a line saying why and until when — an
- * enabled button that produced a `SOS_INVALID_STATE` error would be a worse lie than a disabled
- * one that explains itself.
+ * from the server on every read — it is true from the first acceptance onward, and stays true
+ * until the customer acts. Until then the cards are fully readable and comparable but their CTA
+ * is disabled, with a line saying so: an enabled button that produced a `SOS_INVALID_STATE`
+ * error would be a worse lie than a disabled one that explains itself.
+ *
+ * **There is no countdown here any more** (MS3 follow-up). The tray used to show the customer's
+ * decision window ticking down, because there was one — ten minutes from the first acceptance,
+ * after which every professional who had committed to come was deleted. That rule is gone, and
+ * so is the clock: a timer counting toward nothing would be the most misleading thing on the
+ * screen, and its absence is what tells the customer, correctly, that they can take the time
+ * they need.
  */
 export function SosCandidateTray({
   candidates,
   selectionOpen,
-  selectionExpiresAt,
-  matchingExpiresAt,
+  stillSearching,
   isSubmitting,
   pendingOfferId,
   onSelect,
   onOpenDetails,
   errorMessage,
 }: SosCandidateTrayProps) {
-  const selection = useCountdown(selectionOpen ? selectionExpiresAt : null);
-  const matching = useCountdown(!selectionOpen && candidates.length > 0 ? matchingExpiresAt : null);
-
   const isEmpty = candidates.length === 0;
 
   return (
@@ -65,14 +64,6 @@ export function SosCandidateTray({
           {!isEmpty && <span className={styles.count}>{candidates.length}</span>}
         </h2>
 
-        {/* The countdown is presentation only — the server enforces the deadline on the next
-            read regardless of what this shows, and reaching 0:00 here changes nothing by itself. */}
-        {selectionOpen && selection.label && (
-          <span className={styles.timer} aria-label={`נותרו ${selection.label} דקות לבחירה`}>
-            <Timer size={15} aria-hidden="true" />
-            <span className={styles.timerValue}>{selection.label}</span>
-          </span>
-        )}
       </div>
 
       {errorMessage && (
@@ -97,11 +88,11 @@ export function SosCandidateTray({
         <>
           <p className={styles.hint}>
             {selectionOpen
-              ? 'אפשר לבחור כבר עכשיו — וממשיכים לחפש עוד אפשרויות עד שתבחרו.'
-              : matching.label
-                ? `רגע, מעדכנים את מצב הקריאה. עוד ${matching.label} לכל היותר.`
-                : // The shared fallback, also used by the details sheet — one rule, one wording.
-                  SOS_SELECTION_PENDING_HINT}
+              ? stillSearching
+                ? 'אפשר לבחור בכל רגע — הבחירה נשארת פתוחה, וממשיכים לחפש עוד אפשרויות בינתיים.'
+                : 'סיימנו לחפש. הבחירה נשארת פתוחה — אפשר לבחור מתי שנוח.'
+              : // The shared fallback, also used by the details sheet — one rule, one wording.
+                SOS_SELECTION_PENDING_HINT}
           </p>
 
           <ul className={styles.list}>

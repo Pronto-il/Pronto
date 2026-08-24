@@ -48,11 +48,17 @@ export interface RegisterProfessionalPayload {
   fullName: string;
   email: string;
   password: string;
-  categoryId: number;
-  serviceArea: string;
+  /** MS4 — at least one; a professional may register for several trades. */
+  categoryIds: number[];
+  /** MS4 — a canonical `service_regions` id, never free text. */
+  serviceRegionId: number;
+  /** MS4 — at least one canonical city, every one inside `serviceRegionId`. */
+  serviceCityIds: number[];
+  /** MS4 — must be one of `serviceCityIds`; the city ETA is measured from. */
+  baseCityId: number;
   basePrice: number;
   /**
-   * MS1 (D4/D7) — required, at least one, every id belonging to `categoryId`'s own category.
+   * MS1 (D4/D7) — required, at least one, every id belonging to one of `categoryIds`.
    * A cross-category id is refused by the backend with `400 CATEGORY_MISMATCH`
    * (`professionals.service.SubServiceSelectionValidator`), never silently dropped.
    */
@@ -90,8 +96,10 @@ interface RegisterRequestData {
   password: string;
   customer: { defaultAddress: RegisterAddressPayload; phone: string } | null;
   professional: {
-    categoryId: number;
-    serviceArea: string;
+    categoryIds: number[];
+    serviceRegionId: number;
+    serviceCityIds: number[];
+    baseCityId: number;
     basePrice: number;
     subServiceIds: number[];
     workingHours: WorkingHoursItemRequest[];
@@ -171,8 +179,10 @@ export function registerProfessional(
     password: payload.password,
     customer: null,
     professional: {
-      categoryId: payload.categoryId,
-      serviceArea: payload.serviceArea,
+      categoryIds: payload.categoryIds,
+      serviceRegionId: payload.serviceRegionId,
+      serviceCityIds: payload.serviceCityIds,
+      baseCityId: payload.baseCityId,
       basePrice: payload.basePrice,
       subServiceIds: payload.subServiceIds,
       workingHours: payload.workingHours,

@@ -47,6 +47,7 @@ exists or may ever exist.
 | `DemoDataSeeder` | `ApplicationRunner`; no-op unless a mode was requested |
 | `DemoDatasetWriter` | `@Transactional` writer — plain SQL, the whole dataset |
 | `DemoContent` | Hebrew names, cities, bios, issue descriptions, review text |
+| `DemoProfilePhotos` | Which fictional profile photograph each seed index gets, and reading it off the classpath |
 
 ## Configuration
 
@@ -174,3 +175,55 @@ is connected to).
   generated placeholder verification document so the operator review screen has a real object to
   open. Everything else is `JdbcTemplate`, `PasswordEncoder` and the schema.
 - Nothing depends on this package.
+
+## MS4 (2026-08-24) — a dataset big enough to exercise the product
+
+The seeded population roughly doubled, and gained the two things MS4 added to the domain.
+
+| | Before MS4 | After MS4 |
+|---|---|---|
+| Professionals | 79 | **125** |
+| Bookable | 68 | **114** |
+| Multi-category | 0 | **22** |
+| Demo customers | 14 | **20** |
+| Orders / reviews | ~360 | **603 / 603** |
+| Regions represented | n/a (free text) | **7** |
+
+Per category, counting a multi-category professional once per trade: plumbing 28, general_handyman
+23, electrical 20, ac_hvac 20, appliance_repair 17, painting 17, locksmith 15.
+
+What changed in `DemoDatasetWriter`, and why:
+
+- **`bookablePoolSize` raises the floor for every non-first category from 7 to 12.** The old
+  `11 - position` taper made the *last* categories in the catalogue the least testable, which was
+  an artifact of the formula rather than a product statement. The first category still gets 20 —
+  that number is load-bearing for demonstrating an SOS expansion wave and is explained in the
+  method's Javadoc.
+- **A separate multi-category cohort** (`MULTI_CATEGORY_COMBINATIONS`) rather than widening the
+  per-category pools, so "how many professionals does category X have?" stays answerable and every
+  combination is guaranteed to appear rather than emerging by chance. The combinations are
+  real-world adjacent trades — including plumbing + handyman, the MS4 brief's own worked example,
+  so its matching QA case can be run against the seeded data directly.
+- **Regions and cities are read from `service_regions`/`service_cities`**, never hardcoded here —
+  the same read-the-database contract `loadCategories()` already had. Three professionals in five
+  are based in גוש דן's first city (תל אביב), which is also where a majority of demo *customers*
+  live; that coincidence is what exercises both branches of `ApproximateDistanceEtaStrategy`.
+- **Sub-services are drawn per category**, not merely per professional: a plumber-and-handyman
+  with sub-services only under plumbing would pass eligibility while looking, on their profile,
+  like they had never finished setting up the second trade.
+- **45 of the 125 professionals get a fictional profile photograph** through the real
+  `StorageClient`, under the same `professionals/{id}/profile/...` key template production uses;
+  the other 80 keep `profile_image_key = null` and render the ordinary no-photo fallback. A
+  marketplace where everyone has a photo cannot demonstrate the fallback, and one where nobody
+  does cannot demonstrate the photo. Which professional gets which face is an explicit, written-out
+  mapping in `DemoProfilePhotos`, keyed by seed index and matched to the seeded person's gender
+  presentation and trade — see
+  [`backend/tools/demo-profile-photos/README.md`](../../../../../../tools/demo-profile-photos/README.md)
+  for the full table and for where the images come from. The faces are invented people, not
+  photographs of anyone real, which is what makes them safe to attach to an invented tradesperson.
+- `service_regions`/`service_cities` join `categories`/`sub_services` in `PRESERVED_TABLES` —
+  they are schema-owned seed data, not demo data, and every professional row points at them.
+
+Everything remains deterministic: the same seed run twice produces the same marketplace, or a QA
+finding cannot be reproduced.
+

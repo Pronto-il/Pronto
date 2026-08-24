@@ -20,7 +20,7 @@ public record EligibleProfessional(
         Long userId,
         String fullName,
         String city,
-        String serviceArea,
+        String serviceRegion,
         BigDecimal basePrice,
         BigDecimal reliabilityScore,
         String profileImageKey,

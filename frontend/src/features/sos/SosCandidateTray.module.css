@@ -36,21 +36,9 @@
   font-variant-numeric: tabular-nums;
 }
 
-.timer {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-sm);
-  background: var(--color-warning-bg);
-  color: var(--color-warning);
-  font-size: var(--font-size-small);
-  font-weight: var(--font-weight-semibold);
-}
-
-.timerValue {
-  font-variant-numeric: tabular-nums;
-}
+/* The choosing countdown that used to sit in this header is gone with the rule it counted down
+   to (MS3 follow-up) — the customer's decision window no longer exists, so neither does its
+   amber timer chip. */
 
 .error {
   padding: var(--space-3) var(--space-4);

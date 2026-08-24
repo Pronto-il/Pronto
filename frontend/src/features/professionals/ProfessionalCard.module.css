@@ -84,6 +84,13 @@
   margin-block-start: var(--space-1);
 }
 
+/* MS4 §7: "+N תחומים נוספים" beside the searched-for trade. Deliberately quieter than the
+   profession itself — it is context, not the reason this professional is in the list. */
+.professionExtra {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
 .rating {
   display: inline-flex;
   align-items: center;

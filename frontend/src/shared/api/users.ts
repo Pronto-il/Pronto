@@ -2,8 +2,10 @@ import { httpClient } from './httpClient';
 import type { UserRole } from './auth';
 
 export interface ProfessionalInfo {
-  categoryId: number;
-  serviceArea: string;
+  /** MS4: every trade this professional serves, in catalogue display order. */
+  categoryIds: number[];
+  /** MS4: canonical service-region label; `null` when the account predates MS4 with no match. */
+  serviceRegion: string | null;
   basePrice: number;
   /** Added MS10 profile redesign §6, so a professional's own photo can be shown read-only
    *  on the shared `/profile` page. `null` when no photo has been uploaded (mirrors

@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getMySosOffers, getSosRequest, isSosOfferResolved, isSosTerminalStatus } from '../api/sos';
 import type { SosOfferResponse, SosRealtimeEventType } from '../api/sos';
+import { PRO_SOS_KEY } from '../api/resourceKeys';
 import { ProSosContext, type ProSosJob } from './proSosContext';
 import { usePolling } from './usePolling';
 import { useSosRealtime } from './useSosRealtime';
 import { useToast } from './useToast';
 
 /**
- * Fallback poll cadence while something is actually live. Offers expire in ~2 minutes, so a
- * professional staring at a countdown needs the truth sooner than the idle case does. This is the
- * *fallback*: with the socket up, every real change lands via a realtime-triggered refetch first.
+ * Fallback poll cadences. The pair that matters is socket-up vs socket-down, not busy vs idle:
+ * with the socket up every real change already arrives as an event and triggers a refetch, so
+ * the timer is only reconciling; with it down the timer is the entire channel, and an offer
+ * expires in about two minutes.
  */
-const ACTIVE_POLL_INTERVAL_MS = 5000;
-/** Nothing in flight — the poll is only there to notice that something started. */
-const IDLE_POLL_INTERVAL_MS = 20000;
+const DISCONNECTED_ACTIVE_POLL_INTERVAL_MS = 5_000;
+const DISCONNECTED_IDLE_POLL_INTERVAL_MS = 20_000;
+const CONNECTED_ACTIVE_POLL_INTERVAL_MS = 20_000;
+const CONNECTED_IDLE_POLL_INTERVAL_MS = 60_000;
 
 /**
  * How long a finished outcome (not selected / expired / declined / completed job) stays on the
@@ -65,6 +68,14 @@ const PROFESSIONAL_EVENT_TYPES: ReadonlySet<SosRealtimeEventType> = new Set<SosR
  * straight out of that set, so a professional who was available and lost would simply watch their
  * card vanish with no explanation. Asking for everything and bucketing here is what makes
  * `NOT_SELECTED` and `EXPIRED` showable at all — see `resolvedOffers`.
+ *
+ * ## Background tabs
+ *
+ * This is one of the two places allowed to poll a hidden tab, and only while the socket is down.
+ * An SOS offer's window is about two minutes; a professional who tabbed away with no socket and
+ * no timer would simply lose the work. With the socket up the hidden tab costs nothing — events
+ * still arrive and still trigger a refetch — so the exemption is scoped to exactly the case that
+ * needs it.
  */
 export function ProSosProvider({ children }: { children: ReactNode }) {
   const { showToast } = useToast();
@@ -89,29 +100,43 @@ export function ProSosProvider({ children }: { children: ReactNode }) {
     return { offers: list.offers, job: { offer: selected, request } as ProSosJob };
   }, []);
 
-  // Starts fast so a professional opening the dashboard mid-dispatch sees the offer promptly,
-  // then settles to the idle cadence once nothing is in flight.
-  const [pollIntervalMs, setPollIntervalMs] = useState(ACTIVE_POLL_INTERVAL_MS);
-  const { data, error, isLoading, refetch } = usePolling(fetcher, { intervalMs: pollIntervalMs });
+  const [hasLiveWork, setHasLiveWork] = useState(true);
+  const [realtimeStatus, setRealtimeStatus] = useState<'connected' | 'other'>('other');
+  const isSocketUp = realtimeStatus === 'connected';
+
+  const intervalMs = isSocketUp
+    ? hasLiveWork
+      ? CONNECTED_ACTIVE_POLL_INTERVAL_MS
+      : CONNECTED_IDLE_POLL_INTERVAL_MS
+    : hasLiveWork
+      ? DISCONNECTED_ACTIVE_POLL_INTERVAL_MS
+      : DISCONNECTED_IDLE_POLL_INTERVAL_MS;
+
+  const { data, error, isLoading, refetch } = usePolling(fetcher, {
+    key: PRO_SOS_KEY,
+    intervalMs,
+    pollWhenHidden: !isSocketUp,
+  });
 
   useEffect(() => {
-    const hasLiveWork = (data?.offers ?? []).some(
-      (offer: SosOfferResponse) =>
-        offer.status === 'OFFERED' ||
-        offer.status === 'VIEWED' ||
-        offer.status === 'ACCEPTED' ||
-        (offer.status === 'SELECTED' && !isSosTerminalStatus(offer.requestStatus)),
+    setHasLiveWork(
+      (data?.offers ?? []).some(
+        (offer: SosOfferResponse) =>
+          offer.status === 'OFFERED' ||
+          offer.status === 'VIEWED' ||
+          offer.status === 'ACCEPTED' ||
+          (offer.status === 'SELECTED' && !isSosTerminalStatus(offer.requestStatus)),
+      ),
     );
-    setPollIntervalMs(hasLiveWork ? ACTIVE_POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS);
   }, [data]);
 
-  // `usePolling` hands back a new `refetch` identity every render; realtime must not rebuild its
-  // socket for that, so it gets a stable wrapper.
+  // `usePolling` hands back a `refetch` bound to the key; realtime must not rebuild its socket
+  // for a re-render, so it gets a stable wrapper.
   const refetchRef = useRef(refetch);
   refetchRef.current = refetch;
   const stableRefetch = useCallback(() => refetchRef.current(), []);
 
-  const { status: realtimeStatus } = useSosRealtime({
+  const { status: socketStatus } = useSosRealtime({
     onEvent: (message) => {
       if (!PROFESSIONAL_EVENT_TYPES.has(message.eventType)) {
         return;
@@ -135,6 +160,10 @@ export function ProSosProvider({ children }: { children: ReactNode }) {
     },
     onResync: stableRefetch,
   });
+
+  useEffect(() => {
+    setRealtimeStatus(socketStatus === 'connected' ? 'connected' : 'other');
+  }, [socketStatus]);
 
   const dismissResolved = useCallback((offerId: number) => {
     setDismissedResolvedIds((previous) => new Set(previous).add(offerId));
@@ -173,9 +202,9 @@ export function ProSosProvider({ children }: { children: ReactNode }) {
       isLoading,
       error,
       refetch: stableRefetch,
-      realtimeStatus,
+      realtimeStatus: socketStatus,
     };
-  }, [data, dismissedResolvedIds, dismissResolved, isLoading, error, stableRefetch, realtimeStatus]);
+  }, [data, dismissedResolvedIds, dismissResolved, isLoading, error, stableRefetch, socketStatus]);
 
   return <ProSosContext.Provider value={value}>{children}</ProSosContext.Provider>;
 }

@@ -1,9 +1,11 @@
 package com.pronto.sos.service;
 
+import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.professionals.repository.ReviewAggregateRepository;
 import com.pronto.sos.dto.SosRequestResponse;
 import com.pronto.sos.entity.SosRequest;
+import com.pronto.sos.entity.SosRequestStatus;
 import com.pronto.sos.entity.SosUrgency;
 import com.pronto.sos.repository.SosOfferRepository;
 import com.pronto.storage.service.StorageService;
@@ -14,6 +16,7 @@ import org.mockito.Mockito;
 
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -49,8 +52,11 @@ class SosResponseAssemblerTest {
         ReviewAggregateRepository reviewAggregateRepository = Mockito.mock(ReviewAggregateRepository.class);
         sosOfferRepository = Mockito.mock(SosOfferRepository.class);
         StorageService storageService = Mockito.mock(StorageService.class);
+        ProfessionalCoverageService professionalCoverageService =
+                Mockito.mock(ProfessionalCoverageService.class);
         assembler = new SosResponseAssembler(professionalRepository, userRepository, reviewAggregateRepository,
-                sosOfferRepository, storageService, new com.pronto.sos.config.SosProperties());
+                sosOfferRepository, storageService, new com.pronto.sos.config.SosProperties(),
+                professionalCoverageService);
 
         when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(anyLong())).thenReturn(List.of());
     }
@@ -63,6 +69,52 @@ class SosResponseAssemblerTest {
                 new BigDecimal("32.075100"), new BigDecimal("34.775200"));
         setField(request, "id", REQUEST_ID);
         return request;
+    }
+
+    // ------------------------------------------------------------------
+    // "is anybody new still being contacted" — canExpandSearch (MS3 follow-up)
+    // ------------------------------------------------------------------
+
+    /**
+     * The flag the customer's screen uses to decide whether to say "we are still looking". It has
+     * to go false when the scan window closes, or the screen claims to be searching after
+     * dispatch has stopped — a lie told to somebody in an emergency.
+     */
+    @Test
+    void searchIsNotExpandableOnceTheScanWindowHasClosed() {
+        SosRequest request = fullyAddressedRequest();
+        setField(request, "status", SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
+        setField(request, "matchingExpiresAt", Instant.now().minusSeconds(30));
+
+        SosRequestResponse response = assembler.toRequestResponse(request, SosAddressAccess.FULL);
+
+        assertThat(response.canExpandSearch()).isFalse();
+    }
+
+    /** ...and true while the scan window is genuinely open with expansions left. */
+    @Test
+    void searchIsExpandableWhileTheScanWindowIsOpen() {
+        SosRequest request = fullyAddressedRequest();
+        setField(request, "status", SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
+        setField(request, "matchingExpiresAt", Instant.now().plusSeconds(300));
+
+        SosRequestResponse response = assembler.toRequestResponse(request, SosAddressAccess.FULL);
+
+        assertThat(response.canExpandSearch()).isTrue();
+    }
+
+    /**
+     * <b>No customer-decision deadline reaches the wire.</b> The record has no such component
+     * since the MS3 follow-up; this asserts the shape itself, so re-adding one would fail here
+     * rather than quietly reappear on a client.
+     */
+    @Test
+    void theResponseCarriesNoCustomerDecisionDeadline() {
+        assertThat(java.util.Arrays.stream(SosRequestResponse.class.getRecordComponents())
+                .map(java.lang.reflect.RecordComponent::getName)
+                .filter(name -> name.toLowerCase().contains("selection")))
+                .as("SosRequestResponse components naming a selection deadline")
+                .isEmpty();
     }
 
     @Test

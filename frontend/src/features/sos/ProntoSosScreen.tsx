@@ -12,7 +12,6 @@ import type { SosCandidate } from '../../shared/api';
 import { SosCandidateTray } from './SosCandidateTray';
 import { SosHeader } from './SosHeader';
 import { SosProfessionalSheet } from './SosProfessionalSheet';
-import { SosScanAgainControl } from './SosScanAgainControl';
 import { SosScanPanel } from './SosScanPanel';
 import { SosSelectedProfessionalPanel } from './SosSelectedProfessionalPanel';
 import {
@@ -55,22 +54,18 @@ function toUserMessage(error: unknown): string {
  * State comes entirely from `useSosRequest` (REST canonical, realtime-accelerated). This
  * component holds only what is genuinely local: which button is mid-submit, and whether the
  * cancel dialog is open.
+ *
+ * **MS3**: there is no "סרוק שוב" control here any more. The search widens by itself every two
+ * minutes for as long as the scan window is open, on a schedule the backend owns, so the
+ * customer has nothing to press and nothing to decide about how hard the platform is looking.
+ * What is left for them is the two things only they can answer: choosing somebody, and calling
+ * it off.
  */
 export default function ProntoSosScreen({ sosRequestId, onRetry, isRetrying, retryError }: ProntoSosScreenProps) {
   const navigate = useNavigate();
   const { draft, clearDraft } = useBookingDraft();
-  const {
-    request,
-    candidates,
-    selectionOpen,
-    isLoading,
-    error,
-    refetch,
-    realtimeStatus,
-    expandSearch,
-    isExpanding,
-    expandError,
-  } = useSosRequest(sosRequestId);
+  const { request, candidates, selectionOpen, isLoading, error, refetch, realtimeStatus } =
+    useSosRequest(sosRequestId);
 
   /** The offer whose `בחר` was pressed. Non-null for the whole round trip — one submit at a time. */
   const [pendingOfferId, setPendingOfferId] = useState<number | null>(null);
@@ -200,23 +195,8 @@ export default function ProntoSosScreen({ sosRequestId, onRetry, isRetrying, ret
           // keeps the tray below. Same data, same interaction model, one composition per width.
           candidates={candidates}
           onOpenCandidate={(candidate) => setOpenCandidateOfferId(candidate.offerId)}
-          isExpanding={isExpanding}
-        />
-      )}
-
-      {/* "סרוק שוב", directly under the scan on both widths. Its enabled state is
-          `request.canExpandSearch` — canonical backend state, which goes false the instant a
-          professional is selected, so "selection stops the search" is enforced where it is decided
-          rather than re-derived here. */}
-      {isSearching && (
-        <SosScanAgainControl
-          canExpand={request.canExpandSearch}
-          expansionsUsed={request.searchExpansions}
-          maxExpansions={request.maxSearchExpansions}
-          isExpanding={isExpanding}
-          errorMessage={expandError}
-          hasCandidates={candidates.length > 0}
-          onExpand={() => void expandSearch()}
+          searchExpansions={request.searchExpansions}
+          stillSearching={request.canExpandSearch}
         />
       )}
 
@@ -228,8 +208,7 @@ export default function ProntoSosScreen({ sosRequestId, onRetry, isRetrying, ret
           <SosCandidateTray
             candidates={candidates}
             selectionOpen={selectionOpen}
-            selectionExpiresAt={request.selectionExpiresAt}
-            matchingExpiresAt={request.matchingExpiresAt}
+            stillSearching={request.canExpandSearch}
             isSubmitting={pendingOfferId !== null}
             pendingOfferId={pendingOfferId}
             onSelect={handleSelect}

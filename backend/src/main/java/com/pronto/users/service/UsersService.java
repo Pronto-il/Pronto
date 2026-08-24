@@ -5,6 +5,7 @@ import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRepository;
+import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.storage.service.StorageService;
 import com.pronto.users.dto.DefaultAddressInfo;
 import com.pronto.users.dto.ProfessionalInfo;
@@ -28,12 +29,15 @@ public class UsersService {
     private final UserRepository userRepository;
     private final ProfessionalRepository professionalRepository;
     private final StorageService storageService;
+    private final ProfessionalCoverageService professionalCoverageService;
 
     public UsersService(UserRepository userRepository, ProfessionalRepository professionalRepository,
-                         StorageService storageService) {
+                         StorageService storageService,
+                         ProfessionalCoverageService professionalCoverageService) {
         this.userRepository = userRepository;
         this.professionalRepository = professionalRepository;
         this.storageService = storageService;
+        this.professionalCoverageService = professionalCoverageService;
     }
 
     @Transactional(readOnly = true)
@@ -43,7 +47,8 @@ public class UsersService {
         ProfessionalInfo professionalInfo = null;
         if (user.getRole() == UserRole.PROFESSIONAL) {
             professionalInfo = professionalRepository.findByUserId(user.getId())
-                    .map(p -> new ProfessionalInfo(p.getCategoryId(), p.getServiceArea(), p.getBasePrice(),
+                    .map(p -> new ProfessionalInfo(professionalCoverageService.categoryIds(p.getId()),
+                            professionalCoverageService.load(p).serviceRegionNameHe(), p.getBasePrice(),
                             p.getProfileImageKey() == null ? null
                                     : storageService.getPresignedUrl(user.getId(), p.getProfileImageKey())))
                     .orElse(null);

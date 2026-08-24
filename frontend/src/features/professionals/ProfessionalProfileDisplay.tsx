@@ -1,6 +1,6 @@
 import { ShieldCheck, Star } from 'lucide-react';
-import { Badge, Card } from '../../shared/components';
-import { getCategoryNameHe } from '../../shared/api';
+import { Badge, Card, ZoomableImage } from '../../shared/components';
+import { getCategoryNamesHe } from '../../shared/api';
 import type { ProfessionalProfileResponse } from '../../shared/api';
 import { formatMonthYearLabel } from '../../shared/utils/formatDateTime';
 import { formatReviewCount } from '../../shared/utils/hebrewText';
@@ -10,8 +10,9 @@ export interface ProfessionalProfileDisplayProps {
   professional: Pick<
     ProfessionalProfileResponse,
     | 'fullName'
-    | 'categoryId'
-    | 'serviceArea'
+    | 'categoryIds'
+    | 'serviceRegionNameHe'
+    | 'serviceCityNamesHe'
     | 'city'
     | 'bio'
     | 'basePrice'
@@ -22,6 +23,12 @@ export interface ProfessionalProfileDisplayProps {
     /** Trust signals (§44) — optional so a caller that has no real value for them (rather than
      *  a false one) simply omits the corresponding element. */
     Partial<Pick<ProfessionalProfileResponse, 'approvalStatus' | 'createdAt'>>;
+  /**
+   * When provided, the review count (both the rating row's "· 3 ביקורות" fragment and the
+   * stats strip's ביקורות tile) becomes a button that calls this instead of being static text.
+   * Omitted by callers that have nothing to open — the count then renders exactly as before.
+   */
+  onReviewsClick?: () => void;
 }
 
 /**
@@ -45,19 +52,31 @@ export interface ProfessionalProfileDisplayProps {
  * state, no review history of its own, and nothing to "select") and stay inline in
  * `ProfessionalProfilePage.tsx`, composed around this component.
  */
-export function ProfessionalProfileDisplay({ professional }: ProfessionalProfileDisplayProps) {
+export function ProfessionalProfileDisplay({ professional, onReviewsClick }: ProfessionalProfileDisplayProps) {
+  const reviewsAreOpenable = onReviewsClick != null && professional.reviewCount > 0;
+  const reviewsButtonLabel = `הצגת ${formatReviewCount(professional.reviewCount)}`;
+
   return (
     <>
       <div className={styles.identityBlock}>
+        {/* The photo enlarges on click; the initials fallback deliberately does not — there is
+            nothing behind it to show. */}
         {professional.profileImageUrl ? (
-          <img src={professional.profileImageUrl} alt="" className={styles.photo} />
+          <ZoomableImage
+            imageUrl={professional.profileImageUrl}
+            label={`הגדלת תמונת הפרופיל של ${professional.fullName}`}
+          >
+            <img src={professional.profileImageUrl} alt="" className={styles.photo} />
+          </ZoomableImage>
         ) : (
           <span className={styles.photoFallback} aria-hidden="true">
             {professional.fullName.trim().charAt(0)}
           </span>
         )}
         <h1 className={styles.name}>{professional.fullName}</h1>
-        <p className={styles.category}>{getCategoryNameHe(professional.categoryId)}</p>
+        {/* MS4 §7: the profile is where the *full* list belongs — compact surfaces show the
+            primary trade and a count, this one has the room to name every one of them. */}
+        <p className={styles.category}>{getCategoryNamesHe(professional.categoryIds).join(' · ')}</p>
         {professional.approvalStatus === 'APPROVED' && (
           <Badge tone="success" size="sm" icon={<ShieldCheck size={14} />}>
             בעל מקצוע מאומת
@@ -67,7 +86,18 @@ export function ProfessionalProfileDisplay({ professional }: ProfessionalProfile
           <span className={styles.rating}>
             <Star size={16} className={styles.ratingStar} aria-hidden="true" fill="currentColor" />
             {professional.averageRating.toFixed(1)}
-            <span className={styles.reviewCount}>· {formatReviewCount(professional.reviewCount)}</span>
+            {reviewsAreOpenable ? (
+              <button
+                type="button"
+                className={`${styles.reviewCount} ${styles.reviewCountButton}`}
+                onClick={onReviewsClick}
+                aria-label={reviewsButtonLabel}
+              >
+                · {formatReviewCount(professional.reviewCount)}
+              </button>
+            ) : (
+              <span className={styles.reviewCount}>· {formatReviewCount(professional.reviewCount)}</span>
+            )}
           </span>
         )}
       </div>
@@ -82,10 +112,17 @@ export function ProfessionalProfileDisplay({ professional }: ProfessionalProfile
           </span>
           <span className={styles.statLabel}>דירוג ממוצע</span>
         </div>
-        <div className={styles.stat}>
-          <span className={styles.statValue}>{professional.reviewCount}</span>
-          <span className={styles.statLabel}>ביקורות</span>
-        </div>
+        {reviewsAreOpenable ? (
+          <button type="button" className={`${styles.stat} ${styles.statButton}`} onClick={onReviewsClick}>
+            <span className={styles.statValue}>{professional.reviewCount}</span>
+            <span className={styles.statLabel}>ביקורות</span>
+          </button>
+        ) : (
+          <div className={styles.stat}>
+            <span className={styles.statValue}>{professional.reviewCount}</span>
+            <span className={styles.statLabel}>ביקורות</span>
+          </div>
+        )}
         {professional.createdAt && (
           <div className={styles.stat}>
             <span className={styles.statValue}>{formatMonthYearLabel(professional.createdAt)}</span>
@@ -97,12 +134,18 @@ export function ProfessionalProfileDisplay({ professional }: ProfessionalProfile
       <Card className={styles.infoCard}>
         <div className={styles.row}>
           <span className={styles.rowLabel}>אזור שירות</span>
-          <span className={styles.rowValue}>{professional.serviceArea}</span>
+          <span className={styles.rowValue}>{professional.serviceRegionNameHe ?? 'לא הוגדר'}</span>
         </div>
         {professional.city && (
           <div className={styles.row}>
-            <span className={styles.rowLabel}>עיר</span>
+            <span className={styles.rowLabel}>עיר בסיס</span>
             <span className={styles.rowValue}>{professional.city}</span>
+          </div>
+        )}
+        {professional.serviceCityNamesHe.length > 0 && (
+          <div className={styles.row}>
+            <span className={styles.rowLabel}>ערי שירות</span>
+            <span className={styles.rowValue}>{professional.serviceCityNamesHe.join(', ')}</span>
           </div>
         )}
         <div className={styles.row}>

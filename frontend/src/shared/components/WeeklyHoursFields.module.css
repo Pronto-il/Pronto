@@ -48,7 +48,64 @@
 
 .timesCell > * {
   flex: 1;
-  max-width: 160px;
+  /* Two `TimeField` selects (`HH` + `mm`) need a little more room than the single
+     `<input type="time">` that used to sit here. */
+  max-width: 200px;
+}
+
+/* "החל על הכל" — one start/end pair applied to every relevant working day at once. */
+.applyAll {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-secondary);
+}
+
+.applyAllTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.applyAllControls {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.applyAllField {
+  flex: 1 1 140px;
+  max-width: 200px;
+  margin-block-end: 0;
+}
+
+.applyAllButton {
+  flex-shrink: 0;
+}
+
+.applyAllHint,
+.applyAllNotice,
+.applyAllError {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.applyAllHint {
+  color: var(--color-text-muted);
+}
+
+.applyAllNotice {
+  color: var(--color-success);
+}
+
+.applyAllError {
+  color: var(--color-error);
 }
 
 .switch {
@@ -90,6 +147,15 @@
   }
 
   .timesCell > * {
+    max-width: none;
+  }
+
+  .applyAllControls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .applyAllField {
     max-width: none;
   }
 }

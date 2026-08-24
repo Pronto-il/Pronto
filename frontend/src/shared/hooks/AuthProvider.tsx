@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { login as loginRequest } from '../api/auth';
 import { getMe, type UserMeResponse } from '../api/users';
-import { ApiError, setAuthTokenGetter } from '../api/httpClient';
+import { ApiError, setAuthTokenGetter, setUnauthorizedHandler } from '../api/httpClient';
 import { AuthContext } from './authContext';
+import { clearPollingStore } from './pollingStore';
 
 const TOKEN_STORAGE_KEY = 'pronto_auth_token';
 
@@ -29,10 +30,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // importing React or reading localStorage directly — keeps the api layer
     // framework-agnostic and the token's source of truth in this provider only.
     setAuthTokenGetter(() => tokenRef.current);
+
+    // Any request we sent *with* a token that came back 401 means that token is dead
+    // (expired, or its user row is gone). Ending the session here is the same logout path
+    // `logout()` takes, so `RequireAuth` sends the user to `/login` on the next render
+    // instead of leaving them on a screen whose every write fails with UNAUTHORIZED. This is
+    // the app's intended behavior for an expired token — there is no refresh-token flow in
+    // this system (`docs/architecture/api-contract.md` §3.1: a single 24h access token).
+    setUnauthorizedHandler(() => {
+      if (!tokenRef.current) {
+        return;
+      }
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      tokenRef.current = null;
+      setToken(null);
+      setUser(null);
+      clearPollingStore();
+    });
   }, []);
 
+  /**
+   * Guards the one-and-only bootstrap read. `StrictMode` runs mount effects twice in
+   * development, which made every page load issue `GET /api/users/me` twice — the duplicate
+   * `/me` most visible in DevTools. A ref (not a cleanup flag) is what fixes it: refs survive
+   * StrictMode's simulated remount, so the second pass sees the guard and does nothing, whereas
+   * a `cancelled` flag would have cancelled the *first* pass and left the second one suppressed
+   * by the guard, i.e. no user at all.
+   *
+   * There is deliberately no cancellation here any more: `AuthProvider` wraps the whole app and
+   * is never unmounted while the tab is open, so there is no unmount for a late response to race.
+   */
+  const hasBootstrappedRef = useRef(false);
+
   useEffect(() => {
-    let cancelled = false;
+    if (hasBootstrappedRef.current) {
+      return;
+    }
+    hasBootstrappedRef.current = true;
 
     async function rehydrate() {
       if (!tokenRef.current) {
@@ -41,26 +75,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       try {
         const me = await getMe();
-        if (!cancelled) {
-          setUser(me);
-        }
+        setUser(me);
       } catch (error) {
-        if (!cancelled && error instanceof ApiError && error.status === 401) {
+        if (error instanceof ApiError && error.status === 401) {
           tokenRef.current = null;
           setToken(null);
           localStorage.removeItem(TOKEN_STORAGE_KEY);
         }
       } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
+        setIsLoading(false);
       }
     }
 
     void rehydrate();
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   async function login(email: string, password: string): Promise<UserMeResponse> {
@@ -78,6 +105,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tokenRef.current = null;
     setToken(null);
     setUser(null);
+    // Shared polling entries are keyed by request, not by caller, so `bookings:orders:me` would
+    // otherwise still be holding the outgoing session's orders when the next account signs in.
+    clearPollingStore();
   }
 
   async function refreshUser(): Promise<void> {

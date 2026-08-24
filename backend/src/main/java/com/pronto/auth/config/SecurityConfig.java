@@ -36,9 +36,12 @@ import java.util.List;
  * JWT-gated via the catch-all below), and {@code GET /api/categories} (MS11 — Services &amp;
  * Sub-services — non-sensitive reference data, deliberately public per
  * {@code docs/architecture/product-ms11-sub-services-design.md} §3.1, so it could someday
- * also serve the pre-login registration screen without redesign). Everything else —
- * including {@code /api/users/me} and any endpoint added by a later milestone — requires a
- * valid, non-revoked JWT.
+ * also serve the pre-login registration screen without redesign), and {@code GET
+ * /api/service-areas} (MS4 — the closed Israeli region/city catalogue, public on exactly the
+ * same grounds, and here the "pre-login registration screen" is not hypothetical: the
+ * professional registration wizard cannot render its region and city selectors without it).
+ * Everything else — including {@code /api/users/me} and any endpoint added by a later
+ * milestone — requires a valid, non-revoked JWT.
  *
  * <p><b>{@code /ws/**} (the STOMP handshake, SOS realtime phase) is permitted here, and that is
  * not a weakening.</b> A browser's {@code WebSocket} constructor cannot attach an
@@ -85,6 +88,10 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/health", "/api/auth/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/storage/images/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/categories").permitAll()
+                        // MS4 Part A: the closed region/city catalogue. Public for the same
+                        // reason /api/categories is — professional registration needs it before
+                        // an account exists — and no more sensitive: a list of Israeli city names.
+                        .requestMatchers(HttpMethod.GET, "/api/service-areas").permitAll()
                         .requestMatchers("/ws/**").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(eh -> eh.authenticationEntryPoint(authenticationEntryPoint))
@@ -112,6 +119,18 @@ public class SecurityConfig {
         // set of verbs this API actually answers, so PATCH belongs in it.
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Content-Type", "Authorization"));
+        // Every authenticated call carries `Authorization`, which makes it a non-simple request,
+        // which means the browser preflights it. Without `Access-Control-Max-Age` on the response
+        // Chromium caches that preflight decision for only 5 seconds, so a screen polling on any
+        // interval longer than that re-asked permission before almost every single GET — measured
+        // at 16-24 OPTIONS per minute on an idle customer home screen, roughly one per poll.
+        //
+        // This is a cache duration for a decision that does not vary, not a relaxation of it: the
+        // allowed origins, methods and headers above are unchanged, every actual request is still
+        // checked against them, and an expired or revoked token still fails on the request itself
+        // (the preflight never carried credentials to begin with). 1800s is Spring's own default
+        // for `CorsConfiguration.applyPermitDefaultValues()`, and is under Chromium's 2h cap.
+        configuration.setMaxAge(1800L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/api/**", configuration);

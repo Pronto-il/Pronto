@@ -173,6 +173,28 @@ PRD §6 fields: `id, user_id, profession_type, service_area, approval_status,
 reliability_score`. Two of these fields need explicit re-interpretation, both flagged for
 sign-off in §3 — summary here, detail there.
 
+> **MS4 (2026-08-24) — three columns left this table.** `category_id`, `service_area` and
+> `city` are **gone**; the rows describing them below are historical and no longer describe the
+> live schema.
+>
+> | Was | Is now | Migration |
+> |---|---|---|
+> | `category_id BIGINT NOT NULL` | `professional_categories` many-to-many (§2.20) | `V45`, backfilled `X → [X]` for every row *before* the column was dropped |
+> | `service_area VARCHAR(150) NOT NULL` (free text) | `service_region_id BIGINT` → `service_regions` (§2.22) | `V44` |
+> | `city VARCHAR(100)` (free text) | `base_city_id BIGINT` → `service_cities` (§2.23), plus `professional_service_cities` (§2.21) for the full coverage set | `V44` |
+>
+> The two new FK columns are **nullable**, deliberately. The free text they replace was written
+> before any catalogue existed (`'Tel Aviv'`, `'תל אביב והמרכז'`, `''`), so a share of existing
+> rows had no honest canonical value to backfill. `NOT NULL` would have forced the migration to
+> invent a region for a professional it could not place; keeping the old columns as a fallback
+> would have left two competing sources of truth. Unplaced professionals instead read as "not
+> configured" and are asked to choose in the profile editor. Every write path since MS4 requires
+> all three (`locations.service.ServiceCoverageValidator`).
+>
+> **`V44` deliberately did not add coverage to `ProfessionalEligibility`.** An existing bookable
+> professional whose free text could not be matched stays bookable; silently de-listing real
+> professionals is not a migration's decision to make.
+
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
 | `id` | `BIGINT` (identity) | NO | — | PK |
@@ -202,15 +224,41 @@ approval_status = 'REJECTED')` — the invariant's home is the database, the sam
 `V39` states for `ck_sos_requests_search_expansions`; it is what guarantees a rejection reason
 can never be left dangling on an `APPROVED` row where an operator would read it as current.
 Holds for every pre-existing row (all `APPROVED`, all `NULL` reason).
-**Indexes**: `idx_professionals_category ON (category_id)` (primary filter for Standard/SOS
-listings — who offers this issue's category); **`idx_professionals_approval_status ON
-(approval_status)` (new, `V40`)** — the operator queue is "everyone awaiting review, oldest
+**Indexes**: ~~`idx_professionals_category ON (category_id)`~~ — **dropped with its column by
+`V45`**; the Standard/SOS category filter is now `idx_professional_categories_category` on the
+join table (§2.20). **`idx_professionals_service_region ON (service_region_id)` (new, `V44`)**.
+**`idx_professionals_approval_status ON (approval_status)` (new, `V40`)** — the operator queue is "everyone awaiting review, oldest
 first", filtered on a column whose selectivity runs the wrong way (almost every row is
 `APPROVED`; the slice an operator opens all day is the small `PENDING` one).
 `service_area`/`city` are not indexed in v1.0
 (no area-based search/filter UX is specified yet beyond the same-city/different-city ETA
 comparison, which reads full table scans of already-category-filtered result sets, not an
 independent city-indexed query; revisit if a dedicated city-filter UX is added).
+
+**`V41` (MS3 SOS lifecycle redesign)** adds three columns, each because a browser timer cannot be
+trusted with what it holds:
+
+- `sos_requests.next_expansion_at` — when the search next widens by itself, `NULL` once it never
+  will again. Advanced by the same compare-and-set that increments `search_expansions`, so the
+  2-minute expansion cadence survives a refresh and cannot fire twice.
+- `sos_offers.accepted_at` and `sos_offers.promised_eta_minutes` — write-once, set only by the
+  `accept` statement. They duplicate `responded_at`/`estimated_arrival_minutes` today *because*
+  the ETA is now immutable; they are the audit record of what a professional promised and when,
+  which stays true independently of the live columns (`responded_at` is also stamped by a
+  rejection). `ck_sos_offers_promised_eta` keeps the promise non-negative.
+
+Note the semantics of an existing column changed without the column moving:
+`sos_requests.matching_expires_at` is now the **scan window** (when the platform stops looking for
+new professionals), not an overall response deadline. Each offer's own `expires_at` owns the
+professional-response window.
+
+**`V42`** then removes `sos_requests.selection_expires_at` (and its partial index) outright. It
+held the customer's decision deadline, and the deadline itself was the mistake: it deleted
+professionals who had committed to come because the customer had not tapped within ten minutes. A
+request now ends only on selection, cancellation, or the state where nothing can happen at all —
+no acceptance and no offer still able to answer. `candidates_ready_at` (unchanged) still records
+when the customer could first choose, which is the fact worth keeping. See
+`backend/src/main/java/com/pronto/sos/README.md`.
 
 **Marketplace eligibility is not a column** (Production Roadmap MS1, governing decision D4).
 There is no `is_eligible`/`is_bookable` flag and there must not be one: such a flag would have
@@ -225,8 +273,23 @@ eligible(p) := p.approval_status = 'APPROVED'
            AND p.verification_document_key IS NOT NULL
            AND EXISTS an enabled professional_working_hours row for p
            AND EXISTS a professional_sub_services row for p whose sub_service
-                      belongs to p's own category_id
+                      belongs to ONE OF p's own categories
 ```
+
+**MS4** widened the last clause. It used to read `s.category_id = p.category_id`, singular;
+`professionals.category_id` no longer exists, so it is now a three-way existence test over
+`professional_sub_services × sub_services × professional_categories`. Unchanged in intent (the
+professional has proven at least one concrete thing they do, under a trade they actually claim)
+and unchanged in outcome for every single-category professional — which, after `V45`'s
+`X → [X]` backfill, is all of them.
+
+**Category matching is a separate predicate.** "Does this professional serve the category being
+asked about?" is `com.pronto.professionals.ProfessionalCategoryMatch.SERVES_CATEGORY_JPQL`, an
+`EXISTS` over `professional_categories`, concatenated into **both**
+`bookings.repository.ProfessionalListingRepository.listByCategory` and
+`sos.repository.SosCandidateRepository.findEligible`. Membership, not position: a professional
+serving `[Plumbing, Handyman]` matches a Handyman request exactly as well as a Plumbing one, and
+no category of theirs is privileged over another (there is no "primary" flag — see §2.20).
 
 Read by `bookings.repository.ProfessionalListingRepository`,
 `sos.repository.SosCandidateRepository` and `ProfessionalRepository#existsEligibleById`
@@ -721,6 +784,105 @@ already handles as "nothing to show" rather than an error.
 See `docs/architecture/ai-issue-classification-redesign.md` for the full design.
 
 ---
+
+### 2.20 `professional_categories` — *new table, 2026-08-24 (MS4 — multi-category professionals)*
+
+Replaces `professionals.category_id`. A professional may serve several trades — Plumbing **and**
+Handyman — which the single FK could not express.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `professional_id` | `BIGINT` | NO | — | **PK part.** FK → `professionals(id)` `ON DELETE CASCADE`. |
+| `category_id` | `BIGINT` | NO | — | **PK part.** FK → `categories(id)` `ON DELETE RESTRICT`. |
+| `created_at` | `TIMESTAMPTZ` | NO | `now()` | When this trade was added. Survives an edit that keeps the row — writes are diff-based, never delete-all-then-reinsert (`professionals.service.ProfessionalCoverageService`). |
+
+**Constraints**: `pk_professional_categories PRIMARY KEY (professional_id, category_id)`;
+the two FKs above. Modelled directly on `professional_sub_services` (§2.16) — same composite-key
+shape, same reasoning, because it is the same kind of thing: a pure many-to-many with no meaning
+beyond the relationship.
+
+**Indexes**: `idx_professional_categories_category ON (category_id)` — "which professionals serve
+category X", the direction the composite PK (ordered `professional_id` first) cannot serve, and
+the one both `ProfessionalListingRepository.listByCategory` and
+`SosCandidateRepository.findEligible` drive their hard category filter from.
+
+**Not a comma-separated column, and not carrying a `is_primary` flag.** The first for an obvious
+reason (`category_ids LIKE '%3%'` matches 13 and 30, and no index helps). The second because
+"primary category" is satisfied by ordering on `categories.display_order`, which every surface
+already has — a stored flag would be another thing to keep correct on every edit, and nothing in
+matching or SOS treats one of a professional's categories differently from another.
+
+**Migration.** `V45` inserts `SELECT p.id, p.category_id, p.created_at FROM professionals p` —
+every row, no `WHERE`, no invented default — and only then drops `professionals.category_id`.
+No professional loses their trade.
+
+### 2.21 `professional_service_cities` — *new table, 2026-08-24 (MS4)*
+
+The cities a professional is willing to travel to, as canonical ids rather than the free text
+`professionals.city` used to hold.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `professional_id` | `BIGINT` | NO | — | **PK part.** FK → `professionals(id)` `ON DELETE CASCADE`. |
+| `city_id` | `BIGINT` | NO | — | **PK part.** FK → `service_cities(id)` `ON DELETE RESTRICT`. |
+| `created_at` | `TIMESTAMPTZ` | NO | `now()` | Diff-based writes, as §2.20. |
+
+**Constraints**: `pk_professional_service_cities PRIMARY KEY (professional_id, city_id)` plus the
+two FKs.
+**Indexes**: `idx_professional_service_cities_city ON (city_id)` — "who serves this city", for a
+future city-scoped filter.
+
+**Distinct from `professionals.base_city_id`**, which is the one city the professional operates
+out of and the one `matching.ApproximateDistanceEtaStrategy` measures travel from. The base city
+is always a member of this set, enforced on every write path by
+`locations.service.ServiceCoverageValidator` — the strategy must not measure from a city they do
+not serve.
+
+**Migration.** `V44` seeds one row per professional who could be placed: the city they are based
+in, and only that one. Widening someone's advertised coverage without asking would be a claim the
+professional never made.
+
+### 2.22 `service_regions` — *new reference table, 2026-08-24 (MS4)*
+
+The closed list of Israeli service regions. Owned by `com.pronto.locations`; **only migrations
+write it**, exactly like `categories` (§2.1), which is what makes its `id` safe to store on
+`professionals.service_region_id`.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `BIGINT` (identity) | NO | — | PK |
+| `code` | `VARCHAR(50)` | NO | — | `UNIQUE` (`ux_service_regions_code`). Stable machine handle: `north`, `haifa`, `sharon`, `gush_dan`, `center`, `jerusalem`, `south`. |
+| `name_he` | `VARCHAR(100)` | NO | — | Display label (`צפון`, `גוש דן`, …). |
+| `name_en` | `VARCHAR(100)` | NO | — | English gloss, same convention as `categories`/`sub_services`. |
+| `display_order` | `SMALLINT` | NO | — | Product order for the region select. |
+| `created_at` | `TIMESTAMPTZ` | NO | `now()` | |
+
+Seeded with **7 regions** by `V43`.
+
+### 2.23 `service_cities` — *new reference table, 2026-08-24 (MS4)*
+
+The closed list of cities, each inside exactly one region.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `BIGINT` (identity) | NO | — | PK. Stored by `professionals.base_city_id` and `professional_service_cities.city_id`. |
+| `region_id` | `BIGINT` | NO | — | FK → `service_regions(id)` `ON DELETE RESTRICT`. **This column is the whole of the region→city filtering rule** — the cities offered for a region are the rows carrying its id. No region→city map exists anywhere in application or frontend code. |
+| `code` | `VARCHAR(60)` | NO | — | `UNIQUE` (`ux_service_cities_code`). |
+| `name_he` | `VARCHAR(100)` | NO | — | **`UNIQUE` (`ux_service_cities_name_he`).** This constraint is the point of the whole table: `'תל אביב'`, `'תל-אביב'` and `'Tel Aviv'` cannot become three rows, because there is exactly one row per city and everything downstream stores its id. |
+| `name_en` | `VARCHAR(100)` | NO | — | |
+| `display_order` | `SMALLINT` | NO | — | Order within the region. Also the order a professional's own city list renders in, everywhere it is shown. |
+| `created_at` | `TIMESTAMPTZ` | NO | `now()` | |
+
+**Indexes**: `idx_service_cities_region ON (region_id)`.
+
+Seeded with **96 cities** across the 7 regions by `V43`. Both tables are exposed together on the
+public `GET /api/service-areas`.
+
+**Customer addresses are deliberately not constrained to this list.** `users.default_*` and
+`orders.service_*` stay free text: a customer types where they live, which may be a town this
+service-area list does not name, while a professional declares which of a fixed set of places
+they will travel to. Forcing the first into this catalogue would reject real addresses.
+
 
 ## 3. Decisions requiring explicit sign-off before `pronto-coding` writes migrations
 

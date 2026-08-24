@@ -12,6 +12,7 @@ import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.entity.ProfessionalSubService;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.professionals.repository.ProfessionalSubServiceRepository;
+import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.repository.UserRepository;
@@ -58,15 +59,18 @@ public class ProfessionalApprovalService {
     private final ProfessionalSubServiceRepository professionalSubServiceRepository;
     private final UserRepository userRepository;
     private final StorageService storageService;
+    private final ProfessionalCoverageService professionalCoverageService;
 
     public ProfessionalApprovalService(ProfessionalRepository professionalRepository,
                                         ProfessionalSubServiceRepository professionalSubServiceRepository,
                                         UserRepository userRepository,
-                                        StorageService storageService) {
+                                        StorageService storageService,
+                                        ProfessionalCoverageService professionalCoverageService) {
         this.professionalRepository = professionalRepository;
         this.professionalSubServiceRepository = professionalSubServiceRepository;
         this.userRepository = userRepository;
         this.storageService = storageService;
+        this.professionalCoverageService = professionalCoverageService;
     }
 
     /**
@@ -100,9 +104,12 @@ public class ProfessionalApprovalService {
                 .map(ProfessionalSubService::getSubServiceId)
                 .toList();
 
+        ProfessionalCoverageService.CoverageView coverage = professionalCoverageService.load(professional);
+
         return new ProfessionalReviewDetailResponse(professional.getId(), professional.getUserId(),
-                user.getFullName(), user.getEmail(), professional.getCategoryId(), professional.getServiceArea(),
-                professional.getCity(), professional.getBio(), professional.getBasePrice(),
+                user.getFullName(), user.getEmail(), coverage.categoryIds(), coverage.serviceRegionNameHe(),
+                coverage.baseCityNameHe(), coverage.serviceCityNamesHe(),
+                professional.getBio(), professional.getBasePrice(),
                 professional.getApprovalStatus(), professionalRepository.existsEligibleById(professionalId),
                 professional.getVerificationDocumentKey() != null, subServiceIds,
                 professionalRepository.hasCompleteOnboarding(professionalId), professional.getCreatedAt(),
@@ -196,9 +203,10 @@ public class ProfessionalApprovalService {
 
     private ProfessionalApprovalSummary toSummary(Professional professional) {
         User user = userRepository.findById(professional.getUserId()).orElse(null);
+        ProfessionalCoverageService.CoverageView coverage = professionalCoverageService.load(professional);
         return new ProfessionalApprovalSummary(professional.getId(), professional.getUserId(),
                 user == null ? null : user.getFullName(), user == null ? null : user.getEmail(),
-                professional.getCategoryId(), professional.getServiceArea(), professional.getCity(),
+                coverage.categoryIds(), coverage.serviceRegionNameHe(), coverage.baseCityNameHe(),
                 professional.getApprovalStatus(),
                 professionalRepository.hasCompleteOnboarding(professional.getId()),
                 professional.getCreatedAt(), professional.getApprovalReviewedAt());

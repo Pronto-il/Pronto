@@ -120,7 +120,7 @@ export function SosProfessionalSheet({
   }
 
   const name = candidate.fullName ?? 'בעל מקצוע';
-  const area = profile?.serviceArea ?? candidate.serviceArea ?? candidate.city;
+  const area = profile?.serviceRegionNameHe ?? candidate.serviceRegion ?? candidate.city;
 
   return (
     <Modal
@@ -152,6 +152,7 @@ export function SosProfessionalSheet({
             fullName={candidate.fullName}
             imageClassName={styles.avatar}
             fallbackClassName={styles.avatarFallback}
+            enlargeable
           />
           <div className={styles.identityText}>
             <h3 className={styles.name}>{name}</h3>

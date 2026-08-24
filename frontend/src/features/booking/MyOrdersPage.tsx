@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ChevronLeft } from 'lucide-react';
 import { StatusBadge, Button, EmptyState, Skeleton } from '../../shared/components';
 import { ProfessionalProfileModal } from '../professionals';
-import { useEtaCountdown } from '../../shared/hooks';
-import { getMyOrders, GENERIC_ERROR_MESSAGE } from '../../shared/api';
-import type { OrderSummary, OrderStatus } from '../../shared/api';
+import { useEtaCountdown, usePolling } from '../../shared/hooks';
+import { getMyOrders, GENERIC_ERROR_MESSAGE, MY_ORDERS_KEY } from '../../shared/api';
+import type { MyOrdersResponse, OrderSummary, OrderStatus } from '../../shared/api';
 import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
 import styles from './MyOrdersPage.module.css';
 
@@ -150,28 +150,26 @@ function OrderRow({
  */
 export default function MyOrdersPage() {
   const navigate = useNavigate();
-  const [orders, setOrders] = useState<OrderSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   /** The professional whose profile is open in the in-page modal, if any. */
   const [openProfessionalId, setOpenProfessionalId] = useState<number | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    getMyOrders()
-      .then((result) => {
-        if (!cancelled) {
-          setOrders(result.orders);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setError(GENERIC_ERROR_MESSAGE);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // Reads the same `GET /api/bookings/orders/me` entry `ActiveOrderProvider` already keeps warm
+  // for this session, so arriving here usually costs no request at all — and never costs a
+  // second one alongside the provider's. `enabled: false` because the provider owns the cadence;
+  // this screen only needs the current answer when it opens.
+  //
+  // `maxStaleOnMountMs` is what keeps that from becoming a stale-state regression: the provider
+  // drops to a 60s cadence when nothing is live, and a list of the customer's own orders should
+  // not be a minute old the moment they open it. Fresher than 15s renders from cache; older than
+  // that costs exactly the one request this screen used to make unconditionally.
+  const { data, error: loadError } = usePolling<MyOrdersResponse>(() => getMyOrders(), {
+    key: MY_ORDERS_KEY,
+    enabled: false,
+    fetchOnMountWhenDisabled: true,
+    maxStaleOnMountMs: 15_000,
+  });
+  const orders = data?.orders ?? null;
+  const error = loadError ? GENERIC_ERROR_MESSAGE : null;
 
   const sections = useMemo(() => bucketOrders(orders ?? []), [orders]);
 

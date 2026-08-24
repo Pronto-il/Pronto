@@ -1,7 +1,12 @@
-import { Input } from './Input';
+import { useState } from 'react';
+import { Button } from './Button';
+import { TimeField } from './TimeField';
 import { WEEKDAY_LABELS_HE } from './weeklyHoursTypes';
 import type { WeeklyHoursRow } from './weeklyHoursTypes';
 import styles from './WeeklyHoursFields.module.css';
+
+/** Seed for the apply-to-all pair, matching `WorkingHoursForm`'s own `UNCONFIGURED_TIMES`. */
+const APPLY_ALL_DEFAULTS = { startTime: '08:00', endTime: '17:00' };
 
 export interface WeeklyHoursFieldsProps {
   /** Always 7 rows, weekday 0-6 — build them with `buildWeeklyHoursRows()`. */
@@ -9,6 +14,9 @@ export interface WeeklyHoursFieldsProps {
   onChange: (rows: WeeklyHoursRow[]) => void;
   /** Per-weekday error message, keyed by `weekday` — from `validateWeeklyHoursRows()`. */
   errors?: Record<number, string>;
+  /** Renders the "החל על הכל" bulk-set row above the weekdays. Off by default so registration
+   *  keeps its current, deliberately blank-slate week (see `BuildWeeklyHoursRowsOptions`). */
+  showApplyToAll?: boolean;
 }
 
 /**
@@ -26,14 +34,98 @@ export interface WeeklyHoursFieldsProps {
  * Overnight ranges are deliberately not expressible: `ck_professional_working_hours_times`
  * requires `end_time > start_time`, so a UI implying 22:00→02:00 would be offering something
  * the database refuses.
+ *
+ * Times are entered through `TimeField` (24-hour `HH:mm`, two selects) rather than
+ * `<input type="time">`, whose AM/PM segment on a non-Israeli browser locale was the actual
+ * source of 12-hour entry in this app — see that component's doc.
+ *
+ * `showApplyToAll` adds a "החל על הכל" row above the week: one start/end pair pushed onto every
+ * relevant day at once, after which each day stays independently editable (this only writes
+ * the rows' values; it changes nothing else about how the week is edited or saved).
  */
-export function WeeklyHoursFields({ rows, onChange, errors }: WeeklyHoursFieldsProps) {
+export function WeeklyHoursFields({ rows, onChange, errors, showApplyToAll = false }: WeeklyHoursFieldsProps) {
+  const [bulkStart, setBulkStart] = useState(APPLY_ALL_DEFAULTS.startTime);
+  const [bulkEnd, setBulkEnd] = useState(APPLY_ALL_DEFAULTS.endTime);
+  const [bulkError, setBulkError] = useState<string | undefined>();
+  const [appliedCount, setAppliedCount] = useState<number | null>(null);
+
   function updateRow(weekday: number, patch: Partial<WeeklyHoursRow>) {
+    setAppliedCount(null);
     onChange(rows.map((row) => (row.weekday === weekday ? { ...row, ...patch } : row)));
+  }
+
+  /**
+   * "Relevant working days" = the days that are currently on. A professional who has already
+   * said "I don't work Saturday" must not have Saturday switched on by a bulk time change.
+   * The one exception is a week with nothing on at all (a not-yet-configured professional):
+   * there, applying to zero days would make the button look broken, so it enables the whole
+   * week — which the professional can then switch days off from, one by one.
+   */
+  function handleApplyToAll() {
+    if (!bulkStart || !bulkEnd) {
+      setBulkError('יש לבחור שעת התחלה ושעת סיום.');
+      return;
+    }
+    if (bulkEnd <= bulkStart) {
+      setBulkError('שעת הסיום צריכה להיות אחרי שעת ההתחלה.');
+      return;
+    }
+    setBulkError(undefined);
+
+    const anyEnabled = rows.some((row) => row.enabled);
+    const next = rows.map((row) =>
+      anyEnabled && !row.enabled
+        ? row
+        : { ...row, enabled: true, startTime: bulkStart, endTime: bulkEnd },
+    );
+    setAppliedCount(next.filter((row) => row.enabled).length);
+    onChange(next);
   }
 
   return (
     <div className={styles.rows}>
+      {showApplyToAll && (
+        <div className={styles.applyAll}>
+          <p className={styles.applyAllTitle}>שעות קבועות לכל הימים</p>
+          <div className={styles.applyAllControls}>
+            <TimeField
+              label="משעה"
+              value={bulkStart}
+              onChange={(value) => {
+                setBulkStart(value);
+                setAppliedCount(null);
+              }}
+              className={styles.applyAllField}
+            />
+            <TimeField
+              label="עד שעה"
+              value={bulkEnd}
+              onChange={(value) => {
+                setBulkEnd(value);
+                setAppliedCount(null);
+              }}
+              className={styles.applyAllField}
+            />
+            <Button type="button" variant="secondary" onClick={handleApplyToAll} className={styles.applyAllButton}>
+              החל על הכל
+            </Button>
+          </div>
+          {bulkError ? (
+            <p className={styles.applyAllError} role="alert">
+              {bulkError}
+            </p>
+          ) : appliedCount !== null ? (
+            <p className={styles.applyAllNotice} role="status">
+              השעות הוחלו על {appliedCount} ימים. אפשר לשנות כל יום בנפרד למטה.
+            </p>
+          ) : (
+            <p className={styles.applyAllHint}>
+              קובעים שעות פעם אחת ומחילים על ימי העבודה. אפשר לערוך כל יום בנפרד אחר כך.
+            </p>
+          )}
+        </div>
+      )}
+
       {rows.map((row) => {
         const rowError = errors?.[row.weekday];
         return (
@@ -54,18 +146,16 @@ export function WeeklyHoursFields({ rows, onChange, errors }: WeeklyHoursFieldsP
 
             {row.enabled ? (
               <div className={styles.timesCell}>
-                <Input
+                <TimeField
                   label="משעה"
-                  type="time"
                   value={row.startTime}
-                  onChange={(event) => updateRow(row.weekday, { startTime: event.target.value })}
+                  onChange={(value) => updateRow(row.weekday, { startTime: value })}
                   error={rowError && !row.startTime ? rowError : undefined}
                 />
-                <Input
+                <TimeField
                   label="עד שעה"
-                  type="time"
                   value={row.endTime}
-                  onChange={(event) => updateRow(row.weekday, { endTime: event.target.value })}
+                  onChange={(value) => updateRow(row.weekday, { endTime: value })}
                   error={rowError && row.startTime ? rowError : undefined}
                 />
               </div>

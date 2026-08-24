@@ -54,6 +54,7 @@ public class ProfessionalsService {
     private final StorageService storageService;
     private final SubServiceSelectionValidator subServiceSelectionValidator;
     private final ProfessionalSubServiceRepository professionalSubServiceRepository;
+    private final ProfessionalCoverageService professionalCoverageService;
 
     public ProfessionalsService(ProfessionalRepository professionalRepository,
                                  UserRepository userRepository,
@@ -61,7 +62,8 @@ public class ProfessionalsService {
                                  FavoriteRepository favoriteRepository,
                                  StorageService storageService,
                                  SubServiceSelectionValidator subServiceSelectionValidator,
-                                 ProfessionalSubServiceRepository professionalSubServiceRepository) {
+                                 ProfessionalSubServiceRepository professionalSubServiceRepository,
+                                 ProfessionalCoverageService professionalCoverageService) {
         this.professionalRepository = professionalRepository;
         this.userRepository = userRepository;
         this.reviewAggregateRepository = reviewAggregateRepository;
@@ -69,6 +71,7 @@ public class ProfessionalsService {
         this.storageService = storageService;
         this.subServiceSelectionValidator = subServiceSelectionValidator;
         this.professionalSubServiceRepository = professionalSubServiceRepository;
+        this.professionalCoverageService = professionalCoverageService;
     }
 
     /** PROFESSIONAL only. {@code favorited} is always {@code null} on this self-view. */
@@ -96,8 +99,15 @@ public class ProfessionalsService {
         user.setFullName(request.fullName());
         userRepository.save(user);
 
-        professional.setServiceArea(request.serviceArea());
-        professional.setCity(request.city());
+        // MS4 §18: coverage and categories are editable here, not only at registration, and both
+        // go through the same validators registration uses -- an unknown city, a city outside the
+        // chosen region, a base city the professional does not serve, or an unknown category is a
+        // 400 naming the field, never a constraint violation. `fieldPrefix` is "" because this
+        // request body is flat, unlike registration's nested `professional` object.
+        professionalCoverageService.replaceCoverage(professional, request.serviceRegionId(),
+                request.serviceCityIds(), request.baseCityId(), "");
+        professionalCoverageService.replaceCategories(professional.getId(), request.categoryIds(), "categoryIds");
+
         professional.setBio(request.bio());
         professional.setBasePrice(request.basePrice());
         professional = professionalRepository.save(professional);
@@ -181,7 +191,9 @@ public class ProfessionalsService {
 
         // MS1: the existence/cross-category rule moved verbatim into SubServiceSelectionValidator
         // so registration enforces the identical one. Behavior and both error codes unchanged.
-        subServiceSelectionValidator.validate(professional.getCategoryId(), requestedIds, "subServiceIds");
+        // MS4: "the caller's category" is now "any of the caller's categories".
+        subServiceSelectionValidator.validate(professionalCoverageService.categoryIds(professional.getId()),
+                requestedIds, "subServiceIds");
 
         Set<Long> existingIds = professionalSubServiceRepository.findByProfessionalId(professional.getId())
                 .stream()
@@ -236,8 +248,12 @@ public class ProfessionalsService {
         String approvalStatus = selfView ? professional.getApprovalStatus() : null;
         boolean bookable = professionalRepository.existsEligibleById(professional.getId());
 
-        return new ProfessionalProfileResponse(professional.getId(), professional.getCategoryId(),
-                user.getFullName(), professional.getServiceArea(), professional.getCity(), professional.getBio(),
+        ProfessionalCoverageService.CoverageView coverage = professionalCoverageService.load(professional);
+
+        return new ProfessionalProfileResponse(professional.getId(), coverage.categoryIds(),
+                user.getFullName(), coverage.serviceRegionId(), coverage.serviceRegionNameHe(),
+                coverage.baseCityId(), coverage.baseCityNameHe(), coverage.serviceCityIds(),
+                coverage.serviceCityNamesHe(), professional.getBio(),
                 professional.getBasePrice(), profileImageUrl, averageRating, reviewCount,
                 approvalStatus, bookable, favorited, professional.getCreatedAt(), professional.getUpdatedAt());
     }

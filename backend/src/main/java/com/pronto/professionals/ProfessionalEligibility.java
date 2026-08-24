@@ -13,8 +13,16 @@ package com.pronto.professionals;
  *               AND p.verification_document_key IS NOT NULL
  *               AND EXISTS an enabled professional_working_hours row
  *               AND EXISTS a professional_sub_services row whose sub_service
- *                          belongs to p's own category
+ *                          belongs to one of p's own categories
  * </pre>
+ *
+ * <p><b>MS4:</b> the last clause used to read "p's own category", singular, against
+ * {@code professionals.category_id}. That column is gone — a professional now holds a set of
+ * categories in {@code professional_categories} — so the clause is now a three-way existence
+ * test over {@code professional_sub_services × sub_services × professional_categories}. The
+ * rule is unchanged in intent (the professional has proven at least one concrete thing they
+ * do, under a trade they actually claim) and unchanged in outcome for every single-category
+ * professional, which after {@code V45}'s {@code X -> [X]} backfill is all of them.
  *
  * <h2>Alias contract</h2>
  *
@@ -87,8 +95,10 @@ public final class ProfessionalEligibility {
             + "AND EXISTS (SELECT 1 FROM com.pronto.availability.entity.ProfessionalWorkingHours wh "
             + "WHERE wh.professionalId = p.id AND wh.enabled = true) "
             + "AND EXISTS (SELECT 1 FROM com.pronto.professionals.entity.ProfessionalSubService ps, "
-            + "com.pronto.professionals.entity.SubService s "
-            + "WHERE s.id = ps.subServiceId AND ps.professionalId = p.id AND s.categoryId = p.categoryId)";
+            + "com.pronto.professionals.entity.SubService s, "
+            + "com.pronto.professionals.entity.ProfessionalCategory pcOnboarding "
+            + "WHERE s.id = ps.subServiceId AND ps.professionalId = p.id "
+            + "AND pcOnboarding.professionalId = p.id AND pcOnboarding.categoryId = s.categoryId)";
 
     /**
      * The eligibility conjunction — approval <b>and</b> {@link #ONBOARDING_COMPLETE_JPQL} — for an

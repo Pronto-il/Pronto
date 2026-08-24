@@ -2,6 +2,7 @@ package com.pronto.professionals.dto;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 
 /**
  * Response body for {@code GET /api/professionals/me} (self view) and
@@ -24,13 +25,30 @@ import java.time.Instant;
  *                       UI to withhold a booking affordance it would otherwise offer into a dead
  *                       end, and it reveals nothing about which of the several possible reasons
  *                       applies.
+ * @param categoryIds    <b>MS4</b>, replacing the single {@code categoryId}: every category this
+ *                       professional serves, in {@code categories.display_order}. The first entry
+ *                       is what compact surfaces show as the primary trade — an ordering
+ *                       convention, not a stored flag (see
+ *                       {@link com.pronto.professionals.entity.ProfessionalCategory}).
+ * @param serviceRegionId <b>MS4</b>, replacing free-text {@code serviceArea}: a canonical
+ *                       {@code service_regions} id, with {@code serviceRegionNameHe} alongside so
+ *                       a client can render it without a second lookup. Both {@code null} for a
+ *                       pre-MS4 professional {@code V44} could not place — the profile editor
+ *                       then asks them to choose, which is the honest outcome.
+ * @param serviceCityIds <b>MS4</b>: the canonical cities they serve, in catalogue order, with
+ *                       {@code serviceCityNamesHe} alongside. {@code baseCityId} is always one of
+ *                       them, and is the city ETA is measured from.
  */
 public record ProfessionalProfileResponse(
         Long id,
-        Long categoryId,
+        List<Long> categoryIds,
         String fullName,
-        String serviceArea,
+        Long serviceRegionId,
+        String serviceRegionNameHe,
+        Long baseCityId,
         String city,
+        List<Long> serviceCityIds,
+        List<String> serviceCityNamesHe,
         String bio,
         BigDecimal basePrice,
         String profileImageUrl,

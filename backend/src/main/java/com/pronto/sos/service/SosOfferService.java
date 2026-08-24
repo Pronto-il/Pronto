@@ -1,6 +1,7 @@
 package com.pronto.sos.service;
 
 import com.pronto.bookings.repository.OrderRepository;
+import com.pronto.common.dto.FieldError;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.issues.repository.IssueRepository;
@@ -131,21 +132,35 @@ public class SosOfferService {
     /**
      * {@code POST /api/sos/offers/{id}/accept}.
      *
+     * <p><b>An ETA is required</b> (MS3): accepting is a commitment to arrive within a stated
+     * time, and the customer chooses on that number, so there is no such thing here as saying
+     * "yes" without saying "when". It used to be optional, falling back to the platform's own
+     * dispatch-time estimate — which meant a candidate could be shown to a customer advertising
+     * a figure no human had agreed to.
+     *
      * <p>Expiry is enforced <b>in the guarded update</b> ({@code expiresAt > :now}), not by the
      * pre-check below — the pre-check exists only to produce a specific error message. That
      * ordering matters: an offer that expires in the microseconds between a read and a write
      * must be rejected by the database, not slip through because application code checked the
-     * clock a moment too early.
+     * clock a moment too early. Because that deadline lives on the offer row, it is genuinely
+     * per professional: somebody first contacted in the last minute of the scan can still accept
+     * long after the platform stopped looking for anybody new.
      *
-     * <p><b>The first acceptance opens the customer's selection window immediately</b>, rather
-     * than waiting for a quota or for the response timer. That is the product rule the whole
-     * screen turns on: somebody with an active leak and one real option in hand should be able to
-     * take it. The search does not stop when the window opens — this method still accepts
-     * responses in {@code WAITING_FOR_CUSTOMER_SELECTION}, so later professionals keep appearing
-     * alongside the first while the customer decides.
+     * <p><b>Acceptance is what makes a professional visible to the customer</b>, and it happens
+     * in one transaction: the offer becomes {@code ACCEPTED} with its promised ETA, and the
+     * customer's selection window opens on the very first one. So a candidate never appears
+     * without an ETA beside them, and never has to wait for the scan to finish to appear at all.
+     * The search does not stop when the window opens — this method still accepts responses in
+     * {@code WAITING_FOR_CUSTOMER_SELECTION}, so later professionals keep appearing alongside
+     * the first while the customer decides.
      */
     @Transactional
     public SosOfferResponse accept(Long callerId, Long offerId, Integer estimatedArrivalMinutes) {
+        if (estimatedArrivalMinutes == null) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR,
+                    "An estimated arrival time is required when accepting an SOS offer.",
+                    List.of(new FieldError("estimatedArrivalMinutes", "is required")));
+        }
         SosOffer offer = loadOffer(offerId);
         Long professionalId = resolveProfessionalId(callerId);
         authorizeOfferRecipient(offer, professionalId);
@@ -166,9 +181,7 @@ public class SosOfferService {
         }
 
         Instant now = Instant.now();
-        Short eta = estimatedArrivalMinutes == null
-                ? offer.getEstimatedArrivalMinutes()
-                : estimatedArrivalMinutes.shortValue();
+        Short eta = estimatedArrivalMinutes.shortValue();
 
         int accepted = sosOfferRepository.accept(offerId, eta, now);
         if (accepted == 0) {
@@ -221,37 +234,38 @@ public class SosOfferService {
     }
 
     /**
-     * {@code POST /api/sos/offers/{id}/eta} — revise a committed ETA. Allowed while
-     * {@code ACCEPTED} or {@code SELECTED}: traffic changes, and a customer watching a stale ETA
-     * is worse than one watching a revised one.
+     * {@code POST /api/sos/offers/{id}/eta} — <b>always refused (MS3).</b>
      *
-     * <p>Records {@link SosEventType#ETA_UPDATED}, <b>not</b> {@code PROFESSIONAL_RESPONDED}. The
-     * two are different events and were previously conflated: with only the offer's current status
-     * to go on, the realtime publisher could not tell a revision on an {@code ACCEPTED} offer from
-     * a fresh acceptance, so it told the customer "another professional is available" every time
-     * somebody edited a number. Naming the event for what happened is what lets the publisher say
-     * the true thing to both audiences — see {@code SosRealtimePublisher#publishEtaUpdated}.
+     * <p>An ETA used to be revisable while {@code ACCEPTED} or {@code SELECTED}, on the reasoning
+     * that traffic changes and a stale figure serves nobody. The reasoning that beats it: the
+     * customer picks a professional <em>because of</em> that number, so a revisable ETA lets
+     * somebody win the job with a promise of fifteen minutes and change it to fifty once they
+     * have. That is not a stale-data problem, it is an incentive problem, and hiding the control
+     * in the professional's app would not fix it — anyone can call the endpoint.
+     *
+     * <p>So the refusal lives here, and the write path is gone from
+     * {@code SosOfferRepository} entirely: <b>no statement in this package can change an ETA
+     * after acceptance</b>, which is a stronger guarantee than a check somebody has to remember.
+     * {@code sos_offers.promised_eta_minutes}/{@code accepted_at} ({@code V41}) keep the original
+     * commitment on the record independently.
+     *
+     * <p>The route is kept rather than deleted so that a client still holding the old build gets
+     * {@code 409 SOS_ETA_LOCKED} — an explanation — instead of a {@code 404} it cannot interpret.
+     * A professional who genuinely cannot make it still has an honest action: cancel the job,
+     * which the customer sees and can act on, rather than quietly moving the goalposts.
      */
-    @Transactional
+    @Transactional(readOnly = true)
     public SosOfferResponse updateEta(Long callerId, Long offerId, Integer estimatedArrivalMinutes) {
         SosOffer offer = loadOffer(offerId);
         Long professionalId = resolveProfessionalId(callerId);
+        // Authorized first, deliberately: "you may not touch someone else's offer" outranks "no
+        // one may do this at all", and a 403 must not be leaked as a 409.
         authorizeOfferRecipient(offer, professionalId);
 
-        int updated = sosOfferRepository.updateEta(offerId, estimatedArrivalMinutes.shortValue(), Instant.now());
-        if (updated == 0) {
-            throw new ApiException(ErrorCode.SOS_OFFER_NOT_OPEN,
-                    "Offer " + offerId + " is " + offer.getStatus() + "; its ETA can no longer be changed.");
-        }
-
-        SosRequest request = sosService.loadRequest(offer.getSosRequestId());
-        sosEventService.recordProfessional(request.getId(), callerId, professionalId, offerId,
-                SosEventType.ETA_UPDATED, request.getStatus(), null,
-                "ETA updated to " + estimatedArrivalMinutes + " min");
-
-        log.info("sos.offer.eta-updated sosRequestId={} offerId={} professionalId={} etaMinutes={}",
-                request.getId(), offerId, professionalId, estimatedArrivalMinutes);
-        return assembler.toOfferResponse(loadOffer(offerId), request);
+        log.info("sos.offer.eta-change-refused sosRequestId={} offerId={} professionalId={} attemptedEta={}",
+                offer.getSosRequestId(), offerId, professionalId, estimatedArrivalMinutes);
+        throw new ApiException(ErrorCode.SOS_ETA_LOCKED,
+                "The arrival time committed when offer " + offerId + " was accepted cannot be changed.");
     }
 
     // ------------------------------------------------------------------

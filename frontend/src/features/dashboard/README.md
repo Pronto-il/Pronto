@@ -855,3 +855,81 @@ after the change: 32 px of top spacing, 0 px horizontal overflow at 1440 px and 
 sidebar still resolving to the physical right of its content.
 
 Validated live (MS1 report, Validations 54-56), including a screenshot review at both widths.
+
+## Professional requests, profile reviews & availability UX (2026-08-23)
+
+Five changes to this feature, all inside existing screens — no new route, no nav item, no change
+to any backend business rule.
+
+**1. "בקשות חדשות" opens a request inline.** `IncomingRequestCard`'s body is now a
+`role="button"` region (`onOpenDetails`; the אישור/דחייה buttons sit outside it and keep their
+own click targets) that opens `RequestDetailsModal` over the feed. `IncomingRequestsPage` stays
+mounted and keeps polling behind it, so the professional never loses their place — this is
+deliberately *not* a navigation to `/orders/{id}`.
+
+`RequestDetailsModal` renders `features/booking`'s `OrderDetailsCard` — the same card the
+tracking screen reachable from a notification renders — plus `ProntoAnalysisCard` for the brief.
+It fetches `GET /api/bookings/orders/{orderId}` once per opening (the feed's `OrderSummary` has
+no address/customer/phone; the full `OrderDetailResponse` does) and passes the feed's
+already-loaded issue straight through, so no issue is fetched twice. אישור/דחייה inside it call
+`IncomingRequestsPage`'s existing handlers, i.e. the same `POST .../accept` and `.../reject`
+endpoints with the same rules; a decision closes the modal, since that order has just left the
+pending feed.
+
+**2. The review count on `/pro/profile` opens the reviews inline.** `ProfessionalProfileDisplay`
+gained an optional `onReviewsClick`; when a caller passes it (only `ProfileEditorPage` does), the
+rating row's count and the stats strip's ביקורות tile become buttons that open
+`features/professionals`' `ProfessionalReviewsModal` (existing `GET /api/reviews`, existing
+`ReviewList`). The public profile page passes nothing and is unchanged — it already lists reviews
+on the page.
+
+**3. "עריכת שעות עבודה" → "שעות פעילות קבועות"** on `WeeklyAvailabilityPage` (button and modal
+title). The hours are the professional's standing weekly schedule, not a one-off edit.
+
+**4. "החל על הכל".** `WorkingHoursForm` passes `showApplyToAll` to the shared
+`WeeklyHoursFields`, which renders one start/end pair above the week. Applying it writes those
+hours onto every day that is currently on (a week with nothing on yet gets all seven enabled —
+otherwise the button would visibly do nothing). Every day stays independently editable
+afterwards; this only sets row values and changes nothing about validation or saving.
+
+**5. The availability block editor (`CalendarBlockModal`) was rebuilt.** Two stacked groups —
+"מתאריך ושעה" above "עד תאריך ושעה" — each a date field plus a 24-hour `TimeField`, replacing two
+side-by-side `datetime-local` inputs (which render an AM/PM segment on a non-Israeli browser
+locale and were ~130px wide each inside a mobile sheet). A summary line spells the chosen range
+back out in Hebrew, including its day count.
+
+Multi-day ranges are a first-class case. The backend always stored them
+(`professional_availability_blocks` is a plain `[start_at, end_at)` range) and the calendar
+already derived them per day — what did not work was *editing* one: the calendar's `BLOCKED`
+segments are clipped to each day's working hours, so a modal seeded from the clicked segment
+would `PATCH` a multi-day block down to that single day. Edit mode now loads the block's real
+range from `GET /api/availability/blocks/{blockId}` (added for this) before the professional
+touches anything.
+
+## MS4 (2026-08-24) — `ProfileEditorPage` owns coverage and categories
+
+MS4 §18 requires that everything registration collects be correctable later. `PUT
+/api/professionals/me` accordingly gained `serviceRegionId`, `serviceCityIds`, `baseCityId` and
+`categoryIds`, and this page gained the controls for them — the same `MultiSelectField`/`Select`
+components, the same `citiesForRegion()` filter, as the registration wizard.
+
+Two behaviours specific to editing *saved* data:
+
+- **Changing the region warns before dropping cities.** A cross-region city cannot be submitted
+  (the backend refuses it), so the ones belonging to the old region are removed from the
+  selection — but they are *named* in a notice, not vanished, and nothing is persisted until the
+  professional presses save, so switching the region back restores them. Registration has no
+  equivalent notice because it has nothing saved to lose.
+- **The base-city `Select` is scoped to the cities currently selected.** Removing a city that
+  happens to be the base city re-points it rather than leaving a base city the professional no
+  longer serves — which the backend would refuse on save.
+
+The read-only "תחום שירות" chip beside the photo is **gone**: it existed because a professional
+could not change their single category at all, and that restriction is exactly what MS4 lifts.
+The sub-service checklist is now grouped by category and scoped to the *currently selected*
+categories, so unticking a category removes its group immediately.
+
+The live preview column reflects the unsaved selection — region, cities and categories are
+resolved from the catalogue against form state, for the same reason the rest of that object
+already was.
+

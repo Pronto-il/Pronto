@@ -6,7 +6,7 @@ import { Card, Button, Input, AddressFormFields, EMPTY_ADDRESS, ProfilePhoto } f
 import type { AddressValue } from '../shared/components';
 import { useAuth } from '../shared/hooks';
 import {
-  getCategoryNameHe,
+  getCategoryNamesHe,
   deleteMe,
   updateMe,
   GENERIC_ERROR_MESSAGE,
@@ -249,12 +249,14 @@ export default function ProfilePage() {
             {user.professional && (
               <>
                 <div className={styles.row}>
-                  <dt>תחום שירות</dt>
-                  <dd>{getCategoryNameHe(user.professional.categoryId)}</dd>
+                  <dt>תחומי שירות</dt>
+                  {/* MS4: several trades are possible now; this read-only page has room to
+                      name them all rather than showing a primary and hiding the rest. */}
+                  <dd>{getCategoryNamesHe(user.professional.categoryIds).join(' · ') || 'לא הוגדר'}</dd>
                 </div>
                 <div className={styles.row}>
                   <dt>אזור שירות</dt>
-                  <dd>{user.professional.serviceArea}</dd>
+                  <dd>{user.professional.serviceRegion ?? 'לא הוגדר'}</dd>
                 </div>
                 <div className={styles.row}>
                   <dt>מחיר ביקור בסיסי</dt>

@@ -26,8 +26,9 @@ import org.springframework.web.bind.annotation.RestController;
  * Split from {@code SosCustomerController} by actor rather than by URL prefix so each
  * controller has exactly one authorization story — see that class's Javadoc.
  *
- * <p>{@code accept} takes an optional body ({@code required = false}): a professional tapping
- * "accept" without revising the ETA should not have to send {@code {}}.
+ * <p>{@code accept} takes a <b>required</b> body carrying the professional's ETA (MS3). It was
+ * optional while the platform's own estimate could stand in for one; it cannot any more, because
+ * the customer chooses on that number and it is locked the moment it is accepted.
  */
 @RestController
 @RequestMapping("/api/sos")
@@ -61,6 +62,9 @@ public class SosProfessionalController {
             @PathVariable("offerId") String offerIdRaw,
             @Valid @RequestBody(required = false) AcceptSosOfferRequest request) {
         Long offerId = SosCustomerController.parsePathId(offerIdRaw);
+        // `required = false` is kept so a body-less POST from an old client reaches the service
+        // and comes back as a field-level VALIDATION_ERROR naming `estimatedArrivalMinutes`,
+        // rather than as Spring's generic "required request body is missing".
         Integer eta = request == null ? null : request.estimatedArrivalMinutes();
         return ResponseEntity.ok(sosOfferService.accept(principal.id(), offerId, eta));
     }

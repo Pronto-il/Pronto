@@ -717,3 +717,33 @@ Also removed here: the `ההזמנות שלי` `PageHeader`. It repeated, word f
 link that opens this screen — present in the desktop nav and in `BottomNav`, both of which already
 mark it `aria-current="page"`. The two section headings carry the structure this screen needs. The
 history empty-state copy no longer promises that expired orders will appear.
+
+## `OrderDetailsCard` extracted from `OrderTrackingPage` (2026-08-23)
+
+The order-details card (counterparty + order id + status, the issue and its photos, date/time,
+service address, the professional-only customer-phone row, the total) moved out of
+`OrderTrackingPage`'s inline JSX into `OrderDetailsCard.tsx`. Markup, class names and every
+role-scoped condition are unchanged, and it still styles itself from
+`OrderTrackingPage.module.css` — the same "co-locate on the one consumer's stylesheet"
+precedent `features/professionals`' `ReviewList` follows.
+
+It was extracted because the professional dashboard's new inline request-details view
+(`features/dashboard/RequestDetailsModal`) has to show the same order details this screen shows;
+the alternative was a second rendition of `OrderDetailResponse` that would drift. `ProntoAnalysisCard`
+is exported from this feature's barrel for the same reason. `OrderTrackingPage`'s own behavior —
+hero, stepper, ETA countdown, status actions, cancel confirmation, back-path handling — is
+untouched.
+
+## The professional is clickable on the order screen (2026-08-24)
+
+`OrderTrackingPage` opens `features/professionals`' `ProfessionalProfileModal` — the same
+component `/orders` opens from its list rows — from two places on the customer's view: the
+`ProfessionalSummaryCard` in `OrderStatusHero` (via its new `onOpen`), and the professional's name
+on `OrderDetailsCard`, which renders as a button when `onOpenProfessional` is supplied.
+
+Both are in-place: no navigation, the status hero, the progress stepper and the status polling all
+stay exactly where they were. The professional's own view of the same screen passes neither
+handler — the name there is their customer's, and there is no professional profile to open.
+
+Nothing new is fetched to make this work: `professionalId` is already on `OrderDetailResponse`,
+and the modal does its own lazy load the first time it is opened.

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { StatusBadge, EmptyState } from '../../shared/components';
-import { getMyOrders, GENERIC_ERROR_MESSAGE } from '../../shared/api';
-import type { OrderSummary, OrderStatus } from '../../shared/api';
+import { usePolling } from '../../shared/hooks';
+import { getMyOrders, GENERIC_ERROR_MESSAGE, MY_ORDERS_KEY } from '../../shared/api';
+import type { MyOrdersResponse, OrderSummary, OrderStatus } from '../../shared/api';
 import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
 import styles from './MyJobsPage.module.css';
 
@@ -111,26 +112,18 @@ function OrderRow({ order }: { order: OrderSummary }) {
  * link-only rows, and no-inline-actions behavior are all otherwise unchanged.
  */
 export default function MyJobsPage() {
-  const [orders, setOrders] = useState<OrderSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    getMyOrders()
-      .then((result) => {
-        if (!cancelled) {
-          setOrders(result.orders);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setError(GENERIC_ERROR_MESSAGE);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // One-shot read of the shared `GET /api/bookings/orders/me` entry: this is a reference list,
+  // not a live board, so it has no cadence of its own. Keying it means tabbing away to another
+  // `/pro/*` screen and back re-renders from what is already held — but only while that is still
+  // recent, so flipping tabs after accepting a job does not show the list from before it.
+  const { data, error: loadError } = usePolling<MyOrdersResponse>(() => getMyOrders(), {
+    key: MY_ORDERS_KEY,
+    enabled: false,
+    fetchOnMountWhenDisabled: true,
+    maxStaleOnMountMs: 15_000,
+  });
+  const orders = data?.orders ?? null;
+  const error = loadError ? GENERIC_ERROR_MESSAGE : null;
 
   const sections = useMemo(() => bucketOrders(orders ?? []), [orders]);
 

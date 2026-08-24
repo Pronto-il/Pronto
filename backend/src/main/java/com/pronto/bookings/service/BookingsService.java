@@ -33,6 +33,7 @@ import com.pronto.notifications.entity.NotificationMessageType;
 import com.pronto.notifications.service.NotificationService;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRepository;
+import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.entity.UserRole;
@@ -117,6 +118,7 @@ public class BookingsService {
     private final DistanceEtaStrategy distanceEtaStrategy;
     private final StorageService storageService;
     private final AvailabilityDerivationService availabilityDerivationService;
+    private final ProfessionalCoverageService professionalCoverageService;
 
     public BookingsService(IssueRepository issueRepository,
                             ProfessionalRepository professionalRepository,
@@ -127,7 +129,8 @@ public class BookingsService {
                             NotificationService notificationService,
                             DistanceEtaStrategy distanceEtaStrategy,
                             StorageService storageService,
-                            AvailabilityDerivationService availabilityDerivationService) {
+                            AvailabilityDerivationService availabilityDerivationService,
+                            ProfessionalCoverageService professionalCoverageService) {
         this.issueRepository = issueRepository;
         this.professionalRepository = professionalRepository;
         this.professionalListingRepository = professionalListingRepository;
@@ -138,6 +141,7 @@ public class BookingsService {
         this.distanceEtaStrategy = distanceEtaStrategy;
         this.storageService = storageService;
         this.availabilityDerivationService = availabilityDerivationService;
+        this.professionalCoverageService = professionalCoverageService;
     }
 
     /** §2.2, extended with the service-location/sort matching design. */
@@ -190,7 +194,7 @@ public class BookingsService {
         if (!isProfessionalBookable(professional)) {
             throw professionalNotBookable(professionalId);
         }
-        if (!professional.getCategoryId().equals(issue.getCategoryId())) {
+        if (!professionalCoverageService.servesCategory(professional.getId(), issue.getCategoryId())) {
             throw categoryMismatch();
         }
 
@@ -246,7 +250,7 @@ public class BookingsService {
                     List.of(new FieldError("professionalId",
                             "must reference an existing, bookable professional")));
         }
-        if (!professional.getCategoryId().equals(issue.getCategoryId())) {
+        if (!professionalCoverageService.servesCategory(professional.getId(), issue.getCategoryId())) {
             throw categoryMismatch();
         }
 
@@ -431,7 +435,8 @@ public class BookingsService {
                         "Professional " + professionalId + " not found."));
         ServiceLocation customerLocation = new ServiceLocation(order.getServiceCity(), order.getServiceStreet(),
                 order.getServiceHouseNumber(), order.getServiceApartment());
-        EtaResult eta = distanceEtaStrategy.calculate(professional.getCity(), customerLocation, now);
+        EtaResult eta = distanceEtaStrategy.calculate(
+                professionalCoverageService.baseCityName(professional), customerLocation, now);
         Instant expectedArrivalAt = now.plus(Duration.ofMinutes(eta.etaMinutes()));
 
         int affected = orderRepository.onTheWayIfConfirmed(orderId, now, expectedArrivalAt);
@@ -744,17 +749,24 @@ public class BookingsService {
     private List<ProfessionalCard> enrichAndSort(Long callerId, List<ProfessionalCard> cards,
                                                   ServiceLocation location, ProfessionalSort sort) {
         Instant requestTime = Instant.now();
+        // MS4: one batched professional_categories read for the whole page, before the per-card
+        // pass -- a card has to be able to say a professional serves several trades, and JPQL
+        // cannot project a collection into the listing's SELECT NEW (see ProfessionalCard).
+        Map<Long, List<Long>> categoryIdsByProfessional = professionalCoverageService
+                .categoryIdsByProfessional(cards.stream().map(ProfessionalCard::professionalId).toList());
+
         List<ProfessionalCard> enriched = cards.stream()
                 .map(card -> {
                     String profileImageUrl = card.profileImageUrl() == null
                             ? null
                             : storageService.getPresignedUrl(callerId, card.profileImageUrl());
                     EtaResult eta = distanceEtaStrategy.calculate(card.city(), location, requestTime);
-                    return new ProfessionalCard(card.professionalId(), card.fullName(), card.serviceArea(),
+                    return new ProfessionalCard(card.professionalId(), card.fullName(), card.serviceRegion(),
                             card.basePrice(), card.reliabilityScore(), card.city(), profileImageUrl,
-                            card.averageRating(), card.reviewCount(), card.favorited(), eta.sameCity(),
-                            eta.distanceKm(), eta.baseTravelTimeMinutes(), eta.trafficAdjustmentMinutes(),
-                            eta.etaMinutes());
+                            card.averageRating(), card.reviewCount(), card.favorited(),
+                            categoryIdsByProfessional.getOrDefault(card.professionalId(), List.of()),
+                            eta.sameCity(), eta.distanceKm(), eta.baseTravelTimeMinutes(),
+                            eta.trafficAdjustmentMinutes(), eta.etaMinutes());
                 })
                 .toList();
 

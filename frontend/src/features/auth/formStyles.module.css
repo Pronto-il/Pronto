@@ -104,6 +104,19 @@
   margin-block-end: var(--space-2);
 }
 
+/* MS4: stage 3 groups the checklist under one heading per selected category, so a registrant
+   who chose two trades can tell which trade each sub-service belongs to. */
+.subServiceGroup {
+  margin-block-end: var(--space-4);
+}
+
+.subServiceGroupTitle {
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+
 /* Short explanatory line under a stage heading (stages 3 and 5). */
 .stepHint {
   margin: 0 0 var(--space-3);

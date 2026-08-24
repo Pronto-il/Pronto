@@ -721,3 +721,53 @@ inventing an unrelated third duration. Flagged as a judgment call, not a hard re
   original email string no longer exists in the table. Recorded here only because the
   interaction between soft-delete and a non-partial unique index is easy to mis-flag as a
   bug at a glance.
+
+---
+
+## MS4 (2026-08-24) — professional registration payload
+
+`POST /api/auth/register`'s nested `professional` object changed shape. The fields below
+**supersede** the `professional.categoryId` / `professional.serviceArea` rows above.
+
+```jsonc
+"professional": {
+  "categoryIds":     [1, 8],      // >= 1; a professional may serve several trades
+  "serviceRegionId": 4,           // canonical service_regions.id -- never free text
+  "serviceCityIds":  [40, 41],    // >= 1; every one inside serviceRegionId
+  "baseCityId":      40,          // must be one of serviceCityIds
+  "basePrice":       250.00,
+  "subServiceIds":   [1, 31],
+  "workingHours":    [ /* 7 entries, unchanged */ ]
+}
+```
+
+| Field | Rule |
+|---|---|
+| `professional.categoryIds` | Required *iff* `role = PROFESSIONAL`; non-empty, no `null` entries, duplicates de-duplicated. Every id must exist in `categories` → otherwise `400 VALIDATION_ERROR` naming `professional.categoryIds`. |
+| `professional.serviceRegionId` | Required; must exist in `service_regions` (see `GET /api/service-areas`). |
+| `professional.serviceCityIds` | Required, non-empty; every id must exist in `service_cities` **and belong to `serviceRegionId`** — a cross-region city is `400 VALIDATION_ERROR`, reported against `professional.serviceCityIds`. |
+| `professional.baseCityId` | Required; must be one of `serviceCityIds`. This is the city `matching` measures travel from, so it has to be a city the professional actually serves. |
+| `professional.subServiceIds` | Unchanged except that "belongs to `professional.categoryId`'s own category" is now "belongs to **one of** `professional.categoryIds`". Cross-category is still `400 CATEGORY_MISMATCH`. |
+
+All of the above are validated **before any row is written**, by
+`locations.service.ServiceCoverageValidator` and
+`professionals.service.ProfessionalCoverageService` — the same components
+`PUT /api/professionals/me` uses, so registration and the profile edit cannot enforce different
+rules. Every problem in a selection is reported at once rather than one resubmission at a time.
+
+### `GET /api/service-areas` — new, public
+
+The closed region/city catalogue registration and the profile editor choose from. Unauthenticated
+for the same reason `GET /api/categories` is: the professional registration wizard needs it before
+an account exists, and it is a list of Israeli city names.
+
+```jsonc
+[
+  { "id": 4, "code": "gush_dan", "nameHe": "גוש דן", "nameEn": "Gush Dan", "displayOrder": 4,
+    "cities": [ { "id": 40, "code": "tel_aviv", "nameHe": "תל אביב", "nameEn": "Tel Aviv", "displayOrder": 1 } ] }
+]
+```
+
+7 regions, 96 cities. A client fetches the whole thing once and filters locally; `cities` nested
+under its region **is** the region→city filter, so no client needs a region→city map of its own.
+

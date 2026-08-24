@@ -146,6 +146,17 @@ public enum ErrorCode {
      * needs to be told that specific thing rather than "something went wrong".
      */
     SOS_EXPANSION_LIMIT_REACHED(HttpStatus.CONFLICT),
+    /**
+     * An attempt to change an ETA a professional has already committed to (MS3).
+     *
+     * <p><b>A rule, not a race.</b> The customer chose — or is choosing — partly on that number,
+     * so a professional who could revise it afterwards could win the job with an unrealistically
+     * short promise and then take as long as they liked. The commitment is therefore final from
+     * the moment acceptance persists, enforced in the domain: there is no repository statement
+     * that writes an ETA outside {@code accept}. The endpoint survives only so a stale client
+     * gets this explanation instead of a {@code 404}.
+     */
+    SOS_ETA_LOCKED(HttpStatus.CONFLICT),
 
     // MS1 (professional verification & approval). See
     // docs/architecture/ms1-professional-verification-design.md D-F.

@@ -1,5 +1,6 @@
 package com.pronto.sos.repository;
 
+import com.pronto.professionals.ProfessionalCategoryMatch;
 import com.pronto.professionals.ProfessionalEligibility;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.sos.dto.EligibleProfessional;
@@ -31,8 +32,16 @@ public interface SosCandidateRepository extends Repository<Professional, Long> {
      * why each is a hard filter rather than a ranking signal:
      *
      * <ul>
-     *   <li><b>{@code p.categoryId = :categoryId}</b> — a plumber cannot take an electrical
-     *       job. Not negotiable.</li>
+     *   <li><b>{@link ProfessionalCategoryMatch#SERVES_CATEGORY_JPQL}</b> — a plumber cannot
+     *       take an electrical job. Not negotiable. <b>MS4</b> makes this a membership test over
+     *       {@code professional_categories} instead of the old {@code p.categoryId =
+     *       :categoryId} column comparison: a professional who serves
+     *       {@code [Plumbing, Handyman]} is askable for both, and neither is privileged over the
+     *       other. Concatenated from the same constant
+     *       {@code bookings.repository.ProfessionalListingRepository} uses, so the SOS hard
+     *       filter and standard discovery cannot disagree about who serves what — the failure
+     *       mode being a professional a customer can find by browsing but SOS will never
+     *       dispatch to.</li>
      *   <li><b>{@code s.isAvailable = true}</b> — the professional's own live SOS toggle
      *       ({@code sos_availability}, the table the codebase already had for exactly this).
      *       An inner join, so a professional with no row at all is excluded rather than
@@ -67,14 +76,17 @@ public interface SosCandidateRepository extends Repository<Professional, Long> {
      *                                 ()}. Callers pass a sentinel; see
      *                                 {@code SosMatchingService}.
      */
-    @Query("SELECT new com.pronto.sos.dto.EligibleProfessional(p.id, p.userId, u.fullName, p.city, "
-            + "p.serviceArea, p.basePrice, p.reliabilityScore, p.profileImageKey, "
+    @Query("SELECT new com.pronto.sos.dto.EligibleProfessional(p.id, p.userId, u.fullName, sc.nameHe, "
+            + "sr.nameHe, p.basePrice, p.reliabilityScore, p.profileImageKey, "
             + "(SELECT AVG(r.rating) FROM com.pronto.reviews.entity.Review r WHERE r.professionalId = p.id), "
             + "(SELECT COUNT(r) FROM com.pronto.reviews.entity.Review r WHERE r.professionalId = p.id)) "
-            + "FROM Professional p, com.pronto.users.entity.User u, "
-            + "com.pronto.availability.entity.SosAvailability s "
-            + "WHERE p.userId = u.id AND p.id = s.professionalId "
-            + "AND p.categoryId = :categoryId AND s.isAvailable = true AND u.deletedAt IS NULL "
+            + "FROM Professional p "
+            + "JOIN com.pronto.users.entity.User u ON u.id = p.userId "
+            + "JOIN com.pronto.availability.entity.SosAvailability s ON s.professionalId = p.id "
+            + "LEFT JOIN com.pronto.locations.entity.ServiceRegion sr ON sr.id = p.serviceRegionId "
+            + "LEFT JOIN com.pronto.locations.entity.ServiceCity sc ON sc.id = p.baseCityId "
+            + "WHERE s.isAvailable = true AND u.deletedAt IS NULL "
+            + "AND " + ProfessionalCategoryMatch.SERVES_CATEGORY_JPQL + " "
             + "AND " + ProfessionalEligibility.ELIGIBLE_JPQL + " "
             + "AND p.id NOT IN :excludedProfessionalIds")
     List<EligibleProfessional> findEligible(@Param("categoryId") Long categoryId,

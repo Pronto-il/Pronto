@@ -5,6 +5,9 @@ export type { AuthContextValue } from './authContext';
 export { usePolling } from './usePolling';
 export type { UsePollingOptions, UsePollingResult } from './usePolling';
 
+export { clearPollingStore, primeResource, refetchResource, inspectPollingStore } from './pollingStore';
+export type { ResourceSnapshot } from './pollingStore';
+
 export { useOrderStatus } from './useOrderStatus';
 export type { UseOrderStatusResult } from './useOrderStatus';
 
@@ -20,7 +23,7 @@ export type {
 
 export { ActiveOrderProvider } from './ActiveOrderProvider';
 export { useActiveOrder } from './useActiveOrder';
-export { selectActiveOrder, resolveActiveOrderRoute } from './activeOrderContext';
+export { selectActiveOrder, resolveActiveOrderRoute, isLiveActiveOrder } from './activeOrderContext';
 export type { ActiveOrderIndicatorState, ActiveOrderSelection, ActiveOrderContextValue } from './activeOrderContext';
 
 export { useEtaCountdown } from './useEtaCountdown';
@@ -43,7 +46,7 @@ export { useNotifications } from './useNotifications';
 export type { UseNotificationsResult } from './useNotifications';
 
 export { PendingRequestsProvider } from './PendingRequestsProvider';
-export { usePendingRequests } from './usePendingRequests';
+export { usePendingRequests, useLivePendingRequests } from './usePendingRequests';
 export type { PendingRequestsContextValue } from './pendingRequestsContext';
 
 export { ToastProvider } from './ToastProvider';

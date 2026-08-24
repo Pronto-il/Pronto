@@ -65,6 +65,32 @@ export function setAuthTokenGetter(getter: TokenGetter): void {
   tokenGetter = getter;
 }
 
+type UnauthorizedHandler = () => void;
+
+let unauthorizedHandler: UnauthorizedHandler = () => {};
+
+/**
+ * Injected by `AuthProvider`, called once per request that was sent **with** a token and came
+ * back `401 UNAUTHORIZED` — i.e. the token the app is holding is no longer accepted by the
+ * backend (expired, or its user row was deleted).
+ *
+ * Without this, a token that expires while a long-lived screen stays open (the professional
+ * dashboard polls its calendar every 25s, so a tab left open overnight always outlives the 24h
+ * `pronto.jwt.expiration-seconds`) produced a silently broken session: `usePolling` keeps the
+ * last successful response on screen when a tick fails, so the calendar still rendered its
+ * stale segments and every write the professional then attempted — `PATCH`/`DELETE
+ * /api/availability/blocks/{id}` being the ones QA hit — came back
+ * `UNAUTHORIZED / Missing, invalid, or expired authentication token` behind a generic Hebrew
+ * error banner, with no way to recover short of clearing `localStorage` by hand.
+ *
+ * Deliberately only fires for requests that actually carried a token: a `401` on a request sent
+ * without one is a login/credential failure (`POST /api/auth/login` answers
+ * `401 INVALID_CREDENTIALS`), which must stay the caller's own error to render.
+ */
+export function setUnauthorizedHandler(handler: UnauthorizedHandler): void {
+  unauthorizedHandler = handler;
+}
+
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
@@ -85,10 +111,12 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   if (body !== undefined && !isFormData) {
     headers['Content-Type'] = 'application/json';
   }
+  let sentWithToken = false;
   if (auth) {
     const token = tokenGetter();
     if (token) {
       headers.Authorization = `Bearer ${token}`;
+      sentWithToken = true;
     }
   }
 
@@ -117,6 +145,12 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   if (!response.ok) {
+    if (response.status === 401 && sentWithToken) {
+      // The token we hold is no longer accepted — see `setUnauthorizedHandler`. The error is
+      // still thrown below so the calling screen keeps its own error handling; the handler
+      // only ends the dead session so the app can send the user back to login.
+      unauthorizedHandler();
+    }
     const envelope = payload as ErrorEnvelope | null;
     throw new ApiError(
       envelope?.error?.code ?? 'UNKNOWN_ERROR',

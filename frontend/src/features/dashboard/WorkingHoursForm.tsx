@@ -73,7 +73,10 @@ export function WorkingHoursForm({ workingHours, onSaved, onCancel }: WorkingHou
         </div>
       )}
 
-      <WeeklyHoursFields rows={rows} onChange={setRows} errors={fieldErrors} />
+      {/* Apply-to-all is enabled on this surface only: an existing professional's week is
+          usually the same hours on most days, so entering them seven times was busywork.
+          Registration keeps the plain editor (see `WeeklyHoursFields`' prop doc). */}
+      <WeeklyHoursFields rows={rows} onChange={setRows} errors={fieldErrors} showApplyToAll />
 
       <div className={styles.actionsRow}>
         <Button type="submit" loading={isSubmitting}>

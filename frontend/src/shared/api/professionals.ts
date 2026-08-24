@@ -10,10 +10,27 @@ import { httpClient } from './httpClient';
 
 export interface ProfessionalProfileResponse {
   id: number;
-  categoryId: number;
+  /**
+   * MS4: every category this professional serves, in the catalogue's own display order. The
+   * first entry is what compact surfaces show as the primary trade — an ordering convention, not
+   * a stored flag, so nothing has to keep a "primary" field correct across edits.
+   */
+  categoryIds: number[];
   fullName: string;
-  serviceArea: string;
-  city: string;
+  /**
+   * MS4: canonical `service_regions` id, replacing the old free-text `serviceArea`.
+   * `null` for a professional who registered before MS4 and whose old text named no recognisable
+   * region — the profile editor then asks them to choose rather than showing an invented one.
+   */
+  serviceRegionId: number | null;
+  serviceRegionNameHe: string | null;
+  /** MS4: the city ETA is measured from. Always one of `serviceCityIds`. */
+  baseCityId: number | null;
+  /** The base city's Hebrew name, resolved server-side. */
+  city: string | null;
+  /** MS4: every canonical city they serve, in catalogue order. */
+  serviceCityIds: number[];
+  serviceCityNamesHe: string[];
   bio: string | null;
   basePrice: number;
   profileImageUrl: string | null;
@@ -37,10 +54,20 @@ export interface ProfessionalProfileResponse {
   updatedAt: string;
 }
 
+/**
+ * MS4 §18: everything registration collects about coverage and trades is editable here too.
+ * `categoryId` used to be excluded from this DTO precisely because a professional could not
+ * change their single trade at all; that restriction is what MS4 lifts.
+ */
 export interface UpdateProfessionalProfileRequest {
   fullName: string;
-  serviceArea: string;
-  city: string;
+  serviceRegionId: number;
+  /** At least one; every one inside `serviceRegionId`. */
+  serviceCityIds: number[];
+  /** Must be one of `serviceCityIds`. */
+  baseCityId: number;
+  /** At least one; every one an existing category. */
+  categoryIds: number[];
   /** Optional, <=2000 chars server-side. */
   bio?: string;
   basePrice: number;
@@ -58,7 +85,7 @@ export function getMyProfessionalProfile(): Promise<ProfessionalProfileResponse>
   return httpClient.get<ProfessionalProfileResponse>('/api/professionals/me');
 }
 
-/** PUT /api/professionals/me — PROFESSIONAL only, allowlist DTO (no categoryId/id/etc). */
+/** PUT /api/professionals/me — PROFESSIONAL only, allowlist DTO (no id/approvalStatus/etc). */
 export function updateMyProfessionalProfile(
   payload: UpdateProfessionalProfileRequest,
 ): Promise<ProfessionalProfileResponse> {

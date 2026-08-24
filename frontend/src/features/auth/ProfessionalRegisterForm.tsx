@@ -4,6 +4,7 @@ import {
   Input,
   Select,
   Checkbox,
+  MultiSelectField,
   ImageUploadField,
   DocumentUploadField,
   Skeleton,
@@ -16,15 +17,17 @@ import {
   hasEnabledWeekday,
   toWeeklyHoursRequest,
 } from '../../shared/components';
-import type { SelectOption, WeeklyHoursRow } from '../../shared/components';
+import type { MultiSelectOption, SelectOption, WeeklyHoursRow } from '../../shared/components';
 import {
   registerProfessional,
   ApiError,
   getFieldErrorMessages,
   GENERIC_ERROR_MESSAGE,
   getCategoriesWithSubServices,
+  getServiceAreas,
+  citiesForRegion,
 } from '../../shared/api';
-import type { CategoryWithSubServicesResponse } from '../../shared/api';
+import type { CategoryWithSubServicesResponse, ServiceRegionResponse } from '../../shared/api';
 import { RegistrationWizardShell } from './RegistrationWizardShell';
 import styles from './formStyles.module.css';
 
@@ -39,8 +42,9 @@ interface FormErrors {
   email?: string;
   password?: string;
   confirmPassword?: string;
-  categoryId?: string;
-  serviceArea?: string;
+  categoryIds?: string;
+  serviceRegionId?: string;
+  serviceCityIds?: string;
   subServiceIds?: string;
   basePrice?: string;
   verificationDocument?: string;
@@ -57,7 +61,8 @@ const WORKING_HOURS_ROW_ERROR_FIELDS = ['weekday', 'startTime', 'endTime'];
 
 /**
  * Professional registration — a **6-stage** wizard: (1) personal details — no `phone`, not a
- * backend field for `PROFESSIONAL`; (2) profession + service area; (3) **sub-services**;
+ * backend field for `PROFESSIONAL`; (2) service categories + service region + service cities;
+ * (3) **sub-services**;
  * (4) pricing + documents; (5) **weekly working hours**; (6) read-only summary + the real
  * submit (`registerProfessional()`) + an honest "what's next" block.
  *
@@ -79,6 +84,16 @@ const WORKING_HOURS_ROW_ERROR_FIELDS = ['weekday', 'startTime', 'endTime'];
  * therefore a real blocking error with a retry — sub-services are required, so there is no
  * honest way to complete registration without the catalog.
  *
+ * **MS4**: stage 2 collects a *set* of categories (a professional may be a plumber and a
+ * handyman), and replaces the free-text service-area input with two controlled selectors — a
+ * region `Select` and a searchable city `MultiSelectField`, both fed by `GET /api/service-areas`
+ * through `shared/api/serviceAreas.ts`. There is no field left on this form that a registrant
+ * can type a place name into: 'תל אביב', 'תל-אביב' and 'Tel Aviv' used to be three different
+ * service areas. Changing the region re-scopes the city list via the shared `citiesForRegion()`
+ * helper — this component holds no region→city map of its own. Stage 5 turns on
+ * `WeeklyHoursFields`' "החל על הכל" (§11), which is why registrants no longer type the same
+ * hours seven times.
+ *
  * A successful submit yields `approval_status = PENDING`: an application awaiting review, not a
  * live marketplace listing. Stage 6's copy says exactly that.
  */
@@ -90,8 +105,9 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [categoryId, setCategoryId] = useState('');
-  const [serviceArea, setServiceArea] = useState('');
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
+  const [serviceRegionId, setServiceRegionId] = useState<number | null>(null);
+  const [serviceCityIds, setServiceCityIds] = useState<number[]>([]);
   const [basePrice, setBasePrice] = useState('');
   const [photo, setPhoto] = useState<File | null>(null);
   const [verificationDocument, setVerificationDocument] = useState<File | null>(null);
@@ -100,6 +116,7 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [categories, setCategories] = useState<CategoryWithSubServicesResponse[] | null>(null);
+  const [regions, setRegions] = useState<ServiceRegionResponse[] | null>(null);
   const [isLoadingCategories, setIsLoadingCategories] = useState(true);
   const [categoriesError, setCategoriesError] = useState<string | null>(null);
   const [catalogReloadKey, setCatalogReloadKey] = useState(0);
@@ -109,18 +126,22 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
   const [workingHoursRows, setWorkingHoursRows] = useState<WeeklyHoursRow[]>(() => buildWeeklyHoursRows([]));
   const [workingHoursRowErrors, setWorkingHoursRowErrors] = useState<Record<number, string>>({});
 
-  // The one catalog fetch (public, no auth) behind both the category select and the
-  // sub-service checklist.
+  // Both catalogs (public, no auth) in one pass: the category/sub-service tree behind stages 2
+  // and 3, and the region/city catalogue behind stage 2's coverage selectors. They share one
+  // loading/error/retry state because neither stage can be completed without both, so splitting
+  // them would only mean two spinners and two ways to be half-broken.
   useEffect(() => {
     let cancelled = false;
     setIsLoadingCategories(true);
     setCategoriesError(null);
-    getCategoriesWithSubServices()
-      .then((result) => {
-        if (!cancelled) setCategories(result);
+    Promise.all([getCategoriesWithSubServices(), getServiceAreas()])
+      .then(([categoriesResult, regionsResult]) => {
+        if (cancelled) return;
+        setCategories(categoriesResult);
+        setRegions(regionsResult);
       })
       .catch(() => {
-        if (!cancelled) setCategoriesError('לא הצלחנו לטעון את רשימת התחומים.');
+        if (!cancelled) setCategoriesError('לא הצלחנו לטעון את רשימת התחומים ואזורי השירות.');
       })
       .finally(() => {
         if (!cancelled) setIsLoadingCategories(false);
@@ -130,27 +151,62 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
     };
   }, [catalogReloadKey]);
 
-  const selectedCategory = categories?.find((category) => String(category.id) === categoryId) ?? null;
-  const categoryOptions: SelectOption[] = (categories ?? []).map((category) => ({
-    value: String(category.id),
+  const selectedCategories = (categories ?? []).filter((category) =>
+    selectedCategoryIds.includes(category.id),
+  );
+  const categoryOptions: MultiSelectOption[] = (categories ?? []).map((category) => ({
+    value: category.id,
     label: category.nameHe,
   }));
-  const availableSubServices = selectedCategory?.subServices ?? [];
+  const regionOptions: SelectOption[] = (regions ?? []).map((region) => ({
+    value: String(region.id),
+    label: region.nameHe,
+  }));
+  /** MS4 §3: the city options are the chosen region's own cities, from the shared data layer. */
+  const cityOptions: MultiSelectOption[] = citiesForRegion(regions, serviceRegionId).map((city) => ({
+    value: city.id,
+    label: city.nameHe,
+  }));
+  const selectedCityNames = cityOptions
+    .filter((option) => serviceCityIds.includes(option.value))
+    .map((option) => option.label);
+
+  /** Sub-services across every selected category — MS4 lets a professional hold several trades,
+   *  and each of them brings its own sub-service list. */
+  const availableSubServices = selectedCategories.flatMap((category) => category.subServices);
   const selectedSubServices = availableSubServices.filter((subService) =>
     selectedSubServiceIds.includes(subService.id),
   );
   const enabledWorkingHoursRows = workingHoursRows.filter((row) => row.enabled);
 
-  /** Changing the main category invalidates every sub-service already chosen — the backend
-   *  refuses a cross-category id with `400 CATEGORY_MISMATCH`, so they are dropped here rather
-   *  than carried into a submit that cannot succeed. */
-  function handleCategoryChange(nextCategoryId: string) {
-    if (nextCategoryId === categoryId) {
+  /** Dropping a category invalidates any sub-service that belonged only to it — the backend
+   *  refuses an id outside the professional's own categories with `400 CATEGORY_MISMATCH`, so
+   *  they are dropped here rather than carried into a submit that cannot succeed. Sub-services
+   *  under the categories that remain are kept: re-picking them would be busywork. */
+  function handleCategoriesChange(nextCategoryIds: number[]) {
+    setSelectedCategoryIds(nextCategoryIds);
+    const stillValid = new Set(
+      (categories ?? [])
+        .filter((category) => nextCategoryIds.includes(category.id))
+        .flatMap((category) => category.subServices.map((subService) => subService.id)),
+    );
+    setSelectedSubServiceIds((prev) => prev.filter((id) => stillValid.has(id)));
+    setErrors((prev) => ({ ...prev, categoryIds: undefined, subServiceIds: undefined }));
+  }
+
+  /** MS4 §3: changing region re-scopes the city options, so any city already chosen that isn't
+   *  in the new region is dropped — it could not be submitted anyway (the backend refuses a
+   *  cross-region city). This is registration, where nothing is persisted yet and there is
+   *  nothing to warn about; the profile editor, which *is* editing saved data, says so out loud
+   *  instead. */
+  function handleRegionChange(nextRegionId: number | null) {
+    if (nextRegionId === serviceRegionId) {
       return;
     }
-    setCategoryId(nextCategoryId);
-    setSelectedSubServiceIds([]);
-    setErrors((prev) => ({ ...prev, categoryId: undefined, subServiceIds: undefined }));
+    setServiceRegionId(nextRegionId);
+    const allowed = new Set(citiesForRegion(regions, nextRegionId).map((city) => city.id));
+    setServiceCityIds((prev) => prev.filter((id) => allowed.has(id)));
+    setErrors((prev) => ({ ...prev, serviceRegionId: undefined, serviceCityIds: undefined }));
   }
 
   function toggleSubService(subServiceId: number) {
@@ -176,17 +232,21 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
     return next;
   }
 
-  function validateStage2(): Pick<FormErrors, 'categoryId' | 'serviceArea'> {
-    const next: Pick<FormErrors, 'categoryId' | 'serviceArea'> = {};
-    if (!categoryId) {
+  function validateStage2(): Pick<FormErrors, 'categoryIds' | 'serviceRegionId' | 'serviceCityIds'> {
+    const next: Pick<FormErrors, 'categoryIds' | 'serviceRegionId' | 'serviceCityIds'> = {};
+    if (selectedCategoryIds.length === 0) {
       // Without the catalog there is no category list to choose from — say that, rather than
       // asking for a choice the screen can't offer.
-      next.categoryId = categories
-        ? 'יש לבחור תחום שירות.'
+      next.categoryIds = categories
+        ? 'יש לבחור לפחות תחום שירות אחד.'
         : 'לא ניתן להמשיך ללא רשימת התחומים. יש לנסות לטעון אותה שוב.';
     }
-    if (!serviceArea.trim()) {
-      next.serviceArea = 'יש להזין אזור שירות.';
+    if (serviceRegionId === null) {
+      next.serviceRegionId = regions
+        ? 'יש לבחור אזור שירות.'
+        : 'לא ניתן להמשיך ללא רשימת אזורי השירות. יש לנסות לטעון אותה שוב.';
+    } else if (serviceCityIds.length === 0) {
+      next.serviceCityIds = 'יש לבחור לפחות עיר אחת שבה אתה נותן שירות.';
     }
     return next;
   }
@@ -232,7 +292,7 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
   function routeFieldErrors(nextErrors: FormErrors) {
     if (nextErrors.fullName || nextErrors.email || nextErrors.password) {
       goToStage(1, -1);
-    } else if (nextErrors.categoryId || nextErrors.serviceArea) {
+    } else if (nextErrors.categoryIds || nextErrors.serviceRegionId || nextErrors.serviceCityIds) {
       goToStage(2, -1);
     } else if (nextErrors.subServiceIds) {
       goToStage(3, -1);
@@ -276,7 +336,12 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
 
     if (currentStage === 2) {
       const stage2Errors = validateStage2();
-      setErrors((prev) => ({ ...prev, categoryId: stage2Errors.categoryId, serviceArea: stage2Errors.serviceArea }));
+      setErrors((prev) => ({
+        ...prev,
+        categoryIds: stage2Errors.categoryIds,
+        serviceRegionId: stage2Errors.serviceRegionId,
+        serviceCityIds: stage2Errors.serviceCityIds,
+      }));
       if (Object.keys(stage2Errors).length > 0) {
         return;
       }
@@ -331,8 +396,13 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
         fullName: fullName.trim(),
         email: email.trim(),
         password,
-        categoryId: Number(categoryId),
-        serviceArea: serviceArea.trim(),
+        categoryIds: selectedCategoryIds,
+        serviceRegionId: serviceRegionId as number,
+        serviceCityIds,
+        // The base city is the first city they picked, in the catalogue's own order — MS4
+        // requires it to be one of the service cities, and asking a registrant to nominate a
+        // "main" city on top of choosing them would be a question with no obvious right answer.
+        baseCityId: serviceCityIds[0],
         basePrice: Number(basePrice),
         subServiceIds: selectedSubServiceIds,
         workingHours: toWeeklyHoursRequest(workingHoursRows),
@@ -346,10 +416,10 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
         setErrors((prev) => ({ ...prev, ...nextErrors }));
         routeFieldErrors(nextErrors);
       } else if (error instanceof ApiError && error.code === 'CATEGORY_MISMATCH') {
-        // A chosen sub-service doesn't belong to the chosen category — only reachable if the
-        // catalog changed under the wizard mid-session.
+        // A chosen sub-service doesn't belong to any of the chosen categories — only reachable
+        // if the catalog changed under the wizard mid-session.
         const nextErrors: FormErrors = {
-          subServiceIds: 'חלק מהתחומים שנבחרו אינם שייכים לתחום השירות שנבחר. יש לבחור אותם מחדש.',
+          subServiceIds: 'חלק מהתחומים שנבחרו אינם שייכים לתחומי השירות שנבחרו. יש לבחור אותם מחדש.',
         };
         setSelectedSubServiceIds([]);
         setErrors((prev) => ({ ...prev, ...nextErrors }));
@@ -451,33 +521,56 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
             )}
 
             {!isLoadingCategories && !categoriesError && (
-              <Select
-                label="תחום שירות"
-                value={categoryId}
-                onChange={(event) => handleCategoryChange(event.target.value)}
-                options={categoryOptions}
-                placeholder="בחירת תחום"
-                error={errors.categoryId}
-                required
-              />
+              <>
+                <MultiSelectField
+                  label="תחומי שירות"
+                  options={categoryOptions}
+                  selected={selectedCategoryIds}
+                  onChange={handleCategoriesChange}
+                  placeholder="בחירת תחומים"
+                  error={errors.categoryIds}
+                  hint="אפשר לבחור יותר מתחום אחד — למשל אינסטלציה והנדימן."
+                  required
+                />
+
+                <Select
+                  label="אזור שירות"
+                  value={serviceRegionId === null ? '' : String(serviceRegionId)}
+                  onChange={(event) =>
+                    handleRegionChange(event.target.value ? Number(event.target.value) : null)
+                  }
+                  options={regionOptions}
+                  placeholder="בחירת אזור"
+                  error={errors.serviceRegionId}
+                  required
+                />
+
+                <MultiSelectField
+                  label="ערים שבהן אתה נותן שירות"
+                  options={cityOptions}
+                  selected={serviceCityIds}
+                  onChange={(next) => {
+                    setServiceCityIds(next);
+                    setErrors((prev) => ({ ...prev, serviceCityIds: undefined }));
+                  }}
+                  placeholder="בחירת ערים"
+                  emptyMessage="יש לבחור אזור שירות תחילה."
+                  searchable
+                  searchPlaceholder="חיפוש עיר…"
+                  error={errors.serviceCityIds}
+                  hint="הערים מוצגות לפי האזור שנבחר. העיר הראשונה ברשימה היא עיר הבסיס שממנה מחושב זמן ההגעה."
+                  required
+                />
+              </>
             )}
 
-            {/* The `Select` above owns the message when it's on screen; while the catalog is
-                loading or failed it isn't, so the error would otherwise be invisible. */}
-            {(isLoadingCategories || categoriesError) && errors.categoryId && (
+            {/* The fields above own their messages when they're on screen; while the catalog is
+                loading or failed they aren't, so the errors would otherwise be invisible. */}
+            {(isLoadingCategories || categoriesError) && (errors.categoryIds || errors.serviceRegionId) && (
               <p className={styles.stepError} role="alert">
-                {errors.categoryId}
+                {errors.categoryIds ?? errors.serviceRegionId}
               </p>
             )}
-
-            <Input
-              label="אזור שירות"
-              value={serviceArea}
-              onChange={(event) => setServiceArea(event.target.value)}
-              error={errors.serviceArea}
-              hint="למשל: תל אביב והמרכז"
-              required
-            />
           </>
         )}
 
@@ -504,21 +597,32 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
             )}
 
             {!isLoadingCategories && !categoriesError && availableSubServices.length === 0 && (
-              <p className={styles.stepHint}>אין עדיין תת-שירותים מוגדרים עבור התחום שנבחר.</p>
+              <p className={styles.stepHint}>אין עדיין תת-שירותים מוגדרים עבור התחומים שנבחרו.</p>
             )}
 
-            {!isLoadingCategories && !categoriesError && availableSubServices.length > 0 && (
-              <div className={styles.subServicesList}>
-                {availableSubServices.map((subService) => (
-                  <Checkbox
-                    key={subService.id}
-                    label={subService.nameHe}
-                    checked={selectedSubServiceIds.includes(subService.id)}
-                    onChange={() => toggleSubService(subService.id)}
-                  />
-                ))}
-              </div>
-            )}
+            {/* MS4: grouped by category, because a professional who chose two trades needs to
+                see which trade each sub-service belongs to — an undivided list of, say,
+                plumbing and handyman items reads as one long jumble. A single-category
+                registrant sees one heading, which costs nothing. */}
+            {!isLoadingCategories &&
+              !categoriesError &&
+              selectedCategories.map((category) =>
+                category.subServices.length === 0 ? null : (
+                  <div key={category.id} className={styles.subServiceGroup}>
+                    <p className={styles.subServiceGroupTitle}>{category.nameHe}</p>
+                    <div className={styles.subServicesList}>
+                      {category.subServices.map((subService) => (
+                        <Checkbox
+                          key={subService.id}
+                          label={subService.nameHe}
+                          checked={selectedSubServiceIds.includes(subService.id)}
+                          onChange={() => toggleSubService(subService.id)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ),
+              )}
 
             {errors.subServiceIds && (
               <p className={styles.stepError} role="alert">
@@ -558,10 +662,17 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
               יש להפעיל לפחות יום אחד. שעת הסיום חייבת להיות אחרי שעת ההתחלה, ומשמרת לילה שחוצה חצות אינה נתמכת.
             </p>
 
+            {/* MS4 §11: "החל על הכל" — set common hours once instead of typing the same pair
+                seven times. The week itself stays blank until the registrant acts (nothing is
+                pre-filled on their behalf), and every day remains independently editable
+                afterwards (§12). Same shared component, same 24-hour `TimeField`, as
+                /pro/availability — §13's "registration and dashboard must agree" is satisfied by
+                them being literally the same code. */}
             <WeeklyHoursFields
               rows={workingHoursRows}
               onChange={setWorkingHoursRows}
               errors={workingHoursRowErrors}
+              showApplyToAll
             />
 
             {errors.workingHours && (
@@ -584,19 +695,39 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
                 <dd>{email}</dd>
               </div>
               <div className={styles.summaryRow}>
-                <dt>תחום שירות</dt>
-                <dd>{selectedCategory?.nameHe ?? ''}</dd>
+                <dt>תחומי שירות</dt>
+                <dd>
+                  <span className={styles.subServiceChips}>
+                    {selectedCategories.map((category) => (
+                      <Badge key={category.id} size="sm">
+                        {category.nameHe}
+                      </Badge>
+                    ))}
+                  </span>
+                </dd>
               </div>
               <div className={styles.summaryRow}>
                 <dt>אזור שירות</dt>
-                <dd>{serviceArea}</dd>
+                <dd>{regions?.find((region) => region.id === serviceRegionId)?.nameHe ?? ''}</dd>
+              </div>
+              <div className={styles.summaryRow}>
+                <dt>ערי שירות</dt>
+                <dd>
+                  <span className={styles.subServiceChips}>
+                    {selectedCityNames.map((name) => (
+                      <Badge key={name} size="sm">
+                        {name}
+                      </Badge>
+                    ))}
+                  </span>
+                </dd>
               </div>
               <div className={styles.summaryRow}>
                 <dt>מחיר ביקור בסיסי</dt>
                 <dd>{basePrice ? `₪${basePrice}` : ''}</dd>
               </div>
               <div className={styles.summaryRow}>
-                <dt>תחומי שירות</dt>
+                <dt>תת-שירותים</dt>
                 <dd>
                   <span className={styles.subServiceChips}>
                     {selectedSubServices.map((subService) => (

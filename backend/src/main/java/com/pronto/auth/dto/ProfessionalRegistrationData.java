@@ -29,17 +29,30 @@ import java.util.List;
  * and no sub-services are guessed. Both stay editable afterwards through
  * {@code PUT /api/professionals/me/sub-services} and {@code PUT /api/availability/working-hours}.
  *
- * @param subServiceIds at least one, every one belonging to {@code categoryId}'s own category —
+ * <p><b>MS4:</b> {@code categoryId} became {@link #categoryIds} — a professional may register as
+ * a plumber <em>and</em> a handyman — and free-text {@code serviceArea} became the controlled
+ * triple {@link #serviceRegionId}/{@link #serviceCityIds}/{@link #baseCityId}, validated against
+ * the closed {@code service_regions}/{@code service_cities} catalogue by
+ * {@code locations.service.ServiceCoverageValidator}. There is no field on this record a
+ * registrant can put arbitrary place-name text into any more, which is the point: 'תל אביב',
+ * 'תל-אביב' and 'Tel Aviv' used to be three different service areas.
+ *
+ * @param categoryIds   at least one, every one an existing {@code categories} row
+ * @param subServiceIds at least one, every one belonging to one of {@link #categoryIds} —
  *                      enforced by {@code professionals.service.SubServiceSelectionValidator},
  *                      the same component the later edit endpoint uses
+ * @param serviceCityIds at least one, every one inside {@link #serviceRegionId}
+ * @param baseCityId    must be one of {@link #serviceCityIds}
  * @param workingHours  the full week, exactly 7 entries as
  *                      {@code PUT /api/availability/working-hours} takes them (the identical
  *                      record type, so the two surfaces cannot drift), with at least one enabled
  *                      day
  */
 public record ProfessionalRegistrationData(
-        Long categoryId,
-        String serviceArea,
+        List<Long> categoryIds,
+        Long serviceRegionId,
+        List<Long> serviceCityIds,
+        Long baseCityId,
         BigDecimal basePrice,
         List<Long> subServiceIds,
         List<WorkingHoursItemRequest> workingHours

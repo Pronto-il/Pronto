@@ -4,7 +4,7 @@ import { Card, Badge } from '../../shared/components';
 import type { ProfessionalApprovalSummary, CategoryWithSubServicesResponse } from '../../shared/api';
 import { formatDateTimeLabel } from '../../shared/utils/formatDateTime';
 import { describeDecision, describeOnboarding } from './approvalPresentation';
-import { findCategoryNameHe } from './serviceCatalog';
+import { findCategoryNamesHe } from './serviceCatalog';
 import styles from './ProfessionalQueueCard.module.css';
 
 export interface ProfessionalQueueCardProps {
@@ -27,8 +27,8 @@ export interface ProfessionalQueueCardProps {
 export function ProfessionalQueueCard({ professional, catalog }: ProfessionalQueueCardProps) {
   const decision = describeDecision(professional.approvalStatus);
   const onboarding = describeOnboarding(professional.onboardingComplete);
-  const categoryNameHe = findCategoryNameHe(catalog, professional.categoryId);
-  const area = [professional.city, professional.serviceArea].filter(Boolean).join(' · ');
+  const categoryNameHe = findCategoryNamesHe(catalog, professional.categoryIds).join(' · ') || null;
+  const area = [professional.city, professional.serviceRegion].filter(Boolean).join(' · ');
 
   return (
     <Card interactive className={styles.card}>

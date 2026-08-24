@@ -1,5 +1,6 @@
 package com.pronto.bookings.service;
 
+import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.availability.dto.CalendarSegment;
 import com.pronto.availability.repository.AvailabilitySlotRepository;
 import com.pronto.availability.service.AvailabilityDerivationService;
@@ -64,6 +65,10 @@ import static org.mockito.Mockito.when;
  */
 class BookingsServiceTest {
 
+    /** MS4: `professionals` no longer stores a category or free-text place -- see the entity. */
+    private static final long SERVICE_REGION_ID = 4L;
+    private static final long BASE_CITY_ID = 40L;
+
     private static final Long CUSTOMER_ID = 1L;
     private static final Long ISSUE_ID = 2L;
     private static final Long PROFESSIONAL_ID = 3L;
@@ -79,6 +84,7 @@ class BookingsServiceTest {
     private DistanceEtaStrategy distanceEtaStrategy;
     private StorageService storageService;
     private AvailabilityDerivationService availabilityDerivationService;
+    private ProfessionalCoverageService professionalCoverageService;
     private BookingsService bookingsService;
 
     @BeforeEach
@@ -93,14 +99,29 @@ class BookingsServiceTest {
         distanceEtaStrategy = Mockito.mock(DistanceEtaStrategy.class);
         storageService = Mockito.mock(StorageService.class);
         availabilityDerivationService = Mockito.mock(AvailabilityDerivationService.class);
+        professionalCoverageService = Mockito.mock(ProfessionalCoverageService.class);
         bookingsService = new BookingsService(issueRepository, professionalRepository, professionalListingRepository,
                 availabilitySlotRepository, orderRepository, userRepository,
-                notificationService, distanceEtaStrategy, storageService, availabilityDerivationService);
+                notificationService, distanceEtaStrategy, storageService, availabilityDerivationService,
+                professionalCoverageService);
         // MS1: every pre-existing test in this class describes a world of ordinary, verified
         // professionals, so eligibility is stubbed true by default. The MS1 tests at the bottom of
         // the class override it per-test -- lenient() because most tests here never reach the
         // check at all (they fail earlier on ownership, urgency or issue status).
         Mockito.lenient().when(professionalRepository.existsEligibleById(anyLong())).thenReturn(true);
+        // MS4: every pre-existing test in this class describes an ordinary, fully-configured
+        // professional, so coverage and categories are stubbed to a sane default here; the tests
+        // that care override them per-test. ProfessionalCoverageService's own rules are covered by
+        // ProfessionalCoverageServiceTest, not by re-asserting them through every consumer.
+        Mockito.lenient().when(professionalCoverageService.load(Mockito.any()))
+                .thenReturn(new ProfessionalCoverageService.CoverageView(SERVICE_REGION_ID, "גוש דן",
+                        BASE_CITY_ID, "תל אביב", List.of(BASE_CITY_ID), List.of("תל אביב"),
+                        List.of(CATEGORY_ID)));
+        Mockito.lenient().when(professionalCoverageService.categoryIds(Mockito.anyLong()))
+                .thenReturn(List.of(CATEGORY_ID));
+        Mockito.lenient().when(professionalCoverageService.baseCityName(Mockito.any())).thenReturn("Tel Aviv");
+        Mockito.lenient().when(professionalCoverageService.servesCategory(Mockito.anyLong(), Mockito.anyLong()))
+                .thenReturn(true);
         // The other half of isProfessionalBookable: the owning account is not soft-deleted.
         // listAvailableWindows now runs that check too (MS1 -- it previously ran neither), so the
         // default professional's user row has to resolve for the pre-existing tests to describe
@@ -137,9 +158,9 @@ class BookingsServiceTest {
     }
 
     private Professional activeProfessional() {
-        Professional professional = new Professional(99L, CATEGORY_ID, "Tel Aviv", new BigDecimal("100.00"));
+        Professional professional = new Professional(99L, SERVICE_REGION_ID, BASE_CITY_ID, new BigDecimal("100.00"));
         setField(professional, "id", PROFESSIONAL_ID);
-        setField(professional, "city", "Tel Aviv");
+        setField(professional, "baseCityId", BASE_CITY_ID);
         return professional;
     }
 
@@ -373,9 +394,12 @@ class BookingsServiceTest {
     void listAvailableWindows_categoryMismatch_throwsCategoryMismatch() {
         Issue issue = openIssue(IssueUrgencyType.STANDARD);
         when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
-        Professional mismatchedProfessional = new Professional(99L, 999L, "Tel Aviv", new BigDecimal("100.00"));
+        Professional mismatchedProfessional = new Professional(99L, SERVICE_REGION_ID, BASE_CITY_ID, new BigDecimal("100.00"));
         setField(mismatchedProfessional, "id", PROFESSIONAL_ID);
         when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(mismatchedProfessional));
+        // MS4: the category is a professional_categories membership test now, not a column on
+        // the row -- "this professional does not serve that category" is stated by the relation.
+        when(professionalCoverageService.servesCategory(PROFESSIONAL_ID, CATEGORY_ID)).thenReturn(false);
 
         assertThatThrownBy(() -> bookingsService.listAvailableWindows(CUSTOMER_ID, PROFESSIONAL_ID, ISSUE_ID))
                 .isInstanceOf(ApiException.class)
@@ -468,9 +492,9 @@ class BookingsServiceTest {
 
         // DB order (cheapest first) puts "SlowCity" ahead of "FastCity" by base price.
         ProfessionalCard slowCard = new ProfessionalCard(10L, "Slow Pro", "Area", new BigDecimal("50.00"), null,
-                "SlowCity", null, null, 0, false, false, BigDecimal.ZERO, 0, 0, 0);
+                "SlowCity", null, null, 0, false, List.of(CATEGORY_ID), false, BigDecimal.ZERO, 0, 0, 0);
         ProfessionalCard fastCard = new ProfessionalCard(20L, "Fast Pro", "Area", new BigDecimal("80.00"), null,
-                "FastCity", null, null, 0, false, false, BigDecimal.ZERO, 0, 0, 0);
+                "FastCity", null, null, 0, false, List.of(CATEGORY_ID), false, BigDecimal.ZERO, 0, 0, 0);
         when(professionalListingRepository.listByCategory(CATEGORY_ID, CUSTOMER_ID))
                 .thenReturn(List.of(slowCard, fastCard));
 
@@ -498,9 +522,9 @@ class BookingsServiceTest {
         when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
 
         ProfessionalCard cheapButSlow = new ProfessionalCard(10L, "Cheap Pro", "Area", new BigDecimal("50.00"), null,
-                "SlowCity", null, null, 0, false, false, BigDecimal.ZERO, 0, 0, 0);
+                "SlowCity", null, null, 0, false, List.of(CATEGORY_ID), false, BigDecimal.ZERO, 0, 0, 0);
         ProfessionalCard pricyButFast = new ProfessionalCard(20L, "Pricy Pro", "Area", new BigDecimal("80.00"), null,
-                "FastCity", null, null, 0, false, false, BigDecimal.ZERO, 0, 0, 0);
+                "FastCity", null, null, 0, false, List.of(CATEGORY_ID), false, BigDecimal.ZERO, 0, 0, 0);
         when(professionalListingRepository.listByCategory(CATEGORY_ID, CUSTOMER_ID))
                 .thenReturn(List.of(cheapButSlow, pricyButFast));
         when(distanceEtaStrategy.calculate(eq("SlowCity"), any(), any()))

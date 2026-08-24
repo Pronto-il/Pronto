@@ -32,7 +32,7 @@ public record SosCandidate(
         String fullName,
         String profileImageUrl,
         String city,
-        String serviceArea,
+        String serviceRegion,
         BigDecimal averageRating,
         long reviewCount,
         Short estimatedArrivalMinutes,

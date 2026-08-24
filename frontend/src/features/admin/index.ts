@@ -20,5 +20,5 @@ export {
 } from './approvalPresentation';
 export type { StatePresentation, VisibilityPresentation, VisibilityInput } from './approvalPresentation';
 
-export { findCategoryNameHe, resolveSubServices } from './serviceCatalog';
+export { findCategoryNameHe, findCategoryNamesHe, resolveSubServices } from './serviceCatalog';
 export type { ResolvedSubService } from './serviceCatalog';

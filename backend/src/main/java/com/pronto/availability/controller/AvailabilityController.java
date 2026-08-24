@@ -126,6 +126,18 @@ public class AvailabilityController {
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
+    /**
+     * Reads one of the caller's own blocks, unclipped. The calendar's {@code BLOCKED} segments
+     * are per-day derivations of a block, so the edit modal needs the real row before it can
+     * safely rewrite a multi-day range -- see {@code AvailabilityService#getBlock}.
+     */
+    @GetMapping("/blocks/{blockId}")
+    public ResponseEntity<BlockResponse> getBlock(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                    @PathVariable("blockId") String blockIdRaw) {
+        Long blockId = parsePathId(blockIdRaw);
+        return ResponseEntity.ok(availabilityService.getBlock(principal.id(), blockId));
+    }
+
     /** §4.4. */
     @PatchMapping("/blocks/{blockId}")
     public ResponseEntity<BlockResponse> updateBlock(@AuthenticationPrincipal AuthenticatedUser principal,

@@ -3,13 +3,14 @@ import { Link } from 'react-router-dom';
 import { Card, Badge } from '../../shared/components';
 import { useAuth, usePendingRequests, usePolling } from '../../shared/hooks';
 import { getAvailabilityCalendar, getSosAvailability } from '../../shared/api';
-import type { CalendarResponse, CalendarSegment } from '../../shared/api';
+import { SOS_AVAILABILITY_KEY, availabilityCalendarKey } from '../../shared/api/resourceKeys';
+import type { CalendarResponse, SosAvailabilityResponse, CalendarSegment } from '../../shared/api';
 import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
 import styles from './CommandCenterBanner.module.css';
 
-/** Matches `WeeklyCalendarGrid.tsx`'s own `CALENDAR_POLL_INTERVAL_MS` — a summary banner
- *  doesn't need a faster cadence than the calendar it sits above (MS6 design doc §3.3). */
-const BANNER_POLL_INTERVAL_MS = 25000;
+/** A summary banner doesn't need a faster cadence than the calendar it sits above (MS6 design
+ *  doc §3.3), and 25s was faster than a day's job list ever changes. */
+const BANNER_POLL_INTERVAL_MS = 60_000;
 
 function toDateKey(date: Date): string {
   const y = date.getFullYear();
@@ -41,11 +42,20 @@ function getTimeOfDayGreeting(): string {
  *
  * Data sources, each already verified real (§3.2): the pending-request count comes from
  * `PendingRequestsContext` (shared with the sidebar badge, §3.3) rather than its own fetch;
- * today's job count/next appointment come from a new, narrow, single-day
- * `GET /api/availability/calendar?from=&to=` fetch (does **not** touch `WeeklyCalendarGrid`'s
- * own week-range poll — that component stays untouched, §2); SOS state comes from its own
- * read-only `GET /api/availability/sos-availability` call rather than lifting state out of
- * `SosAvailabilityToggle`. Earnings are deliberately omitted — no backend field exists (§3.4).
+ * today's job count/next appointment come from a narrow, single-day
+ * `GET /api/availability/calendar?from=&to=`; SOS state from
+ * `GET /api/availability/sos-availability`. Earnings are deliberately omitted — no backend field
+ * exists (§3.4).
+ *
+ * **Both of those reads are keyed, and that is the point.** `SosAvailabilityToggle` sits directly
+ * below this banner on the same screen and reads the same SOS-availability resource; sharing
+ * `SOS_AVAILABILITY_KEY` means the two of them make one request between them, and the toggle's
+ * own `PUT` publishes its response into the same entry, so flipping the switch updates this
+ * badge without either component asking the server again. The calendar read is keyed by its
+ * date range for the same reason — when `WeeklyCalendarGrid` below is showing the week that
+ * contains today (its default, and where a professional spends nearly all of their time), the
+ * ranges differ so the keys differ; sharing happens whenever the ranges actually coincide, and
+ * the banner never silently pins the grid to a range it didn't choose.
  *
  * Motion: CSS-only mount transition (`.banner`'s own `.module.css`) — this is a static,
  * non-interactive-on-mount informational card, not a mount/exit-driven surface, per the
@@ -60,9 +70,11 @@ export function CommandCenterBanner() {
   const to = toDateKey(addDays(today, 1));
 
   const { data: calendarData } = usePolling<CalendarResponse>(() => getAvailabilityCalendar(from, to), {
+    key: availabilityCalendarKey(from, to),
     intervalMs: BANNER_POLL_INTERVAL_MS,
   });
-  const { data: sosData } = usePolling(() => getSosAvailability(), {
+  const { data: sosData } = usePolling<SosAvailabilityResponse>(() => getSosAvailability(), {
+    key: SOS_AVAILABILITY_KEY,
     intervalMs: BANNER_POLL_INTERVAL_MS,
   });
 

@@ -8,8 +8,6 @@ export type { SosHeaderProps } from './SosHeader';
 export { SosScanPanel } from './SosScanPanel';
 export type { SosScanPanelProps, SosScanState } from './SosScanPanel';
 
-export { SosScanAgainControl } from './SosScanAgainControl';
-export type { SosScanAgainControlProps } from './SosScanAgainControl';
 
 export { SosCandidateTray } from './SosCandidateTray';
 export type { SosCandidateTrayProps } from './SosCandidateTray';
@@ -34,7 +32,7 @@ export { SosOfferCard } from './SosOfferCard';
 export type { SosOfferCardProps } from './SosOfferCard';
 
 export { SosEtaModal } from './SosEtaModal';
-export type { SosEtaModalProps, SosEtaMode } from './SosEtaModal';
+export type { SosEtaModalProps } from './SosEtaModal';
 
 export { SosJobPanel } from './SosJobPanel';
 export type { SosJobPanelProps } from './SosJobPanel';

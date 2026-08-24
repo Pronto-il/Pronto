@@ -2,6 +2,7 @@ package com.pronto.bookings.dto;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.List;
 
 /**
  * One entry in {@code GET /api/bookings/professionals?issueId=}'s (and
@@ -19,14 +20,24 @@ import java.math.RoundingMode;
  * column value (not yet a resolved URL) and the {@code sameCity}/{@code distanceKm}/
  * {@code baseTravelTimeMinutes}/{@code trafficAdjustmentMinutes}/{@code etaMinutes} fields are
  * all placeholders — {@code bookings.service.BookingsService} performs a second, in-Java-only
- * enrichment pass per card (resolving the image URL via {@code StorageClient}, and computing
+ * enrichment pass per card (resolving the image URL via {@code StorageClient}, computing
  * ETA/distance via {@code matching.DistanceEtaStrategy}, never in SQL — per the approved
- * design), producing the final card via the canonical constructor.
+ * design — and attaching {@code categoryIds}), producing the final card via the canonical
+ * constructor.
+ *
+ * <p><b>MS4.</b> {@code serviceArea} became {@link #serviceRegion}: the Hebrew label of the
+ * professional's canonical {@code service_regions} row, joined in, rather than whatever free
+ * text they once typed. {@link #city} is unchanged in type and meaning — it is still the one
+ * city ETA is measured from — but it is now the joined label of {@code professionals
+ * .base_city_id} rather than a free-text column, so 'תל אביב' and 'תל-אביב' can no longer be two
+ * different places. Both are nullable, for pre-MS4 rows {@code V44} could not canonicalise.
+ * {@link #categoryIds} is new: a professional may serve several trades, and the card has to be
+ * able to say so.
  */
 public record ProfessionalCard(
         Long professionalId,
         String fullName,
-        String serviceArea,
+        String serviceRegion,
         BigDecimal basePrice,
         BigDecimal reliabilityScore,
         String city,
@@ -34,6 +45,7 @@ public record ProfessionalCard(
         BigDecimal averageRating,
         long reviewCount,
         boolean favorited,
+        List<Long> categoryIds,
         boolean sameCity,
         BigDecimal distanceKm,
         int baseTravelTimeMinutes,
@@ -50,14 +62,19 @@ public record ProfessionalCard(
      * {@code COUNT} subquery over {@code favorites} scoped to the calling customer (0 or 1,
      * never more — {@code favorites}' composite PK guarantees at most one row per
      * (customer, professional) pair), converted to a plain {@code boolean} here.
+     *
+     * <p>{@code categoryIds} starts empty and is filled by the same enrichment pass, from one
+     * batched {@code professional_categories} lookup for the whole page rather than a correlated
+     * subquery per card — JPQL cannot project a collection into a constructor expression, and
+     * N+1 queries for a listing is not a trade worth making to pretend otherwise.
      */
-    public ProfessionalCard(Long professionalId, String fullName, String serviceArea, BigDecimal basePrice,
+    public ProfessionalCard(Long professionalId, String fullName, String serviceRegion, BigDecimal basePrice,
                              BigDecimal reliabilityScore, String city, String profileImageKey,
                              Double averageRating, Long reviewCount, Long favoritedCount) {
-        this(professionalId, fullName, serviceArea, basePrice, reliabilityScore, city, profileImageKey,
+        this(professionalId, fullName, serviceRegion, basePrice, reliabilityScore, city, profileImageKey,
                 averageRating == null ? null : BigDecimal.valueOf(averageRating).setScale(2, RoundingMode.HALF_UP),
                 reviewCount == null ? 0L : reviewCount,
                 favoritedCount != null && favoritedCount > 0,
-                false, BigDecimal.ZERO, 0, 0, 0);
+                List.of(), false, BigDecimal.ZERO, 0, 0, 0);
     }
 }

@@ -130,7 +130,7 @@ export interface CreateSosRequestPayload {
 /**
  * The canonical request shape — returned by create, get, cancel and select.
  *
- * `matchingExpiresAt`/`selectionExpiresAt` are absolute ISO instants, not remaining-second
+ * `matchingExpiresAt` is an absolute ISO instant, not a remaining-second
  * counts, and that is load-bearing: a countdown rendered from an absolute deadline stays correct
  * across a slow response, a remount or a backgrounded tab. **The backend enforces both deadlines
  * regardless of what this client displays** — every read path re-applies them server-side.
@@ -186,8 +186,14 @@ export interface SosRequestResponse {
    * stops the search".
    */
   canExpandSearch: boolean;
+  /**
+   * When active scanning stops. **The only deadline on this shape.** There is deliberately no
+   * `selectionExpiresAt`: the customer's decision window was removed in the MS3 follow-up, so a
+   * professional who accepted stays selectable until the customer chooses, cancels, or every
+   * offer has lapsed with nothing accepted. "Can I choose right now" is `status ===
+   * 'WAITING_FOR_CUSTOMER_SELECTION'`, and the candidates endpoint says so directly.
+   */
   matchingExpiresAt: string | null;
-  selectionExpiresAt: string | null;
   createdAt: string;
   updatedAt: string | null;
   matchedAt: string | null;
@@ -216,7 +222,8 @@ export interface SosCandidate {
   fullName: string;
   profileImageUrl: string | null;
   city: string | null;
-  serviceArea: string | null;
+  /** MS4: canonical service-region label, replacing the old free-text service area. */
+  serviceRegion: string | null;
   /** Null when the professional has no reviews yet — render honestly, never a fabricated 0.0. */
   averageRating: number | null;
   reviewCount: number;
@@ -241,13 +248,14 @@ export interface SosCandidate {
  * which guarantees the property this screen depends on: a candidate already on screen is never
  * pushed off by a faster professional arriving later.
  *
- * `selectionOpen` is the only authority on whether `/select` will be accepted right now, and it
- * **flips true on the first acceptance** — there is no waiting for a second or a third.
+ * `selectionOpen` is the only authority on whether `/select` will be accepted right now. It flips
+ * true on the first acceptance — no waiting for a second or a third — and, since the MS3
+ * follow-up, it does not flip back on a timer: there is no decision deadline, so it stays true
+ * until the customer chooses or cancels.
  */
 export interface SosCandidatesResponse {
   sosRequestId: number;
   status: SosRequestStatus;
-  selectionExpiresAt: string | null;
   selectionOpen: boolean;
   candidates: SosCandidate[];
 }
@@ -546,9 +554,8 @@ export function getSosOffer(offerId: number): Promise<SosOfferResponse> {
  * `SOS_OFFER_NOT_OPEN` (409 — already answered), `SOS_INVALID_STATE` (409 — the request stopped
  * accepting responses, e.g. somebody was already selected).
  */
-export function acceptSosOffer(offerId: number, estimatedArrivalMinutes?: number): Promise<SosOfferResponse> {
-  const body = estimatedArrivalMinutes === undefined ? undefined : { estimatedArrivalMinutes };
-  return httpClient.post<SosOfferResponse>(`/api/sos/offers/${offerId}/accept`, body);
+export function acceptSosOffer(offerId: number, estimatedArrivalMinutes: number): Promise<SosOfferResponse> {
+  return httpClient.post<SosOfferResponse>(`/api/sos/offers/${offerId}/accept`, { estimatedArrivalMinutes });
 }
 
 /**
@@ -559,14 +566,13 @@ export function rejectSosOffer(offerId: number): Promise<SosOfferResponse> {
   return httpClient.post<SosOfferResponse>(`/api/sos/offers/${offerId}/reject`);
 }
 
-/**
- * `POST /api/sos/offers/{id}/eta` — revise a committed ETA. Allowed while `ACCEPTED` or
- * `SELECTED` (traffic changes, and a customer watching a stale ETA is worse than a revised one).
- * Required value, unlike on accept: revising an ETA to "no value" is not a meaningful operation.
+/*
+ * `POST /api/sos/offers/{id}/eta` has no client function any more (MS3). The endpoint still
+ * exists and answers `409 SOS_ETA_LOCKED` to anything that calls it — an ETA committed at
+ * acceptance is what the customer chooses on, so it is final. Keeping a wrapper for a call whose
+ * only possible outcome is a refusal would be a client for an operation this product does not
+ * have.
  */
-export function updateSosOfferEta(offerId: number, estimatedArrivalMinutes: number): Promise<SosOfferResponse> {
-  return httpClient.post<SosOfferResponse>(`/api/sos/offers/${offerId}/eta`, { estimatedArrivalMinutes });
-}
 
 // ---------------------------------------------------------------------------
 // Professional: operational transitions (the selected professional only)

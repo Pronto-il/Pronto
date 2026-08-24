@@ -14,11 +14,22 @@ import java.time.Instant;
 
 /**
  * JPA entity for the {@code professionals} table — a 1:1 extension of a {@code users} row
- * with {@code role = PROFESSIONAL}. {@code userId}/{@code categoryId} are stored as plain
- * FK columns rather than {@code @ManyToOne}/{@code @OneToOne} associations, deliberately —
- * this package doesn't need to navigate/lazy-load the related {@code User} object graph,
- * just the id. Mapping matches the already-applied {@code V4__create_professionals.sql}
- * migration exactly. See {@code docs/architecture/data-model.md} §2.4.
+ * with {@code role = PROFESSIONAL}. {@code userId}/{@code serviceRegionId}/{@code baseCityId}
+ * are stored as plain FK columns rather than {@code @ManyToOne}/{@code @OneToOne} associations,
+ * deliberately — this package doesn't need to navigate/lazy-load the related object graphs,
+ * just the ids. Mapping matches the applied migrations exactly
+ * ({@code V4__create_professionals.sql} as amended through
+ * {@code V45__create_professional_categories.sql}). See
+ * {@code docs/architecture/data-model.md} §2.4.
+ *
+ * <p><b>MS4 — service coverage and multiple categories.</b> Three columns left this table:
+ * {@code category_id} became the {@code professional_categories} relation
+ * ({@link com.pronto.professionals.entity.ProfessionalCategory}), because a professional may
+ * serve several trades; free-text {@code service_area} became {@link #serviceRegionId}, a
+ * reference into the closed {@code service_regions} catalogue; and free-text {@code city}
+ * became {@link #baseCityId} plus the {@code professional_service_cities} relation
+ * ({@link ProfessionalServiceCity}). Nothing on this entity holds a category or a place as
+ * text any more — the ids are the truth, and the Hebrew labels are resolved for display.
  *
  * <p>Does not model {@code sos_availability} — that's a separate 1:1 table owned by the
  * {@code availability} package ({@code availability.entity.SosAvailability}), not this
@@ -69,11 +80,25 @@ public class Professional {
     @Column(name = "user_id", nullable = false, unique = true)
     private Long userId;
 
-    @Column(name = "category_id", nullable = false)
-    private Long categoryId;
+    /**
+     * The professional's service region, as a {@code service_regions} id. Nullable at the
+     * database because {@code V44} could not honestly canonicalise every pre-MS4 free-text
+     * {@code service_area} ('Tel Aviv', 'תל אביב והמרכז', ''); every write path since requires
+     * it, so {@code null} means exactly one thing — a professional who registered before MS4 and
+     * whose old text named no recognisable region. See that migration's header.
+     */
+    @Column(name = "service_region_id")
+    private Long serviceRegionId;
 
-    @Column(name = "service_area", nullable = false, length = 150)
-    private String serviceArea;
+    /**
+     * Where the professional is based, as a {@code service_cities} id — the city
+     * {@code matching.ApproximateDistanceEtaStrategy} measures travel from, and the one shown on
+     * a card. Always also a member of {@code professional_service_cities}, enforced on every
+     * write by {@code locations.service.ServiceCoverageValidator}. Nullable for the same
+     * migration reason as {@link #serviceRegionId}.
+     */
+    @Column(name = "base_city_id")
+    private Long baseCityId;
 
     @Column(name = "approval_status", nullable = false, length = 20)
     private String approvalStatus;
@@ -100,9 +125,6 @@ public class Professional {
      */
     @Column(name = "verification_document_key", length = 500)
     private String verificationDocumentKey;
-
-    @Column(name = "city", length = 100)
-    private String city;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
@@ -144,10 +166,10 @@ public class Professional {
      * profile, their sub-services and their working hours, and toggle SOS availability. What they
      * cannot do until an operator approves them is appear to customers or receive work.
      */
-    public Professional(Long userId, Long categoryId, String serviceArea, BigDecimal basePrice) {
+    public Professional(Long userId, Long serviceRegionId, Long baseCityId, BigDecimal basePrice) {
         this.userId = userId;
-        this.categoryId = categoryId;
-        this.serviceArea = serviceArea;
+        this.serviceRegionId = serviceRegionId;
+        this.baseCityId = baseCityId;
         this.basePrice = basePrice;
         this.approvalStatus = STATUS_PENDING;
     }
@@ -172,20 +194,20 @@ public class Professional {
         return userId;
     }
 
-    public Long getCategoryId() {
-        return categoryId;
+    public Long getServiceRegionId() {
+        return serviceRegionId;
     }
 
-    public void setCategoryId(Long categoryId) {
-        this.categoryId = categoryId;
+    public void setServiceRegionId(Long serviceRegionId) {
+        this.serviceRegionId = serviceRegionId;
     }
 
-    public String getServiceArea() {
-        return serviceArea;
+    public Long getBaseCityId() {
+        return baseCityId;
     }
 
-    public void setServiceArea(String serviceArea) {
-        this.serviceArea = serviceArea;
+    public void setBaseCityId(Long baseCityId) {
+        this.baseCityId = baseCityId;
     }
 
     public String getApprovalStatus() {
@@ -302,14 +324,6 @@ public class Professional {
 
     public void setVerificationDocumentKey(String verificationDocumentKey) {
         this.verificationDocumentKey = verificationDocumentKey;
-    }
-
-    public String getCity() {
-        return city;
-    }
-
-    public void setCity(String city) {
-        this.city = city;
     }
 
     public Instant getCreatedAt() {

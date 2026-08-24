@@ -201,6 +201,23 @@ constraint).
 
 ---
 
+### 4a. `GET /api/availability/blocks/{blockId}`
+
+Reads one of the caller's own blocks. Same authorization sequence as §4 (`404 NOT_FOUND` →
+`403 FORBIDDEN`), same `BlockResponse` body as §3's `201`.
+
+**Why this exists, given §6's "no separate list-blocks endpoint" ruling**: §6's `segments` are
+*derived* — the calendar clips every block to each day's working-hours window, so a block
+spanning several days appears as several day-sized `BLOCKED` segments sharing one `blockId`.
+That is right for rendering and wrong for editing: an editor seeded from a clicked segment
+would `PATCH` a multi-day block down to the single day it was opened from. This endpoint
+returns the block **row**, unclipped, and is called by the block editor before an edit. It is a
+single-id read, not the range listing §6 rejects.
+
+**Status codes**: `200` · `401 UNAUTHORIZED` · `403 FORBIDDEN` · `404 NOT_FOUND`.
+
+---
+
 ## 5. `DELETE /api/availability/blocks/{blockId}`
 
 Same ownership check as §4 (`404 NOT_FOUND` → `403 FORBIDDEN`), then an unconditional

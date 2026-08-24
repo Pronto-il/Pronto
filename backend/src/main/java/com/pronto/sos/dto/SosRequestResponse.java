@@ -11,11 +11,16 @@ import java.time.Instant;
  * The canonical SOS request shape, returned by create, get, cancel and every professional-side
  * operational transition.
  *
- * <p>{@code selectionExpiresAt} and {@code matchingExpiresAt} are absolute instants, not
- * remaining-second counts, deliberately: the backend is the source of truth for these deadlines
- * and a client that renders a countdown from an absolute deadline stays correct across a slow
- * response or a backgrounded tab, whereas one handed "120 seconds left" does not. The server
- * enforces the deadline regardless of what any client displays.
+ * <p>{@code matchingExpiresAt} — when active scanning stops — is an absolute instant, not a
+ * remaining-second count, deliberately: the backend is the source of truth and a client that
+ * renders from an absolute deadline stays correct across a slow response or a backgrounded tab,
+ * whereas one handed "120 seconds left" does not.
+ *
+ * <p><b>There is no customer-decision deadline on this DTO, because there is no such deadline.</b>
+ * A {@code selectionExpiresAt} was removed in the MS3 follow-up along with the rule it expressed:
+ * a professional who has committed to come stays selectable until the customer chooses, cancels,
+ * or every offer has lapsed with nothing accepted. Whether choosing is possible right now is
+ * simply {@code status == WAITING_FOR_CUSTOMER_SELECTION}.
  *
  * @param acceptedCandidateCount how many professionals have accepted so far — what drives the
  *                               customer's "finding you a professional… 2 found" progress view
@@ -78,7 +83,6 @@ public record SosRequestResponse(
          */
         boolean canExpandSearch,
         Instant matchingExpiresAt,
-        Instant selectionExpiresAt,
         Instant createdAt,
         Instant updatedAt,
         Instant matchedAt,

@@ -64,22 +64,36 @@ public class SosSweepJob {
                 }
             }
 
-            // 2. Requests past their matching or selection deadline. sweepOne re-derives which
-            //    of the two applies rather than trusting the query that produced the id.
+            // 2. Searches due to widen. This is where "the search expands automatically after
+            //    two minutes" actually happens — on a schedule the request itself carries
+            //    (`next_expansion_at`), so it survives a refresh, works with no browser open at
+            //    all, and cannot be triggered twice by two clients. Each expansion is its own
+            //    transaction and its own compare-and-set; losing is silent and ordinary.
+            int expansions = 0;
+            for (Long sosRequestId : sosService.findExpansionDueIds()) {
+                if (sosService.expandSearchAutomatically(sosRequestId)) {
+                    expansions++;
+                }
+            }
+
+            // 3. Requests past their scan or decision deadline. sweepOne re-derives which
+            //    applies rather than trusting the query that produced the id — and a closed scan
+            //    only ends a request once no offer can still be answered.
             List<Long> expiring = sosService.findExpiryCandidateIds();
             for (Long sosRequestId : expiring) {
                 sosService.sweepOne(sosRequestId);
             }
 
-            // 3. Selections the professional never confirmed.
+            // 4. Selections the professional never confirmed.
             List<Long> unconfirmed = sosService.findUnconfirmedSelectionIds();
             for (Long sosRequestId : unconfirmed) {
                 sosService.expireUnconfirmedSelection(sosRequestId);
             }
 
-            if (expiredOffers > 0 || !expiring.isEmpty() || !unconfirmed.isEmpty()) {
-                log.info("sos.sweep expiredOffers={} expiredRequests={} unconfirmedSelections={}",
-                        expiredOffers, expiring.size(), unconfirmed.size());
+            if (expiredOffers > 0 || expansions > 0 || !expiring.isEmpty() || !unconfirmed.isEmpty()) {
+                log.info("sos.sweep expiredOffers={} searchExpansions={} expiredRequests={} "
+                                + "unconfirmedSelections={}",
+                        expiredOffers, expansions, expiring.size(), unconfirmed.size());
             }
         } catch (RuntimeException e) {
             // A scheduled method that throws is silently unscheduled by some executors and, at

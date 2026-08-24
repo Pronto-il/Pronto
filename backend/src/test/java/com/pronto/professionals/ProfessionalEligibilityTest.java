@@ -50,7 +50,7 @@ class ProfessionalEligibilityTest {
                 .contains("ProfessionalSubService ps")
                 // The cross-category rule: a sub-service that belongs to somebody else's category
                 // must not confer eligibility.
-                .contains("s.categoryId = p.categoryId");
+                .contains("pcOnboarding.categoryId = s.categoryId");
     }
 
     @Test

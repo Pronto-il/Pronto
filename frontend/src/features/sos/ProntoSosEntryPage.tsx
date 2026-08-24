@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Siren } from 'lucide-react';
 import {
@@ -63,7 +63,17 @@ function toUserMessage(error: unknown): string {
  * 2. Resolves the service address without asking again where it can: the booking draft the
  *    matching screen already wrote, then the profile's saved default. It only renders the address
  *    step when there is genuinely nothing to use (a direct visit with no default on file).
- * 3. Activates, and hands the whole live experience to `ProntoSosScreen`.
+ * 3. **Activates immediately**, and hands the whole live experience to `ProntoSosScreen`.
+ *
+ * ## Why there is no "הפעלת SOS" button any more (MS3)
+ *
+ * There used to be a confirmation card here: the customer picked SOS, pressed Continue, and then
+ * had to press a second button to actually start the search. Two presses for one decision, the
+ * second of which asked "are you sure?" about something the customer had already chosen twice —
+ * while a pipe was leaking. Choosing SOS and continuing *is* the intent, so arriving here with a
+ * usable address starts the search, once (`activationAttemptedRef`), and the customer lands on
+ * the live screen with the scan already running. The address step still appears when there is
+ * genuinely nothing to send, and cancelling is always one tap away on the live screen.
  *
  * This replaces the no-API placeholder that held this route while the Pronto SOS backend was
  * being built.
@@ -189,21 +199,16 @@ export default function ProntoSosEntryPage() {
     [issueId],
   );
 
-  function handleActivate() {
-    const errors = validateAddress(address);
-    setAddressErrors(errors);
-    if (Object.keys(errors).length > 0) {
-      setIsEditingAddress(true);
-      return;
-    }
-    void activate(address);
-  }
-
+  /**
+   * The address step's own action. It no longer hands back to a confirmation card — filling in
+   * where to send somebody is the last question this flow has, so answering it starts the search.
+   */
   function handleAddressContinue() {
     const errors = validateAddress(address);
     setAddressErrors(errors);
     if (Object.keys(errors).length === 0) {
       setIsEditingAddress(false);
+      void activate(address);
     }
   }
 
@@ -219,6 +224,34 @@ export default function ProntoSosEntryPage() {
   }, [activate, address]);
 
   const hasUsableAddress = Object.keys(validateAddress(address)).length === 0;
+
+  /**
+   * Exactly one automatic activation per mount. A ref, not state: two effect runs in the same
+   * tick would both read a stale flag and fire twice, and while the backend's unique index would
+   * refuse the second, the customer would see an error for something that worked.
+   *
+   * Note what this deliberately does *not* re-run on: a failed activation sets
+   * `activationError` and stops. Retrying automatically would hammer a backend that just said no
+   * (an issue that is not SOS, an issue no longer open) — the live screen's own "נסה שוב" is the
+   * retry path, and it is a decision, not a loop.
+   */
+  const activationAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (isResolving || sosRequestId !== null || activationAttemptedRef.current) {
+      return;
+    }
+    // Nothing to send yet (no draft, no saved default) or the customer is mid-edit: the address
+    // step is showing and its own continue action will start the search.
+    if (!hasUsableAddress || isEditingAddress) {
+      return;
+    }
+    // A STANDARD issue reaching this route is a mistake to explain, not a search to start.
+    if (issue && issue.urgencyType !== 'SOS') {
+      return;
+    }
+    activationAttemptedRef.current = true;
+    void activate(address);
+  }, [isResolving, sosRequestId, hasUsableAddress, isEditingAddress, issue, activate, address]);
 
   // ---- render ----
 
@@ -308,6 +341,43 @@ export default function ProntoSosEntryPage() {
     .filter(Boolean)
     .join(', ');
 
+  // Activation failed. The only screen left with something to say — everything above either
+  // resolved into the live screen or into a question. Deliberately not auto-retried: the backend
+  // refused for a reason, and retrying in a loop would hide it.
+  if (activationError) {
+    return (
+      <div className="focused-page">
+        <PageHeader title="Pronto SOS" onBack={() => navigate('/')} />
+        <Card className={styles.card}>
+          <span className={styles.mark} aria-hidden="true">
+            <Siren size={26} />
+          </span>
+          <h2 className={styles.cardTitle}>לא הצלחנו להתחיל את החיפוש</h2>
+          <p className={styles.errorText} role="alert">
+            {activationError}
+          </p>
+          <div className={styles.actions}>
+            <Button onClick={() => void activate(address)} loading={isActivating} fullWidth>
+              ניסיון נוסף
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setAddressErrors({});
+                setIsEditingAddress(true);
+              }}
+              fullWidth
+            >
+              שינוי כתובת
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  // The one frame between "we have everything we need" and the live screen: the activation
+  // request is in flight (or about to be). No button — see this page's doc comment.
   return (
     <div className="focused-page">
       <PageHeader title="Pronto SOS" onBack={() => navigate('/')} />
@@ -316,10 +386,10 @@ export default function ProntoSosEntryPage() {
         <span className={styles.mark} aria-hidden="true">
           <Siren size={26} />
         </span>
-        <h2 className={styles.cardTitle}>להפעיל חיפוש דחוף עכשיו?</h2>
+        <h2 className={styles.cardTitle}>מתחילים לחפש בעל מקצוע</h2>
         <p className={styles.cardBody}>
-          נפנה בשמך לבעלי מקצוע פנויים באזור שלך. כל מי שיאשר שהוא יכול להגיע יופיע לך מיד, ואתה
-          תבחר את מי שמתאים לך.
+          פונים עכשיו לבעלי מקצוע פנויים באזור שלך. כל מי שיאשר שהוא יכול להגיע יופיע כאן מיד, עם
+          זמן ההגעה שלו.
         </p>
 
         {/* The context that already exists — shown so it's clear nothing needs to be filled in
@@ -333,35 +403,9 @@ export default function ProntoSosEntryPage() {
             <dt className={styles.summaryLabel}>כתובת</dt>
             <dd className={styles.summaryValue}>{addressSummary}</dd>
           </div>
-          {issue?.description && (
-            <div className={styles.summaryRow}>
-              <dt className={styles.summaryLabel}>התקלה</dt>
-              <dd className={`${styles.summaryValue} ${styles.summaryDescription}`}>{issue.description}</dd>
-            </div>
-          )}
         </dl>
 
-        {activationError && (
-          <p className={styles.errorText} role="alert">
-            {activationError}
-          </p>
-        )}
-
-        <div className={styles.actions}>
-          <Button onClick={handleActivate} loading={isActivating} fullWidth>
-            הפעלת SOS
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              setAddressErrors({});
-              setIsEditingAddress(true);
-            }}
-            fullWidth
-          >
-            שינוי כתובת
-          </Button>
-        </div>
+        <Skeleton variant="rect" className={styles.loading} />
       </Card>
     </div>
   );

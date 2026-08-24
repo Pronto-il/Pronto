@@ -17,3 +17,16 @@ export function formatReviewCount(count: number): string {
   }
   return `${count} ביקורות`;
 }
+
+/**
+ * MS4 §7's "how many other trades does this professional serve" fragment on a listing card.
+ * Same singular boundary as {@link formatReviewCount}: "+1 תחומים נוספים" is not Hebrew.
+ *
+ * @returns `null` at zero, so the caller renders nothing rather than "+0".
+ */
+export function formatExtraCategoryCount(count: number): string | null {
+  if (count <= 0) {
+    return null;
+  }
+  return count === 1 ? '+ תחום נוסף' : `+ ${count} תחומים נוספים`;
+}

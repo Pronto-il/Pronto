@@ -35,6 +35,7 @@ class SosSweepJobTest {
         sosService = Mockito.mock(SosService.class);
         job = new SosSweepJob(sosService);
         when(sosService.findOverdueOfferIds()).thenReturn(List.of());
+        when(sosService.findExpansionDueIds()).thenReturn(List.of());
         when(sosService.findExpiryCandidateIds()).thenReturn(List.of());
         when(sosService.findUnconfirmedSelectionIds()).thenReturn(List.of());
     }
@@ -52,14 +53,18 @@ class SosSweepJobTest {
     }
 
     /**
-     * The three passes are ordered, not incidental: offers are closed before requests are
+     * The four passes are ordered, not incidental: offers are closed before requests are
      * assessed, so that "did anyone accept?" cannot count an offer that has already lapsed and
-     * open a selection window over a candidate who is no longer reachable.
+     * open a selection window over a candidate who is no longer reachable. Expansion runs before
+     * expiry for the same class of reason — a search that is still allowed to widen should widen
+     * before anything considers whether the request has run out of options.
      */
     @Test
-    void allThreePassesRunInOrder() {
+    void allFourPassesRunInOrder() {
         when(sosService.findOverdueOfferIds()).thenReturn(List.of(11L));
         when(sosService.expireOffer(11L)).thenReturn(true);
+        when(sosService.findExpansionDueIds()).thenReturn(List.of(22L));
+        when(sosService.expandSearchAutomatically(22L)).thenReturn(true);
         when(sosService.findExpiryCandidateIds()).thenReturn(List.of(44L));
         when(sosService.findUnconfirmedSelectionIds()).thenReturn(List.of(55L));
 
@@ -67,8 +72,25 @@ class SosSweepJobTest {
 
         org.mockito.InOrder inOrder = Mockito.inOrder(sosService);
         inOrder.verify(sosService).expireOffer(11L);
+        inOrder.verify(sosService).expandSearchAutomatically(22L);
         inOrder.verify(sosService).sweepOne(44L);
         inOrder.verify(sosService).expireUnconfirmedSelection(55L);
+    }
+
+    /**
+     * <b>This is where "the search expands automatically after two minutes" actually happens.</b>
+     * The customer presses nothing; the sweep reads the schedule the request itself carries and
+     * widens each one that is due, in its own transaction.
+     */
+    @Test
+    void everyDueSearchIsExpandedIndividually() {
+        when(sosService.findExpansionDueIds()).thenReturn(List.of(11L, 22L));
+        when(sosService.expandSearchAutomatically(anyLong())).thenReturn(true);
+
+        job.sweep();
+
+        verify(sosService).expandSearchAutomatically(11L);
+        verify(sosService).expandSearchAutomatically(22L);
     }
 
     /** Nothing overdue is the common case, and it must not touch anything. */
@@ -77,6 +99,7 @@ class SosSweepJobTest {
         job.sweep();
 
         verify(sosService, never()).expireOffer(anyLong());
+        verify(sosService, never()).expandSearchAutomatically(anyLong());
         verify(sosService, never()).sweepOne(anyLong());
         verify(sosService, never()).expireUnconfirmedSelection(anyLong());
     }

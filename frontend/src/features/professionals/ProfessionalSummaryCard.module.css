@@ -89,3 +89,22 @@
   font-size: 13px;
   color: var(--color-text-muted);
 }
+
+/* The whole card as one target, when a caller passes `onOpen`. Button chrome is reset entirely
+   — the Card inside keeps every visual it has when the card is static. */
+.cardButton {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.cardButton:focus-visible {
+  outline: none;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 0 0 3px var(--color-focus-ring-subtle);
+}

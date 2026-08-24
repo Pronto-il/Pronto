@@ -22,6 +22,37 @@
   color: var(--color-text-primary);
 }
 
+/* The customer's view: the professional's name opens their profile in place. Button chrome is
+   reset so the identity keeps the exact typography it has when it isn't clickable. */
+.professionalNameButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--color-primary);
+  cursor: pointer;
+  text-align: start;
+}
+
+.professionalNameButton:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.professionalNameButton:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-focus-ring-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.professionalChevron {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
 .orderIdLabel {
   font-size: 13px;
   color: var(--color-text-secondary);

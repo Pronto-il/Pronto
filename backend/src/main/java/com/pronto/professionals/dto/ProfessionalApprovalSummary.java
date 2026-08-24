@@ -1,6 +1,7 @@
 package com.pronto.professionals.dto;
 
 import java.time.Instant;
+import java.util.List;
 
 /**
  * One row of the operator queue, {@code GET /api/admin/professionals}. MS1 (D-F).
@@ -21,8 +22,8 @@ public record ProfessionalApprovalSummary(
         Long userId,
         String fullName,
         String email,
-        Long categoryId,
-        String serviceArea,
+        List<Long> categoryIds,
+        String serviceRegion,
         String city,
         String approvalStatus,
         boolean onboardingComplete,

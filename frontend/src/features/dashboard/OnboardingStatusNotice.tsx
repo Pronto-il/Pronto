@@ -2,12 +2,17 @@ import { Link } from 'react-router-dom';
 import { Card } from '../../shared/components';
 import { usePolling } from '../../shared/hooks';
 import { getMyProfessionalProfile, getMySubServices, getWorkingHours } from '../../shared/api';
+import { ONBOARDING_STATUS_KEY } from '../../shared/api/resourceKeys';
 import styles from './OnboardingStatusNotice.module.css';
 
-/** Slow on purpose: this is a "something is still missing" reminder, not live data. It does
- *  keep polling after the account becomes bookable, so clearing your own sub-services later in
- *  the profile editor brings the notice back without a page reload. */
-const STATUS_POLL_INTERVAL_MS = 60000;
+/**
+ * Slow on purpose: this is a "something is still missing" reminder, not live data. It does keep
+ * re-reading after the account becomes bookable, so clearing your own sub-services later in the
+ * profile editor brings the notice back without a page reload — but at five minutes rather than
+ * one, because the only thing that changes it is an operator decision or an edit the
+ * professional themselves just made on another screen of this same app.
+ */
+const STATUS_POLL_INTERVAL_MS = 300_000;
 
 interface OnboardingStatus {
   bookable: boolean;
@@ -58,9 +63,14 @@ async function fetchOnboardingStatus(): Promise<OnboardingStatus> {
  * `GET /api/professionals/me` (`approvalStatus` is self-view-only per D-G, which is exactly the
  * caller here), the two gaps from `GET /api/professionals/me/sub-services` and
  * `GET /api/availability/working-hours`. When the account is eligible it renders nothing.
+ *
+ * The key is on the *composite* — the three calls answer one question and are only meaningful
+ * together — so mounting this on every `/pro/*` screen, as `ProDashboardLayout` does, costs one
+ * shared entry rather than one per screen.
  */
 export function OnboardingStatusNotice() {
   const { data } = usePolling<OnboardingStatus>(fetchOnboardingStatus, {
+    key: ONBOARDING_STATUS_KEY,
     intervalMs: STATUS_POLL_INTERVAL_MS,
   });
 

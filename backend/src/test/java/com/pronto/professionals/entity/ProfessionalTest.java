@@ -15,11 +15,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class ProfessionalTest {
 
+    /** MS4: `professionals` no longer stores a category or free-text place -- see the entity. */
+    private static final long SERVICE_REGION_ID = 4L;
+    private static final long BASE_CITY_ID = 40L;
+
     private static final Instant REVIEWED_AT = Instant.parse("2026-08-22T10:15:30Z");
     private static final Long OPERATOR_ID = 7L;
 
     private Professional newProfessional() {
-        return new Professional(1L, 3L, "Tel Aviv", new BigDecimal("250.00"));
+        return new Professional(1L, SERVICE_REGION_ID, BASE_CITY_ID, new BigDecimal("250.00"));
     }
 
     @Test

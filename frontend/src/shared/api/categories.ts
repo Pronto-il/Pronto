@@ -47,3 +47,39 @@ export function getCategoryNameHe(categoryId: number): string {
 export function getProfessionalNameHe(categoryId: number): string {
   return CATEGORIES.find((category) => category.id === categoryId)?.professionalNameHe ?? 'בעל מקצוע';
 }
+
+/**
+ * MS4 — the Hebrew names for a professional's categories, in this list's own order.
+ *
+ * The backend already returns `categoryIds` ordered by `categories.display_order`, and this
+ * preserves that order rather than re-sorting: "the first one" has to mean the same thing on the
+ * card, in the profile modal and on the dashboard, and it is what
+ * {@link formatCategorySummary} shows as the primary trade.
+ *
+ * Unknown ids are dropped rather than rendered as "לא ידוע" — a card listing a real trade
+ * alongside a placeholder reads as a data error to the customer, and one extra unknown id in a
+ * list of three is not worth saying anything about.
+ */
+export function getCategoryNamesHe(categoryIds: number[]): string[] {
+  return categoryIds
+    .map((id) => CATEGORIES.find((category) => category.id === id)?.nameHe)
+    .filter((name): name is string => Boolean(name));
+}
+
+/**
+ * MS4 §7 — the compact representation for small surfaces: the primary trade, plus how many more
+ * there are. "אינסטלציה +2", never a comma-joined dump of every category into a card that has
+ * room for one line.
+ *
+ * The full list stays available on the profile (see `getCategoryNamesHe`).
+ */
+export function formatCategorySummary(categoryIds: number[]): string {
+  const names = getCategoryNamesHe(categoryIds);
+  if (names.length === 0) {
+    return 'בעל מקצוע';
+  }
+  if (names.length === 1) {
+    return names[0];
+  }
+  return `${names[0]} +${names.length - 1}`;
+}

@@ -61,9 +61,31 @@ public class SosOffer {
      * The platform's ETA estimate at dispatch, replaced by the professional's own figure when
      * they accept — they know their current job and traffic better than
      * {@code matching.ApproximateDistanceEtaStrategy} does.
+     *
+     * <p><b>Immutable from acceptance onward</b> (MS3): the professional commits to a number the
+     * customer then chooses on, so nothing may revise it afterwards — see
+     * {@code SosOfferService#updateEta}, which refuses, and note that
+     * {@code SosOfferRepository} no longer contains any statement that writes this column
+     * outside {@code accept}.
      */
     @Column(name = "estimated_arrival_minutes")
     private Short estimatedArrivalMinutes;
+
+    /**
+     * The ETA the professional promised at the moment they accepted, and the moment they
+     * accepted it ({@code V41}).
+     *
+     * <p>Write-once, by the {@code accept} statement only. They duplicate
+     * {@link #estimatedArrivalMinutes}/{@link #respondedAt} today <em>because</em> the ETA is
+     * locked — that is the point: {@code responded_at} is also stamped by a rejection, and these
+     * two columns are the audit record that stays true even if some future code touches the live
+     * ETA. "What was promised, and when" is what a reliability or dispute review reads.
+     */
+    @Column(name = "promised_eta_minutes")
+    private Short promisedEtaMinutes;
+
+    @Column(name = "accepted_at")
+    private Instant acceptedAt;
 
     @Column(name = "visit_fee", precision = 10, scale = 2)
     private BigDecimal visitFee;
@@ -186,6 +208,16 @@ public class SosOffer {
 
     public Instant getViewedAt() {
         return viewedAt;
+    }
+
+    /** The immutable promise: what was committed at acceptance. See the field's Javadoc. */
+    public Short getPromisedEtaMinutes() {
+        return promisedEtaMinutes;
+    }
+
+    /** When the professional accepted — never set by a rejection or an expiry. */
+    public Instant getAcceptedAt() {
+        return acceptedAt;
     }
 
     public Instant getRespondedAt() {

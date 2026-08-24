@@ -38,8 +38,8 @@ export interface ProfessionalApprovalSummary {
   userId: number;
   fullName: string | null;
   email: string | null;
-  categoryId: number;
-  serviceArea: string;
+  categoryIds: number[];
+  serviceRegion: string | null;
   city: string | null;
   approvalStatus: string;
   /** Sub-services (category-valid), an enabled working-hours day, and a verification document
@@ -64,9 +64,11 @@ export interface ProfessionalReviewDetail {
   userId: number;
   fullName: string;
   email: string;
-  categoryId: number;
-  serviceArea: string;
+  categoryIds: number[];
+  serviceRegion: string | null;
   city: string | null;
+  /** MS4: every canonical city this professional serves, in catalogue order. */
+  serviceCityNamesHe: string[];
   bio: string | null;
   basePrice: number;
   approvalStatus: string;
@@ -74,7 +76,7 @@ export interface ProfessionalReviewDetail {
    *  request; `APPROVED` on its own does not imply it (D4). */
   bookable: boolean;
   hasVerificationDocument: boolean;
-  /** Every sub-service row this professional has — **not** pre-filtered to `categoryId`. */
+  /** Every sub-service row this professional has — **not** pre-filtered to their categories. */
   subServiceIds: number[];
   onboardingComplete: boolean;
   registeredAt: string;

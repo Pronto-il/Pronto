@@ -18,8 +18,6 @@ export interface SosOfferCardProps {
   /** Opens the availability sheet. Absent for a card with nothing to answer. */
   onRespondAvailable?: (offer: SosOfferResponse) => void;
   onDecline?: (offer: SosOfferResponse) => void;
-  /** Revise a committed ETA while `ACCEPTED`. */
-  onReviseEta?: (offer: SosOfferResponse) => void;
   /** Clears a resolved outcome card early. */
   onDismiss?: (offerId: number) => void;
   /**
@@ -57,7 +55,6 @@ export function SosOfferCard({
   onViewed,
   onRespondAvailable,
   onDecline,
-  onReviseEta,
   onDismiss,
   onCountdownElapsed,
   isDeclining = false,
@@ -199,12 +196,9 @@ export function SosOfferCard({
 
       {offer.status === 'ACCEPTED' && (
         <div className={styles.waitingFooter}>
-          <p className={styles.waitingNote}>האישור נשלח ללקוח. מחכים לבחירה שלו.</p>
-          {onReviseEta && (
-            <Button variant="ghost" onClick={() => onReviseEta(offer)} disabled={isBusy} fullWidth>
-              עדכון זמן הגעה
-            </Button>
-          )}
+          <p className={styles.waitingNote}>
+            האישור נשלח ללקוח עם זמן ההגעה שמסרת. מחכים לבחירה שלו.
+          </p>
         </div>
       )}
 

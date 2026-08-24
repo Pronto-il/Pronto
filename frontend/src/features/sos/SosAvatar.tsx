@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ZoomableImage } from '../../shared/components';
 
 export interface SosAvatarProps {
   /** Presigned profile-image URL, or `null` when the professional has never uploaded one. */
@@ -9,6 +10,14 @@ export interface SosAvatarProps {
   imageClassName: string;
   /** The consumer's own CSS-module class for the initials circle. */
   fallbackClassName: string;
+  /**
+   * Opt in to click-to-enlarge (see `shared/components/ZoomableImage`). Off by default, and it
+   * has to be: on the map marker and the candidate card the avatar sits inside a control whose
+   * click *selects* that professional, and stealing it to open a picture would take the customer
+   * further from the thing they were trying to do. Only the detail surfaces — the professional's
+   * own sheet and the selected-professional panel — turn it on.
+   */
+  enlargeable?: boolean;
 }
 
 /** First + last initial, or a single letter, or nothing — whatever the name actually supports. */
@@ -46,18 +55,36 @@ function initials(fullName: string | null): string {
  * the card and the sheet want genuinely different dimensions and this component has no business
  * knowing about any of them.
  */
-export function SosAvatar({ imageUrl, fullName, imageClassName, fallbackClassName }: SosAvatarProps) {
+export function SosAvatar({
+  imageUrl,
+  fullName,
+  imageClassName,
+  fallbackClassName,
+  enlargeable = false,
+}: SosAvatarProps) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const isUsable = imageUrl !== null && imageUrl !== failedUrl;
 
   if (isUsable) {
-    return (
+    const thumbnail = (
       <img
         src={imageUrl}
         alt=""
         className={imageClassName}
         onError={() => setFailedUrl(imageUrl)}
       />
+    );
+    // Only a photo that actually loaded is enlargeable: a failed one has already fallen through
+    // to the initials below, and enlarging those would show an empty overlay.
+    return enlargeable ? (
+      <ZoomableImage
+        imageUrl={imageUrl}
+        label={`הגדלת תמונת הפרופיל של ${fullName ?? 'בעל המקצוע'}`}
+      >
+        {thumbnail}
+      </ZoomableImage>
+    ) : (
+      thumbnail
     );
   }
 

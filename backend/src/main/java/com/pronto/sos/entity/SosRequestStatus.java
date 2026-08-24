@@ -28,8 +28,10 @@ public enum SosRequestStatus {
 
     /**
      * <b>At least one professional is available and the customer may choose, right now.</b>
-     * Bounded by {@code selectionExpiresAt} — roughly two minutes, extended each time the
-     * customer widens the search.
+     * <b>Unbounded by any clock</b> (MS3 follow-up): a professional who has committed to come is
+     * a real option, and no timer deletes it. This status ends when the customer selects or
+     * cancels — or, in the degenerate case where every offer has lapsed with nothing accepted,
+     * when there is genuinely nothing left to choose from.
      *
      * <p>Reached on the <em>first</em> acceptance, not on a quota. A customer with a burst pipe
      * and one real option in hand has nothing to gain from being made to wait for a second and a

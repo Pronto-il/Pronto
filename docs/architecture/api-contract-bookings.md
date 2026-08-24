@@ -2606,3 +2606,29 @@ the same problem. Tracked in `data-model.md` §4, `api-contract-notifications.md
 this doc's Milestone 6 pass doesn't have to wonder whether it was silently resolved or
 silently broken by the new endpoints above. It was neither — it was decided explicitly,
 elsewhere, with no code change to this doc's endpoints required.
+
+---
+
+## MS4 (2026-08-24) — listing card and category matching
+
+**Step 7 of §2.2 changed.** "Query `professionals` joined to `users` where `category_id =
+issue.categoryId`" is now a membership test over `professional_categories`: a professional is
+eligible if the issue's category is anywhere in their set, not only if it is their first. The
+predicate is `professionals.ProfessionalCategoryMatch.SERVES_CATEGORY_JPQL`, and the SOS hard
+filter (`sos.repository.SosCandidateRepository`) is built from the same constant, so the two
+surfaces cannot disagree about who serves what.
+
+Rule 5 of `POST /api/bookings/orders` (`professional.categoryId != issue.categoryId` →
+`400 CATEGORY_MISMATCH`) keeps its behaviour and its error code; the check is now
+"does this professional serve `issue.categoryId`".
+
+**`ProfessionalCard` fields**: `serviceArea` → `serviceRegion` (the canonical region's Hebrew
+label, nullable), `city` is now the resolved base-city name rather than a free-text column, and
+`categoryIds` is new. All other fields, the `base_price ASC` default order and the
+`CHEAPEST`/`FASTEST`/`RECOMMENDED` sorts are unchanged.
+
+`categoryIds` is attached during the existing in-Java enrichment pass from **one batched
+`professional_categories` read for the whole page** — JPQL cannot project a collection into a
+`SELECT NEW` constructor expression, and N+1 queries per listing is not a trade worth making to
+pretend otherwise.
+

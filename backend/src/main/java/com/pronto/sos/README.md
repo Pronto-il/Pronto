@@ -256,17 +256,87 @@ and never rewrites the economics of one already in flight.
 
 | Property | Default | What it bounds |
 |---|---|---|
-| `offer-ttl-seconds` | 120 | One professional's window to answer one offer. |
-| `matching-window-seconds` | 150 | Overall professional-response window. |
-| `selection-window-seconds` | 120 | The customer's ~2 minutes to choose. Reset by each "סרוק שוב". |
+| `scan-window-seconds` | 600 | **Timer 1** — how long the platform keeps looking for *new* professionals, from activation. |
+| `offer-ttl-seconds` | 600 | **Timer 2** — one professional's window to answer *their* offer, from when it reached them. |
+| `expansion-interval-seconds` | 120 | How often the search widens by itself while the scan window is open. |
+| `max-search-expansions` | 4 | How many times one request may widen. `0` disables expansion. |
 | `confirmation-grace-seconds` | 180 | Selected professional's window to confirm. |
-| `max-search-expansions` | 2 | How many times the customer may widen one request. `0` disables it. |
 | `expansion-pool-increment` | 8 | Additional professionals per expansion, as a running total. |
 | `expansion-radius-multiplier` | 1.5 | Radius seam per expansion. Inert against the v1 distance model. |
 
-Every one of these is `pronto.sos.*` configuration. `confirmation-grace-seconds` was a hardcoded
-`Duration` constant on `SosService` until the final-readiness pass; it is the same 3 minutes it
-always was, now tunable per environment like its peers.
+Every one of these is `pronto.sos.*` configuration.
+
+### There are two timers, and neither belongs to the customer (MS3 + follow-up)
+
+There used to be one, doing three jobs. `matching-window-seconds` was simultaneously "how long we
+look", "how long professionals have to answer" and, in effect, "when the request dies" — so the
+moment the search stopped, live offers became unanswerable and a customer with a real option in
+hand could be expired out from under it. MS3 split it into three; the follow-up then deleted the
+third, because a deadline on the customer's own decision turned out to be the same mistake in a
+smaller shape:
+
+1. **The scan window** (`scan-window-seconds`, stored per request as
+   `sos_requests.matching_expires_at`). When it elapses the platform stops widening and stops
+   dispatching. It closes *nothing* else — no offer, no candidate, no decision.
+2. **Each professional's response window** (`offer-ttl-seconds`, stored per row as
+   `sos_offers.expires_at`, enforced inside `SosOfferRepository#accept`'s guard). A professional
+   first contacted at minute 9 of the scan still has until minute 19; the scan closing at minute
+   10 does not shorten it. An offer TTL longer than the scan window is therefore *expected*, and
+   the old startup check that forbade it is gone.
+3. ~~The customer's decision window~~ — **removed.** There is no third timer and no
+   `selection_expires_at` column (`V42`). A professional who has committed to arrive is a real
+   option; deleting it because the customer spent eleven minutes moving furniture away from the
+   water is not a product rule anybody wants.
+
+### What actually ends an SOS request
+
+`SosService#enforceDeadlines` recomputes this from persisted state on every read, and
+`SosSweepJob` applies the same rule to requests nobody is reading. A request stops being
+actionable when — and only when:
+
+* **the customer selects** (`PROFESSIONAL_SELECTED`, one atomic guarded update), or
+* **the customer cancels** (`CANCELLED`), or
+* **nothing can happen any more**: the scan window has closed, *and* no offer is `ACCEPTED`,
+  *and* no `OFFERED`/`VIEWED` offer is still inside its own response window. Then, and only then,
+  `EXPIRED`.
+
+Read the third bullet as three independent facts, because that is how it is evaluated:
+
+| Fact | Why it has to be true before ending anything |
+|---|---|
+| scan window closed | while it is open, a further expansion may still contact somebody new |
+| no accepted offer | an acceptance is a professional who said they would come — the customer may take it whenever they get back to their phone |
+| no answerable offer | an outstanding offer inside its own window may yet become a candidate, and that window legitimately outlives the scan |
+
+There is deliberately **no** retention rule for a request the customer simply abandons with a
+candidate on it. That is a cleanup concern, not product semantics, and smuggling it in here would
+recreate the deadline this section exists to describe the removal of.
+
+### Search expansion is automatic (MS3)
+
+There is no "סרוק שוב" control in the product any more. Every `expansion-interval-seconds`, for
+as long as the scan window is open, `SosSweepJob` widens the search: pool size grows by
+`expansion-pool-increment`, offers go to professionals nobody has contacted yet, and a
+`SEARCH_EXPANDED` event is recorded with a `SYSTEM` actor. The schedule lives on the request
+(`sos_requests.next_expansion_at`, `V41`) and is advanced by the same compare-and-set that
+increments `search_expansions`, so it survives a refresh, needs no browser open at all, and two
+overlapping sweeps produce exactly one expansion.
+
+`POST /api/sos/requests/{id}/scan-again` still exists and still works — bounded by the same
+ceiling and the same guards — but nothing in the product calls it.
+
+### The ETA is locked at acceptance (MS3)
+
+Accepting requires an ETA (`AcceptSosOfferRequest.estimatedArrivalMinutes` is `@NotNull`), and
+that number cannot be changed afterwards. `POST /api/sos/offers/{id}/eta` answers
+`409 SOS_ETA_LOCKED` to everyone, and — the part that actually enforces it — there is no
+statement left in `SosOfferRepository` that writes an ETA outside `accept`
+(`SosEtaImmutabilityTest` fails the build if one reappears). `sos_offers.promised_eta_minutes`
+and `sos_offers.accepted_at` (`V41`) are write-once records of what was promised and when.
+
+Why a rule rather than a freshness feature: the customer chooses partly on that number, so a
+revisable ETA lets a professional win a job with fifteen minutes and deliver fifty. A professional
+who genuinely cannot make it cancels, which the customer sees.
 
 `SosProperties.validate()` is a `@PostConstruct` fail-fast guard over all of them (the
 `JwtSecretStartupGuard` precedent — it runs before the web server binds a port). It rejects
@@ -312,7 +382,7 @@ address. An `sos_requests` row is **one attempt to find somebody for it**. Many 
 problem, one at a time:
 
 ```
-issue 42 ──► sos_requests #7  EXPIRED    (nobody answered in the response window)
+issue 42 ──► sos_requests #7  EXPIRED    (nobody answered before every offer lapsed)
 issue 42 ──► sos_requests #9  FAILED     (nobody eligible in that category/area)
 issue 42 ──► sos_requests #14 CANCELLED  (customer changed their mind)
 issue 42 ──► sos_requests #21 MATCHING   ◄── allowed; nothing is re-described, re-uploaded

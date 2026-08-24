@@ -3,6 +3,7 @@ package com.pronto.sos.service;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRatingAggregate;
 import com.pronto.professionals.repository.ProfessionalRepository;
+import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.professionals.repository.ReviewAggregateRepository;
 import com.pronto.sos.config.SosProperties;
 import com.pronto.sos.dto.SosCandidate;
@@ -20,6 +21,7 @@ import com.pronto.users.repository.UserRepository;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.math.RoundingMode;
 import java.util.List;
 
@@ -38,6 +40,7 @@ public class SosResponseAssembler {
     private final SosOfferRepository sosOfferRepository;
     private final StorageService storageService;
     private final SosProperties properties;
+    private final ProfessionalCoverageService professionalCoverageService;
 
     /**
      * {@code ReviewAggregateRepository} is reused from the {@code professionals} package rather
@@ -50,13 +53,15 @@ public class SosResponseAssembler {
                                  ReviewAggregateRepository reviewAggregateRepository,
                                  SosOfferRepository sosOfferRepository,
                                  StorageService storageService,
-                                 SosProperties properties) {
+                                 SosProperties properties,
+                                 ProfessionalCoverageService professionalCoverageService) {
         this.professionalRepository = professionalRepository;
         this.userRepository = userRepository;
         this.reviewAggregateRepository = reviewAggregateRepository;
         this.sosOfferRepository = sosOfferRepository;
         this.storageService = storageService;
         this.properties = properties;
+        this.professionalCoverageService = professionalCoverageService;
     }
 
     /**
@@ -111,26 +116,34 @@ public class SosResponseAssembler {
                 request.getOrderId(), request.getCancelledBy(), offers.size(),
                 accepted,
                 request.getSearchExpansions(), properties.getMaxSearchExpansions(), canExpandSearch(request),
-                request.getMatchingExpiresAt(), request.getSelectionExpiresAt(), request.getCreatedAt(),
+                request.getMatchingExpiresAt(), request.getCreatedAt(),
                 request.getUpdatedAt(), request.getMatchedAt(), request.getCandidatesReadyAt(),
                 request.getSelectedAt(), request.getConfirmedAt(), request.getCancelledAt(),
                 request.getCompletedAt());
     }
 
     /**
-     * Whether {@code POST /api/sos/requests/{id}/scan-again} would be accepted for this request
-     * right now.
+     * Whether this request's search can still widen — equivalently, <b>whether anybody new may
+     * still be contacted</b>.
      *
-     * <p>The three conditions are exactly the ones inside
+     * <p>The four conditions are exactly the ones inside
      * {@code SosRequestRepository#expandSearch}'s {@code WHERE} clause — <b>that statement is
-     * what enforces them</b>; this is the same rule projected into the DTO so the customer's
-     * button can be right without the client re-deriving the platform's policy. Evaluated per
-     * response rather than cached, so it goes false on the very read after a selection lands.
+     * what enforces them</b>; this is the same rule projected into the DTO. Evaluated per
+     * response rather than cached, so it goes false on the very read after a selection lands or
+     * the scan window closes.
+     *
+     * <p>The scan-window clause is not decoration: the customer's screen uses this flag to decide
+     * whether to say "we are still looking", and a screen that claims to be searching after
+     * dispatch has stopped is lying to somebody in an emergency. Since the MS3 follow-up removed
+     * the customer's decision deadline, this is also the only remaining signal that distinguishes
+     * "still searching, choose whenever" from "search over, choose whenever".
      */
     private boolean canExpandSearch(SosRequest request) {
         return request.getSelectedProfessionalId() == null
                 && request.getStatus().isAcceptingProfessionalResponses()
-                && request.getSearchExpansions() < properties.getMaxSearchExpansions();
+                && request.getSearchExpansions() < properties.getMaxSearchExpansions()
+                && request.getMatchingExpiresAt() != null
+                && request.getMatchingExpiresAt().isAfter(Instant.now());
     }
 
     /**
@@ -143,12 +156,14 @@ public class SosResponseAssembler {
         Professional professional = professionalRepository.findById(offer.getProfessionalId()).orElse(null);
         String fullName = null;
         String city = null;
-        String serviceArea = null;
+        String serviceRegion = null;
         String imageUrl = null;
         if (professional != null) {
             fullName = userRepository.findById(professional.getUserId()).map(User::getFullName).orElse(null);
-            city = professional.getCity();
-            serviceArea = professional.getServiceArea();
+            ProfessionalCoverageService.CoverageView coverage =
+                    professionalCoverageService.load(professional);
+            city = coverage.baseCityNameHe();
+            serviceRegion = coverage.serviceRegionNameHe();
             imageUrl = professional.getProfileImageKey() == null
                     ? null
                     : storageService.getPresignedUrlAssumingCallerAuthorized(professional.getProfileImageKey());
@@ -161,7 +176,7 @@ public class SosResponseAssembler {
         BigDecimal visitFee = offer.getVisitFee();
         BigDecimal totalVisitCost = (visitFee == null ? BigDecimal.ZERO : visitFee).add(offer.getSosFee());
 
-        return new SosCandidate(offer.getId(), offer.getProfessionalId(), fullName, imageUrl, city, serviceArea,
+        return new SosCandidate(offer.getId(), offer.getProfessionalId(), fullName, imageUrl, city, serviceRegion,
                 average == null ? null : BigDecimal.valueOf(average).setScale(2, RoundingMode.HALF_UP),
                 reviewCount, offer.getEstimatedArrivalMinutes(), offer.getDistanceKm(), visitFee,
                 offer.getSosFee(), totalVisitCost, offer.getPlatformCommission(), offer.getRespondedAt());

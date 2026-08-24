@@ -14,3 +14,9 @@ export type { ProfessionalSummaryCardProps } from './ProfessionalSummaryCard';
 
 export { ProfessionalProfileModal } from './ProfessionalProfileModal';
 export type { ProfessionalProfileModalProps } from './ProfessionalProfileModal';
+
+export { ReviewList } from './ReviewList';
+export type { ReviewListProps } from './ReviewList';
+
+export { ProfessionalReviewsModal } from './ProfessionalReviewsModal';
+export type { ProfessionalReviewsModalProps } from './ProfessionalReviewsModal';

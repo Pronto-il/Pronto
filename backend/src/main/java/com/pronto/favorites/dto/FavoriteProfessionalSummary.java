@@ -2,6 +2,7 @@ package com.pronto.favorites.dto;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 
 /**
  * One entry in {@code GET /api/favorites}'s list. A dedicated, lean DTO rather than reusing
@@ -23,8 +24,9 @@ import java.time.Instant;
 public record FavoriteProfessionalSummary(
         Long professionalId,
         String fullName,
-        String serviceArea,
+        String serviceRegion,
         String city,
+        List<Long> categoryIds,
         BigDecimal basePrice,
         String profileImageUrl,
         BigDecimal averageRating,

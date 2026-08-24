@@ -10,8 +10,11 @@ import { httpClient } from './httpClient';
 export interface FavoriteProfessionalSummary {
   professionalId: number;
   fullName: string;
-  serviceArea: string;
-  city: string;
+  /** MS4: canonical service-region label, `null` for a pre-MS4 professional with no region. */
+  serviceRegion: string | null;
+  city: string | null;
+  /** MS4: every category this professional serves, in catalogue display order. */
+  categoryIds: number[];
   basePrice: number;
   profileImageUrl: string | null;
   averageRating: number | null;

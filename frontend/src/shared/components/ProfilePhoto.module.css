@@ -14,18 +14,16 @@
   width: fit-content;
 }
 
+/* Shape/chrome only — `ZoomableImage` supplies the button reset, the cursor and the focus ring. */
 .photoButton {
-  display: block;
-  padding: 0;
   border: 1px solid var(--color-border);
-  border-radius: 50%;
   background: var(--color-surface-secondary);
-  cursor: zoom-in;
   overflow: hidden;
 }
 
-.photoButton:disabled {
-  cursor: default;
+/* Carries the `size` prop's dimensions inside the trigger, which shrink-wraps it. */
+.photoInner {
+  display: block;
 }
 
 .photoStatic {

@@ -30,7 +30,8 @@ export interface ServiceLocation {
 export interface ProfessionalCard {
   professionalId: number;
   fullName: string;
-  serviceArea: string;
+  /** MS4: the Hebrew label of the professional's canonical service region. */
+  serviceRegion: string | null;
   basePrice: number;
   /** Legacy field, always null in practice — do not render. */
   reliabilityScore: number | null;
@@ -41,6 +42,8 @@ export interface ProfessionalCard {
   reviewCount: number;
   /** Display only this pass — no favorite-toggle interaction built (needs POST/DELETE /api/favorites). */
   favorited: boolean;
+  /** MS4: every category this professional serves, in catalogue display order. */
+  categoryIds: number[];
   sameCity: boolean;
   distanceKm: number;
   baseTravelTimeMinutes: number;

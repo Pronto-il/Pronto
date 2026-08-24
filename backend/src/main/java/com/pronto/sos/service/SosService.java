@@ -192,9 +192,14 @@ public class SosService {
                 SosRequestStatus.CREATED, "SOS activated for category " + issue.getCategoryId());
 
         Instant now = Instant.now();
-        Instant matchingExpiresAt = now.plus(Duration.ofSeconds(properties.getMatchingWindowSeconds()));
+        // Timer 1 of 3, fixed here and never moved again: how long the platform keeps looking
+        // for new professionals. Timer 2 (each professional's own response window) is stamped
+        // per offer at dispatch; timer 3 (the customer's decision window) starts when there is
+        // finally something to decide between. See SosProperties for why they are independent.
+        Instant scanExpiresAt = now.plus(Duration.ofSeconds(properties.getScanWindowSeconds()));
         SosStateMachine.validate(sosRequest.getId(), SosRequestStatus.CREATED, SosRequestStatus.MATCHING);
-        int started = sosRequestRepository.startMatching(sosRequest.getId(), now, matchingExpiresAt);
+        int started = sosRequestRepository.startMatching(sosRequest.getId(), now, scanExpiresAt,
+                firstExpansionDueAt(now));
         if (started == 0) {
             // Unreachable in practice -- the row was inserted microseconds ago in this same
             // transaction and nothing else can see it yet. Handled rather than assumed.
@@ -210,6 +215,28 @@ public class SosService {
                 sosRequest.getId(), issue.getId(), callerId, urgency, dispatched);
 
         return assembler.toRequestResponse(reload(sosRequest.getId()), SosAddressAccess.FULL);
+    }
+
+    /**
+     * When this request's search should first widen by itself, or {@code null} when expansion is
+     * switched off ({@code max-search-expansions = 0}) — the whole automatic cadence is derived
+     * from persisted instants, never from a client-side clock.
+     */
+    private Instant firstExpansionDueAt(Instant now) {
+        return properties.getMaxSearchExpansions() <= 0
+                ? null
+                : now.plus(Duration.ofSeconds(properties.getExpansionIntervalSeconds()));
+    }
+
+    /**
+     * When the <em>next</em> expansion after {@code appliedLevel} falls due, or {@code null}
+     * once the ceiling has been reached — written by the same atomic statement that records the
+     * expansion, so the schedule can never disagree with the counter.
+     */
+    private Instant nextExpansionDueAt(Instant now, int appliedLevel) {
+        return appliedLevel >= properties.getMaxSearchExpansions()
+                ? null
+                : now.plus(Duration.ofSeconds(properties.getExpansionIntervalSeconds()));
     }
 
     // ------------------------------------------------------------------
@@ -295,15 +322,17 @@ public class SosService {
      *       {@code status} is what tells the client to render "your request expired".</li>
      * </ul>
      *
-     * <h2>The cap, and why it grows</h2>
+     * <h2>No cap (MS3)</h2>
      *
-     * At most {@link #candidateCap(SosRequest)} candidates:
-     * {@code target-candidate-count} in the initial scope, plus one per manual expansion. The
-     * shortlist is filled in <b>arrival order</b> (ascending offer id) and only then sorted by
-     * ETA for display, which is what guarantees the property the whole "סרוק שוב" flow depends
-     * on: <b>a candidate the customer can already see never disappears because somebody faster
-     * turned up later.</b> A fixed cap over an ETA-sorted query would do exactly that, and it
-     * would do it precisely when the customer had asked for more options.
+     * <b>Every professional who accepted is returned</b>, in arrival order and then sorted by
+     * ETA for display. There used to be a shortlist cap that grew by one per manual expansion,
+     * with careful arrival-order filling so that a later, faster acceptance could not evict a
+     * candidate the customer was already reading. Automatic expansion makes that whole
+     * construction the wrong shape: the search now widens by itself up to four times, so a cap
+     * would routinely hide people who said yes — and the redesign's rule is the opposite, that
+     * an accepted professional stays visible and selectable until the customer decides. The
+     * fan-out is bounded by the pool size (40 at the defaults), so "all of them" is a bounded
+     * list, not an unbounded one.
      */
     @Transactional
     public SosCandidatesResponse getCandidates(Long callerId, Long sosRequestId) {
@@ -316,31 +345,16 @@ public class SosService {
         List<SosCandidate> candidates = sosOfferRepository
                 .findBySosRequestIdAndStatusOrderByIdAsc(sosRequestId, SosOfferStatus.ACCEPTED)
                 .stream()
-                .limit(candidateCap(current))
                 .sorted(Comparator.comparing(SosOffer::getEstimatedArrivalMinutes,
                         Comparator.nullsLast(Comparator.naturalOrder())))
                 .map(assembler::toCandidate)
                 .toList();
 
-        boolean selectionOpen = current.getStatus() == SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION
-                && current.getSelectionExpiresAt() != null
-                && current.getSelectionExpiresAt().isAfter(Instant.now());
+        // No clock in this answer any more (MS3 follow-up): if the request is awaiting a choice,
+        // the choice is open. There is no deadline left to be on the wrong side of.
+        boolean selectionOpen = current.getStatus() == SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION;
 
-        return new SosCandidatesResponse(sosRequestId, current.getStatus(), current.getSelectionExpiresAt(),
-                selectionOpen, candidates);
-    }
-
-    /**
-     * How many candidates this request's shortlist may hold: the configured target, plus one for
-     * each expansion the customer has asked for.
-     *
-     * <p>It has to grow with the search. Expansion exists to give the customer <em>more</em> to
-     * choose between; a fixed cap would mean the professionals it turned up had nowhere to be
-     * shown, so pressing the button would visibly do nothing. Bounded by construction —
-     * {@code target-candidate-count + max-search-expansions}, three plus two at the defaults.
-     */
-    private int candidateCap(SosRequest request) {
-        return properties.getTargetCandidateCount() + request.getSearchExpansions();
+        return new SosCandidatesResponse(sosRequestId, current.getStatus(), selectionOpen, candidates);
     }
 
     // ------------------------------------------------------------------
@@ -387,13 +401,13 @@ public class SosService {
                     "A professional has already been selected for SOS request " + sosRequestId + ".");
         }
         if (current.getStatus() != SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION) {
-            // Distinguish "you ran out of time" from every other reason. This is the common
-            // real failure -- a customer tapping a candidate a second after the window closes,
-            // very often because enforceDeadlines above just expired it on this very call -- and
-            // it deserves a specific 410 rather than a generic 409 the frontend cannot explain.
+            // A request that ended still needs its own answer, distinct from every other
+            // conflict. It no longer means "you took too long": since the MS3 follow-up the only
+            // way to reach EXPIRED from a choosing state is that every offer lapsed with nothing
+            // accepted, which means there was nothing on screen left to tap.
             if (current.getStatus() == SosRequestStatus.EXPIRED) {
                 throw new ApiException(ErrorCode.SOS_WINDOW_EXPIRED,
-                        "The selection window for SOS request " + sosRequestId + " has closed.");
+                        "SOS request " + sosRequestId + " has ended and can no longer be chosen from.");
             }
             throw new ApiException(ErrorCode.SOS_INVALID_STATE,
                     "SOS request " + sosRequestId + " is not awaiting customer selection (status "
@@ -457,7 +471,8 @@ public class SosService {
                         "A professional has already been selected for SOS request " + sosRequestId + ".");
             }
             throw new ApiException(ErrorCode.SOS_WINDOW_EXPIRED,
-                    "The selection window for SOS request " + sosRequestId + " has closed.");
+                    "SOS request " + sosRequestId + " is no longer awaiting a choice (status "
+                            + after.getStatus() + ").");
         }
 
         int markedWinner = sosOfferRepository.markSelected(offerId, now);
@@ -551,8 +566,7 @@ public class SosService {
         Instant now = Instant.now();
         int affected = sosRequestRepository.expandSearch(sosRequestId, expected, (short) (expected + 1),
                 (short) properties.getMaxSearchExpansions(),
-                now.plus(Duration.ofSeconds(properties.getMatchingWindowSeconds())),
-                now.plus(Duration.ofSeconds(properties.getSelectionWindowSeconds())),
+                nextExpansionDueAt(now, expected + 1),
                 now);
         if (affected == 0) {
             // Lost a race. Re-read and report the accurate reason -- except for the double-tap
@@ -578,19 +592,79 @@ public class SosService {
             return assembler.toRequestResponse(after, SosAddressAccess.FULL);
         }
 
+        SosRequest expanded = dispatchExpansionWave(sosRequestId, callerId);
+        return assembler.toRequestResponse(expanded, SosAddressAccess.FULL);
+    }
+
+    /**
+     * <b>The automatic widening the sweep drives</b> — the customer presses nothing, and there is
+     * no "סרוק שוב" button anywhere in the product any more.
+     *
+     * <p>Identical machinery to {@link #expandSearch}: the same compare-and-set, the same bound,
+     * the same dispatch wave that never re-contacts anybody. Two differences, both deliberate:
+     * the history row is recorded with a {@code SYSTEM} actor because nobody asked for it, and
+     * losing any of the guards is silent — a background job has no HTTP caller to report a
+     * {@code 409} to, and every reason it can lose (selected, expired, cancelled, ceiling
+     * reached, scan window closed) is an ordinary outcome rather than a failure.
+     *
+     * @return {@code true} if this call is the one that widened the search
+     */
+    @Transactional
+    public boolean expandSearchAutomatically(Long sosRequestId) {
+        SosRequest request = sosRequestRepository.findById(sosRequestId).orElse(null);
+        if (request == null) {
+            return false;
+        }
+        short expected = (short) request.getSearchExpansions();
+        Instant now = Instant.now();
+        int affected = sosRequestRepository.expandSearch(sosRequestId, expected, (short) (expected + 1),
+                (short) properties.getMaxSearchExpansions(),
+                nextExpansionDueAt(now, expected + 1),
+                now);
+        if (affected == 0) {
+            // The scan window closed between the query and this write, or somebody was selected,
+            // or another sweep pass won. Park the schedule so this row stops being re-read every
+            // sweep; harmless if it was already null.
+            sosRequestRepository.clearExpansionSchedule(sosRequestId, now);
+            return false;
+        }
+        dispatchExpansionWave(sosRequestId, null);
+        return true;
+    }
+
+    /**
+     * The half both expansion paths share: rank at the new, wider scope, dispatch to
+     * professionals nobody has contacted yet, and write the history row.
+     *
+     * @param actorCustomerId the customer who asked, or {@code null} when the platform widened
+     *                        the search by itself (recorded as a {@code SYSTEM} event)
+     */
+    private SosRequest dispatchExpansionWave(Long sosRequestId, Long actorCustomerId) {
         SosRequest expanded = reload(sosRequestId);
         SosSearchScope scope = SosSearchScope.forLevel(expanded.getSearchExpansions(),
                 expanded.getUrgency(), properties);
         int dispatched = sosDispatchService.expand(expanded, scope);
 
-        sosEventService.recordCustomer(sosRequestId, callerId, SosEventType.SEARCH_EXPANDED,
-                expanded.getStatus(), expanded.getStatus(),
-                "Search widened to scope level " + scope.level() + "; " + dispatched
-                        + " additional professional(s) contacted");
+        String detail = "Search widened to scope level " + scope.level() + "; " + dispatched
+                + " additional professional(s) contacted";
+        if (actorCustomerId == null) {
+            sosEventService.recordSystem(sosRequestId, SosEventType.SEARCH_EXPANDED,
+                    expanded.getStatus(), expanded.getStatus(), detail);
+        } else {
+            sosEventService.recordCustomer(sosRequestId, actorCustomerId, SosEventType.SEARCH_EXPANDED,
+                    expanded.getStatus(), expanded.getStatus(), detail);
+        }
 
-        log.info("sos.search-expanded sosRequestId={} level={} poolSize={} newOffers={} status={}",
-                sosRequestId, scope.level(), scope.poolSize(), dispatched, expanded.getStatus());
-        return assembler.toRequestResponse(reload(sosRequestId), SosAddressAccess.FULL);
+        log.info("sos.search-expanded sosRequestId={} level={} poolSize={} newOffers={} status={} automatic={}",
+                sosRequestId, scope.level(), scope.poolSize(), dispatched, expanded.getStatus(),
+                actorCustomerId == null);
+        return reload(sosRequestId);
+    }
+
+    /** Sweep input: requests whose automatic search expansion is due. */
+    @Transactional(readOnly = true)
+    public List<Long> findExpansionDueIds() {
+        return sosRequestRepository.findExpansionDueIds(Instant.now());
     }
 
     /** The friendly pre-check. The guarded update is what actually decides — see {@link #expandSearch}. */
@@ -709,10 +783,9 @@ public class SosService {
         }
 
         Instant now = Instant.now();
-        Instant selectionExpiresAt = now.plus(Duration.ofSeconds(properties.getSelectionWindowSeconds()));
         SosStateMachine.validate(sosRequestId, SosRequestStatus.WAITING_FOR_PROFESSIONALS,
                 SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
-        int opened = sosRequestRepository.openSelectionWindow(sosRequestId, now, selectionExpiresAt);
+        int opened = sosRequestRepository.openSelectionWindow(sosRequestId, now);
         if (opened == 0) {
             // Somebody else opened it, or the request was cancelled. Either way not our problem.
             return false;
@@ -723,7 +796,7 @@ public class SosService {
                 accepted + " professional(s) available");
         sosEventService.recordSystem(sosRequestId, SosEventType.CUSTOMER_SELECTION_STARTED, null,
                 SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION,
-                "Customer has " + properties.getSelectionWindowSeconds() + "s to choose");
+                "Customer may now choose; the choice stays open until they do");
         notificationService.recordSosNotification(sosRequestId, request.getCustomerId(),
                 NotificationMessageType.SOS_CANDIDATES_READY);
 
@@ -738,38 +811,62 @@ public class SosService {
     /**
      * Applies any elapsed deadline to {@code request} and returns the current row.
      *
-     * <p>This is what makes the backend the source of truth for the two-minute window: a request
-     * whose deadline has passed is transitioned on the very next read, so no API call can ever
-     * observe or act on it as though it were still live — regardless of whether the sweep job has
-     * run, or is even enabled. The sweep exists to also terminate requests <em>nobody</em> is
-     * reading; it is a completeness mechanism, not the enforcement mechanism.
+     * <p><b>Since the MS3 follow-up this decides one question, not two: can anything still
+     * happen?</b> There is no customer-decision deadline any more, so a request is never ended
+     * because somebody was slow to choose — only because the platform has stopped looking, nobody
+     * accepted, and no outstanding offer can still be answered. The three conditions are
+     * evaluated in that order below.
      *
-     * <p>Cheap in the common case: two field comparisons and no write unless a deadline has
-     * actually elapsed.
+     * <p>This is what keeps the backend the source of truth: the answer is recomputed from
+     * persisted state on every read, so a refresh, a second device and a client that has been
+     * asleep for an hour all see the same thing — regardless of whether the sweep job has run, or
+     * is even enabled. The sweep exists to also terminate requests <em>nobody</em> is reading; it
+     * is a completeness mechanism, not the enforcement mechanism.
+     *
+     * <p>Cheap in the common case: a status check and, only once the scan window has closed, at
+     * most two indexed counts.
      */
     private SosRequest enforceDeadlines(SosRequest request) {
+        SosRequestStatus status = request.getStatus();
+        if (status != SosRequestStatus.WAITING_FOR_PROFESSIONALS
+                && status != SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION) {
+            return request;
+        }
+
         Instant now = Instant.now();
 
-        if (request.getStatus() == SosRequestStatus.WAITING_FOR_PROFESSIONALS
-                && request.getMatchingExpiresAt() != null && !request.getMatchingExpiresAt().isAfter(now)) {
-            // The response window closed. If anyone accepted, move to selection with whoever
-            // there is rather than expiring a request that has usable candidates.
-            if (maybeOpenSelectionWindow(request.getId(), true)) {
-                return reload(request.getId());
-            }
-            expire(request.getId(), SosRequestStatus.WAITING_FOR_PROFESSIONALS,
-                    "No professionals accepted within the response window.");
+        // 1. Somebody accepted while the request was still gathering responses: the customer can
+        //    choose. Cheap to attempt on every read, and idempotent -- the guarded update inside
+        //    decides, and losing means somebody else already opened it.
+        if (status == SosRequestStatus.WAITING_FOR_PROFESSIONALS
+                && maybeOpenSelectionWindow(request.getId(), true)) {
             return reload(request.getId());
         }
 
-        if (request.getStatus() == SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION
-                && request.getSelectionExpiresAt() != null && !request.getSelectionExpiresAt().isAfter(now)) {
-            expire(request.getId(), SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION,
-                    "Customer did not choose a professional in time.");
-            return reload(request.getId());
+        // 2. While the scan window is open the request always has a future: a further expansion
+        //    may still contact somebody nobody has asked yet.
+        if (request.getMatchingExpiresAt() == null || request.getMatchingExpiresAt().isAfter(now)) {
+            return request;
         }
 
-        return request;
+        // 3. The scan has closed. That stops dispatch and nothing else -- so before ending
+        //    anything, ask whether anything can still happen:
+        //      * an ACCEPTED offer is a professional who said they would come. The customer may
+        //        take it whenever they get back to their phone, and no clock removes it. This is
+        //        the case the old customer-decision deadline used to destroy.
+        //      * an OFFERED/VIEWED offer inside its own response window may yet become one.
+        if (sosOfferRepository.countBySosRequestIdAndStatus(request.getId(), SosOfferStatus.ACCEPTED) > 0
+                || sosOfferRepository.existsAnswerableOffer(request.getId(), now)) {
+            // Stop the sweep re-reading this row for an expansion it can no longer perform.
+            sosRequestRepository.clearExpansionSchedule(request.getId(), now);
+            return request;
+        }
+
+        // 4. Nothing accepted, nothing answerable, nobody new to ask. Now there is genuinely
+        //    nothing left that could happen, which is the only reason this flow ends by itself.
+        expire(request.getId(), status,
+                "No professional accepted, and no offer can still be answered.");
+        return reload(request.getId());
     }
 
     /**
@@ -796,7 +893,7 @@ public class SosService {
         log.info("sos.expired sosRequestId={} fromStatus={} reason={}", sosRequestId, expectedStatus, reason);
     }
 
-    /** Sweep input: requests whose matching or selection deadline has passed. */
+    /** Sweep input: requests that can no longer produce anything — see {@link #enforceDeadlines}. */
     @Transactional(readOnly = true)
     public List<Long> findExpiryCandidateIds() {
         return sosRequestRepository.findExpiryCandidateIds(Instant.now());

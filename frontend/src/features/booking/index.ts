@@ -5,6 +5,12 @@ export { default as BookingFlowPage } from './BookingFlowPage';
 export { default as MyOrdersPage } from './MyOrdersPage';
 export { default as OrderTrackingPage } from './OrderTrackingPage';
 export { default as CompletionReviewPage } from './CompletionReviewPage';
+
+// The order-details card and the Pronto brief, shared with the professional dashboard's
+// inline request-details view so both surfaces render one presentation of an order.
+export { OrderDetailsCard } from './OrderDetailsCard';
+export type { OrderDetailsCardProps } from './OrderDetailsCard';
+export { ProntoAnalysisCard } from './ProntoAnalysisCard';
 // Reused by `features/issues/ProfessionMatchPage`, which now collects the service address
 // before the matching animation. Exported rather than copied so both entry points into the
 // booking flow ask for the address in exactly one way.

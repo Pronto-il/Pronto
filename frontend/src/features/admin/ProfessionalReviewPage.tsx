@@ -18,7 +18,7 @@ import {
   canApprove,
   canReject,
 } from './approvalPresentation';
-import { findCategoryNameHe, resolveSubServices } from './serviceCatalog';
+import { findCategoryNamesHe, resolveSubServices } from './serviceCatalog';
 import { VerificationDocumentAction } from './VerificationDocumentAction';
 import { ApprovalDecisionModal } from './ApprovalDecisionModal';
 import type { ApprovalDecision } from './ApprovalDecisionModal';
@@ -202,8 +202,8 @@ export default function ProfessionalReviewPage() {
 
   const decision = describeDecision(detail.approvalStatus);
   const visibility = describeVisibility(detail);
-  const categoryNameHe = findCategoryNameHe(catalog, detail.categoryId);
-  const subServices = resolveSubServices(catalog, detail.categoryId, detail.subServiceIds);
+  const categoryNamesHe = findCategoryNamesHe(catalog, detail.categoryIds);
+  const subServices = resolveSubServices(catalog, detail.categoryIds, detail.subServiceIds);
   const approvable = canApprove(detail.approvalStatus);
   const rejectable = canReject(detail.approvalStatus);
 
@@ -257,16 +257,22 @@ export default function ProfessionalReviewPage() {
           <h3 className={styles.sectionTitle}>פרטי בעל המקצוע</h3>
           <dl className={styles.facts}>
             <div className={styles.fact}>
-              <dt>תחום ראשי</dt>
-              <dd>{categoryNameHe ?? 'שם התחום אינו זמין כרגע'}</dd>
+              <dt>תחומי שירות</dt>
+              <dd>{categoryNamesHe.length > 0 ? categoryNamesHe.join(' · ') : 'שם התחום אינו זמין כרגע'}</dd>
             </div>
             <div className={styles.fact}>
               <dt>אזור שירות</dt>
-              <dd>{detail.serviceArea}</dd>
+              <dd>{detail.serviceRegion ?? 'לא הוגדר'}</dd>
             </div>
             <div className={styles.fact}>
-              <dt>עיר</dt>
+              <dt>עיר בסיס</dt>
               <dd>{detail.city ?? 'לא צוינה'}</dd>
+            </div>
+            <div className={styles.fact}>
+              <dt>ערי שירות</dt>
+              <dd>
+                {detail.serviceCityNamesHe.length > 0 ? detail.serviceCityNamesHe.join(', ') : 'לא הוגדרו'}
+              </dd>
             </div>
             <div className={styles.fact}>
               <dt>מחיר ביקור בסיסי</dt>

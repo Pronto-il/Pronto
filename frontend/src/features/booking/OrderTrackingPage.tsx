@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { PageHeader, Card, Button, StatusBadge, Skeleton, Modal } from '../../shared/components';
+import { PageHeader, Button, Skeleton, Modal } from '../../shared/components';
 import { OrderStatusHero } from './OrderStatusHero';
 import { OrderProgressStepper } from './OrderProgressStepper';
+import { OrderDetailsCard } from './OrderDetailsCard';
 import { ProntoAnalysisCard } from './ProntoAnalysisCard';
+import { ProfessionalProfileModal } from '../professionals';
 import { useAuth, useOrderStatus, useEtaCountdown, useActiveOrder } from '../../shared/hooks';
 import {
   cancelOrder,
   markOnTheWay,
   completeOrder,
   getIssue,
-  getCategoryNameHe,
   getProfessionalProfile,
   ApiError,
   GENERIC_ERROR_MESSAGE,
@@ -73,6 +74,12 @@ export default function OrderTrackingPage() {
   const [statusActionError, setStatusActionError] = useState<string | null>(null);
   /** MS5 §3.C — cancelling is irreversible and was previously a one-click action. */
   const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState(false);
+  /**
+   * MS3 Part A: the assigned professional is a person the customer can look up from here.
+   * Opens `ProfessionalProfileModal` — the same component `/orders` opens — over this screen,
+   * so the status, the timeline and the polling all stay exactly where they were.
+   */
+  const [isProfessionalProfileOpen, setIsProfessionalProfileOpen] = useState(false);
 
   const { remainingMinutes, isArriving } = useEtaCountdown(
     order?.orderStatus === 'ON_THE_WAY' ? order.expectedArrivalAt : null,
@@ -197,7 +204,6 @@ export default function OrderTrackingPage() {
       : '/orders';
 
   const isProfessionalViewer = user?.role === 'PROFESSIONAL';
-  const counterpartyName = order ? (isProfessionalViewer ? order.customerName : order.professionalName) : '';
 
   // MS5 (design doc §4 Q2): the §79 status-led treatment is the customer's screen only. The
   // professional keeps the details-card view MS6's surfaces already hand off to, including
@@ -296,92 +302,24 @@ export default function OrderTrackingPage() {
                 isArriving={isArriving}
                 bookedLabel={bookedLabel}
                 professional={professional}
+                onOpenProfessional={() => setIsProfessionalProfileOpen(true)}
                 action={renderHeroAction()}
               />
               <OrderProgressStepper status={order.orderStatus} />
             </>
           )}
 
-          <Card className={styles.statusCard}>
-            <div className={styles.statusRow}>
-              <div>
-                <p className={styles.professionalName}>{counterpartyName}</p>
-                <p className={styles.orderIdLabel}>הזמנה #{order.id}</p>
-              </div>
-              <StatusBadge status={order.orderStatus} />
-            </div>
-
-            {/* The customer's ETA now leads the hero above; the professional's view keeps the
-                inline row, since that view is unchanged this milestone (§4 Q2). */}
-            {isProfessionalViewer && order.orderStatus === 'ON_THE_WAY' && remainingMinutes !== null && (
-              <div className={styles.row}>
-                <span className={styles.rowLabel}>זמן הגעה משוער</span>
-                <span className={styles.rowValue}>{isArriving ? 'מגיע/ה עכשיו' : `כ־${remainingMinutes} דקות`}</span>
-              </div>
-            )}
-
-            <hr className={styles.divider} />
-
-            <div className={styles.headerRow}>
-              {issue ? (
-                <span className={styles.category}>{getCategoryNameHe(issue.categoryId)}</span>
-              ) : (
-                <Skeleton variant="rect" radius="var(--radius-sm)" className={styles.categorySkeleton} />
-              )}
-              {issue?.urgencyType === 'SOS' && <span className={styles.sosTag}>SOS</span>}
-            </div>
-
-            {/* Labelled only for the professional: on the customer's own screen "מה הלקוח
-                תיאר" would be redundant, but on the professional's it is what keeps the
-                customer's words distinguishable from the Pronto analysis card below. */}
-            {issue && isProfessionalViewer && <p className={styles.reportLabel}>מה הלקוח תיאר</p>}
-            {issue && <p className={styles.description}>“{issue.description}”</p>}
-
-            {issue && issue.images.length > 0 && (
-              <div className={styles.photoRow}>
-                {issue.images.map((image) => (
-                  <div key={image.id} className={styles.photoThumbWrapper}>
-                    <img src={image.imageUrl} alt="" className={styles.photoThumb} />
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <hr className={styles.divider} />
-
-            <div className={styles.row}>
-              <span className={styles.rowLabel}>תאריך ושעה</span>
-              <span className={styles.rowValue}>
-                {formatDateLabel(order.bookedStart)}, {formatTimeLabel(order.bookedStart)}
-                {order.bookedEnd ? `–${formatTimeLabel(order.bookedEnd)}` : ''}
-              </span>
-            </div>
-
-            <div className={styles.row}>
-              <span className={styles.rowLabel}>כתובת</span>
-              <span className={styles.rowValue}>
-                {order.serviceCity}, {order.serviceStreet} {order.serviceHouseNumber}
-                {order.serviceApartment ? `, דירה ${order.serviceApartment}` : ''}
-                {order.serviceFloor ? `, קומה ${order.serviceFloor}` : ''}
-                {order.serviceEntrance ? `, כניסה ${order.serviceEntrance}` : ''}
-              </span>
-              {order.serviceAddressNotes && <span className={styles.rowValue}>{order.serviceAddressNotes}</span>}
-            </div>
-
-            {isProfessionalViewer && order.customerPhone && (
-              <div className={styles.row}>
-                <span className={styles.rowLabel}>טלפון הלקוח</span>
-                <span className={styles.rowValue}>{order.customerPhone}</span>
-              </div>
-            )}
-
-            <hr className={styles.divider} />
-
-            <div className={styles.totalRow}>
-              <span className={styles.totalLabel}>סה״כ</span>
-              <span className={styles.totalPrice}>₪{order.finalPrice}</span>
-            </div>
-          </Card>
+          {/* The details card itself now lives in `OrderDetailsCard` — same markup, extracted
+              so the professional dashboard's inline request-details view renders the identical
+              presentation instead of a second copy of it. */}
+          <OrderDetailsCard
+            order={order}
+            issue={issue}
+            isProfessionalViewer={isProfessionalViewer}
+            remainingMinutes={remainingMinutes}
+            isArriving={isArriving}
+            onOpenProfessional={isProfessionalViewer ? undefined : () => setIsProfessionalProfileOpen(true)}
+          />
 
           {/* `prontoAnalysis` is server-scoped to a professional with an order on the issue, so
               it is simply absent for a customer — no client-side role gate needed beyond this
@@ -427,6 +365,17 @@ export default function OrderTrackingPage() {
               link at the bottom of the page, below the fold on mobile, for the one action the
               product most wants at that moment. */}
         </div>
+      )}
+
+      {/* Rendered for a customer only, and mounted alongside the cancel dialog rather than inside
+          the order block so it survives a poll tick re-render. `professionalId` is on the order
+          DTO already — no new fetch, no new endpoint. */}
+      {!isProfessionalViewer && order && (
+        <ProfessionalProfileModal
+          professionalId={order.professionalId}
+          isOpen={isProfessionalProfileOpen}
+          onClose={() => setIsProfessionalProfileOpen(false)}
+        />
       )}
 
       <Modal

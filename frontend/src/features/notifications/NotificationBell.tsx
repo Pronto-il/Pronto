@@ -12,11 +12,15 @@ const MAX_BADGE_COUNT = 9;
 
 /**
  * In-app notification bell (Frontend Milestone 5): a nav button with an unread-count badge
- * that toggles a dropdown panel, backed by `useNotifications()` (`GET /api/notifications`,
- * short-polling — no business logic here beyond mapping state to markup). Rendered for both
+ * that toggles a dropdown panel, backed by `useNotifications()` (`GET /api/notifications` — no
+ * business logic here beyond mapping state to markup). Rendered for both
  * roles in `AppLayout`'s nav, unlike `ActiveOrderIndicator` (CUSTOMER-only) — `notifications`
  * is an either-role feed (`NotificationController`'s routes are self-scoped by caller, no
  * role gate).
+ *
+ * **When the feed is read is `useNotifications`'s decision, not this component's** — it polls
+ * only while an order is live, and otherwise reads once at bootstrap and once per panel open.
+ * All this component contributes to that is `isPanelOpen`.
  *
  * A dedicated page/route was deliberately not built (design brief) — the backend feed has no
  * pagination, so a lightweight anchored popover is enough. Click-outside (via a `mousedown`
@@ -33,8 +37,10 @@ const MAX_BADGE_COUNT = 9;
 export function NotificationBell() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
   const [isOpen, setIsOpen] = useState(false);
+  // Opening the panel is what tells `useNotifications` to read the feed — see its doc comment.
+  // While no order is live nothing polls at all, so this click is the refresh.
+  const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications({ isPanelOpen: isOpen });
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

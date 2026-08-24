@@ -51,6 +51,10 @@ import static org.mockito.Mockito.when;
  */
 class SosRealtimePublisherTest {
 
+    /** MS4: `professionals` no longer stores a category or free-text place -- see the entity. */
+    private static final long SERVICE_REGION_ID = 4L;
+    private static final long BASE_CITY_ID = 40L;
+
     private static final Long REQUEST_ID = 100L;
     private static final Long EVENT_ID = 900L;
     private static final Long CUSTOMER_USER_ID = 1L;
@@ -97,7 +101,7 @@ class SosRealtimePublisherTest {
     // ------------------------------------------------------------------
 
     private static Professional professional(Long professionalId) {
-        Professional professional = new Professional(professionalId + 1, 7L, "Center", new BigDecimal("250.00"));
+        Professional professional = new Professional(professionalId + 1, SERVICE_REGION_ID, BASE_CITY_ID, new BigDecimal("250.00"));
         setField(professional, "id", professionalId);
         return professional;
     }
@@ -479,19 +483,24 @@ class SosRealtimePublisherTest {
                 .containsEntry("availableCandidateCount", 3L);
     }
 
-    /** The deadline is the backend's; the client is only being informed of it. */
+    /**
+     * <b>The push carries a count, not a countdown.</b> It used to carry
+     * {@code selectionExpiresAt} so the customer's screen could tick down to the moment their
+     * options were deleted. There is no such moment any more (MS3 follow-up), so a client that
+     * still expected one would be rendering a clock for a rule that no longer exists — the
+     * absence of the key is the assertion here.
+     */
     @Test
-    void selectionWindowCarriesTheBackendOwnedDeadline() {
-        SosRequest request = request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
-        Instant deadline = Instant.parse("2026-08-21T12:02:00Z");
-        setField(request, "selectionExpiresAt", deadline);
+    void selectionStartedCarriesTheCandidateCountAndNoDeadline() {
+        request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
 
         publisher.publish(stubEvent(SosEventType.CUSTOMER_SELECTION_STARTED, null, null));
 
         assertThat(captureSends()).containsExactly(
                 Map.entry(CUSTOMER_USER_ID, SosRealtimeEventType.CUSTOMER_SELECTION_STARTED));
         assertThat(captureMessageTo(CUSTOMER_USER_ID, SosRealtimeEventType.CUSTOMER_SELECTION_STARTED).data())
-                .containsEntry("selectionExpiresAt", deadline);
+                .containsKey("availableCandidateCount")
+                .doesNotContainKey("selectionExpiresAt");
     }
 
     // ------------------------------------------------------------------

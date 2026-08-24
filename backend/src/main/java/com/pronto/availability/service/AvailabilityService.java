@@ -345,6 +345,33 @@ public class AvailabilityService {
     }
 
     /**
+     * Reads one of the caller's own blocks by id. Same authorization-first ownership check as
+     * {@link #updateBlock} ({@code 404 NOT_FOUND} then {@code 403 FORBIDDEN}).
+     *
+     * <p><b>Why this exists (multi-day blocks).</b> {@code GET /api/availability/calendar}'s
+     * {@code BLOCKED} segments are <em>derived</em>: {@code AvailabilityDerivationService}
+     * clips every block to each day's working-hours window, so a block spanning 25.08 08:00 ->
+     * 28.08 18:00 arrives at the frontend as four separate day-sized segments that all carry
+     * the same {@code blockId} but only that day's start/end. The edit modal used to seed
+     * itself from the clicked segment, which meant re-saving a multi-day block silently
+     * shrank it to the one day the professional happened to click. This endpoint is how that
+     * screen gets the block's real, unclipped range before editing it -- the block row itself,
+     * not a derived view of it.
+     */
+    @Transactional(readOnly = true)
+    public BlockResponse getBlock(Long callerId, Long blockId) {
+        ProfessionalAvailabilityBlock block = blockRepository.findById(blockId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Block " + blockId + " not found."));
+
+        Long professionalId = resolveProfessionalId(callerId);
+        if (!block.getProfessionalId().equals(professionalId)) {
+            throw new ApiException(ErrorCode.FORBIDDEN, "This block does not belong to the caller.");
+        }
+
+        return toBlockResponse(block);
+    }
+
+    /**
      * §4.5. Same ownership check as {@link #updateBlock}. No "in use" protection needed --
      * unlike a slot, a block is never referenced by any FK, so deleting it can never orphan or
      * corrupt anything else.

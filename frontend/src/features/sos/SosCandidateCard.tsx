@@ -48,7 +48,7 @@ export function SosCandidateCard({
   onOpenDetails,
 }: SosCandidateCardProps) {
   const { fullName, profileImageUrl, averageRating, reviewCount, estimatedArrivalMinutes } = candidate;
-  const area = candidate.serviceArea ?? candidate.city;
+  const area = candidate.serviceRegion ?? candidate.city;
 
   return (
     <Card className={styles.card}>

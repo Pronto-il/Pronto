@@ -65,32 +65,30 @@ public class SosProperties {
     private int emergencyCandidatePoolSize = 15;
 
     /**
-     * How many accepted professionals the customer is shown <b>in the initial search scope</b>.
+     * How many times one SOS request's search may widen before it is at its widest.
      *
-     * <p>No longer the count at which the selection window opens: selection opens on the
-     * <em>first</em> acceptance now, because a customer with an emergency and one real option in
-     * hand has nothing to gain from being made to wait for a quota to fill. See
-     * {@code SosService.maybeOpenSelectionWindow}.
+     * <p><b>This is the bound on an otherwise automatic process.</b> Since the MS3 lifecycle
+     * redesign the search expands <em>by itself</em>, every {@link #expansionIntervalSeconds},
+     * for as long as the scan window is open — the customer is never asked to press anything.
+     * Four steps is the default because four is how many 2-minute intervals fit inside the
+     * 10-minute scan window: expansions fall due at 2, 4, 6 and 8 minutes, and the pool grows by
+     * {@link #expansionPoolIncrement} each time (8 professionals contacted initially, at most 40
+     * in total).
      *
-     * <p>Each manual "scan again" raises the shortlist cap by one (so 3, then 4, then 5 at the
-     * default {@link #maxSearchExpansions} of 2). It has to grow: the shortlist is filled in
-     * arrival order and a fixed cap would mean a professional who accepted <em>after</em> an
-     * expansion could push a candidate the customer is already looking at off the screen, which
-     * is the one thing expansion must never do.
+     * <p>{@code 0} disables expansion entirely and restores single-wave dispatch.
      */
-    private int targetCandidateCount = 3;
+    private int maxSearchExpansions = 4;
 
     /**
-     * How many times one SOS request may be manually expanded ("סרוק שוב") before the search is
-     * at its widest.
+     * How long after the previous widening the next automatic expansion falls due — the
+     * product's "expand the search range after 2 minutes".
      *
-     * <p><b>This is the bound.</b> There is no automatic, continuous radius growth anywhere in
-     * this feature — expansion happens only when the customer asks for it, and only this many
-     * times. Two steps beyond the initial scope is the default because the pool grows by
-     * {@link #expansionPoolIncrement} each time: at the defaults that is 8 professionals
-     * contacted initially and at most 24 in total, which is already a large fan-out for one job.
+     * <p>Persisted as an instant, never counted down in a browser: each expansion writes the
+     * next due time to {@code sos_requests.next_expansion_at} in the same atomic statement that
+     * increments the expansion counter, and {@code SosSweepJob} acts on it. A refresh, a second
+     * device or a client that never returns therefore all produce the same schedule.
      */
-    private int maxSearchExpansions = 2;
+    private int expansionIntervalSeconds = 120;
 
     /**
      * How many <b>additional</b> ranked professionals each expansion step may contact, on top of
@@ -118,22 +116,47 @@ public class SosProperties {
      */
     private BigDecimal expansionRadiusMultiplier = new BigDecimal("1.5");
 
-    /** How long a professional has to respond to an individual offer. */
-    private int offerTtlSeconds = 120;
+    /**
+     * <b>Timer 2 of 2: the per-professional response window.</b> How long one professional has
+     * to answer the offer <em>they</em> were sent, counted from the moment it was dispatched to
+     * them — not from when the customer started.
+     *
+     * <p>Stored per row as {@code sos_offers.expires_at}, which is what makes it genuinely
+     * per-professional: a professional first contacted at minute 9 of the scan still has their
+     * full ten minutes, ending at minute 19, and the scan window closing at minute 10 does not
+     * shorten it. Enforced inside {@code SosOfferRepository#accept}'s guard, so an acceptance
+     * that arrives a millisecond late is refused by the database rather than by an application
+     * clock read.
+     */
+    private int offerTtlSeconds = 600;
 
     /**
-     * The overall professional-response window. Once it elapses the request moves on with
-     * however many acceptances it has (or expires with none), rather than waiting on the
-     * slowest offer.
+     * <b>Timer 1 of 2: the active scanning window.</b> How long the platform keeps looking for
+     * <em>new</em> professionals to contact, counted from activation.
+     *
+     * <p>When it elapses the search stops widening and stops dispatching — and that is all it
+     * does. It does not close offers already sent (timer 2 owns those), it does not remove
+     * candidates who have already accepted, and it does not end the customer's ability to
+     * choose (nothing does, short of the customer acting). A request that has no acceptance and
+     * no offer left that could still be answered is what finally expires; see
+     * {@code SosService#enforceDeadlines}.
      */
-    private int matchingWindowSeconds = 150;
+    private int scanWindowSeconds = 600;
 
-    /**
-     * The customer's window to choose from the candidates — the product's "approximately 2
-     * minutes". The backend is the source of truth for this deadline; the frontend timer is
-     * presentation only.
+    /*
+     * There is deliberately no customer-decision-window property (MS3 follow-up).
+     *
+     * There was one, and it was wrong: a fixed 10 minutes from the first acceptance, after which
+     * the request expired and every professional who had committed to come simply vanished. A
+     * customer who is comparing two real options, or who put the phone down to move furniture
+     * away from the water, was losing both of them to a clock they never saw start.
+     *
+     * What ends a request now is an event, not a timer: the customer selects, the customer
+     * cancels, or nothing can happen any more (nobody has accepted and no outstanding offer can
+     * still be answered). The two timers that remain -- {@link #scanWindowSeconds} and
+     * {@link #offerTtlSeconds} -- bound what the *platform* and *professionals* do, which is
+     * exactly what a deadline is good for. See {@code SosService#enforceDeadlines}.
      */
-    private int selectionWindowSeconds = 120;
 
     /**
      * How long the selected professional has to confirm before the request expires.
@@ -177,13 +200,12 @@ public class SosProperties {
     @PostConstruct
     void validate() {
         requirePositive("offer-ttl-seconds", offerTtlSeconds);
-        requirePositive("matching-window-seconds", matchingWindowSeconds);
-        requirePositive("selection-window-seconds", selectionWindowSeconds);
+        requirePositive("scan-window-seconds", scanWindowSeconds);
         requirePositive("confirmation-grace-seconds", confirmationGraceSeconds);
         requirePositive("candidate-pool-size", candidatePoolSize);
         requirePositive("emergency-candidate-pool-size", emergencyCandidatePoolSize);
-        requirePositive("target-candidate-count", targetCandidateCount);
         requirePositive("expansion-pool-increment", expansionPoolIncrement);
+        requirePositive("expansion-interval-seconds", expansionIntervalSeconds);
 
         // Zero is legal and meaningful here, unlike every value above: it turns "סרוק שוב" off
         // entirely and restores single-wave dispatch, which is a deployment a operator might
@@ -210,15 +232,12 @@ public class SosProperties {
                     + "when set (omit it entirely to disable the radius filter), but was "
                     + maxDispatchRadiusKm + ".");
         }
-        // Not an error -- a deployment may legitimately want every offer to stay answerable for
-        // the whole response window -- but an offer TTL *longer* than the window it lives inside
-        // means the extra seconds can never be used, which is almost always a typo.
-        if (offerTtlSeconds > matchingWindowSeconds) {
-            throw new IllegalStateException("Refusing to start: pronto.sos.offer-ttl-seconds ("
-                    + offerTtlSeconds + ") exceeds pronto.sos.matching-window-seconds ("
-                    + matchingWindowSeconds + "), so an offer would outlive the response window it "
-                    + "belongs to. Lower the TTL or raise the window.");
-        }
+        // There is deliberately NO "offer TTL must not exceed the scan window" rule any more.
+        // It used to exist because the scan window was the overall response window, so an offer
+        // outliving it was dead time. The MS3 lifecycle redesign made the two independent on
+        // purpose: an offer dispatched in the last seconds of the scan must still get its full
+        // response window, which by definition ends after the scan does. Re-adding that check
+        // would forbid the behaviour this feature exists to guarantee.
     }
 
     private static void requirePositive(String property, int value) {
@@ -260,14 +279,6 @@ public class SosProperties {
         this.emergencyCandidatePoolSize = emergencyCandidatePoolSize;
     }
 
-    public int getTargetCandidateCount() {
-        return targetCandidateCount;
-    }
-
-    public void setTargetCandidateCount(int targetCandidateCount) {
-        this.targetCandidateCount = targetCandidateCount;
-    }
-
     public int getMaxSearchExpansions() {
         return maxSearchExpansions;
     }
@@ -300,20 +311,20 @@ public class SosProperties {
         this.offerTtlSeconds = offerTtlSeconds;
     }
 
-    public int getMatchingWindowSeconds() {
-        return matchingWindowSeconds;
+    public int getScanWindowSeconds() {
+        return scanWindowSeconds;
     }
 
-    public void setMatchingWindowSeconds(int matchingWindowSeconds) {
-        this.matchingWindowSeconds = matchingWindowSeconds;
+    public void setScanWindowSeconds(int scanWindowSeconds) {
+        this.scanWindowSeconds = scanWindowSeconds;
     }
 
-    public int getSelectionWindowSeconds() {
-        return selectionWindowSeconds;
+    public int getExpansionIntervalSeconds() {
+        return expansionIntervalSeconds;
     }
 
-    public void setSelectionWindowSeconds(int selectionWindowSeconds) {
-        this.selectionWindowSeconds = selectionWindowSeconds;
+    public void setExpansionIntervalSeconds(int expansionIntervalSeconds) {
+        this.expansionIntervalSeconds = expansionIntervalSeconds;
     }
 
     public int getConfirmationGraceSeconds() {

@@ -59,6 +59,41 @@
   font-weight: 400;
 }
 
+/* The count becomes a button when the surface has reviews to open inline
+   (`onReviewsClick`) — underlined so it reads as the affordance it is, and reset from the
+   browser's own button chrome so the rating row's typography is untouched. */
+.reviewCountButton {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.reviewCountButton:focus-visible,
+.statButton:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-focus-ring-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.statButton {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.statButton .statValue {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* §43's [ETA][Jobs][Rating] strip, adapted to the signals this API actually returns. */
 .stats {
   display: grid;

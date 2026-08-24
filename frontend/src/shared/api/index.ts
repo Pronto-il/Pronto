@@ -1,4 +1,4 @@
-export { ApiError, setAuthTokenGetter, httpClient, API_BASE_URL } from './httpClient';
+export { ApiError, setAuthTokenGetter, setUnauthorizedHandler, httpClient, API_BASE_URL } from './httpClient';
 
 export { registerCustomer, registerProfessional, verifyEmail, login } from './auth';
 export type {
@@ -14,11 +14,28 @@ export type {
   LoginResponse,
 } from './auth';
 
+export * from './resourceKeys';
+
 export { getMe, deleteMe, updateMe } from './users';
 export type { ProfessionalInfo, UserMeResponse, UserMeDefaultAddress, UpdateUserMeRequest } from './users';
 
-export { CATEGORIES, getCategoryNameHe, getProfessionalNameHe } from './categories';
+export {
+  CATEGORIES,
+  getCategoryNameHe,
+  getProfessionalNameHe,
+  getCategoryNamesHe,
+  formatCategorySummary,
+} from './categories';
 export type { Category } from './categories';
+
+export {
+  getServiceAreas,
+  citiesForRegion,
+  allCities,
+  regionForCity,
+  cityNames,
+} from './serviceAreas';
+export type { ServiceRegionResponse, ServiceCityResponse } from './serviceAreas';
 
 export { GENERIC_ERROR_MESSAGE, getFieldErrorMessages } from './errorMessages';
 
@@ -80,6 +97,7 @@ export {
   getWorkingHours,
   updateWorkingHours,
   getAvailabilityCalendar,
+  getAvailabilityBlock,
   createAvailabilityBlock,
   updateAvailabilityBlock,
   deleteAvailabilityBlock,
@@ -137,7 +155,6 @@ export {
   getSosOffer,
   acceptSosOffer,
   rejectSosOffer,
-  updateSosOfferEta,
   confirmSosRequest,
   markSosOnTheWay,
   markSosArrived,

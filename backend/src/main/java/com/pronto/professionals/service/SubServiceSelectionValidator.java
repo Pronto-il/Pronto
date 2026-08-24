@@ -8,13 +8,20 @@ import com.pronto.professionals.repository.SubServiceRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * "Every one of these sub-service ids exists, and belongs to that category" — extracted in MS1
- * so registration and the later self-service edit enforce the identical rule.
+ * "Every one of these sub-service ids exists, and belongs to one of those categories" — extracted
+ * in MS1 so registration and the later self-service edit enforce the identical rule.
+ *
+ * <p><b>MS4</b> turns "that category" into "one of those categories": a professional now holds a
+ * set. The rule is otherwise untouched, and for a single-category professional the outcome is
+ * bit-for-bit what it was — the set is a singleton and the membership test reduces to the
+ * equality check it replaced.
  *
  * <p>The rule and both its error codes are unchanged from where it was written inline in
  * {@code ProfessionalsService#updateMySubServices}: an unknown id is a
@@ -38,16 +45,20 @@ public class SubServiceSelectionValidator {
     }
 
     /**
+     * @param categoryIds the professional's own categories — a sub-service under any one of them
+     *                    is legal
      * @param fieldPath the field name to report an unknown id against — {@code "subServiceIds"}
      *                  for the edit endpoint's body, {@code "professional.subServiceIds"} for
      *                  registration's nested payload
      * @throws ApiException {@code 400 VALIDATION_ERROR} for an id no {@code sub_services} row
-     *         has; {@code 400 CATEGORY_MISMATCH} for an id belonging to another category
+     *         has; {@code 400 CATEGORY_MISMATCH} for an id belonging to a category the
+     *         professional does not serve
      */
-    public void validate(Long categoryId, Collection<Long> subServiceIds, String fieldPath) {
+    public void validate(Collection<Long> categoryIds, Collection<Long> subServiceIds, String fieldPath) {
         if (subServiceIds.isEmpty()) {
             return;
         }
+        Set<Long> ownCategoryIds = new HashSet<>(categoryIds);
         Map<Long, SubService> subServicesById = subServiceRepository.findAllById(subServiceIds).stream()
                 .collect(Collectors.toMap(SubService::getId, s -> s));
 
@@ -57,9 +68,9 @@ public class SubServiceSelectionValidator {
                 throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
                         List.of(new FieldError(fieldPath, "unknown sub-service id " + id)));
             }
-            if (!subService.getCategoryId().equals(categoryId)) {
+            if (!ownCategoryIds.contains(subService.getCategoryId())) {
                 throw new ApiException(ErrorCode.CATEGORY_MISMATCH,
-                        "Sub-service " + id + " does not belong to the caller's own category.");
+                        "Sub-service " + id + " does not belong to any of the caller's own categories.");
             }
         }
     }

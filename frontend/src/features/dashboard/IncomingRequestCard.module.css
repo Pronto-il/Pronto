@@ -4,6 +4,31 @@
   gap: var(--space-3);
 }
 
+/* Everything above the two decision buttons opens the inline details view. */
+.clickableBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.clickableBody:hover {
+  background: var(--color-surface-secondary);
+}
+
+.clickableBody:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-focus-ring-subtle);
+}
+
+.detailsHint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
 .headerRow {
   display: flex;
   align-items: center;

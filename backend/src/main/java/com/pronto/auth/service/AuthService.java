@@ -24,11 +24,16 @@ import com.pronto.common.dto.FieldError;
 import com.pronto.common.dto.LockedDetails;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
+import com.pronto.locations.service.ServiceCoverageValidator;
 import com.pronto.professionals.entity.Professional;
+import com.pronto.professionals.entity.ProfessionalCategory;
+import com.pronto.professionals.entity.ProfessionalServiceCity;
 import com.pronto.professionals.entity.ProfessionalSubService;
-import com.pronto.professionals.repository.CategoryRepository;
+import com.pronto.professionals.repository.ProfessionalCategoryRepository;
 import com.pronto.professionals.repository.ProfessionalRepository;
+import com.pronto.professionals.repository.ProfessionalServiceCityRepository;
 import com.pronto.professionals.repository.ProfessionalSubServiceRepository;
+import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.professionals.service.SubServiceSelectionValidator;
 import com.pronto.storage.DocumentContentType;
 import com.pronto.storage.ImageContentType;
@@ -71,7 +76,8 @@ public class AuthService {
     private final UserRepository userRepository;
     private final ProfessionalRepository professionalRepository;
     private final SosAvailabilityRepository sosAvailabilityRepository;
-    private final CategoryRepository categoryRepository;
+    private final ProfessionalCoverageService professionalCoverageService;
+    private final ServiceCoverageValidator serviceCoverageValidator;
     private final VerificationCodeRepository verificationCodeRepository;
     private final PasswordEncoder passwordEncoder;
     private final EmailSender emailSender;
@@ -80,12 +86,15 @@ public class AuthService {
     private final StorageService storageService;
     private final SubServiceSelectionValidator subServiceSelectionValidator;
     private final ProfessionalSubServiceRepository professionalSubServiceRepository;
+    private final ProfessionalCategoryRepository professionalCategoryRepository;
+    private final ProfessionalServiceCityRepository professionalServiceCityRepository;
     private final ProfessionalWorkingHoursRepository professionalWorkingHoursRepository;
 
     public AuthService(UserRepository userRepository,
                         ProfessionalRepository professionalRepository,
                         SosAvailabilityRepository sosAvailabilityRepository,
-                        CategoryRepository categoryRepository,
+                        ProfessionalCoverageService professionalCoverageService,
+                        ServiceCoverageValidator serviceCoverageValidator,
                         VerificationCodeRepository verificationCodeRepository,
                         PasswordEncoder passwordEncoder,
                         EmailSender emailSender,
@@ -94,11 +103,14 @@ public class AuthService {
                         StorageService storageService,
                         SubServiceSelectionValidator subServiceSelectionValidator,
                         ProfessionalSubServiceRepository professionalSubServiceRepository,
+                        ProfessionalCategoryRepository professionalCategoryRepository,
+                        ProfessionalServiceCityRepository professionalServiceCityRepository,
                         ProfessionalWorkingHoursRepository professionalWorkingHoursRepository) {
         this.userRepository = userRepository;
         this.professionalRepository = professionalRepository;
         this.sosAvailabilityRepository = sosAvailabilityRepository;
-        this.categoryRepository = categoryRepository;
+        this.professionalCoverageService = professionalCoverageService;
+        this.serviceCoverageValidator = serviceCoverageValidator;
         this.verificationCodeRepository = verificationCodeRepository;
         this.passwordEncoder = passwordEncoder;
         this.emailSender = emailSender;
@@ -107,6 +119,8 @@ public class AuthService {
         this.storageService = storageService;
         this.subServiceSelectionValidator = subServiceSelectionValidator;
         this.professionalSubServiceRepository = professionalSubServiceRepository;
+        this.professionalCategoryRepository = professionalCategoryRepository;
+        this.professionalServiceCityRepository = professionalServiceCityRepository;
         this.professionalWorkingHoursRepository = professionalWorkingHoursRepository;
     }
 
@@ -138,8 +152,8 @@ public class AuthService {
 
         if (request.role() == UserRole.PROFESSIONAL) {
             ProfessionalRegistrationData professionalData = request.professional();
-            Professional professional = new Professional(user.getId(), professionalData.categoryId(),
-                    professionalData.serviceArea(), professionalData.basePrice());
+            Professional professional = new Professional(user.getId(), professionalData.serviceRegionId(),
+                    professionalData.baseCityId(), professionalData.basePrice());
             // Saved once here (IDENTITY generation assigns the id immediately) so the
             // storage key templates below — same {professionalId}-keyed shape as
             // professionals.service.ProfessionalsService#uploadProfileImage — have a
@@ -171,11 +185,14 @@ public class AuthService {
             // SOS-matching query needs no NULL-handling for professionals who never toggled it.
             sosAvailabilityRepository.save(new SosAvailability(professional.getId()));
 
-            // MS1 (D4/D7): persist the onboarding the registrant actually supplied. Validated in
-            // full by validateRoleSpecificFields above, before the users row was written -- these
-            // two loops insert, they do not decide. Nothing is defaulted or invented here: a
-            // registration that reaches this point carries at least one category-valid
-            // sub-service and a 7-day week with at least one enabled day.
+            // MS1 (D4/D7) + MS4: persist the onboarding the registrant actually supplied.
+            // Validated in full by validateRoleSpecificFields above, before the users row was
+            // written -- these loops insert, they do not decide. Nothing is defaulted or invented
+            // here: a registration that reaches this point carries at least one real category, at
+            // least one sub-service under one of those categories, a region with at least one of
+            // its own cities (including the base city), and a 7-day week with an enabled day.
+            persistCategories(professional.getId(), professionalData.categoryIds());
+            persistServiceCities(professional.getId(), professionalData.serviceCityIds());
             persistSubServices(professional.getId(), professionalData.subServiceIds());
             persistWorkingHours(professional.getId(), professionalData.workingHours());
         }
@@ -198,6 +215,24 @@ public class AuthService {
     private void persistSubServices(Long professionalId, List<Long> subServiceIds) {
         for (Long subServiceId : new LinkedHashSet<>(subServiceIds)) {
             professionalSubServiceRepository.save(new ProfessionalSubService(professionalId, subServiceId));
+        }
+    }
+
+    /**
+     * MS4: the registrant's chosen trades. Same dedupe-preserving-order treatment, and for the
+     * same reason, as {@link #persistSubServices} — a duplicate id in the payload must not become
+     * a primary-key violation on {@code professional_categories}.
+     */
+    private void persistCategories(Long professionalId, List<Long> categoryIds) {
+        for (Long categoryId : new LinkedHashSet<>(categoryIds)) {
+            professionalCategoryRepository.save(new ProfessionalCategory(professionalId, categoryId));
+        }
+    }
+
+    /** MS4: the registrant's chosen service cities. See {@link #persistCategories}. */
+    private void persistServiceCities(Long professionalId, List<Long> cityIds) {
+        for (Long cityId : new LinkedHashSet<>(cityIds)) {
+            professionalServiceCityRepository.save(new ProfessionalServiceCity(professionalId, cityId));
         }
     }
 
@@ -367,16 +402,25 @@ public class AuthService {
             if (professional == null) {
                 errors.add(new FieldError("professional", "is required for professional registration"));
             } else {
-                if (professional.categoryId() == null) {
-                    errors.add(new FieldError("professional.categoryId", "is required for professional registration"));
-                } else if (!categoryRepository.existsById(professional.categoryId())) {
-                    errors.add(new FieldError("professional.categoryId", "must reference an existing category"));
+                // MS4: presence/shape only here, exactly like subServiceIds below -- the
+                // "do these ids exist, and do these cities sit inside that region" rules run in
+                // validateProfessionalOnboarding, against the same validators the profile-edit
+                // endpoint uses.
+                if (professional.categoryIds() == null || professional.categoryIds().isEmpty()) {
+                    errors.add(new FieldError("professional.categoryIds",
+                            "at least one service category is required for professional registration"));
                 }
-
-                if (professional.serviceArea() == null || professional.serviceArea().isBlank()) {
-                    errors.add(new FieldError("professional.serviceArea", "is required for professional registration"));
-                } else if (professional.serviceArea().length() > 150) {
-                    errors.add(new FieldError("professional.serviceArea", "must be at most 150 characters"));
+                if (professional.serviceRegionId() == null) {
+                    errors.add(new FieldError("professional.serviceRegionId",
+                            "is required for professional registration"));
+                }
+                if (professional.serviceCityIds() == null || professional.serviceCityIds().isEmpty()) {
+                    errors.add(new FieldError("professional.serviceCityIds",
+                            "at least one service city is required for professional registration"));
+                }
+                if (professional.baseCityId() == null) {
+                    errors.add(new FieldError("professional.baseCityId",
+                            "is required for professional registration"));
                 }
 
                 if (professional.basePrice() == null) {
@@ -439,13 +483,20 @@ public class AuthService {
      * complete, not that it look a particular way.
      */
     private void validateProfessionalOnboarding(ProfessionalRegistrationData professional) {
+        // MS4: categories first -- the sub-service rule below is expressed relative to them, so
+        // validating sub-services against an unvalidated category set would report the wrong
+        // error for a registrant who simply picked a category id that does not exist.
+        Set<Long> categoryIds = professionalCoverageService.validateCategories(
+                professional.categoryIds(), "professional.categoryIds");
+        serviceCoverageValidator.validate(professional.serviceRegionId(), professional.serviceCityIds(),
+                professional.baseCityId(), "professional.");
+
         Set<Long> subServiceIds = new LinkedHashSet<>(professional.subServiceIds());
         if (subServiceIds.contains(null)) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
                     List.of(new FieldError("professional.subServiceIds", "must not contain null ids")));
         }
-        subServiceSelectionValidator.validate(professional.categoryId(), subServiceIds,
-                "professional.subServiceIds");
+        subServiceSelectionValidator.validate(categoryIds, subServiceIds, "professional.subServiceIds");
 
         WorkingHoursValidator.validateWeek(professional.workingHours());
         WorkingHoursValidator.requireAtLeastOneEnabledDay(professional.workingHours(),

@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import type { ChangeEvent } from 'react';
 import { Pencil } from 'lucide-react';
-import { ImageLightbox } from './ImageLightbox';
+import { ZoomableImage } from './ZoomableImage';
 import styles from './ProfilePhoto.module.css';
 
 export interface ProfilePhotoProps {
@@ -38,7 +38,6 @@ export function ProfilePhoto({
   uploadError,
 }: ProfilePhotoProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
   const dimension = { width: size, height: size };
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -61,15 +60,15 @@ export function ProfilePhoto({
     <div className={styles.wrapper}>
       <div className={styles.photoArea}>
         {imageUrl ? (
-          <button
-            type="button"
+          <ZoomableImage
+            imageUrl={imageUrl}
+            label="הגדלת תמונת פרופיל"
             className={styles.photoButton}
-            style={dimension}
-            onClick={() => setIsLightboxOpen(true)}
-            aria-label="הגדלת תמונת פרופיל"
           >
-            {photoContent}
-          </button>
+            <span className={styles.photoInner} style={dimension}>
+              {photoContent}
+            </span>
+          </ZoomableImage>
         ) : (
           <div className={styles.photoStatic} style={dimension}>
             {photoContent}
@@ -105,9 +104,6 @@ export function ProfilePhoto({
         </p>
       )}
 
-      {imageUrl && (
-        <ImageLightbox isOpen={isLightboxOpen} onClose={() => setIsLightboxOpen(false)} imageUrl={imageUrl} />
-      )}
     </div>
   );
 }

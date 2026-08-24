@@ -1040,6 +1040,16 @@ are the living design/planning docs, owned by `pronto-documentation` going forwa
     purpose-built component rather than a `Modal` variant — `Modal`'s form-dialog-shaped API
     doesn't fit a chrome-free, near-fullscreen image). `ProfessionalProfileImageField.tsx`
     (+ `.module.css`) retired/deleted — its job is now `ProfilePhoto`.
+  - **Extended in the MS4 demo-profile-photo follow-up (2026-08-24)**: `ZoomableImage.tsx`
+    (new) — the click-to-enlarge interaction itself, extracted out of `ProfilePhoto` so that
+    "click a professional's photo to see it bigger" has exactly one implementation rather than
+    one per screen. Wraps a caller-styled thumbnail in a bare button and owns the
+    `ImageLightbox` open state; it is only ever given a real image, so the initials fallback
+    stays non-interactive. Consumers: `ProfilePhoto`, `ProfessionalProfileDisplay` (which is
+    what the customer's professional-profile page, the profile modal and the professional's own
+    editor preview all render), and `SosAvatar` behind an opt-in `enlargeable` prop — off for
+    the map marker and candidate card, whose avatar sits inside a control that *selects* that
+    professional.
   - **Backend**: new `PUT /api/users/me` (`CUSTOMER`-only, `users.config.UsersWebConfig`
     route-level gate + a defense-in-depth service-layer re-check, mirroring
     `reviews.config.ReviewsWebConfig`'s same-path/different-HTTP-method-gate precedent) —

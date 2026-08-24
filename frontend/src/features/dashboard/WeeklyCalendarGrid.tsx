@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Lock, CheckCircle2 } from 'lucide-react';
 import { Button, StatusBadge } from '../../shared/components';
 import { usePolling } from '../../shared/hooks';
 import { getAvailabilityCalendar, GENERIC_ERROR_MESSAGE } from '../../shared/api';
+import { availabilityCalendarKey } from '../../shared/api/resourceKeys';
 import type { CalendarResponse, CalendarSegment } from '../../shared/api';
 import { formatTimeLabel } from '../../shared/utils/formatDateTime';
 import { CalendarBlockModal } from './CalendarBlockModal';
@@ -32,8 +33,10 @@ const WEEKDAY_LABELS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'ח�
 const MOBILE_WEEKDAY_LABELS = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'];
 
 /** Design §7.3/§31: "a coarser interval than the 3-5s order-tracking polling — recommended
- *  20-30s." */
-const CALENDAR_POLL_INTERVAL_MS = 25000;
+ *  20-30s." Raised to 60s: what changes a professional's calendar is their own booking activity
+ *  and their own block edits, both of which already `refetch()` the moment they happen, so the
+ *  timer is only there to notice a customer booking a slot from the other side. */
+const CALENDAR_POLL_INTERVAL_MS = 60000;
 
 /** Design §7.3: "fixed default visible range 06:00-23:00... vertical scroll beyond that." */
 const DEFAULT_START_HOUR = 6;
@@ -220,7 +223,12 @@ function CalendarWeekView({ weekStart }: { weekStart: Date }) {
   const from = toDateKey(weekStart);
   const to = toDateKey(addDays(weekStart, 7));
 
+  // Keyed by the range it is showing, so paging to another week is a different resource (a new
+  // entry, its own timer) while two consumers looking at the *same* range share one request —
+  // and stepping back to a week visited moments ago re-attaches to that entry instead of
+  // re-fetching it.
   const { data, error, isLoading, refetch } = usePolling<CalendarResponse>(() => getAvailabilityCalendar(from, to), {
+    key: availabilityCalendarKey(from, to),
     intervalMs: CALENDAR_POLL_INTERVAL_MS,
   });
 

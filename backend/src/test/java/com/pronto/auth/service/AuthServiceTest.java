@@ -1,5 +1,16 @@
 package com.pronto.auth.service;
 
+import static org.assertj.core.api.Assertions.assertThatCode;
+import com.pronto.professionals.entity.ProfessionalServiceCity;
+import com.pronto.locations.entity.ServiceCity;
+import com.pronto.locations.repository.ServiceCityRepository;
+import com.pronto.locations.repository.ServiceRegionRepository;
+import com.pronto.locations.service.ServiceCoverageValidator;
+import com.pronto.professionals.entity.Category;
+import com.pronto.professionals.entity.ProfessionalCategory;
+import com.pronto.professionals.repository.ProfessionalCategoryRepository;
+import com.pronto.professionals.repository.ProfessionalServiceCityRepository;
+import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.auth.dto.CustomerRegistrationData;
 import com.pronto.auth.dto.DefaultAddressRequest;
 import com.pronto.auth.dto.ProfessionalRegistrationData;
@@ -70,6 +81,13 @@ class AuthServiceTest {
     private static final Long OTHER_CATEGORY_ID = 4L;
     private static final Long SUB_SERVICE_ID = 55L;
     private static final Long CROSS_CATEGORY_SUB_SERVICE_ID = 66L;
+    /** MS4: the closed service-area catalogue registration now validates against. */
+    private static final Long SERVICE_REGION_ID = 4L;
+    private static final Long BASE_CITY_ID = 40L;
+    private static final Long SECOND_CITY_ID = 41L;
+    /** A real city, in a different region -- the cross-region rule's negative case. */
+    private static final Long OTHER_REGION_CITY_ID = 70L;
+    private static final Long OTHER_REGION_ID = 5L;
 
     private UserRepository userRepository;
     private ProfessionalRepository professionalRepository;
@@ -83,6 +101,10 @@ class AuthServiceTest {
     private StorageService storageService;
     private SubServiceRepository subServiceRepository;
     private ProfessionalSubServiceRepository professionalSubServiceRepository;
+    private ProfessionalCategoryRepository professionalCategoryRepository;
+    private ProfessionalServiceCityRepository professionalServiceCityRepository;
+    private ServiceRegionRepository serviceRegionRepository;
+    private ServiceCityRepository serviceCityRepository;
     private ProfessionalWorkingHoursRepository professionalWorkingHoursRepository;
     private AuthService authService;
 
@@ -115,6 +137,35 @@ class AuthServiceTest {
         // the actual cross-category rule registration now shares with the edit endpoint.
         SubServiceSelectionValidator subServiceSelectionValidator =
                 new SubServiceSelectionValidator(subServiceRepository);
+        professionalCategoryRepository = Mockito.mock(ProfessionalCategoryRepository.class);
+        professionalServiceCityRepository = Mockito.mock(ProfessionalServiceCityRepository.class);
+        serviceRegionRepository = Mockito.mock(ServiceRegionRepository.class);
+        serviceCityRepository = Mockito.mock(ServiceCityRepository.class);
+        // MS4: real ServiceCoverageValidator / ProfessionalCoverageService over mocked
+        // repositories, the same "real collaborator over the client boundary" choice this class
+        // already makes for StorageService and SubServiceSelectionValidator -- so these tests
+        // exercise the actual region/city and category rules registration shares with the
+        // profile-edit endpoint, rather than a stub that would agree with anything.
+        ServiceCoverageValidator serviceCoverageValidator =
+                new ServiceCoverageValidator(serviceRegionRepository, serviceCityRepository);
+        ProfessionalCoverageService professionalCoverageService = new ProfessionalCoverageService(
+                professionalCategoryRepository, professionalServiceCityRepository, serviceRegionRepository,
+                serviceCityRepository, categoryRepository, serviceCoverageValidator);
+        Mockito.lenient().when(serviceRegionRepository.existsById(SERVICE_REGION_ID)).thenReturn(true);
+        Mockito.lenient().when(serviceRegionRepository.existsById(OTHER_REGION_ID)).thenReturn(true);
+        Mockito.lenient().when(serviceCityRepository.findAllById(any())).thenAnswer(inv -> {
+            List<ServiceCity> found = new ArrayList<>();
+            for (Long id : (Iterable<Long>) inv.getArgument(0)) {
+                if (BASE_CITY_ID.equals(id)) {
+                    found.add(serviceCity(BASE_CITY_ID, SERVICE_REGION_ID, (short) 1));
+                } else if (SECOND_CITY_ID.equals(id)) {
+                    found.add(serviceCity(SECOND_CITY_ID, SERVICE_REGION_ID, (short) 2));
+                } else if (OTHER_REGION_CITY_ID.equals(id)) {
+                    found.add(serviceCity(OTHER_REGION_CITY_ID, OTHER_REGION_ID, (short) 1));
+                }
+            }
+            return found;
+        });
         when(subServiceRepository.findAllById(any())).thenAnswer(inv -> {
             List<SubService> found = new ArrayList<>();
             for (Long id : (Iterable<Long>) inv.getArgument(0)) {
@@ -128,9 +179,11 @@ class AuthServiceTest {
         });
 
         authService = new AuthService(userRepository, professionalRepository, sosAvailabilityRepository,
-                categoryRepository, verificationCodeRepository, passwordEncoder, emailSender, jwtService,
-                loginAttemptRecorder, storageService, subServiceSelectionValidator,
-                professionalSubServiceRepository, professionalWorkingHoursRepository);
+                professionalCoverageService, serviceCoverageValidator, verificationCodeRepository,
+                passwordEncoder, emailSender, jwtService, loginAttemptRecorder, storageService,
+                subServiceSelectionValidator, professionalSubServiceRepository,
+                professionalCategoryRepository, professionalServiceCityRepository,
+                professionalWorkingHoursRepository);
 
         when(userRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
         when(passwordEncoder.encode(anyString())).thenReturn("hashed");
@@ -156,7 +209,15 @@ class AuthServiceTest {
     }
 
     private void stubValidCategory() {
-        when(categoryRepository.existsById(CATEGORY_ID)).thenReturn(true);
+        when(categoryRepository.findAllById(any())).thenAnswer(inv -> {
+            List<Category> found = new ArrayList<>();
+            for (Long id : (Iterable<Long>) inv.getArgument(0)) {
+                if (CATEGORY_ID.equals(id) || OTHER_CATEGORY_ID.equals(id)) {
+                    found.add(category(id));
+                }
+            }
+            return found;
+        });
     }
 
     private static void setField(Object entity, String fieldName, Object value) {
@@ -167,6 +228,32 @@ class AuthServiceTest {
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    /** {@code Category}/{@code ServiceCity} have no public constructor (read-only reference entities). */
+    private static <T> T readOnlyEntity(Class<T> type) {
+        try {
+            var constructor = type.getDeclaredConstructor();
+            constructor.setAccessible(true);
+            return constructor.newInstance();
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static Category category(Long id) {
+        Category category = readOnlyEntity(Category.class);
+        setField(category, "id", id);
+        return category;
+    }
+
+    private static ServiceCity serviceCity(Long id, Long regionId, short displayOrder) {
+        ServiceCity city = readOnlyEntity(ServiceCity.class);
+        setField(city, "id", id);
+        setField(city, "regionId", regionId);
+        setField(city, "displayOrder", displayOrder);
+        setField(city, "nameHe", "עיר " + id);
+        return city;
     }
 
     /** {@code SubService} has no public constructor (read-only reference entity). */
@@ -205,7 +292,7 @@ class AuthServiceTest {
     }
 
     private static ProfessionalRegistrationData validProfessionalData() {
-        return new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv", new BigDecimal("250.00"),
+        return new ProfessionalRegistrationData(List.of(CATEGORY_ID), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, new BigDecimal("250.00"),
                 List.of(SUB_SERVICE_ID), fullWeek(true));
     }
 
@@ -312,8 +399,14 @@ class AuthServiceTest {
         verify(professionalRepository, times(2)).save(professionalCaptor.capture());
         Professional saved = professionalCaptor.getValue();
         assertThat(saved.getUserId()).isEqualTo(100L);
-        assertThat(saved.getCategoryId()).isEqualTo(CATEGORY_ID);
+        assertThat(saved.getServiceRegionId()).isEqualTo(SERVICE_REGION_ID);
+        assertThat(saved.getBaseCityId()).isEqualTo(BASE_CITY_ID);
         assertThat(saved.getApprovalStatus()).isEqualTo(Professional.STATUS_PENDING);
+        // MS4: the category lives in professional_categories now, not on the row.
+        ArgumentCaptor<ProfessionalCategory> categoryCaptor =
+                ArgumentCaptor.forClass(ProfessionalCategory.class);
+        verify(professionalCategoryRepository).save(categoryCaptor.capture());
+        assertThat(categoryCaptor.getValue().getCategoryId()).isEqualTo(CATEGORY_ID);
     }
 
     @Test
@@ -362,8 +455,8 @@ class AuthServiceTest {
     }
 
     @Test
-    void register_professional_missingCategoryId_rejected() {
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(null, "Tel Aviv", BigDecimal.TEN, List.of(SUB_SERVICE_ID), fullWeek(true));
+    void register_professional_missingCategoryIds_rejected() {
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(null, SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, BigDecimal.TEN, List.of(SUB_SERVICE_ID), fullWeek(true));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -372,8 +465,7 @@ class AuthServiceTest {
 
     @Test
     void register_professional_invalidCategoryId_rejected() {
-        when(categoryRepository.existsById(999L)).thenReturn(false);
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(999L, "Tel Aviv", BigDecimal.TEN, List.of(SUB_SERVICE_ID), fullWeek(true));
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(999L), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, BigDecimal.TEN, List.of(SUB_SERVICE_ID), fullWeek(true));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -382,8 +474,9 @@ class AuthServiceTest {
     }
 
     @Test
-    void register_professional_missingServiceArea_rejected() {
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "  ", BigDecimal.TEN, List.of(SUB_SERVICE_ID), fullWeek(true));
+    void register_professional_missingServiceRegion_rejected() {
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID), null,
+                List.of(BASE_CITY_ID), BASE_CITY_ID, BigDecimal.TEN, List.of(SUB_SERVICE_ID), fullWeek(true));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -392,7 +485,7 @@ class AuthServiceTest {
 
     @Test
     void register_professional_missingBasePrice_rejected() {
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv", null, List.of(SUB_SERVICE_ID), fullWeek(true));
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, null, List.of(SUB_SERVICE_ID), fullWeek(true));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -401,7 +494,7 @@ class AuthServiceTest {
 
     @Test
     void register_professional_negativeBasePrice_rejected() {
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv", new BigDecimal("-5"), List.of(SUB_SERVICE_ID), fullWeek(true));
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, new BigDecimal("-5"), List.of(SUB_SERVICE_ID), fullWeek(true));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -436,10 +529,15 @@ class AuthServiceTest {
         when(failingClient.upload(anyString(), any(), anyString())).thenThrow(new StorageException("disk full", null));
         StorageService failingStorageService = new StorageService(failingClient, Optional.empty(), 300L);
         AuthService serviceWithFailingStorage = new AuthService(userRepository, professionalRepository,
-                sosAvailabilityRepository, categoryRepository, verificationCodeRepository, passwordEncoder,
-                emailSender, jwtService, loginAttemptRecorder, failingStorageService,
-                new SubServiceSelectionValidator(subServiceRepository), professionalSubServiceRepository,
-                professionalWorkingHoursRepository);
+                sosAvailabilityRepository,
+                new ProfessionalCoverageService(professionalCategoryRepository, professionalServiceCityRepository,
+                        serviceRegionRepository, serviceCityRepository, categoryRepository,
+                        new ServiceCoverageValidator(serviceRegionRepository, serviceCityRepository)),
+                new ServiceCoverageValidator(serviceRegionRepository, serviceCityRepository),
+                verificationCodeRepository, passwordEncoder, emailSender, jwtService, loginAttemptRecorder,
+                failingStorageService, new SubServiceSelectionValidator(subServiceRepository),
+                professionalSubServiceRepository, professionalCategoryRepository,
+                professionalServiceCityRepository, professionalWorkingHoursRepository);
 
         assertThatThrownBy(() -> serviceWithFailingStorage.register(
                 professionalRequest(validProfessionalData()), pdfDocument(), null))
@@ -552,8 +650,7 @@ class AuthServiceTest {
 
     @Test
     void register_professional_noSubServices_rejected() {
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
-                new BigDecimal("250.00"), List.of(), fullWeek(true));
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, new BigDecimal("250.00"), List.of(), fullWeek(true));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -563,8 +660,7 @@ class AuthServiceTest {
 
     @Test
     void register_professional_nullSubServices_rejected() {
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
-                new BigDecimal("250.00"), null, fullWeek(true));
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, new BigDecimal("250.00"), null, fullWeek(true));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -577,8 +673,7 @@ class AuthServiceTest {
         // The rule the backend must own rather than trust the UI with: a sub-service belonging to
         // another category. Same CATEGORY_MISMATCH the edit endpoint raises -- one validator.
         stubValidCategory();
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
-                new BigDecimal("250.00"), List.of(CROSS_CATEGORY_SUB_SERVICE_ID), fullWeek(true));
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, new BigDecimal("250.00"), List.of(CROSS_CATEGORY_SUB_SERVICE_ID), fullWeek(true));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -589,8 +684,7 @@ class AuthServiceTest {
     @Test
     void register_professional_unknownSubService_rejected() {
         stubValidCategory();
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
-                new BigDecimal("250.00"), List.of(9999L), fullWeek(true));
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, new BigDecimal("250.00"), List.of(9999L), fullWeek(true));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -600,8 +694,7 @@ class AuthServiceTest {
 
     @Test
     void register_professional_missingWorkingHours_rejected() {
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
-                new BigDecimal("250.00"), List.of(SUB_SERVICE_ID), null);
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, new BigDecimal("250.00"), List.of(SUB_SERVICE_ID), null);
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -614,8 +707,7 @@ class AuthServiceTest {
         // The whole point of D4's working-hours rule: a professional with a week of switched-off
         // days derives an empty calendar and can never actually be booked.
         stubValidCategory();
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
-                new BigDecimal("250.00"), List.of(SUB_SERVICE_ID), fullWeek(false));
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, new BigDecimal("250.00"), List.of(SUB_SERVICE_ID), fullWeek(false));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
@@ -626,8 +718,7 @@ class AuthServiceTest {
     @Test
     void register_professional_partialWeek_rejected() {
         stubValidCategory();
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
-                new BigDecimal("250.00"), List.of(SUB_SERVICE_ID),
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, new BigDecimal("250.00"), List.of(SUB_SERVICE_ID),
                 List.of(new WorkingHoursItemRequest(0, true, LocalTime.of(8, 0), LocalTime.of(17, 0))));
 
         assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
@@ -641,11 +732,212 @@ class AuthServiceTest {
         // A duplicate id in the payload must not become a primary-key violation on
         // professional_sub_services.
         stubValidCategory();
-        ProfessionalRegistrationData data = new ProfessionalRegistrationData(CATEGORY_ID, "Tel Aviv",
-                new BigDecimal("250.00"), List.of(SUB_SERVICE_ID, SUB_SERVICE_ID), fullWeek(true));
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, new BigDecimal("250.00"), List.of(SUB_SERVICE_ID, SUB_SERVICE_ID), fullWeek(true));
 
         authService.register(professionalRequest(data), pdfDocument(), null);
 
         verify(professionalSubServiceRepository, times(1)).save(any(ProfessionalSubService.class));
+    }
+
+    // ---- MS4: multiple categories, controlled service coverage, and the registration week ----
+
+    @Test
+    void register_professional_singleCategory_writesExactlyOneCategoryRow() {
+        stubValidCategory();
+
+        authService.register(professionalRequest(validProfessionalData()), pdfDocument(), null);
+
+        ArgumentCaptor<ProfessionalCategory> captor = ArgumentCaptor.forClass(ProfessionalCategory.class);
+        verify(professionalCategoryRepository, times(1)).save(captor.capture());
+        assertThat(captor.getValue().getProfessionalId()).isEqualTo(200L);
+        assertThat(captor.getValue().getCategoryId()).isEqualTo(CATEGORY_ID);
+    }
+
+    @Test
+    void register_professional_multipleCategories_writesOneRowPerCategory() {
+        stubValidCategory();
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(
+                List.of(CATEGORY_ID, OTHER_CATEGORY_ID), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID,
+                new BigDecimal("250.00"), List.of(SUB_SERVICE_ID, CROSS_CATEGORY_SUB_SERVICE_ID), fullWeek(true));
+
+        authService.register(professionalRequest(data), pdfDocument(), null);
+
+        ArgumentCaptor<ProfessionalCategory> captor = ArgumentCaptor.forClass(ProfessionalCategory.class);
+        verify(professionalCategoryRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues()).extracting(ProfessionalCategory::getCategoryId)
+                .containsExactlyInAnyOrder(CATEGORY_ID, OTHER_CATEGORY_ID);
+    }
+
+    @Test
+    void register_professional_multipleCategories_acceptsASubServiceUnderEitherOfThem() {
+        // CROSS_CATEGORY_SUB_SERVICE_ID belongs to OTHER_CATEGORY_ID. Registering for that
+        // category too makes it legal -- which is the whole of the MS4 sub-service rule change.
+        stubValidCategory();
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(
+                List.of(CATEGORY_ID, OTHER_CATEGORY_ID), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID,
+                new BigDecimal("250.00"), List.of(CROSS_CATEGORY_SUB_SERVICE_ID), fullWeek(true));
+
+        assertThatCode(() -> authService.register(professionalRequest(data), pdfDocument(), null))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void register_professional_subServiceUnderACategoryTheyDidNotRegisterFor_isStillRejected() {
+        // The rule widened, it did not disappear: a sub-service under a trade the registrant
+        // never claimed is exactly as illegal as it was before MS4.
+        stubValidCategory();
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID),
+                SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, new BigDecimal("250.00"),
+                List.of(CROSS_CATEGORY_SUB_SERVICE_ID), fullWeek(true));
+
+        assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.CATEGORY_MISMATCH));
+    }
+
+    @Test
+    void register_professional_duplicateCategoryIds_insertedOnce() {
+        stubValidCategory();
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(
+                List.of(CATEGORY_ID, CATEGORY_ID), SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID,
+                new BigDecimal("250.00"), List.of(SUB_SERVICE_ID), fullWeek(true));
+
+        authService.register(professionalRequest(data), pdfDocument(), null);
+
+        verify(professionalCategoryRepository, times(1)).save(any(ProfessionalCategory.class));
+    }
+
+    @Test
+    void register_professional_multipleServiceCities_areAllPersisted() {
+        stubValidCategory();
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID),
+                SERVICE_REGION_ID, List.of(BASE_CITY_ID, SECOND_CITY_ID), BASE_CITY_ID,
+                new BigDecimal("250.00"), List.of(SUB_SERVICE_ID), fullWeek(true));
+
+        authService.register(professionalRequest(data), pdfDocument(), null);
+
+        ArgumentCaptor<ProfessionalServiceCity> captor = ArgumentCaptor.forClass(ProfessionalServiceCity.class);
+        verify(professionalServiceCityRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues()).extracting(ProfessionalServiceCity::getCityId)
+                .containsExactlyInAnyOrder(BASE_CITY_ID, SECOND_CITY_ID);
+    }
+
+    @Test
+    void register_professional_regionAndBaseCityLandOnTheRow() {
+        stubValidCategory();
+
+        authService.register(professionalRequest(validProfessionalData()), pdfDocument(), null);
+
+        ArgumentCaptor<Professional> captor = ArgumentCaptor.forClass(Professional.class);
+        verify(professionalRepository, times(2)).save(captor.capture());
+        assertThat(captor.getValue().getServiceRegionId()).isEqualTo(SERVICE_REGION_ID);
+        assertThat(captor.getValue().getBaseCityId()).isEqualTo(BASE_CITY_ID);
+    }
+
+    @Test
+    void register_professional_unknownServiceCity_rejectedBeforeAnyRowIsWritten() {
+        stubValidCategory();
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID),
+                SERVICE_REGION_ID, List.of(9_999L), 9_999L, new BigDecimal("250.00"),
+                List.of(SUB_SERVICE_ID), fullWeek(true));
+
+        assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void register_professional_cityOutsideTheChosenRegion_rejected() {
+        stubValidCategory();
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID),
+                SERVICE_REGION_ID, List.of(BASE_CITY_ID, OTHER_REGION_CITY_ID), BASE_CITY_ID,
+                new BigDecimal("250.00"), List.of(SUB_SERVICE_ID), fullWeek(true));
+
+        assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void register_professional_baseCityNotAmongTheServiceCities_rejected() {
+        stubValidCategory();
+        ProfessionalRegistrationData data = new ProfessionalRegistrationData(List.of(CATEGORY_ID),
+                SERVICE_REGION_ID, List.of(BASE_CITY_ID), SECOND_CITY_ID, new BigDecimal("250.00"),
+                List.of(SUB_SERVICE_ID), fullWeek(true));
+
+        assertThatThrownBy(() -> authService.register(professionalRequest(data), pdfDocument(), null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+    }
+
+    /**
+     * MS4 §11 — "apply to all". The button is a frontend affordance, but what it produces is an
+     * ordinary week where several days carry the same pair, and this is the backend half of that
+     * promise: the week is stored exactly as sent, with no server-side normalisation of the
+     * repeated values into something else.
+     */
+    @Test
+    void register_professional_uniformWeek_persistsTheSameHoursOnEveryEnabledDay() {
+        stubValidCategory();
+        List<WorkingHoursItemRequest> week = new ArrayList<>();
+        for (int weekday = 0; weekday <= 4; weekday++) {   // Sunday-Thursday 08:00-17:00
+            week.add(new WorkingHoursItemRequest(weekday, true, LocalTime.of(8, 0), LocalTime.of(17, 0)));
+        }
+        week.add(new WorkingHoursItemRequest(5, false, null, null));
+        week.add(new WorkingHoursItemRequest(6, false, null, null));
+
+        authService.register(professionalRequest(new ProfessionalRegistrationData(List.of(CATEGORY_ID),
+                SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, new BigDecimal("250.00"),
+                List.of(SUB_SERVICE_ID), week)), pdfDocument(), null);
+
+        ArgumentCaptor<ProfessionalWorkingHours> captor =
+                ArgumentCaptor.forClass(ProfessionalWorkingHours.class);
+        verify(professionalWorkingHoursRepository, times(7)).save(captor.capture());
+        assertThat(captor.getAllValues()).filteredOn(ProfessionalWorkingHours::isEnabled)
+                .hasSize(5)
+                .allSatisfy(row -> {
+                    assertThat(row.getStartTime()).isEqualTo(LocalTime.of(8, 0));
+                    assertThat(row.getEndTime()).isEqualTo(LocalTime.of(17, 0));
+                });
+        // A day that is off carries no times at all -- what ck_professional_working_hours_times
+        // is built around, and what keeps a "closed" day from reading as 00:00-00:00.
+        assertThat(captor.getAllValues()).filteredOn(row -> !row.isEnabled())
+                .hasSize(2)
+                .allSatisfy(row -> {
+                    assertThat(row.getStartTime()).isNull();
+                    assertThat(row.getEndTime()).isNull();
+                });
+    }
+
+    /** MS4 §12 — an individual day overrides the common hours, and only that day changes. */
+    @Test
+    void register_professional_perDayOverride_changesOnlyThatDay() {
+        stubValidCategory();
+        List<WorkingHoursItemRequest> week = new ArrayList<>();
+        for (int weekday = 0; weekday <= 4; weekday++) {
+            week.add(new WorkingHoursItemRequest(weekday, true, LocalTime.of(8, 0), LocalTime.of(17, 0)));
+        }
+        // Thursday (weekday 4) overridden to 08:00-14:00 after the bulk apply.
+        week.set(4, new WorkingHoursItemRequest(4, true, LocalTime.of(8, 0), LocalTime.of(14, 0)));
+        week.add(new WorkingHoursItemRequest(5, false, null, null));
+        week.add(new WorkingHoursItemRequest(6, false, null, null));
+
+        authService.register(professionalRequest(new ProfessionalRegistrationData(List.of(CATEGORY_ID),
+                SERVICE_REGION_ID, List.of(BASE_CITY_ID), BASE_CITY_ID, new BigDecimal("250.00"),
+                List.of(SUB_SERVICE_ID), week)), pdfDocument(), null);
+
+        ArgumentCaptor<ProfessionalWorkingHours> captor =
+                ArgumentCaptor.forClass(ProfessionalWorkingHours.class);
+        verify(professionalWorkingHoursRepository, times(7)).save(captor.capture());
+        assertThat(captor.getAllValues())
+                .filteredOn(row -> row.getWeekday() == 4)
+                .singleElement()
+                .satisfies(row -> assertThat(row.getEndTime()).isEqualTo(LocalTime.of(14, 0)));
+        assertThat(captor.getAllValues())
+                .filteredOn(row -> row.isEnabled() && row.getWeekday() != 4)
+                .hasSize(4)
+                .allSatisfy(row -> assertThat(row.getEndTime()).isEqualTo(LocalTime.of(17, 0)));
     }
 }

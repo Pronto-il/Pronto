@@ -53,6 +53,13 @@
   margin: 0;
 }
 
+/* MS4 §7: the primary trade (plus "+N") sits above the region line on this compact card. */
+.category {
+  margin: var(--space-1) 0 0;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
 .serviceArea {
   font-size: 14px;
   color: var(--color-text-secondary);

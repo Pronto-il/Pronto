@@ -26,6 +26,9 @@ export interface OrderStatusHeroProps {
    * failed profile fetch) simply falls back to the name-only headline; nothing is fabricated.
    */
   professional?: ProfessionalProfileResponse | null;
+  /** Opens the professional's profile in place. Passed straight to `ProfessionalSummaryCard`,
+   *  which is the identity element here; omitted ⇒ the card is static, exactly as before. */
+  onOpenProfessional?: () => void;
   /** Rendered under the copy — the status-appropriate call to action, owned by the page. */
   action?: ReactNode;
 }
@@ -58,6 +61,7 @@ export function OrderStatusHero({
   isArriving,
   bookedLabel,
   professional,
+  onOpenProfessional,
   action,
 }: OrderStatusHeroProps) {
   const shouldReduceMotion = useReducedMotion();
@@ -89,7 +93,7 @@ export function OrderStatusHero({
 
         {showProfessionalCard && professional && (
           <motion.div className={styles.professionalCard} variants={pageTransition} animate={itemAnimate}>
-            <ProfessionalSummaryCard professional={professional} />
+            <ProfessionalSummaryCard professional={professional} onOpen={onOpenProfessional} />
           </motion.div>
         )}
 

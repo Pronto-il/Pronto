@@ -58,6 +58,10 @@ import static org.mockito.Mockito.when;
  */
 class AvailabilityServiceTest {
 
+    /** MS4: `professionals` no longer stores a category or free-text place -- see the entity. */
+    private static final long SERVICE_REGION_ID = 4L;
+    private static final long BASE_CITY_ID = 40L;
+
     private static final Long CALLER_ID = 1L;
     private static final Long PROFESSIONAL_ID = 43L;
     private static final Long OTHER_PROFESSIONAL_ID = 99L;
@@ -83,7 +87,7 @@ class AvailabilityServiceTest {
         availabilityService = new AvailabilityService(availabilitySlotRepository, sosAvailabilityRepository,
                 professionalRepository, workingHoursRepository, blockRepository, orderRepository, derivationService);
 
-        Professional professional = new Professional(CALLER_ID, 1L, "Tel Aviv", BigDecimal.TEN);
+        Professional professional = new Professional(CALLER_ID, SERVICE_REGION_ID, BASE_CITY_ID, BigDecimal.TEN);
         setField(professional, "id", PROFESSIONAL_ID);
         when(professionalRepository.findByUserId(CALLER_ID)).thenReturn(Optional.of(professional));
 
@@ -451,6 +455,55 @@ class AvailabilityServiceTest {
         BlockResponse response = availabilityService.updateBlock(CALLER_ID, 555L, request);
 
         assertThat(response.id()).isEqualTo(555L);
+    }
+
+    @Test
+    void getBlock_happyPath_returnsOwnedBlockUnclipped() {
+        // A multi-day block: the whole point of this read is that the caller gets the block's
+        // real range, not the day-sized slice the calendar derives from it.
+        Instant start = Instant.now().plus(1, ChronoUnit.DAYS);
+        Instant end = start.plus(3, ChronoUnit.DAYS);
+        when(blockRepository.findById(555L)).thenReturn(Optional.of(realBlock(PROFESSIONAL_ID, start, end)));
+
+        BlockResponse response = availabilityService.getBlock(CALLER_ID, 555L);
+
+        assertThat(response.id()).isEqualTo(555L);
+        assertThat(response.startAt()).isEqualTo(start);
+        assertThat(response.endAt()).isEqualTo(end);
+    }
+
+    @Test
+    void getBlock_notOwner_returnsForbidden() {
+        Instant start = Instant.now().plus(1, ChronoUnit.DAYS);
+        when(blockRepository.findById(555L))
+                .thenReturn(Optional.of(realBlock(OTHER_PROFESSIONAL_ID, start, start.plus(1, ChronoUnit.HOURS))));
+
+        assertThatThrownBy(() -> availabilityService.getBlock(CALLER_ID, 555L))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.FORBIDDEN));
+    }
+
+    @Test
+    void getBlock_nonexistentBlock_returnsNotFound() {
+        when(blockRepository.findById(555L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> availabilityService.getBlock(CALLER_ID, 555L))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.NOT_FOUND));
+    }
+
+    @Test
+    void createBlock_multiDayRange_isAccepted() {
+        // Blocks spanning several calendar days are a supported, first-class case — nothing in
+        // validation or persistence caps a block at one day.
+        Instant start = Instant.now().plus(1, ChronoUnit.DAYS);
+        Instant end = start.plus(3, ChronoUnit.DAYS);
+        when(blockRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        BlockResponse response = availabilityService.createBlock(CALLER_ID, new CreateBlockRequest(start, end, null));
+
+        assertThat(response.startAt()).isEqualTo(start);
+        assertThat(response.endAt()).isEqualTo(end);
     }
 
     @Test

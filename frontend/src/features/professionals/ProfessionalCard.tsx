@@ -3,7 +3,7 @@ import { Heart, MapPin, Sparkles, Star, Zap } from 'lucide-react';
 import { Badge, Card, Button } from '../../shared/components';
 import { getCategoryNameHe } from '../../shared/api';
 import type { ProfessionalCard as ProfessionalCardData, ProfessionalSort } from '../../shared/api';
-import { formatReviewCount } from '../../shared/utils/hebrewText';
+import { formatExtraCategoryCount, formatReviewCount } from '../../shared/utils/hebrewText';
 import styles from './ProfessionalCard.module.css';
 
 /** Carried via router `state` (not a query param, see `frontend-ms8-design.md` §2.3) so the
@@ -28,10 +28,15 @@ export interface ProfessionalCardProps {
   sort?: ProfessionalSort;
   /**
    * The issue's service category, from the listing response (`ProfessionalListingResponse.
-   * categoryId`) — every professional in a listing matches the issue's category, so this is
-   * the same value for every card. Renders the profession line DESIGN_SYSTEM.md §29 places
-   * directly under the name. Optional: a card rendered without listing context (none today)
-   * simply omits the line rather than guessing.
+   * categoryId`). Renders the profession line DESIGN_SYSTEM.md §29 places directly under the
+   * name. Optional: a card rendered without listing context (none today) simply omits the line
+   * rather than guessing.
+   *
+   * **MS4:** this is the category the customer searched for, and it stays the headline —
+   * every professional in the listing serves it, and it is the one they were found for. What
+   * changed is that a professional may serve others too, so the card additionally shows a
+   * "+N תחומים נוספים" note built from the card's own `categoryIds`; the full list lives on the
+   * profile.
    */
   categoryId?: number;
   /**
@@ -86,7 +91,7 @@ export function ProfessionalCard({
   const {
     professionalId,
     fullName,
-    serviceArea,
+    serviceRegion,
     basePrice,
     profileImageUrl,
     averageRating,
@@ -94,7 +99,13 @@ export function ProfessionalCard({
     distanceKm,
     etaMinutes,
     favorited,
+    categoryIds,
   } = professional;
+
+  /** How many *other* trades this professional serves beyond the one being searched for. */
+  const extraCategoryLabel = formatExtraCategoryCount(
+    categoryIds.filter((id) => id !== categoryId).length,
+  );
 
   const identityContent = (
     <>
@@ -112,7 +123,12 @@ export function ProfessionalCard({
             <Heart size={15} className={styles.favoriteMark} aria-label="שמור במועדפים" fill="currentColor" />
           )}
         </h3>
-        {categoryId !== undefined && <p className={styles.profession}>{getCategoryNameHe(categoryId)}</p>}
+        {categoryId !== undefined && (
+          <p className={styles.profession}>
+            {getCategoryNameHe(categoryId)}
+            {extraCategoryLabel && <span className={styles.professionExtra}> {extraCategoryLabel}</span>}
+          </p>
+        )}
         {averageRating !== null ? (
           <span className={`${styles.rating} ${sort === 'RECOMMENDED' ? styles.ratingEmphasis : ''}`}>
             <Star size={14} className={styles.ratingStar} aria-hidden="true" fill="currentColor" />
@@ -155,7 +171,7 @@ export function ProfessionalCard({
         </span>
         <span className={styles.metaItem}>
           <MapPin size={15} aria-hidden="true" />
-          {serviceArea} · {distanceKm.toFixed(1)} ק״מ ממך
+          {serviceRegion ?? 'אזור לא הוגדר'} · {distanceKm.toFixed(1)} ק״מ ממך
         </span>
       </div>
 

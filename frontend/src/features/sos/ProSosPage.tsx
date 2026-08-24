@@ -12,10 +12,9 @@ import {
   markSosArrived,
   markSosOnTheWay,
   rejectSosOffer,
-  updateSosOfferEta,
 } from '../../shared/api';
 import type { SosOfferResponse } from '../../shared/api';
-import { SosEtaModal, type SosEtaMode } from './SosEtaModal';
+import { SosEtaModal } from './SosEtaModal';
 import { SosJobPanel } from './SosJobPanel';
 import { SosOfferCard } from './SosOfferCard';
 import { SOS_ERROR_MESSAGES } from './sosUiState';
@@ -75,7 +74,7 @@ export default function ProSosPage() {
   const [isAdvancingJob, setIsAdvancingJob] = useState(false);
   const [offerError, setOfferError] = useState<string | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
-  const [etaSheet, setEtaSheet] = useState<{ mode: SosEtaMode; offer: SosOfferResponse } | null>(null);
+  const [etaSheet, setEtaSheet] = useState<{ offer: SosOfferResponse } | null>(null);
   const [isEtaSubmitting, setIsEtaSubmitting] = useState(false);
   const [etaError, setEtaError] = useState<string | null>(null);
   const [isCompleteConfirmOpen, setIsCompleteConfirmOpen] = useState(false);
@@ -123,11 +122,9 @@ export default function ProSosPage() {
     setEtaError(null);
     setIsEtaSubmitting(true);
     try {
-      if (etaSheet.mode === 'accept') {
-        await acceptSosOffer(etaSheet.offer.id, minutes);
-      } else {
-        await updateSosOfferEta(etaSheet.offer.id, minutes);
-      }
+      // Accepting is the only thing this sheet does now: the ETA committed here is final
+      // (MS3 — the customer chooses on it), so there is no revise path to branch on.
+      await acceptSosOffer(etaSheet.offer.id, minutes);
       setEtaSheet(null);
     } catch (err) {
       // Kept open on failure: the message belongs next to the control that produced it, and an
@@ -223,10 +220,6 @@ export default function ProSosPage() {
             job={activeJob}
             onAdvance={handleAdvance}
             isAdvancing={isAdvancingJob}
-            onReviseEta={() => {
-              setEtaError(null);
-              setEtaSheet({ mode: 'revise', offer: activeJob.offer });
-            }}
             errorMessage={jobError}
           />
         </section>
@@ -246,7 +239,7 @@ export default function ProSosPage() {
                 onViewed={handleViewed}
                 onRespondAvailable={(target) => {
                   setEtaError(null);
-                  setEtaSheet({ mode: 'accept', offer: target });
+                  setEtaSheet({ offer: target });
                 }}
                 onDecline={handleDecline}
                 onCountdownElapsed={handleCountdownElapsed}
@@ -263,15 +256,7 @@ export default function ProSosPage() {
           <h2 className={styles.sectionTitle}>אישרת זמינות — הלקוח בוחר</h2>
           <div className={styles.list}>
             {availableOffers.map((offer) => (
-              <SosOfferCard
-                key={offer.id}
-                offer={offer}
-                onReviseEta={(target) => {
-                  setEtaError(null);
-                  setEtaSheet({ mode: 'revise', offer: target });
-                }}
-                isBusy={pendingOfferId !== null}
-              />
+              <SosOfferCard key={offer.id} offer={offer} isBusy={pendingOfferId !== null} />
             ))}
           </div>
         </section>
@@ -303,7 +288,6 @@ export default function ProSosPage() {
 
       <SosEtaModal
         isOpen={etaSheet !== null}
-        mode={etaSheet?.mode ?? 'accept'}
         offer={etaSheet?.offer ?? null}
         isSubmitting={isEtaSubmitting}
         errorMessage={etaError}

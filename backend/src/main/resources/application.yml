@@ -207,18 +207,24 @@ pronto:
     # ever sent an offer.
     candidate-pool-size: ${SOS_CANDIDATE_POOL_SIZE:8}
     emergency-candidate-pool-size: ${SOS_EMERGENCY_CANDIDATE_POOL_SIZE:15}
-    # How many accepted professionals the customer is shown at the initial search scope. NOT the
-    # count at which selection opens -- selection opens on the FIRST acceptance, because somebody
-    # with an active leak and one real option in hand gains nothing from waiting for a quota.
-    # Each "סרוק שוב" raises this cap by one, so a widened search has somewhere to put what it
-    # finds and no visible candidate is ever pushed off the list by a later arrival.
-    target-candidate-count: ${SOS_TARGET_CANDIDATE_COUNT:3}
-    # Per-offer response deadline, and the overall professional-response window.
-    offer-ttl-seconds: ${SOS_OFFER_TTL_SECONDS:120}
-    matching-window-seconds: ${SOS_MATCHING_WINDOW_SECONDS:150}
-    # The product's "approximately 2 minutes" for the customer to choose. The backend is the
-    # source of truth for this deadline; any frontend timer is presentation only.
-    selection-window-seconds: ${SOS_SELECTION_WINDOW_SECONDS:120}
+    # ---- the two SOS timers (MS3 lifecycle redesign) ----
+    # They are deliberately not derived from one another. Coupling them is what used to make
+    # "the scan finished" also mean "your offer is dead".
+    #
+    # There is deliberately NO customer-decision timer. There was one -- 10 minutes from the
+    # first acceptance -- and it expired requests out from under customers who had real, still
+    # valid options on screen. The customer's ability to choose now ends only when the customer
+    # chooses, the customer cancels, or nothing is left that could happen (nobody accepted and no
+    # outstanding offer can still be answered).
+    #
+    # 1. How long the platform keeps looking for NEW professionals, from activation. When it
+    #    elapses the search stops widening and stops dispatching -- and nothing else: offers
+    #    already sent stay answerable, candidates stay visible, the customer can still choose.
+    scan-window-seconds: ${SOS_SCAN_WINDOW_SECONDS:600}
+    # 2. How long ONE professional has to answer the offer THEY were sent, from the moment it
+    #    reached them. Stored per offer, so somebody first contacted at minute 9 still has until
+    #    minute 19 -- the scan window closing does not shorten it.
+    offer-ttl-seconds: ${SOS_OFFER_TTL_SECONDS:600}
     # How long the selected professional has to confirm before the request expires. Deliberately
     # more generous than the windows above: they already said they were available, so this is
     # about them still being reachable, and "waiting for confirmation" is the worst screen a
@@ -230,12 +236,17 @@ pronto:
     # same-city preference rather than a true radius; kept as km so real geocoding can be
     # swapped in later with no config or API change.
     max-dispatch-radius-km: ${SOS_MAX_DISPATCH_RADIUS_KM:40.0}
-    # ---- manual search expansion ("סרוק שוב") ----
-    # How many times ONE request may be widened by the customer. This is the bound: there is no
-    # automatic or continuous expansion anywhere in this feature, and at this ceiling the control
-    # stops being offered while every candidate found so far stays selectable. 0 disables the
-    # feature entirely and restores single-wave dispatch.
-    max-search-expansions: ${SOS_MAX_SEARCH_EXPANSIONS:2}
+    # ---- automatic search expansion ----
+    # The search widens BY ITSELF on this cadence for as long as the scan window is open; there
+    # is no customer-facing "scan again" control any more. The schedule lives on the request
+    # (sos_requests.next_expansion_at) and is advanced by the same atomic statement that counts
+    # the expansion, so it survives a refresh and cannot fire twice.
+    expansion-interval-seconds: ${SOS_EXPANSION_INTERVAL_SECONDS:120}
+    # How many times ONE request may widen. Four is how many 2-minute intervals fit inside the
+    # 10-minute scan window (expansions fall due at 2, 4, 6 and 8 minutes). This is the bound on
+    # fan-out: 8 professionals contacted initially, at most 40 in total. 0 disables expansion
+    # entirely and restores single-wave dispatch.
+    max-search-expansions: ${SOS_MAX_SEARCH_EXPANSIONS:4}
     # How many ADDITIONAL professionals each expansion may contact, as a running total on top of
     # everyone already offered this request. This is the dimension expansion actually moves:
     # matching ranks every eligible professional and truncates to the pool cap, so widening it

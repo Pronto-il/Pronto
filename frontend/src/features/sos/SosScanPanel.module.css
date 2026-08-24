@@ -519,17 +519,29 @@
 /* ---- "מרחיבים את החיפוש" ---- */
 
 /*
- * Only rendered while an expansion is genuinely in flight. Deliberately says nothing about a
+ * Shown once the platform has widened the search on its own. Deliberately says nothing about a
  * radius, a distance or a wave number: none of that is backed by real geographic data in this
  * milestone, and a UI that quotes "15 ק״מ" it invented is worse than one that says less.
  */
-.expandingNote {
+/*
+ * The two explanatory lines, as one band along the bottom of the panel. Absolutely positioned
+ * like everything else in here — the panel's children are all out of flow, so an in-flow
+ * paragraph would land underneath the header rather than below it.
+ */
+.notes {
   position: absolute;
   inset-block-end: var(--space-3);
-  left: 50%;
-  translate: -50% 0;
+  inset-inline: var(--space-4);
   z-index: 3;
 
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.expandingNote {
+  margin: 0;
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-xl);
   background: var(--color-primary);
@@ -543,27 +555,36 @@
 @keyframes sos-expanding-in {
   from {
     opacity: 0;
-    translate: -50% 6px;
+    translate: 0 6px;
   }
   to {
     opacity: 1;
-    translate: -50% 0;
+    translate: 0 0;
   }
 }
 
 /*
- * While widening, the surface picks up energy — the one moment it should visibly respond, because
- * the customer just asked it to do something. The rings breathe at half the period and the
- * decoration doubles its pace, so "we are looking harder" is legible without anything new appearing.
+ * What the scan is doing, under the counters. One quiet sentence rather than a badge: it is
+ * explanatory copy the customer reads once, not a status that changes.
  */
-.expanding .ring,
-.expanding .coreHalo,
-.expanding .core {
-  animation-duration: 3s;
+.searchNote {
+  margin: 0;
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  text-align: center;
+  text-wrap: balance;
 }
 
-.expanding .decor {
-  animation-duration: 5s;
+/*
+ * Hidden on mobile, where the panel's lower band belongs to the candidate cards and `SosHeader`
+ * already carries the same sentence directly above the panel. Two copies of one explanation, one
+ * of them on top of a card, would be worse than none.
+ */
+@media (max-width: 640px) {
+  .searchNote {
+    display: none;
+  }
 }
 
 /* ---- state variants ---- */

@@ -11,8 +11,6 @@ export interface SosJobPanelProps {
   /** The one operational transition available in this state, already resolved by the caller. */
   onAdvance: () => void;
   isAdvancing: boolean;
-  /** Revise the committed ETA — still allowed while `SELECTED`, and traffic changes. */
-  onReviseEta?: () => void;
   /** Hebrew, user-facing. */
   errorMessage?: string | null;
 }
@@ -42,7 +40,7 @@ function price(amount: number): string {
  * hardcoded config value would be a number this app cannot stand behind. The copy carries the
  * urgency instead.
  */
-export function SosJobPanel({ job, onAdvance, isAdvancing, onReviseEta, errorMessage }: SosJobPanelProps) {
+export function SosJobPanel({ job, onAdvance, isAdvancing, errorMessage }: SosJobPanelProps) {
   const { offer, request } = job;
   // The request is canonical when present; the offer's echo of the status covers the moment before
   // that fetch lands, and the failure case.
@@ -125,12 +123,10 @@ export function SosJobPanel({ job, onAdvance, isAdvancing, onReviseEta, errorMes
         </Button>
       )}
 
-      {/* Only while the customer is still waiting on arrival — once on site, an ETA is moot. */}
-      {onReviseEta && (status === 'PROFESSIONAL_SELECTED' || status === 'CONFIRMED' || status === 'ON_THE_WAY') && (
-        <Button variant="ghost" onClick={onReviseEta} disabled={isAdvancing} fullWidth>
-          עדכון זמן הגעה
-        </Button>
-      )}
+      {/* No "update ETA" action here any more (MS3): the arrival time committed at acceptance is
+          what the customer chose on, and it is locked from that moment — backend included. A
+          professional who genuinely cannot make it cancels, which the customer sees and can act
+          on, rather than quietly moving the number they picked. */}
     </Card>
   );
 }

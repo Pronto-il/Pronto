@@ -8,6 +8,9 @@ Reusable React hooks shared across features.
 - Short-polling status hook (per `docs/architecture/overview.md` §3.3) used by the
   booking tracking screen and the professional's incoming-request feed — shipped in
   Frontend Milestone 3 (2026-08-16).
+- The app-wide polling scheduler (`pollingStore.ts`) every one of those hooks runs on: one
+  timer per resource rather than per consumer, visibility-aware, deduplicating — added in the
+  request-efficiency pass (2026-08-24), see the section at the end of this file.
 - Booking-draft persistence context/hook (issue-creation + booking-flow in-progress state,
   survives reload via `localStorage`) — shipped in the MS3/MS4 product-corrections pass
   (2026-08-17), see below.
@@ -33,12 +36,31 @@ Reusable React hooks shared across features.
   profile so the context always holds one consistent `UserMeResponse` shape.
   `logout()` is a client-side-only discard (no server-side logout endpoint in v1.0).
 - `useAuth.ts` — the `useAuth()` hook, throws if used outside `AuthProvider`.
-- `usePolling.ts` — the generic short-polling hook: fetches immediately on mount, then
-  re-fetches every `intervalMs` (default 4000ms). Skips a tick if the previous request is
-  still in flight (never overlaps requests), cleans up its interval on unmount, and is a
-  no-op while `enabled` is `false`. Backing implementation for `useOrderStatus` and any
-  other future polling need, per `docs/architecture/overview.md` §3.3 (short-polling, not
-  WebSocket).
+- `pollingStore.ts` — **new, request-efficiency pass (2026-08-24).** The module-scoped
+  scheduler every polling hook now runs on; `usePolling` is its React binding. It owns one
+  timer and one response *per resource key* rather than per consumer, suspends polling while
+  `document.visibilityState !== 'visible'` (one listener for the whole app, opt out with
+  `pollWhenHidden`), collapses concurrent identical reads onto one in-flight request, re-times
+  rather than re-fires when a cadence changes, and keeps an entry for 30s after its last
+  subscriber leaves so a remount reuses the response. Also exposes `primeResource(key, data)`
+  (publish a mutation's own response as the resource's state, instead of spending a `GET`
+  re-reading what a `PUT` just answered) and `clearPollingStore()` — which `AuthProvider` calls
+  on logout and on the 401 session-end path, because entries are keyed by request rather than
+  by caller and would otherwise serve the previous account's data to the next one. Shared keys
+  live in `shared/api/resourceKeys.ts`. Full rationale, cadences and measured before/after
+  numbers: `docs/architecture/frontend-request-efficiency.md`.
+- `usePolling.ts` — the generic short-polling hook: fetches on mount, then re-fetches every
+  `intervalMs` (default 4000ms). Skips a tick if the previous request is still in flight
+  (never overlaps requests), cleans up on unmount, and is a no-op while `enabled` is `false`.
+  Backing implementation for `useOrderStatus` and every other polling need, per
+  `docs/architecture/overview.md` §3.3 (short-polling, not WebSocket). Its signature is
+  unchanged; the request-efficiency pass added four optional options — `key` (share the poll
+  with every other consumer of the same key; omitted, the hook generates a per-instance key
+  from `useId` and behaves exactly as an unshared interval did), `pollWhenHidden`,
+  `fetchOnMountWhenDisabled` (read once on mount without ever starting an interval — the
+  notification bell's bootstrap), and `maxStaleOnMountMs` (how old a cached value may be and
+  still satisfy that read, so a screen borrowing another owner's warm entry cannot render an
+  arbitrarily stale view of it).
   **Bug fixed in frontend redesign MS5 (2026-08-20), found live during that milestone's QA**:
   the in-flight guard also swallowed an explicit `refetch()`, not just an overlapping *tick*.
   Those are different things — a `refetch()` follows a user action that has just changed the
@@ -53,8 +75,11 @@ Reusable React hooks shared across features.
   polling once the last-observed `orderStatus` reaches a terminal state (`COMPLETED`/
   `CANCELLED`/`REJECTED`/`EXPIRED`) — no point short-polling a status that can never
   change again. Consumed by `features/booking/OrderTrackingPage.tsx`; the professional's
-  incoming-request feed (`features/dashboard/IncomingRequestsPage.tsx`) consumes
-  `usePolling` directly instead (it polls a list endpoint, not a single order).
+  incoming-request feed (`features/dashboard/IncomingRequestsPage.tsx`) reads
+  `useLivePendingRequests()` instead (a shared list resource, not a single order — it used to
+  poll that list itself, see the 2026-08-24 section at the end of this file). Paces itself by
+  lifecycle as of that same pass, including a `CONFIRMED` cadence that depends on how near
+  `bookedStart` is.
 - `bookingDraftContext.ts` — the `BookingDraftContext` (React context) + `BookingDraft`/
   `BookingDraftStage`/`BookingDraftPhoto`/`BookingDraftContextValue` types, kept separate
   from the provider component for the same Fast-Refresh-lint reason `authContext.ts` is.
@@ -197,19 +222,33 @@ Reusable React hooks shared across features.
   and fetching both in one tick keeps them consistent; and realtime `eventId`s are de-duplicated,
   since a message can legitimately arrive twice and a duplicate toast on an urgent inbox is real
   noise. Same contract as the customer side: realtime triggers a refetch, never a state patch.
-- `useNotifications.ts` — **new, Frontend Milestone 5.** Polling wrapper around
+- `useNotifications.ts` — **new, Frontend Milestone 5.** Wrapper around
   `usePolling` (`GET /api/notifications` via `shared/api/notifications.ts`'s
-  `getNotifications`, default 4s interval, no `unreadOnly` filter). Deliberately a plain
+  `getNotifications`). **Gated on active-order state as of the request-efficiency pass
+  (2026-08-24)**: nothing in this product creates a notification outside an order's lifecycle,
+  so the hook polls only while `useActiveOrder().hasLiveOrder` is true (15s, or 10s with the
+  panel open) and **does not poll at all otherwise** — not slower, not at all. The gate is read
+  from the context the floating indicator already maintains, so no request is made in order to
+  decide whether to make requests. Correct initial rendering is preserved by one read at mount
+  (`fetchOnMountWhenDisabled`, a no-op if the key already holds data) plus one read each time
+  the bell's panel is opened, which is a user action rather than an interval.
+  `COMPLETED_UNACKNOWLEDGED` deliberately does not count as live — the work is finished and the
+  review prompt is local UI state, so an undismissed prompt cannot keep a poller alive over a
+  dead order. A `PROFESSIONAL`/`ADMIN` session has no active-order context and therefore never
+  polls the bell; their live signals arrive on the surfaces that own them (`ProSosProvider`'s
+  socket and toast, the pending-request badge). Deliberately a plain
   hook, not a React context: unlike `useBookingDraft`/`useActiveOrder` it has exactly one
   consumer (`features/notifications/NotificationBell.tsx`), no cross-page state to
   coordinate. Exposes `{ notifications, unreadCount, isLoading, markAsRead(id),
-  markAllAsRead() }`. `unreadCount` is derived client-side from `notifications`'s `readAt`
-  values (equivalent to the poll response's own `unreadCount` field, since the feed is
-  always unfiltered) rather than tracked as separate state, so an optimistic
-  `markAsRead`/`markAllAsRead` update is instantly reflected in the badge with nothing else
-  to keep in sync. Both mutations update local state immediately and fire their `POST` in
-  the background without awaiting it or forcing a `refetch()` afterwards — a failed request
-  just self-corrects on the next poll tick (no error toast, low-stakes action).
+  markAllAsRead() }`. The request is `unreadOnly=true` (this paragraph previously described an
+  unfiltered feed — that stopped being true when the bell became a self-cleaning inbox), so
+  `unreadCount` is simply `notifications.length` rather than separate state, and an optimistic
+  `markAsRead`/`markAllAsRead` is instantly reflected in the badge with nothing else to keep in
+  sync. Both mutations update local state immediately and fire their `POST` in the background
+  without awaiting it or forcing a `refetch()` afterwards — a failed request just self-corrects
+  on the next read (no error toast, low-stakes action). A `dismissedIds` ref filters incoming
+  responses so a row optimistically removed cannot flash back while its `POST` is still in
+  flight.
 - `toastContext.ts` / `ToastProvider.tsx` / `useToast.ts` — **new, MS1 (Visual Foundation &
   Motion System, 2026-08-20).** Same structural triad as `authContext.ts`/`AuthProvider.tsx`/
   `useAuth.ts` (context + non-component values kept in their own file for the Fast-Refresh
@@ -324,3 +363,56 @@ and deliberately not persisted — the server's own `readAt` is what makes the r
 reload. The optimistic contract is otherwise unchanged: the `POST` is fired and not awaited, and a
 failure self-corrects on the next tick with no error toast. Nothing is deleted server-side. Full
 rationale and the consumer-side consequence: `features/notifications/README.md`.
+
+## `AuthProvider` — expired-token handling (2026-08-23)
+
+Alongside `setAuthTokenGetter`, the provider now registers `setUnauthorizedHandler`
+(`shared/api/httpClient`): any request sent with a token that comes back `401` clears the token
+from `localStorage` and drops `token`/`user`, exactly as `logout()` does, which makes
+`RequireAuth` send the user to `/login` on the next render.
+
+There is no refresh-token flow in this system (`docs/architecture/api-contract.md` §3.1: one 24h
+access token), so ending the session *is* the intended behavior for an expired token — the
+previous behavior was to keep a dead token in `localStorage` indefinitely while every write
+failed behind a generic error banner. Rehydration's own 401 path is unchanged.
+
+## `useSosRequest` — the expansion action is gone (2026-08-24)
+
+The hook no longer exposes `expandSearch`/`isExpanding`/`expandError`. Widening the SOS search is
+server-side and automatic as of MS3 (every two minutes, for as long as the scan window is open, on
+a schedule the request itself carries), so there is nothing for a client to trigger — a widened
+search simply arrives as more offers and more candidates on the next read, like any other change.
+
+Everything else about the hook is unchanged: REST is canonical, realtime only accelerates it, and
+no state transition is ever derived from a browser timer.
+
+## Request-efficiency pass — polling ownership and cadences (2026-08-24)
+
+Every hook in this folder that polls now schedules through `pollingStore.ts` instead of owning a
+`setInterval`. The measured problem, the full ownership table and the before/after request counts
+live in `docs/architecture/frontend-request-efficiency.md`; what changed *here*:
+
+- **`usePolling`** is now a binding over the shared scheduler (see "Structure" above). Same
+  signature, four new optional options, plus visibility suspension and request deduplication for
+  every existing caller for free.
+- **`useNotifications`** polls only while an order is live, and otherwise not at all — see its
+  entry above. This is a product rule, not a tuning change.
+- **`ActiveOrderProvider`** paces itself by lifecycle (10s `ON_THE_WAY` / 20s `PENDING`-
+  `CONFIRMED` / 60s idle, was a flat 4s) and now also exposes `hasLiveOrder`, which is the
+  session's answer to "is anything happening" and what the notification gate reads.
+- **`useOrderStatus`** paces itself by lifecycle too, and its `CONFIRMED` cadence depends on how
+  near `bookedStart` is: 8s inside 30 minutes of the appointment, 20s beyond it. The flat-20s
+  version measured a real regression — `ON_THE_WAY` took 19.9s to reach the screen against ~4s
+  before — which is what the proximity rule exists to avoid.
+- **`PendingRequestsProvider`** now carries the pending `orders` themselves, not just a count, and
+  exposes a ref-counted `setLiveCadence`. `useLivePendingRequests()` is the wrapper a screen uses
+  to raise the shared poll to 6s while it is mounted. `IncomingRequestsPage` consumes that instead
+  of running its own second poll of the identical URL.
+- **`useSosRequest`/`ProSosProvider`** vary their cadence with the realtime socket, which is what
+  makes "polling is the fallback" true rather than merely documented: 20s (customer) and 20s/60s
+  (professional) while connected, 3s and 5s/20s while not. They are also the only two places
+  allowed to poll a hidden tab, and only while the socket is down — an SOS offer's window is about
+  two minutes, and with no socket the timer is the only channel left.
+- **`AuthProvider`** guards its `GET /api/users/me` bootstrap with a ref, so `StrictMode`'s
+  double-invoked mount effect no longer issues it twice, and calls `clearPollingStore()` on logout
+  and on the 401 session-end path.

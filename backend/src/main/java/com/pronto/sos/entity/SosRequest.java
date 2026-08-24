@@ -110,11 +110,32 @@ public class SosRequest {
     @Column(name = "search_expansions", nullable = false)
     private Short searchExpansions;
 
+    /**
+     * When the <b>active scanning window</b> closes ({@code pronto.sos.scan-window-seconds} after
+     * activation) — the moment the platform stops looking for new professionals to contact.
+     *
+     * <p>Column name predates the MS3 lifecycle redesign, which split what used to be one
+     * "matching window" into three independent timers. It is kept because the meaning did not
+     * invert, it narrowed: this is still "how long the platform searches", it simply no longer
+     * doubles as the professionals' response deadline (each offer now carries its own
+     * {@code expires_at}) — and, since the MS3 follow-up, there is no customer decision deadline
+     * at all. Renaming it would have meant rewriting every guarded update in the repository to
+     * buy a synonym.
+     */
     @Column(name = "matching_expires_at")
     private Instant matchingExpiresAt;
 
-    @Column(name = "selection_expires_at")
-    private Instant selectionExpiresAt;
+    /**
+     * When this request's search next widens automatically, or {@code null} when it never will
+     * again — the expansion ceiling was reached, the scan window closed, or a professional was
+     * selected ({@code V41}).
+     *
+     * <p>Server-owned, like {@link #searchExpansions}, and advanced in the same atomic statement
+     * as it: the 2-minute expansion cadence is therefore immune to a refresh, a second device,
+     * or a client that never comes back. Never mutated through this entity.
+     */
+    @Column(name = "next_expansion_at")
+    private Instant nextExpansionAt;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
@@ -276,8 +297,9 @@ public class SosRequest {
         return matchingExpiresAt;
     }
 
-    public Instant getSelectionExpiresAt() {
-        return selectionExpiresAt;
+    /** When the automatic search expansion is next due, or {@code null} if never again. */
+    public Instant getNextExpansionAt() {
+        return nextExpansionAt;
     }
 
     public Instant getCreatedAt() {

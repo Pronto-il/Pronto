@@ -1199,3 +1199,37 @@ reviewer recorded.
 same reason every other `*_INVALID_STATE` code in that enum exists: nothing about the request
 was malformed, the world simply moved, and an operator UI must tell that apart from "you sent
 nonsense."
+
+---
+
+## MS4 (2026-08-24) — professional profile shape
+
+`ProfessionalProfileResponse` and `UpdateProfessionalProfileRequest` both changed; the
+`serviceArea`/`categoryId` fields in the examples above are historical.
+
+**Response** replaces `categoryId` with `categoryIds` (ordered by `categories.display_order`; the
+first entry is what compact surfaces show as the primary trade — an ordering convention, not a
+stored flag) and replaces free-text `serviceArea` with the resolved pair
+`serviceRegionId`/`serviceRegionNameHe`, plus `baseCityId`, `city` (the base city's Hebrew name),
+`serviceCityIds` and `serviceCityNamesHe`.
+
+`serviceRegionId`, `serviceRegionNameHe`, `baseCityId` and `city` are **nullable** — a
+professional who registered before MS4 and whose old free text named no recognisable region has
+none, and the editor asks them to choose rather than showing an invented value. See
+`data-model.md` §2.4's MS4 note.
+
+**Request** (`PUT /api/professionals/me`) gains `serviceRegionId`, `serviceCityIds`, `baseCityId`
+and `categoryIds`, and loses `serviceArea`/`city`. `categoryId` used to be excluded from this DTO
+precisely because a professional could not change their single trade at all; MS4 §18 lifts that.
+
+Validation is identical to registration's (same two components) — unknown city, city outside the
+declared region, base city not among the selected cities, unknown category → `400
+VALIDATION_ERROR` naming the offending field.
+
+**Authorization is unchanged and unchanging.** The route is `/me`, so the professional being
+edited is always the caller's own; no field in the widened DTO names a professional, so widening
+it cannot widen who it can be applied to.
+
+`PUT /api/professionals/me/sub-services` is unchanged except that its `CATEGORY_MISMATCH` rule now
+reads "belongs to one of the caller's own categories".
+

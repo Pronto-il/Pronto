@@ -6,11 +6,8 @@ import type { SosOfferResponse } from '../../shared/api';
 import { SOS_ETA_PRESET_MINUTES } from './sosProUiState';
 import styles from './SosEtaModal.module.css';
 
-export type SosEtaMode = 'accept' | 'revise';
-
 export interface SosEtaModalProps {
   isOpen: boolean;
-  mode: SosEtaMode;
   /** The offer being answered. `null` while the sheet is closed. */
   offer: SosOfferResponse | null;
   isSubmitting: boolean;
@@ -31,13 +28,15 @@ const FALLBACK_ETA_MINUTES = 30;
 /**
  * The availability sheet: **"I can come, and here is when."**
  *
- * Two jobs, one component, because they ask the identical question: committing an ETA when
- * responding available (`accept`), and revising it afterwards (`revise`). The backend treats them
- * as separate endpoints only because one may omit the value and the other may not.
+ * One job, since MS3: committing an ETA at the moment of accepting. The revise mode it used to
+ * carry is gone because the commitment is now final — the customer chooses partly on this number,
+ * so a professional able to revise it afterwards could win the job with fifteen minutes and
+ * deliver fifty. The backend refuses a revision outright (`409 SOS_ETA_LOCKED`); this sheet not
+ * offering one is the honest front of that rule, not the enforcement of it.
  *
  * The wording is load-bearing. The confirm button says **"אישור זמינות"**, never "קבלת העבודה" —
  * the professional is telling the customer they are free, and the customer may still choose
- * somebody else. The note under the field says so out loud.
+ * somebody else. The note under the field says so out loud, and now also that the time is final.
  *
  * Bounds mirror the backend's `@Min(0) @Max(480)` so an out-of-range value is refused here rather
  * than spending a round trip on a guaranteed `VALIDATION_ERROR`. 480 is a fat-finger guard, not a
@@ -45,7 +44,6 @@ const FALLBACK_ETA_MINUTES = 30;
  */
 export function SosEtaModal({
   isOpen,
-  mode,
   offer,
   isSubmitting,
   errorMessage,
@@ -55,9 +53,9 @@ export function SosEtaModal({
   const [minutes, setMinutes] = useState<string>(String(FALLBACK_ETA_MINUTES));
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  // Prefilled from whatever figure already exists — the platform's dispatch-time estimate when
-  // accepting, the professional's own committed one when revising. Re-seeded per opening, keyed on
-  // the offer, so the sheet never opens showing the previous offer's answer.
+  // Prefilled from the platform's dispatch-time estimate, as a starting point the professional
+  // is expected to correct. Re-seeded per opening, keyed on the offer, so the sheet never opens
+  // showing the previous offer's answer.
   useEffect(() => {
     if (!isOpen || !offer) {
       return;
@@ -80,12 +78,12 @@ export function SosEtaModal({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={mode === 'accept' ? 'תוך כמה זמן תוכל להגיע?' : 'עדכון זמן הגעה'}
+      title="תוך כמה זמן תוכל להגיע?"
       size="normal"
       footer={
         <div className={styles.actions}>
           <Button onClick={handleSubmit} loading={isSubmitting} fullWidth>
-            {mode === 'accept' ? 'אישור זמינות' : 'עדכון זמן ההגעה'}
+            אישור זמינות
           </Button>
           <Button variant="secondary" onClick={onClose} disabled={isSubmitting} fullWidth>
             ביטול
@@ -95,9 +93,7 @@ export function SosEtaModal({
     >
       <div className={styles.body}>
         <p className={styles.intro}>
-          {mode === 'accept'
-            ? 'הזמן שתמסור הוא מה שהלקוח יראה כשהוא בוחר. עדיף להיות מדויק.'
-            : 'הלקוח יראה את הזמן המעודכן מיד.'}
+          הזמן שתמסור הוא מה שהלקוח יראה כשהוא בוחר, ולא ניתן לשנות אותו אחר כך. עדיף להיות מדויק.
         </p>
 
         <FilterChipGroup
@@ -124,13 +120,12 @@ export function SosEtaModal({
           error={validationError ?? undefined}
         />
 
-        {/* The whole point, said plainly at the moment of commitment. */}
-        {mode === 'accept' && (
-          <p className={styles.note}>
-            אישור זמינות אומר שאתה יכול להגיע — הוא לא אומר שקיבלת את העבודה. הלקוח רואה עד שלושה
-            בעלי מקצוע זמינים ובוחר אחד מהם.
-          </p>
-        )}
+        {/* The whole point, said plainly at the moment of commitment — including the part that
+            is new: the time is a promise, not an estimate that can be edited later. */}
+        <p className={styles.note}>
+          אישור זמינות אומר שאתה יכול להגיע — הוא לא אומר שקיבלת את העבודה. הלקוח רואה את כל מי
+          שאישר זמינות, עם זמן ההגעה של כל אחד, ובוחר. הזמן שתמסור ננעל ולא ניתן לעדכון.
+        </p>
 
         {errorMessage && (
           <p className={styles.error} role="alert">

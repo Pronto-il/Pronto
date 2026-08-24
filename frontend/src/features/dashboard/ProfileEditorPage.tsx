@@ -1,6 +1,17 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { PageHeader, Card, Input, Textarea, Button, ProfilePhoto, Checkbox } from '../../shared/components';
+import {
+  PageHeader,
+  Card,
+  Input,
+  Select,
+  Textarea,
+  Button,
+  ProfilePhoto,
+  Checkbox,
+  MultiSelectField,
+} from '../../shared/components';
+import type { MultiSelectOption, SelectOption } from '../../shared/components';
 import { useAuth } from '../../shared/hooks';
 import {
   getMyProfessionalProfile,
@@ -11,10 +22,15 @@ import {
   updateMySubServices,
   GENERIC_ERROR_MESSAGE,
   getFieldErrorMessages,
-  getCategoryNameHe,
+  getServiceAreas,
+  citiesForRegion,
 } from '../../shared/api';
-import type { ProfessionalProfileResponse, CategoryWithSubServicesResponse } from '../../shared/api';
-import { ProfessionalProfileDisplay } from '../professionals';
+import type {
+  ProfessionalProfileResponse,
+  CategoryWithSubServicesResponse,
+  ServiceRegionResponse,
+} from '../../shared/api';
+import { ProfessionalProfileDisplay, ProfessionalReviewsModal } from '../professionals';
 import type { ProfessionalProfileDisplayProps } from '../professionals';
 import styles from './ProfileEditorPage.module.css';
 
@@ -75,8 +91,10 @@ export default function ProfileEditorPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [fullName, setFullName] = useState('');
-  const [serviceArea, setServiceArea] = useState('');
-  const [city, setCity] = useState('');
+  const [serviceRegionId, setServiceRegionId] = useState<number | null>(null);
+  const [serviceCityIds, setServiceCityIds] = useState<number[]>([]);
+  const [baseCityId, setBaseCityId] = useState<number | null>(null);
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
   const [bio, setBio] = useState('');
   const [basePrice, setBasePrice] = useState('');
 
@@ -88,8 +106,20 @@ export default function ProfileEditorPage() {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [photoUploadError, setPhotoUploadError] = useState<string | undefined>();
 
+  /** The professional's own reviews, opened from the review count in the preview column —
+   *  inline in a modal, never a navigation away from an editor holding unsaved changes. */
+  const [isReviewsModalOpen, setIsReviewsModalOpen] = useState(false);
+
   // Sub-services checklist (MS11) — fully independent state from the main profile form above.
   const [categories, setCategories] = useState<CategoryWithSubServicesResponse[] | null>(null);
+  const [regions, setRegions] = useState<ServiceRegionResponse[] | null>(null);
+  /**
+   * MS4 §3: cities the professional had saved that no longer belong to the region now selected.
+   * They are dropped from the selection (a cross-region city is refused by the backend), but
+   * never silently — this is what the warning below names, so a professional who changed region
+   * by accident can see exactly what it cost before they save.
+   */
+  const [droppedCityNames, setDroppedCityNames] = useState<string[]>([]);
   const [selectedSubServiceIds, setSelectedSubServiceIds] = useState<Set<number>>(new Set());
   const [isLoadingSubServices, setIsLoadingSubServices] = useState(true);
   const [subServicesLoadError, setSubServicesLoadError] = useState<string | null>(null);
@@ -104,8 +134,10 @@ export default function ProfileEditorPage() {
         if (cancelled) return;
         setProfile(result);
         setFullName(result.fullName);
-        setServiceArea(result.serviceArea);
-        setCity(result.city ?? '');
+        setServiceRegionId(result.serviceRegionId);
+        setServiceCityIds(result.serviceCityIds);
+        setBaseCityId(result.baseCityId);
+        setSelectedCategoryIds(result.categoryIds);
         setBio(result.bio ?? '');
         setBasePrice(String(result.basePrice));
       })
@@ -126,11 +158,12 @@ export default function ProfileEditorPage() {
   // the checklist can render its pre-checked boxes.
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getCategoriesWithSubServices(), getMySubServices()])
-      .then(([categoriesResult, mineResult]) => {
+    Promise.all([getCategoriesWithSubServices(), getMySubServices(), getServiceAreas()])
+      .then(([categoriesResult, mineResult, regionsResult]) => {
         if (cancelled) return;
         setCategories(categoriesResult);
         setSelectedSubServiceIds(new Set(mineResult.subServiceIds));
+        setRegions(regionsResult);
       })
       .catch(() => {
         if (!cancelled) setSubServicesLoadError(GENERIC_ERROR_MESSAGE);
@@ -142,6 +175,66 @@ export default function ProfileEditorPage() {
       cancelled = true;
     };
   }, []);
+
+  const categoryOptions: MultiSelectOption[] = (categories ?? []).map((category) => ({
+    value: category.id,
+    label: category.nameHe,
+  }));
+  const regionOptions: SelectOption[] = (regions ?? []).map((region) => ({
+    value: String(region.id),
+    label: region.nameHe,
+  }));
+  /** MS4 §3: the city options are the selected region's own cities, from the shared data layer. */
+  const cityOptions: MultiSelectOption[] = citiesForRegion(regions, serviceRegionId).map((city) => ({
+    value: city.id,
+    label: city.nameHe,
+  }));
+  /** The base city is chosen from the cities they actually serve — the backend requires it. */
+  const baseCityOptions: SelectOption[] = cityOptions
+    .filter((option) => serviceCityIds.includes(option.value))
+    .map((option) => ({ value: String(option.value), label: option.label }));
+
+  /**
+   * MS4 §3, on an *existing* professional: changing region cannot keep cities that belong to
+   * the old one (the backend refuses a cross-region city), so they are dropped — and named, in
+   * a warning, rather than vanishing. Nothing is written until the professional saves, so this
+   * is still fully reversible by switching the region back.
+   */
+  function handleRegionChange(nextRegionId: number | null) {
+    if (nextRegionId === serviceRegionId) {
+      return;
+    }
+    const allowed = new Set(citiesForRegion(regions, nextRegionId).map((city) => city.id));
+    const dropped = citiesForRegion(regions, serviceRegionId)
+      .filter((city) => serviceCityIds.includes(city.id) && !allowed.has(city.id))
+      .map((city) => city.nameHe);
+
+    setServiceRegionId(nextRegionId);
+    setServiceCityIds((prev) => prev.filter((id) => allowed.has(id)));
+    setBaseCityId((prev) => (prev !== null && allowed.has(prev) ? prev : null));
+    setDroppedCityNames(dropped);
+  }
+
+  /** Removing a city that happens to be the base city clears the base city rather than leaving
+   *  a base city they no longer serve — which the backend would refuse on save. */
+  function handleServiceCitiesChange(next: number[]) {
+    setServiceCityIds(next);
+    setBaseCityId((prev) => (prev !== null && next.includes(prev) ? prev : (next[0] ?? null)));
+    setDroppedCityNames([]);
+  }
+
+  /** Dropping a category invalidates any sub-service that belonged only to it. Same rule, same
+   *  reason, as the registration wizard: the backend refuses a sub-service outside the
+   *  professional's own categories with `400 CATEGORY_MISMATCH`. */
+  function handleCategoriesChange(next: number[]) {
+    setSelectedCategoryIds(next);
+    const stillValid = new Set(
+      (categories ?? [])
+        .filter((category) => next.includes(category.id))
+        .flatMap((category) => category.subServices.map((subService) => subService.id)),
+    );
+    setSelectedSubServiceIds((prev) => new Set([...prev].filter((id) => stillValid.has(id))));
+  }
 
   function toggleSubService(subServiceId: number) {
     setSelectedSubServiceIds((prev) => {
@@ -192,8 +285,22 @@ export default function ProfileEditorPage() {
     setSavedAt(null);
 
     const priceNumber = Number(basePrice);
-    if (!fullName.trim() || !serviceArea.trim() || !city.trim() || !basePrice || Number.isNaN(priceNumber)) {
+    if (!fullName.trim() || !basePrice || Number.isNaN(priceNumber)) {
       setBannerError('יש למלא את כל השדות הנדרשים.');
+      return;
+    }
+    // MS4: the three coverage fields and the category set are all required by the backend, and
+    // saying which one is missing beats a 400 that names a field the professional cannot see.
+    if (selectedCategoryIds.length === 0) {
+      setBannerError('יש לבחור לפחות תחום שירות אחד.');
+      return;
+    }
+    if (serviceRegionId === null) {
+      setBannerError('יש לבחור אזור שירות.');
+      return;
+    }
+    if (serviceCityIds.length === 0 || baseCityId === null) {
+      setBannerError('יש לבחור לפחות עיר שירות אחת ועיר בסיס.');
       return;
     }
 
@@ -201,12 +308,19 @@ export default function ProfileEditorPage() {
     try {
       const updated = await updateMyProfessionalProfile({
         fullName: fullName.trim(),
-        serviceArea: serviceArea.trim(),
-        city: city.trim(),
+        serviceRegionId,
+        serviceCityIds,
+        baseCityId,
+        categoryIds: selectedCategoryIds,
         bio: bio.trim() || undefined,
         basePrice: priceNumber,
       });
       setProfile(updated);
+      setServiceRegionId(updated.serviceRegionId);
+      setServiceCityIds(updated.serviceCityIds);
+      setBaseCityId(updated.baseCityId);
+      setSelectedCategoryIds(updated.categoryIds);
+      setDroppedCityNames([]);
       setSavedAt(Date.now());
       void refreshUser();
     } catch (error) {
@@ -223,14 +337,21 @@ export default function ProfileEditorPage() {
 
   // §7.1: a same-shaped object recomputed every render from local form state — no new API
   // call, this is what makes the preview column update live as the professional types.
-  // `profile.categoryId`/`profileImageUrl`/`averageRating`/`reviewCount` aren't edited on this
-  // page, so they're read straight from the last-fetched `profile` object.
+  // `profileImageUrl`/`averageRating`/`reviewCount` aren't edited on this page, so they're read
+  // straight from the last-fetched `profile` object.
+  //
+  // MS4: the coverage labels are resolved from the catalogue against the *unsaved* selection, so
+  // switching region or ticking a city updates the preview immediately — the same reason the
+  // rest of this object is built from form state rather than from `profile`.
   const previewProfessional: ProfessionalProfileDisplayProps['professional'] | null = profile
     ? {
         fullName,
-        categoryId: profile.categoryId,
-        serviceArea,
-        city,
+        categoryIds: selectedCategoryIds,
+        serviceRegionNameHe: regions?.find((region) => region.id === serviceRegionId)?.nameHe ?? null,
+        serviceCityNamesHe: cityOptions
+          .filter((option) => serviceCityIds.includes(option.value))
+          .map((option) => option.label),
+        city: baseCityOptions.find((option) => option.value === String(baseCityId))?.label ?? null,
         bio: bio.trim() ? bio : null,
         basePrice: Number.isNaN(Number(basePrice)) ? 0 : Number(basePrice),
         profileImageUrl: profile.profileImageUrl,
@@ -265,10 +386,6 @@ export default function ProfileEditorPage() {
               isUploading={isUploadingPhoto}
               uploadError={photoUploadError}
             />
-            <div className={styles.readonlyRow}>
-              <span className={styles.readonlyLabel}>תחום שירות</span>
-              <span className={styles.readonlyValue}>{getCategoryNameHe(profile.categoryId)}</span>
-            </div>
           </div>
 
           <form className={styles.form} onSubmit={handleSubmit} noValidate>
@@ -279,14 +396,62 @@ export default function ProfileEditorPage() {
               error={fieldErrors.fullName}
               required
             />
-            <Input
-              label="אזור שירות"
-              value={serviceArea}
-              onChange={(e) => setServiceArea(e.target.value)}
-              error={fieldErrors.serviceArea}
+            {/* MS4 §18: categories and service coverage are editable here, not only at
+                registration — the same closed catalogue, the same region→city filter, and the
+                same components the wizard uses. */}
+            <MultiSelectField
+              label="תחומי שירות"
+              options={categoryOptions}
+              selected={selectedCategoryIds}
+              onChange={handleCategoriesChange}
+              placeholder="בחירת תחומים"
+              error={fieldErrors.categoryIds}
+              hint="אפשר לבחור יותר מתחום אחד. הסרת תחום מסירה גם את תת-השירותים ששייכים רק לו."
               required
             />
-            <Input label="עיר" value={city} onChange={(e) => setCity(e.target.value)} error={fieldErrors.city} required />
+
+            <Select
+              label="אזור שירות"
+              value={serviceRegionId === null ? '' : String(serviceRegionId)}
+              onChange={(e) => handleRegionChange(e.target.value ? Number(e.target.value) : null)}
+              options={regionOptions}
+              placeholder="בחירת אזור"
+              error={fieldErrors.serviceRegionId}
+              required
+            />
+
+            {droppedCityNames.length > 0 && (
+              <div className={styles.warningBanner} role="status">
+                <p>
+                  שינוי האזור הסיר מהרשימה ערים ששייכות לאזור הקודם: {droppedCityNames.join(', ')}. אפשר לחזור
+                  לאזור הקודם כדי לשחזר אותן — השינוי נשמר רק בלחיצה על "שמירת שינויים".
+                </p>
+              </div>
+            )}
+
+            <MultiSelectField
+              label="ערים שבהן אני נותן שירות"
+              options={cityOptions}
+              selected={serviceCityIds}
+              onChange={handleServiceCitiesChange}
+              placeholder="בחירת ערים"
+              emptyMessage="יש לבחור אזור שירות תחילה."
+              searchable
+              searchPlaceholder="חיפוש עיר…"
+              error={fieldErrors.serviceCityIds}
+              required
+            />
+
+            <Select
+              label="עיר בסיס"
+              value={baseCityId === null ? '' : String(baseCityId)}
+              onChange={(e) => setBaseCityId(e.target.value ? Number(e.target.value) : null)}
+              options={baseCityOptions}
+              placeholder="בחירת עיר בסיס"
+              error={fieldErrors.baseCityId}
+              hint="העיר שממנה מחושב זמן ההגעה ללקוח. חייבת להיות אחת מערי השירות שנבחרו."
+              required
+            />
             <Textarea
               label="קצת עליי (לא חובה)"
               value={bio}
@@ -317,21 +482,32 @@ export default function ProfileEditorPage() {
 
               {!isLoadingSubServices && !subServicesLoadError && categories && (
                 <>
-                  {(categories.find((c) => c.id === profile.categoryId)?.subServices.length ?? 0) === 0 ? (
-                    <p className={styles.subServicesEmptyState}>אין עדיין תת-שירותים מוגדרים עבור התחום שלך.</p>
+                  {/* MS4: one group per category the professional serves, so a plumber-and-
+                      handyman can tell which trade each sub-service belongs to. Scoped to the
+                      *currently selected* categories, not the saved ones, so unticking a
+                      category removes its group immediately. */}
+                  {categories.filter((c) => selectedCategoryIds.includes(c.id)).every(
+                    (c) => c.subServices.length === 0,
+                  ) ? (
+                    <p className={styles.subServicesEmptyState}>אין עדיין תת-שירותים מוגדרים עבור התחומים שלך.</p>
                   ) : (
-                    <div className={styles.subServicesList}>
-                      {categories
-                        .find((c) => c.id === profile.categoryId)
-                        ?.subServices.map((subService) => (
-                          <Checkbox
-                            key={subService.id}
-                            label={subService.nameHe}
-                            checked={selectedSubServiceIds.has(subService.id)}
-                            onChange={() => toggleSubService(subService.id)}
-                          />
-                        ))}
-                    </div>
+                    categories
+                      .filter((c) => selectedCategoryIds.includes(c.id) && c.subServices.length > 0)
+                      .map((category) => (
+                        <div key={category.id} className={styles.subServiceGroup}>
+                          <p className={styles.subServiceGroupTitle}>{category.nameHe}</p>
+                          <div className={styles.subServicesList}>
+                            {category.subServices.map((subService) => (
+                              <Checkbox
+                                key={subService.id}
+                                label={subService.nameHe}
+                                checked={selectedSubServiceIds.has(subService.id)}
+                                onChange={() => toggleSubService(subService.id)}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      ))
                   )}
 
                   {subServicesSaveError && (
@@ -372,11 +548,22 @@ export default function ProfileEditorPage() {
             <div className={styles.previewColumn}>
               <p className={styles.previewLabel}>תצוגה מקדימה</p>
               <Card className={styles.previewCard}>
-                <ProfessionalProfileDisplay professional={previewProfessional} />
+                <ProfessionalProfileDisplay
+                  professional={previewProfessional}
+                  onReviewsClick={() => setIsReviewsModalOpen(true)}
+                />
               </Card>
             </div>
           )}
         </Card>
+      )}
+
+      {profile && (
+        <ProfessionalReviewsModal
+          isOpen={isReviewsModalOpen}
+          onClose={() => setIsReviewsModalOpen(false)}
+          professionalId={profile.id}
+        />
       )}
     </div>
   );

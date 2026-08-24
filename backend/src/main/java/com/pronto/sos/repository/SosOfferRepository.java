@@ -70,19 +70,41 @@ public interface SosOfferRepository extends JpaRepository<SosOffer, Long> {
     int markViewed(@Param("id") Long id, @Param("now") Instant now);
 
     /**
-     * {@code OFFERED|VIEWED -> ACCEPTED}, carrying the professional's own ETA.
+     * {@code OFFERED|VIEWED -> ACCEPTED}, carrying the professional's own ETA. <b>The only
+     * statement in this repository that writes an ETA</b>, which is what makes the commitment
+     * immutable in the domain rather than merely in the UI: there is no other write path, so
+     * there is nothing to forget to guard.
+     *
+     * <p>The same call stamps the two write-once audit columns ({@code V41}): the promised ETA
+     * and the acceptance instant. Both are written here and nowhere else, so the record of what
+     * was promised survives regardless of what any later code does.
      *
      * <p>{@code expiresAt > :now} is part of the guard, so <b>the database refuses an expired
      * acceptance</b> rather than trusting an application-level expiry check that raced the
-     * write. This is the authoritative protection against the "accepted an expired offer"
-     * case; the service's own pre-check exists only to produce a friendlier error.
+     * write. That guard is per offer, so it is also what implements "each professional gets ten
+     * minutes from when <em>they</em> received it": a professional contacted late in the scan is
+     * still inside their own window long after the scan itself has stopped.
      */
     @Modifying(clearAutomatically = true)
     @Query("UPDATE SosOffer o SET o.status = com.pronto.sos.entity.SosOfferStatus.ACCEPTED, "
-            + "o.estimatedArrivalMinutes = :etaMinutes, o.respondedAt = :now, o.updatedAt = :now "
+            + "o.estimatedArrivalMinutes = :etaMinutes, o.promisedEtaMinutes = :etaMinutes, "
+            + "o.respondedAt = :now, o.acceptedAt = :now, o.updatedAt = :now "
             + "WHERE o.id = :id AND o.expiresAt > :now AND o.status IN ("
             + "com.pronto.sos.entity.SosOfferStatus.OFFERED, com.pronto.sos.entity.SosOfferStatus.VIEWED)")
     int accept(@Param("id") Long id, @Param("etaMinutes") Short etaMinutes, @Param("now") Instant now);
+
+    /**
+     * Is any offer on this request still answerable — dispatched, unanswered, and inside its own
+     * response window?
+     *
+     * <p>What "the scan stopped but the request is not over" is decided by. The scan window and
+     * the per-professional response windows are independent timers, so a request whose scan has
+     * closed with no acceptances stays alive exactly as long as somebody can still say yes.
+     */
+    @Query("SELECT COUNT(o) > 0 FROM SosOffer o WHERE o.sosRequestId = :sosRequestId "
+            + "AND o.status IN (com.pronto.sos.entity.SosOfferStatus.OFFERED, "
+            + "com.pronto.sos.entity.SosOfferStatus.VIEWED) AND o.expiresAt > :now")
+    boolean existsAnswerableOffer(@Param("sosRequestId") Long sosRequestId, @Param("now") Instant now);
 
     /** {@code OFFERED|VIEWED -> REJECTED}. No expiry guard: declining late is harmless. */
     @Modifying(clearAutomatically = true)
@@ -92,12 +114,12 @@ public interface SosOfferRepository extends JpaRepository<SosOffer, Long> {
             + "com.pronto.sos.entity.SosOfferStatus.OFFERED, com.pronto.sos.entity.SosOfferStatus.VIEWED)")
     int reject(@Param("id") Long id, @Param("now") Instant now);
 
-    /** Lets an accepted professional revise their ETA while they still hold the offer. */
-    @Modifying(clearAutomatically = true)
-    @Query("UPDATE SosOffer o SET o.estimatedArrivalMinutes = :etaMinutes, o.updatedAt = :now "
-            + "WHERE o.id = :id AND o.status IN (com.pronto.sos.entity.SosOfferStatus.ACCEPTED, "
-            + "com.pronto.sos.entity.SosOfferStatus.SELECTED)")
-    int updateEta(@Param("id") Long id, @Param("etaMinutes") Short etaMinutes, @Param("now") Instant now);
+    // There is deliberately no updateEta statement here any more (MS3). A professional who has
+    // accepted has made a commitment the customer chooses on, so revising it afterwards is not
+    // an operation this domain offers: removing the write path is what makes that structural
+    // rather than a rule someone has to remember to check. POST /api/sos/offers/{id}/eta still
+    // exists and answers 409 SOS_ETA_LOCKED, so a stale client gets an explanation rather than a
+    // 404 -- see SosOfferService#updateEta.
 
     /**
      * {@code ACCEPTED -> SELECTED} for the winner. Guarded on {@code ACCEPTED} so an offer that

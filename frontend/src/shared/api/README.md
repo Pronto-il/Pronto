@@ -11,7 +11,7 @@
 > `selectSosProfessional`, `cancelSosRequest`, plus the `isSosTerminalStatus`/`hasSosSelection`/
 > `isSosSearching` status predicates that mirror the backend enum's own helpers. Every shape was
 > verified against `com.pronto.sos.dto.*`/`entity.*`/`realtime.*` directly. Two things worth
-> knowing before using it: deadlines (`matchingExpiresAt`/`selectionExpiresAt`) are **absolute
+> knowing before using it: the one deadline (`matchingExpiresAt`, when scanning stops) is **absolute
 > instants**, so a countdown rendered from them survives a remount or a backgrounded tab and the
 > server enforces them regardless; and `SosCandidate` means "this professional is available",
 > never "this professional got the job" — selection is a separate, one-shot call. The file also
@@ -20,7 +20,7 @@
 > truth.
 >
 > **Professional half added MS2 (2026-08-21)**: `getMySosOffers`, `getSosOffer`, `acceptSosOffer`,
-> `rejectSosOffer`, `updateSosOfferEta`, plus the four selected-professional transitions
+> `rejectSosOffer` (no ETA-revision client — MS3 locked the ETA at acceptance), plus the four selected-professional transitions
 > (`confirmSosRequest`, `markSosOnTheWay`, `markSosArrived`, `completeSosRequest`), with
 > `SosOfferStatus`/`SosOfferResponse`/`SosOffersListResponse` and the
 > `isSosOfferOpen`/`isSosOfferResolved` predicates. Shared enums are reused, not redeclared. Two
@@ -411,3 +411,56 @@ changing the sort on the listing screen re-hits the network exactly as before), 
 at 30s (a customer who lingers can never be served a stale list), and **rejection-safe** (a
 failed prefetch drops out of the cache so the real caller retries and owns its own error
 state). `getProfessionalsForIssue`/`getSosProfessionalsForIssue` consult it; nothing else does.
+
+## `setUnauthorizedHandler` (2026-08-23)
+
+`httpClient` now reports one thing back to the app besides the response: a request that was sent
+**with** a token and answered `401` means the token the app is holding is dead (expired, or its
+user row is gone). `setUnauthorizedHandler(fn)` registers the callback for that case;
+`shared/hooks`' `AuthProvider` registers it alongside `setAuthTokenGetter` and ends the session.
+
+Scoped deliberately to requests that carried a token: a `401` on a token-less request is a login
+failure (`POST /api/auth/login` → `401 INVALID_CREDENTIALS`) and must stay the caller's own error
+to render. The `ApiError` is still thrown either way, so no screen's error handling changed.
+
+This is what the professional dashboard's "UNAUTHORIZED on `PATCH`/`DELETE
+/api/availability/blocks/{id}`" report turned out to be: `usePolling` keeps the last successful
+response on screen when a tick fails, so a calendar whose token had expired kept rendering its
+stale segments, and every write attempted from it failed behind a generic error banner with no
+way back to login.
+
+## `getAvailabilityBlock` (2026-08-23)
+
+`GET /api/availability/blocks/{blockId}` — a block's own row, unclipped. The calendar's `BLOCKED`
+segments are derived per day, so a multi-day block arrives as several day-sized segments sharing
+one `blockId`; the block editor loads the real range through this before editing, or it would
+shrink a multi-day block to the day it was opened from.
+
+## MS4 (2026-08-24) — `serviceAreas.ts`, and why it is a fetch
+
+`serviceAreas.ts` is new: `GET /api/service-areas` (the closed Israeli region/city catalogue),
+plus the pure helpers every consumer filters with — `citiesForRegion()`, `allCities()`,
+`regionForCity()`, `cityNames()`.
+
+**It is a fetch, unlike `categories.ts`, and that difference is deliberate.** The backend already
+owns the region/city list: `professionals.service_region_id` and `professional_service_cities`
+are foreign keys into it and registration validates against it. A static TS mirror would be a
+*second* copy of a list the server enforces — which is exactly the cost `categories.ts`
+demonstrates, being a hand-maintained copy of `V10`/`V31` that must be edited whenever a
+migration touches categories, with nothing failing if somebody forgets.
+
+`citiesForRegion()` **is** the region→city filter (MS4 §3). No form component holds a region→city
+map of its own; the registration wizard and the profile editor both call this.
+
+DTO shapes that changed with MS4:
+
+| File | Was | Is |
+|---|---|---|
+| `professionals.ts` | `categoryId`, `serviceArea`, `city` | `categoryIds[]`, `serviceRegionId`/`serviceRegionNameHe`, `baseCityId`/`city`, `serviceCityIds[]`/`serviceCityNamesHe[]` |
+| `auth.ts` | `categoryId`, `serviceArea` | `categoryIds[]`, `serviceRegionId`, `serviceCityIds[]`, `baseCityId` |
+| `bookings.ts` | `serviceArea` | `serviceRegion` (nullable), plus `categoryIds[]` on the card |
+| `favorites.ts`, `users.ts`, `adminProfessionals.ts`, `sos.ts` | `serviceArea`/`categoryId` | `serviceRegion`/`categoryIds[]` |
+
+`categories.ts` also gained `getCategoryNamesHe()` and `formatCategorySummary()` — the latter is
+MS4 §7's compact form ("אינסטלציה +2") for cards with room for one line.
+

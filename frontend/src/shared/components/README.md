@@ -271,3 +271,56 @@ and folded into Handyman (id 8), which already had a drawing. Every seeded categ
 maps to a real illustration, and the `Mascot` fallback is no longer reachable for any live
 category — it stays as the safe path for an unknown id, and still emits one dev-only console
 warning per unmapped id so a future gap is reported rather than swallowed.
+
+## `TimeField` — 24-hour `HH:mm` entry (2026-08-23)
+
+Two `<select>`s (hours `00`-`23`, minutes on a fixed step, default 5), styled to match
+`Input`/`Select`, laid out LTR inside the RTL page because a clock reading is written
+left-to-right. Value contract: `"HH:mm"` strings, `''` for "not set" — identical to the
+`<input type="time">` it replaces, so callers' state, validation and serialization are unchanged.
+
+**Why it exists.** An `<input type="time">`/`<input type="datetime-local">` renders in the
+*browser/OS* locale, not the page's: on an en-US browser it is a 12-hour field with an AM/PM
+segment, inside this Hebrew app. `lang`/`dir` do not override that and no CSS does either. Two
+selects are the only way to guarantee `HH:mm` everywhere, and they give a larger touch target on
+mobile than a segmented time input.
+
+A current value that is off the minute step (say `08:23`, from data entered before this
+component existed) is injected as an extra option rather than rounded away.
+
+Consumers: `WeeklyHoursFields` (both its weekday rows and its apply-to-all row) and
+`features/dashboard`'s `CalendarBlockModal`.
+
+## `WeeklyHoursFields` — `showApplyToAll` (2026-08-23)
+
+Opt-in prop, off by default, that renders a "החל על הכל" row above the week: one start/end pair
+applied to every day that is currently enabled (or, when no day is, to the whole week, which is
+then switchable off day by day). Each day stays independently editable afterwards.
+
+On by default nowhere: `features/dashboard`'s `WorkingHoursForm` passes it, professional
+registration deliberately does not — registration still starts from a blank week ("do not invent
+default working hours"), and a bulk-fill affordance there would work against that.
+
+## MS4 (2026-08-24) — `MultiSelectField`
+
+Multi-select with an optional filter box, a checkbox list and removable chips. Built for the
+service-city selector (≈16 cities per region, searchable) and reused by the service-category
+selector (7 options, not searchable) — one component, because they differ only in list length.
+
+Deliberately **not** a native `<select multiple>`: on touch that renders as an unlabeled scrolling
+box with no indication that ctrl/cmd-click selects a second item, and it cannot show what is
+currently chosen without scrolling. The chips do that.
+
+Values are `number`s (canonical `service_cities.id` / `categories.id`), not display strings — the
+whole point of MS4 Part A is that nothing persists a place or a trade as text.
+
+Presentational and self-contained, the same contract `WeeklyHoursFields` follows: no API call, no
+validation, no submit. Consumers: `features/auth`'s `ProfessionalRegisterForm` and
+`features/dashboard`'s `ProfileEditorPage`.
+
+**`WeeklyHoursFields` is unchanged by MS4** — its `showApplyToAll` prop already existed; MS4 turns
+it *on* in registration (§11), which is why registrants no longer type the same hours seven times.
+Registration and `/pro/availability` render literally the same component and the same 24-hour
+`TimeField`, which is how §13's "the two screens must agree" is satisfied structurally rather
+than by convention.
+

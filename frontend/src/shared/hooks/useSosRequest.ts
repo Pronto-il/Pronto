@@ -1,25 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  expandSosSearch,
-  getSosCandidates,
-  getSosRequest,
-  hasSosSelection,
-  isSosTerminalStatus,
-} from '../api/sos';
+import { getSosCandidates, getSosRequest, hasSosSelection, isSosTerminalStatus } from '../api/sos';
 import type { SosCandidate, SosRequestResponse } from '../api/sos';
-import { ApiError } from '../api/httpClient';
-import { GENERIC_ERROR_MESSAGE } from '../api/errorMessages';
+import { sosRequestKey } from '../api/resourceKeys';
 import type { StompConnectionStatus } from '../realtime';
 import { usePolling } from './usePolling';
 import { useSosRealtime } from './useSosRealtime';
 
 /**
- * Poll interval while a request is live. Faster than the 4s the order-tracking screen uses,
- * because this screen's whole subject is a two-minute window — and it is only the *fallback*:
- * with the socket up, every real change lands via a realtime-triggered refetch well before the
- * next tick.
+ * Poll interval while a request is live **and the realtime socket is not**. Faster than the
+ * order-tracking screen's, because this screen's whole subject is a two-minute window and with
+ * no socket the poll is the only thing that will ever tell it anything.
  */
-const LIVE_POLL_INTERVAL_MS = 3000;
+const DISCONNECTED_POLL_INTERVAL_MS = 3000;
+/**
+ * Poll interval while the socket is up. Every real change already lands via a realtime-triggered
+ * refetch — and on every (re)subscribe, which is what covers whatever was missed while the
+ * socket was down — so what is left for the timer is reconciliation: catching a message that was
+ * published while this client was between sockets and no resubscribe fired. The old code ran the
+ * full 3s cadence regardless of the socket, which meant a connected screen paid for the same
+ * information twice, twenty times a minute.
+ */
+const CONNECTED_POLL_INTERVAL_MS = 20_000;
 
 export interface UseSosRequestResult {
   request: SosRequestResponse | null;
@@ -34,18 +35,6 @@ export interface UseSosRequestResult {
   error: Error | null;
   refetch: () => void;
   realtimeStatus: StompConnectionStatus;
-  /**
-   * Widen the search on this same request ("סרוק שוב"). Resolves once the server has answered and
-   * the screen has been refetched, so the caller never has to reconcile anything itself.
-   *
-   * Safe to call twice — the client drops a second call while one is in flight, and the backend's
-   * compare-and-set means even two that got through would produce exactly one expansion.
-   */
-  expandSearch: () => Promise<void>;
-  /** True while an expansion request is in flight. The control disables itself on this. */
-  isExpanding: boolean;
-  /** Hebrew message from the last failed expansion, or `null`. */
-  expandError: string | null;
 }
 
 /**
@@ -63,6 +52,12 @@ export interface UseSosRequestResult {
  * was down. Polling continues underneath regardless, so the screen is correct with the socket
  * permanently dead — it is merely slower.
  *
+ * **The polling cadence follows the socket, which is what "fallback" has to mean to be worth
+ * saying.** Connected, the timer drops to a slow reconciliation pass (`CONNECTED_POLL_INTERVAL_MS`)
+ * because events are doing the work; disconnected, it goes back to carrying the screen on its own
+ * (`DISCONNECTED_POLL_INTERVAL_MS`). Nothing about which endpoints are read, or what is trusted,
+ * changes with it.
+ *
  * ## Two deliberate details
  *
  * *Candidates stop being fetched once a professional is selected or the request ends.* The
@@ -74,21 +69,14 @@ export interface UseSosRequestResult {
  * *Polling stops at a terminal status*, matching `useOrderStatus`'s precedent: nothing can change
  * again, so there is nothing to ask about.
  *
+ * **MS3**: the search-expansion action is gone from this hook. Widening now happens server-side
+ * on the request's own schedule, so there is nothing for a client to trigger — the widened search
+ * simply arrives as more offers and more candidates on the next read, like any other change.
+ *
  * @param sosRequestId the request to track, or `null` before one has been activated
  */
 export function useSosRequest(sosRequestId: number | null): UseSosRequestResult {
   const [isTerminal, setIsTerminal] = useState(false);
-  const [isExpanding, setIsExpanding] = useState(false);
-  const [expandError, setExpandError] = useState<string | null>(null);
-  /**
-   * Guards against a double-tap producing two requests. Deliberately a ref, not the state above:
-   * two clicks in the same tick would both read a stale `isExpanding` and both fire.
-   *
-   * This is a courtesy, not the protection. `POST .../scan-again` advances a compare-and-set
-   * counter server-side, so even two requests that got through produce exactly one expansion and
-   * one dispatch wave — see `expandSosSearch`.
-   */
-  const expandInFlightRef = useRef(false);
 
   /**
    * Whether the candidates endpoint is still worth calling — see the doc comment. Read before the
@@ -103,10 +91,7 @@ export function useSosRequest(sosRequestId: number | null): UseSosRequestResult 
     // A different request (a retry on the same issue) starts from a clean slate.
     wantsCandidatesRef.current = true;
     lastCandidatesRef.current = [];
-    expandInFlightRef.current = false;
     setIsTerminal(false);
-    setIsExpanding(false);
-    setExpandError(null);
   }, [sosRequestId]);
 
   const fetcher = useCallback(async () => {
@@ -137,9 +122,23 @@ export function useSosRequest(sosRequestId: number | null): UseSosRequestResult 
   }, [sosRequestId]);
 
   const enabled = sosRequestId !== null && !isTerminal;
+
+  // Declared before the poll so the cadence can follow it. `useSosRealtime` is mounted below and
+  // reports back into this, which is a render-cycle later than the socket actually connects —
+  // harmless, because the only cost of being one tick behind is one extra reconciliation read.
+  const [realtimeStatus, setRealtimeStatus] = useState<StompConnectionStatus>('idle');
+  const isSocketUp = realtimeStatus === 'connected';
+
   const { data, error, isLoading, refetch } = usePolling(fetcher, {
+    key: sosRequestId === null ? undefined : sosRequestKey(sosRequestId),
     enabled,
-    intervalMs: LIVE_POLL_INTERVAL_MS,
+    intervalMs: isSocketUp ? CONNECTED_POLL_INTERVAL_MS : DISCONNECTED_POLL_INTERVAL_MS,
+    // The one place in the app that keeps polling a backgrounded tab, and only when it is the
+    // sole channel left: a customer who switches tabs during a two-minute search must not come
+    // back to a screen that stopped following it. With the socket up this is `false`, because
+    // the socket already delivers to a hidden tab and every message triggers a refetch — so the
+    // background cost is an event that actually happened, not a timer.
+    pollWhenHidden: !isSocketUp,
   });
 
   useEffect(() => {
@@ -148,13 +147,13 @@ export function useSosRequest(sosRequestId: number | null): UseSosRequestResult 
     }
   }, [data]);
 
-  // `usePolling` returns a new `refetch` identity every render; the socket must not be rebuilt
-  // for that, so realtime is handed a stable wrapper.
+  // `usePolling` returns a new `refetch` identity when the key changes; the socket must not be
+  // rebuilt for that, so realtime is handed a stable wrapper.
   const refetchRef = useRef(refetch);
   refetchRef.current = refetch;
   const stableRefetch = useCallback(() => refetchRef.current(), []);
 
-  const { status: realtimeStatus } = useSosRealtime({
+  const { status } = useSosRealtime({
     enabled,
     onEvent: (message) => {
       // A customer session can legitimately hold several SOS requests over time (a retry, or an
@@ -166,26 +165,9 @@ export function useSosRequest(sosRequestId: number | null): UseSosRequestResult 
     onResync: stableRefetch,
   });
 
-  const expandSearch = useCallback(async () => {
-    if (sosRequestId === null || expandInFlightRef.current) {
-      return;
-    }
-    expandInFlightRef.current = true;
-    setIsExpanding(true);
-    setExpandError(null);
-    try {
-      await expandSosSearch(sosRequestId);
-    } catch (err) {
-      setExpandError(toExpandMessage(err));
-    } finally {
-      expandInFlightRef.current = false;
-      setIsExpanding(false);
-      // On both paths. Success means new offers exist and the deadline moved; every failure means
-      // the server knows something this screen does not (somebody was selected, the ceiling was
-      // reached, the request expired), and the refetch is what makes the screen agree.
-      refetchRef.current();
-    }
-  }, [sosRequestId]);
+  useEffect(() => {
+    setRealtimeStatus(status);
+  }, [status]);
 
   return {
     request: data?.request ?? null,
@@ -195,33 +177,5 @@ export function useSosRequest(sosRequestId: number | null): UseSosRequestResult 
     error,
     refetch: stableRefetch,
     realtimeStatus,
-    expandSearch,
-    isExpanding,
-    expandError,
   };
 }
-
-/**
- * Hebrew for a failed expansion, never the backend's English message (FRONTEND_AGENT.md §26).
- *
- * The two interesting codes are both "the world moved on", not "something broke", and the refetch
- * that follows will already have re-rendered the screen correctly — so the copy explains rather
- * than alarms.
- */
-function toExpandMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.code === 'SOS_EXPANSION_LIMIT_REACHED') {
-      return 'הרחבנו את החיפוש עד הסוף. אפשר לבחור מבין מי שכבר אישר שהוא זמין.';
-    }
-    if (SOS_EXPAND_ERROR_MESSAGES[error.code]) {
-      return SOS_EXPAND_ERROR_MESSAGES[error.code];
-    }
-  }
-  return GENERIC_ERROR_MESSAGE;
-}
-
-const SOS_EXPAND_ERROR_MESSAGES: Record<string, string> = {
-  SOS_ALREADY_SELECTED: 'כבר נבחר בעל מקצוע לקריאה הזו, ולכן החיפוש נעצר.',
-  SOS_WINDOW_EXPIRED: 'הזמן לקריאה הזו נגמר. אפשר להתחיל קריאה חדשה על אותה תקלה.',
-  SOS_INVALID_STATE: 'הקריאה השתנתה בינתיים. רגע, מרעננים את המצב.',
-};

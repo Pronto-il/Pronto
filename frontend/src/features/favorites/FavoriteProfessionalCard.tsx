@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Star, Heart } from 'lucide-react';
 import { Card } from '../../shared/components';
+import { formatCategorySummary } from '../../shared/api';
 import type { FavoriteProfessionalSummary } from '../../shared/api';
 import { formatReviewCount } from '../../shared/utils/hebrewText';
 import styles from './FavoriteProfessionalCard.module.css';
@@ -27,8 +28,17 @@ function initials(fullName: string): string {
  * view-only detail page (§2.3).
  */
 export function FavoriteProfessionalCard({ favorite, onRemove, isRemoving }: FavoriteProfessionalCardProps) {
-  const { professionalId, fullName, serviceArea, city, basePrice, profileImageUrl, averageRating, reviewCount } =
-    favorite;
+  const {
+    professionalId,
+    fullName,
+    serviceRegion,
+    city,
+    categoryIds,
+    basePrice,
+    profileImageUrl,
+    averageRating,
+    reviewCount,
+  } = favorite;
 
   return (
     <Card className={styles.card}>
@@ -42,9 +52,10 @@ export function FavoriteProfessionalCard({ favorite, onRemove, isRemoving }: Fav
         )}
         <div className={styles.identity}>
           <h3 className={styles.name}>{fullName}</h3>
+          {/* MS4 §7: primary trade + count on this compact card; region and base city follow. */}
+          <p className={styles.category}>{formatCategorySummary(categoryIds)}</p>
           <p className={styles.serviceArea}>
-            {serviceArea}
-            {city ? ` · ${city}` : ''}
+            {[serviceRegion, city].filter(Boolean).join(' · ') || 'אזור לא הוגדר'}
           </p>
           {averageRating !== null && (
             <span className={styles.rating}>

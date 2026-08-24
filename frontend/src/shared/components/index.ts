@@ -13,6 +13,12 @@ export type { CheckboxProps } from './Checkbox';
 export { Select } from './Select';
 export type { SelectProps, SelectOption } from './Select';
 
+export { MultiSelectField } from './MultiSelectField';
+export type { MultiSelectFieldProps, MultiSelectOption } from './MultiSelectField';
+
+export { TimeField } from './TimeField';
+export type { TimeFieldProps } from './TimeField';
+
 export { PageHeader } from './PageHeader';
 export type { PageHeaderProps } from './PageHeader';
 
@@ -62,6 +68,9 @@ export type { ProfilePhotoProps } from './ProfilePhoto';
 
 export { ImageLightbox } from './ImageLightbox';
 export type { ImageLightboxProps } from './ImageLightbox';
+
+export { ZoomableImage } from './ZoomableImage';
+export type { ZoomableImageProps } from './ZoomableImage';
 
 export { Skeleton } from './Skeleton';
 export type { SkeletonProps, SkeletonVariant } from './Skeleton';

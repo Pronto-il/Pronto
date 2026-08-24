@@ -17,11 +17,35 @@ export interface ActiveOrderSelection {
 /** Mirrors `BookingDraftContextValue`'s minimal shape. */
 export interface ActiveOrderContextValue {
   selection: ActiveOrderSelection | null;
+  /**
+   * Whether this session has an order actually in flight — see `isLiveActiveOrder`.
+   *
+   * Exposed separately from `selection` because it is a different question with a different
+   * audience: `selection` is "what should the floating indicator show", which includes a finished
+   * job still waiting to be reviewed. This is "is anything happening", which is what
+   * `useNotifications` gates its polling on. Reading it costs no request — that is the whole
+   * point of it living here rather than being re-derived from a second fetch.
+   */
+  hasLiveOrder: boolean;
   /** Idempotent: a no-op if `orderId` is already acknowledged. See §6.2. */
   acknowledgeOrder: (orderId: number) => void;
   /** Forces an immediate re-poll of `GET /api/bookings/orders/me` (mirrors `usePolling`'s
    *  own `refetch`). */
   refetch: () => void;
+}
+
+/**
+ * "Is an order actually in flight right now?" — `PENDING`/`CONFIRMED`/`ON_THE_WAY`, and
+ * deliberately **not** `COMPLETED_UNACKNOWLEDGED`.
+ *
+ * A completed visit awaiting its review prompt is a local UI state over a finished job: the work
+ * is done, no further server-side transition will occur, and nothing more will be sent about it.
+ * Treating it as live would mean a customer who never dismisses a review prompt keeps a poller
+ * running indefinitely over an order that can no longer change — which is exactly the class of
+ * background traffic the gate exists to remove.
+ */
+export function isLiveActiveOrder(selection: ActiveOrderSelection | null): boolean {
+  return selection !== null && selection.state !== 'COMPLETED_UNACKNOWLEDGED';
 }
 
 export const ActiveOrderContext = createContext<ActiveOrderContextValue | undefined>(undefined);

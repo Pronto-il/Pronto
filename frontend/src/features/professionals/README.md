@@ -304,3 +304,47 @@ present for a bookable professional, CTA absent plus the notice when the backend
 `ProDashboardLayout`'s `לוח בקרה לבעלי מקצוע` title, so `/pro/profile` is down from three `<h1>`
 elements to two. The underlying suggestion (a heading-level prop on `ProfessionalProfileDisplay`)
 is still open and still not this pass's scope.
+
+## `ProfessionalReviewsModal` + a clickable review count (2026-08-23)
+
+`ProfessionalProfileDisplay` takes an optional `onReviewsClick`. When it is supplied *and* the
+professional has at least one review, the rating row's count fragment and the stats strip's
+ביקורות tile render as buttons; when it is not (every caller except the professional's own
+`/pro/profile` editor), they render exactly as before, as text.
+
+`ProfessionalReviewsModal` is what that opens: the existing `GET /api/reviews?professionalId=`
+rendered by the existing `ReviewList` inside the shared `Modal`, whose body is already the
+scrollable region. Nothing about the review data model or the public profile page changed —
+that page lists reviews inline and therefore passes no handler. `ReviewList` is now exported
+from this feature's barrel, since it has a second consumer.
+
+## `ProfessionalSummaryCard` — an optional `onOpen` (2026-08-24)
+
+With `onOpen` the whole card becomes one button that opens the professional's full profile;
+without it the card renders exactly as before, as static identity. The card already *is* the
+professional on the surfaces that use it, so it is the right target — better than a "view profile"
+link bolted beside it.
+
+Its first consumer is the customer's order-tracking hero (`features/booking`), which passes a
+handler that opens `ProfessionalProfileModal` in place.
+
+## MS4 (2026-08-24) — showing several categories without dumping them
+
+`ProfessionalProfileResponse.categoryId` became `categoryIds[]`, ordered by the catalogue's own
+`display_order`. §7 asks for a compact representation on small surfaces and the full list on the
+profile, so the three components here split that way:
+
+| Component | Surface | Shows |
+|---|---|---|
+| `ProfessionalCard` | listing | The **searched-for** category as the headline (every professional in the listing serves it, and it is why they were found), plus a quieter "+ N תחומים נוספים" note built from the card's own `categoryIds`. |
+| `ProfessionalSummaryCard` | compact identity | `formatCategorySummary()` — primary trade + "+N". |
+| `ProfessionalProfileDisplay` | full profile | Every category, joined with `·`. Also gains a "ערי שירות" row alongside "אזור שירות" and "עיר בסיס". |
+
+The Hebrew singular boundary is handled by `formatExtraCategoryCount()` in
+`shared/utils/hebrewText.ts` — "+1 תחומים נוספים" is not Hebrew, so one extra trade reads
+"+ תחום נוסף". Same class of fix as `formatReviewCount()`.
+
+`serviceArea` (free text) became `serviceRegion` (the canonical region's Hebrew label, nullable
+for a pre-MS4 professional the migration could not place — rendered "אזור לא הוגדר" rather than
+blank).
+

@@ -1,5 +1,6 @@
 package com.pronto.favorites.service;
 
+import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
@@ -40,6 +41,11 @@ import static org.mockito.Mockito.when;
  */
 class FavoritesServiceTest {
 
+    /** MS4: `professionals` no longer stores a category or free-text place -- see the entity. */
+    private static final long SERVICE_REGION_ID = 4L;
+    private static final long BASE_CITY_ID = 40L;
+    private static final long CATEGORY_ID = 3L;
+
     private static final Long CUSTOMER_ID = 10L;
     private static final Long OTHER_CUSTOMER_ID = 999L;
     private static final Long PROFESSIONAL_ID = 20L;
@@ -49,6 +55,7 @@ class FavoritesServiceTest {
     private UserRepository userRepository;
     private ReviewAggregateRepository reviewAggregateRepository;
     private StorageService storageService;
+    private ProfessionalCoverageService professionalCoverageService;
     private FavoritesService favoritesService;
     private final AuthenticatedUser customer = new AuthenticatedUser(CUSTOMER_ID, "CUSTOMER");
 
@@ -59,8 +66,22 @@ class FavoritesServiceTest {
         userRepository = Mockito.mock(UserRepository.class);
         reviewAggregateRepository = Mockito.mock(ReviewAggregateRepository.class);
         storageService = Mockito.mock(StorageService.class);
+        professionalCoverageService = Mockito.mock(ProfessionalCoverageService.class);
         favoritesService = new FavoritesService(favoriteRepository, professionalRepository, userRepository,
-                reviewAggregateRepository, storageService);
+                reviewAggregateRepository, storageService, professionalCoverageService);
+        // MS4: every pre-existing test in this class describes an ordinary, fully-configured
+        // professional, so coverage and categories are stubbed to a sane default here; the tests
+        // that care override them per-test. ProfessionalCoverageService's own rules are covered by
+        // ProfessionalCoverageServiceTest, not by re-asserting them through every consumer.
+        Mockito.lenient().when(professionalCoverageService.load(Mockito.any()))
+                .thenReturn(new ProfessionalCoverageService.CoverageView(SERVICE_REGION_ID, "גוש דן",
+                        BASE_CITY_ID, "תל אביב", List.of(BASE_CITY_ID), List.of("תל אביב"),
+                        List.of(CATEGORY_ID)));
+        Mockito.lenient().when(professionalCoverageService.categoryIds(Mockito.anyLong()))
+                .thenReturn(List.of(CATEGORY_ID));
+        Mockito.lenient().when(professionalCoverageService.baseCityName(Mockito.any())).thenReturn("תל אביב");
+        Mockito.lenient().when(professionalCoverageService.servesCategory(Mockito.anyLong(), Mockito.anyLong()))
+                .thenReturn(true);
     }
 
     private static void setField(Object entity, String fieldName, Object value) {
@@ -74,9 +95,9 @@ class FavoritesServiceTest {
     }
 
     private Professional professional() {
-        Professional professional = new Professional(1L, 1L, "Tel Aviv", BigDecimal.TEN);
+        Professional professional = new Professional(1L, SERVICE_REGION_ID, BASE_CITY_ID, BigDecimal.TEN);
         setField(professional, "id", PROFESSIONAL_ID);
-        setField(professional, "city", "Tel Aviv");
+        setField(professional, "baseCityId", BASE_CITY_ID);
         return professional;
     }
 

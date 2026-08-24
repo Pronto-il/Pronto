@@ -189,6 +189,20 @@ export interface BlockResponse {
   updatedAt: string;
 }
 
+/**
+ * `GET /api/availability/blocks/{blockId}` — PROFESSIONAL only, must be the block's owner.
+ * Returns the block row itself, with its true `startAt`/`endAt`.
+ *
+ * Needed because `GET /api/availability/calendar` returns *derived* `BLOCKED` segments: the
+ * backend clips each block to every day's working-hours window, so a block spanning several
+ * days arrives as several day-sized segments that share one `blockId`. Editing from a clicked
+ * segment alone would rewrite the block down to that single day — the edit modal loads the
+ * real range through this endpoint first.
+ */
+export function getAvailabilityBlock(blockId: number): Promise<BlockResponse> {
+  return httpClient.get<BlockResponse>(`/api/availability/blocks/${blockId}`);
+}
+
 /** `POST /api/availability/blocks` — PROFESSIONAL only. `409 BLOCK_OVERLAPS_EXISTING_BLOCK` /
  *  `409 BLOCK_OVERLAPS_BOOKING` on overlap (design §4.3). */
 export function createAvailabilityBlock(payload: CreateBlockRequest): Promise<BlockResponse> {

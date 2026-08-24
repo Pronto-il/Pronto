@@ -184,3 +184,32 @@ separate scope. The professional wizard's two new required stages (sub-services,
 hours) and the `PENDING` result copy landed in **Production Roadmap MS1 — Professional
 Verification & Marketplace Eligibility**
 (`docs/architecture/ms1-professional-verification-design.md`).
+
+## MS4 (2026-08-24) — registration stage 2 and stage 5
+
+**Stage 2** ("profession + service area") became "service categories + service region + service
+cities":
+
+- The single category `Select` is now a `MultiSelectField` — a professional may register as a
+  plumber *and* a handyman.
+- The free-text "אזור שירות" `Input` is gone, replaced by a region `Select` and a searchable city
+  `MultiSelectField`, both fed by `GET /api/service-areas` via `shared/api/serviceAreas.ts`.
+  **There is no field left on this form a registrant can type a place name into** — `'תל אביב'`,
+  `'תל-אביב'` and `'Tel Aviv'` used to be three different service areas.
+- Changing the region re-scopes the city list through the shared `citiesForRegion()` helper; this
+  component holds no region→city map of its own. Cities outside the new region are dropped
+  silently here, because registration has persisted nothing yet and there is nothing to warn
+  about — the profile editor, which *is* editing saved data, warns and names them instead.
+- The base city is the first city chosen in catalogue order. Asking a registrant to additionally
+  nominate a "main" city would be a question with no obvious right answer; the profile editor
+  exposes it as an explicit field for anyone who wants to change it.
+
+**Stage 3** groups the sub-service checklist under one heading per selected category, so a
+registrant who chose two trades can tell which trade each item belongs to. A single-category
+registrant sees one heading, which costs nothing.
+
+**Stage 5** turns on `WeeklyHoursFields`' `showApplyToAll` — MS4 §11's "החל על הכל". The week is
+still blank until the registrant acts (nothing is pre-filled on their behalf, per MS1), every day
+stays independently editable afterwards (§12), and the times are the same 24-hour `TimeField` the
+availability dashboard uses (§13).
+

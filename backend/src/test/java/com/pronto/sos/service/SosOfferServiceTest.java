@@ -37,6 +37,10 @@ import static org.mockito.Mockito.when;
 /** Professional-side responses and the operational transitions, including their authorization. */
 class SosOfferServiceTest {
 
+    /** MS4: `professionals` no longer stores a category or free-text place -- see the entity. */
+    private static final long SERVICE_REGION_ID = 4L;
+    private static final long BASE_CITY_ID = 40L;
+
     private static final Long REQUEST_ID = 100L;
     private static final Long OFFER_ID = 200L;
     private static final Long CUSTOMER_ID = 1L;
@@ -105,13 +109,13 @@ class SosOfferServiceTest {
     }
 
     private static Professional professional() {
-        Professional professional = new Professional(PROFESSIONAL_USER_ID, 7L, "Center", new BigDecimal("250.00"));
+        Professional professional = new Professional(PROFESSIONAL_USER_ID, SERVICE_REGION_ID, BASE_CITY_ID, new BigDecimal("250.00"));
         setField(professional, "id", PROFESSIONAL_ID);
         return professional;
     }
 
     private static Professional otherProfessional() {
-        Professional professional = new Professional(OTHER_PROFESSIONAL_USER_ID, 7L, "Center",
+        Professional professional = new Professional(OTHER_PROFESSIONAL_USER_ID, SERVICE_REGION_ID, BASE_CITY_ID,
                 new BigDecimal("250.00"));
         setField(professional, "id", OTHER_PROFESSIONAL_ID);
         return professional;
@@ -164,17 +168,34 @@ class SosOfferServiceTest {
         verify(sosOfferRepository).accept(eq(OFFER_ID), eq((short) 20), any());
     }
 
-    /** Omitting an ETA keeps the platform's dispatch-time estimate rather than nulling it. */
+    /**
+     * <b>Accepting without an ETA is refused (MS3).</b> It used to fall back to the platform's
+     * own dispatch-time estimate, which meant a candidate could reach the customer's decision
+     * screen advertising a figure no professional had agreed to — and, since the ETA is now
+     * locked at acceptance, would have locked in that invented figure. Nothing is written.
+     */
     @Test
-    void acceptWithoutAnEtaKeepsThePlatformEstimate() {
+    void acceptingWithoutAnEtaIsRefused() {
+        assertThatThrownBy(() -> service.accept(PROFESSIONAL_USER_ID, OFFER_ID, null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+
+        verify(sosOfferRepository, never()).accept(anyLong(), any(), any());
+    }
+
+    /** The professional's own figure is what is stored — as both the live ETA and the promise. */
+    @Test
+    void acceptanceStoresTheProfessionalsOwnEta() {
         when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.OFFERED)));
         when(sosService.loadRequest(REQUEST_ID))
                 .thenReturn(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS));
         when(sosOfferRepository.accept(anyLong(), any(), any())).thenReturn(1);
 
-        service.accept(PROFESSIONAL_USER_ID, OFFER_ID, null);
+        service.accept(PROFESSIONAL_USER_ID, OFFER_ID, 25);
 
-        verify(sosOfferRepository).accept(eq(OFFER_ID), eq((short) 15), any());
+        // One statement writes status, live ETA, promised ETA and accepted_at together, so there
+        // is no window in which a candidate exists without the commitment beside them.
+        verify(sosOfferRepository).accept(eq(OFFER_ID), eq((short) 25), any());
     }
 
     /**
@@ -220,6 +241,44 @@ class SosOfferServiceTest {
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.SOS_INVALID_STATE));
         verify(sosOfferRepository, never()).accept(anyLong(), any(), any());
+    }
+
+    /**
+     * <b>A closed scan does not close an offer (MS3).</b> The platform has stopped looking for
+     * anybody new, but this professional's own response window is still open — the request is
+     * still {@code WAITING_FOR_PROFESSIONALS}, so their acceptance lands and makes them a
+     * candidate. Nothing here consults the scan window; the offer's own {@code expires_at} is
+     * the only deadline that governs this call, which is what keeps the two timers independent.
+     */
+    @Test
+    void acceptingAfterTheScanEndedButWithinTheOwnWindowStillCreatesACandidate() {
+        when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.OFFERED)));
+        SosRequest scanClosed = request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
+        setField(scanClosed, "matchingExpiresAt", java.time.Instant.now().minusSeconds(60));
+        when(sosService.loadRequest(REQUEST_ID)).thenReturn(scanClosed);
+        when(sosOfferRepository.accept(anyLong(), any(), any())).thenReturn(1);
+
+        service.accept(PROFESSIONAL_USER_ID, OFFER_ID, 20);
+
+        verify(sosOfferRepository).accept(eq(OFFER_ID), eq((short) 20), any());
+        // ...and the customer's window opens on it, so the candidate is immediately selectable.
+        verify(sosService).maybeOpenSelectionWindow(REQUEST_ID, false);
+    }
+
+    /**
+     * The same, once the customer already has somebody on screen: acceptances keep landing while
+     * the customer is deciding, so candidates appear progressively rather than in one batch.
+     */
+    @Test
+    void acceptingWhileTheCustomerIsAlreadyChoosingIsAllowed() {
+        when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.OFFERED)));
+        when(sosService.loadRequest(REQUEST_ID))
+                .thenReturn(request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION));
+        when(sosOfferRepository.accept(anyLong(), any(), any())).thenReturn(1);
+
+        service.accept(PROFESSIONAL_USER_ID, OFFER_ID, 12);
+
+        verify(sosOfferRepository).accept(eq(OFFER_ID), eq((short) 12), any());
     }
 
     /** A professional may only ever touch an offer that was sent to them. */
@@ -289,64 +348,62 @@ class SosOfferServiceTest {
                 eq(SosEventType.OFFER_VIEWED), any(), any(), any());
     }
 
-    @Test
-    void etaCanBeRevisedWhileAccepted() {
-        when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.ACCEPTED)));
-        when(sosOfferRepository.updateEta(eq(OFFER_ID), eq((short) 40), any())).thenReturn(1);
-        when(sosService.loadRequest(REQUEST_ID))
-                .thenReturn(request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION));
-
-        service.updateEta(PROFESSIONAL_USER_ID, OFFER_ID, 40);
-
-        verify(sosOfferRepository).updateEta(eq(OFFER_ID), eq((short) 40), any());
-    }
+    // ------------------------------------------------------------------
+    // ETA locking (MS3)
+    // ------------------------------------------------------------------
 
     /**
-     * A revision must be recorded as {@link SosEventType#ETA_UPDATED}, not as
-     * {@code PROFESSIONAL_RESPONDED}.
-     *
-     * <p>This is the seam the stale-ETA bug lived in. With both recorded under one type, the
-     * realtime publisher had only the offer's current status to route on — and on an
-     * {@code ACCEPTED} offer a revision is indistinguishable from a fresh acceptance, so the
-     * customer was told "another professional is available" instead of "this one's ETA changed".
-     * Asserting the recorded type here is what keeps the publisher's routing decidable at all.
+     * <b>The commitment is final.</b> An ETA used to be revisable while {@code ACCEPTED} or
+     * {@code SELECTED}, on the reasoning that traffic changes. The reasoning that beats it: the
+     * customer picks a professional because of that number, so a revisable ETA is an invitation
+     * to win the job with fifteen minutes and deliver fifty.
      */
     @Test
-    void revisingAnEtaIsRecordedAsItsOwnEventTypeNotAsAResponse() {
+    void anAcceptedEtaCannotBeRevised() {
         when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.ACCEPTED)));
-        when(sosOfferRepository.updateEta(eq(OFFER_ID), eq((short) 12), any())).thenReturn(1);
-        when(sosService.loadRequest(REQUEST_ID))
-                .thenReturn(request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION));
-
-        service.updateEta(PROFESSIONAL_USER_ID, OFFER_ID, 12);
-
-        verify(sosEventService).recordProfessional(eq(REQUEST_ID), eq(PROFESSIONAL_USER_ID), eq(PROFESSIONAL_ID),
-                eq(OFFER_ID), eq(SosEventType.ETA_UPDATED), any(), any(), any());
-        verify(sosEventService, never()).recordProfessional(anyLong(), anyLong(), anyLong(), anyLong(),
-                eq(SosEventType.PROFESSIONAL_RESPONDED), any(), any(), any());
-    }
-
-    /** Availability is not selection: revising an ETA while merely available is legal and normal. */
-    @Test
-    void etaCanBeRevisedBeforeTheCustomerHasChosen() {
-        when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.ACCEPTED)));
-        when(sosOfferRepository.updateEta(eq(OFFER_ID), eq((short) 12), any())).thenReturn(1);
-        when(sosService.loadRequest(REQUEST_ID))
-                .thenReturn(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS));
-
-        service.updateEta(PROFESSIONAL_USER_ID, OFFER_ID, 12);
-
-        verify(sosOfferRepository).updateEta(eq(OFFER_ID), eq((short) 12), any());
-    }
-
-    @Test
-    void etaCannotBeRevisedOnAnUnansweredOffer() {
-        when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.OFFERED)));
-        when(sosOfferRepository.updateEta(anyLong(), any(), any())).thenReturn(0);
 
         assertThatThrownBy(() -> service.updateEta(PROFESSIONAL_USER_ID, OFFER_ID, 40))
                 .isInstanceOf(ApiException.class)
-                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.SOS_OFFER_NOT_OPEN));
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.SOS_ETA_LOCKED));
+    }
+
+    /** Being chosen does not reopen it either — if anything, that is when it matters most. */
+    @Test
+    void aSelectedProfessionalCannotReviseTheirEtaEither() {
+        when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.SELECTED)));
+
+        assertThatThrownBy(() -> service.updateEta(PROFESSIONAL_USER_ID, OFFER_ID, 5))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.SOS_ETA_LOCKED));
+    }
+
+    /**
+     * Enforced in the domain, not by hiding a control: <b>no ETA is written by any path other
+     * than acceptance</b>, so a refused revision leaves the stored figure untouched — there is
+     * nothing to write it with.
+     */
+    @Test
+    void aRefusedEtaRevisionWritesNothingAtAll() {
+        when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.ACCEPTED)));
+
+        assertThatThrownBy(() -> service.updateEta(PROFESSIONAL_USER_ID, OFFER_ID, 40))
+                .isInstanceOf(ApiException.class);
+
+        verify(sosEventService, never()).recordProfessional(anyLong(), anyLong(), anyLong(), anyLong(),
+                any(), any(), any(), any());
+        verify(sosOfferRepository, never()).saveAndFlush(any());
+    }
+
+    /** Authorization still outranks the rule: another professional's offer is a 403, not a 409. */
+    @Test
+    void anotherProfessionalsEtaAttemptIsForbiddenNotLocked() {
+        SosOffer foreign = offer(SosOfferStatus.ACCEPTED);
+        setField(foreign, "professionalId", 999L);
+        when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(foreign));
+
+        assertThatThrownBy(() -> service.updateEta(PROFESSIONAL_USER_ID, OFFER_ID, 40))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.FORBIDDEN));
     }
 
     // ------------------------------------------------------------------

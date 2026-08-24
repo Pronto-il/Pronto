@@ -34,8 +34,8 @@ class SosPropertiesTest {
     @Test
     void everyTimingPropertyIsRejectedWhenNotPositive() {
         assertRejected("offer-ttl-seconds", p -> p.setOfferTtlSeconds(0));
-        assertRejected("matching-window-seconds", p -> p.setMatchingWindowSeconds(0));
-        assertRejected("selection-window-seconds", p -> p.setSelectionWindowSeconds(0));
+        assertRejected("scan-window-seconds", p -> p.setScanWindowSeconds(0));
+        assertRejected("expansion-interval-seconds", p -> p.setExpansionIntervalSeconds(0));
         assertRejected("confirmation-grace-seconds", p -> p.setConfirmationGraceSeconds(0));
         assertRejected("confirmation-grace-seconds", p -> p.setConfirmationGraceSeconds(-1));
     }
@@ -44,8 +44,6 @@ class SosPropertiesTest {
     void everyPoolSizeIsRejectedWhenNotPositive() {
         assertRejected("candidate-pool-size", p -> p.setCandidatePoolSize(0));
         assertRejected("emergency-candidate-pool-size", p -> p.setEmergencyCandidatePoolSize(-3));
-        // A target of 0 would open the selection window with nobody to choose from.
-        assertRejected("target-candidate-count", p -> p.setTargetCandidateCount(0));
     }
 
     @Test
@@ -84,31 +82,60 @@ class SosPropertiesTest {
     }
 
     /**
-     * The cross-field rule: an offer that outlives the response window it belongs to has seconds
-     * on it that can never be used. Not expressible as a per-field annotation, which is part of
-     * why this validation is hand-written.
+     * MS3 removed the old "an offer must not outlive the scan window" cross-field rule, and this
+     * test guards that removal rather than mourning it: a professional contacted in the last
+     * seconds of the scan is *supposed* to keep answering after the platform has stopped looking,
+     * so a configuration where the response window reaches past the scan window is the intended
+     * shape of this feature, not a typo.
      */
     @Test
-    void anOfferTtlLongerThanTheMatchingWindowIsRejected() {
-        assertRejected("offer-ttl-seconds", p -> {
-            p.setOfferTtlSeconds(300);
-            p.setMatchingWindowSeconds(150);
-        });
+    void anOfferTtlLongerThanTheScanWindowIsAccepted() {
+        assertThatCode(() -> propertiesWith(p -> {
+            p.setOfferTtlSeconds(600);
+            p.setScanWindowSeconds(300);
+        }).validate()).doesNotThrowAnyException();
     }
 
+    /** The shipped timing rules, stated once so a silent default change fails here. */
     @Test
-    void anOfferTtlEqualToTheMatchingWindowIsAccepted() {
-        assertThatCode(() -> propertiesWith(p -> {
-            p.setOfferTtlSeconds(150);
-            p.setMatchingWindowSeconds(150);
-        }).validate()).doesNotThrowAnyException();
+    void theShippedTimersAreTenMinutesAndTwoMinutes() {
+        SosProperties defaults = new SosProperties();
+        assertThat(defaults.getScanWindowSeconds()).isEqualTo(600);
+        assertThat(defaults.getOfferTtlSeconds()).isEqualTo(600);
+        assertThat(defaults.getExpansionIntervalSeconds()).isEqualTo(120);
+        assertThat(defaults.getMaxSearchExpansions()).isEqualTo(4);
+    }
+
+    /**
+     * <b>There is no customer-decision timer, and this test is what keeps it that way.</b>
+     *
+     * <p>A property called anything like "decision window" reappearing on this class would mean
+     * the rule it encodes has reappeared too: a clock that deletes a professional the customer
+     * could still have chosen. The absence is the feature, so it is asserted rather than assumed.
+     */
+    @Test
+    void thereIsNoCustomerDecisionTimerProperty() {
+        assertThat(java.util.Arrays.stream(SosProperties.class.getDeclaredFields())
+                .map(java.lang.reflect.Field::getName)
+                .filter(name -> name.toLowerCase().contains("decision")
+                        || name.toLowerCase().contains("selectionwindow")))
+                .as("SosProperties fields describing a customer-decision deadline")
+                .isEmpty();
+    }
+
+    /** Four 2-minute expansions is exactly what fits inside a 10-minute scan. */
+    @Test
+    void theExpansionCadenceFitsInsideTheScanWindow() {
+        SosProperties defaults = new SosProperties();
+        assertThat(defaults.getMaxSearchExpansions() * defaults.getExpansionIntervalSeconds())
+                .isLessThan(defaults.getScanWindowSeconds());
     }
 
     // ---- search expansion ----
 
     /**
-     * Zero is legal here and nowhere else above: it turns "סרוק שוב" off and restores single-wave
-     * dispatch, which is a deployment somebody might genuinely want.
+     * Zero is legal here and nowhere else above: it turns automatic expansion off and restores
+     * single-wave dispatch, which is a deployment somebody might genuinely want.
      */
     @Test
     void zeroSearchExpansionsIsAcceptedAndDisablesTheFeature() {

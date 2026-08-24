@@ -13,6 +13,7 @@ import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRatingAggregate;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.professionals.repository.ReviewAggregateRepository;
+import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.repository.UserRepository;
@@ -38,17 +39,20 @@ public class FavoritesService {
     private final UserRepository userRepository;
     private final ReviewAggregateRepository reviewAggregateRepository;
     private final StorageService storageService;
+    private final ProfessionalCoverageService professionalCoverageService;
 
     public FavoritesService(FavoriteRepository favoriteRepository,
                              ProfessionalRepository professionalRepository,
                              UserRepository userRepository,
                              ReviewAggregateRepository reviewAggregateRepository,
-                             StorageService storageService) {
+                             StorageService storageService,
+                             ProfessionalCoverageService professionalCoverageService) {
         this.favoriteRepository = favoriteRepository;
         this.professionalRepository = professionalRepository;
         this.userRepository = userRepository;
         this.reviewAggregateRepository = reviewAggregateRepository;
         this.storageService = storageService;
+        this.professionalCoverageService = professionalCoverageService;
     }
 
     /**
@@ -136,8 +140,11 @@ public class FavoritesService {
                 : BigDecimal.valueOf(aggregate.averageRating()).setScale(2, RoundingMode.HALF_UP);
         long reviewCount = aggregate.reviewCount() == null ? 0 : aggregate.reviewCount();
 
-        return new FavoriteProfessionalSummary(professional.getId(), fullName, professional.getServiceArea(),
-                professional.getCity(), professional.getBasePrice(), profileImageUrl, averageRating, reviewCount,
-                favorite.getCreatedAt(), professionalRepository.existsEligibleById(professional.getId()));
+        ProfessionalCoverageService.CoverageView coverage = professionalCoverageService.load(professional);
+
+        return new FavoriteProfessionalSummary(professional.getId(), fullName, coverage.serviceRegionNameHe(),
+                coverage.baseCityNameHe(), coverage.categoryIds(), professional.getBasePrice(), profileImageUrl,
+                averageRating, reviewCount, favorite.getCreatedAt(),
+                professionalRepository.existsEligibleById(professional.getId()));
     }
 }

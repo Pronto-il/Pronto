@@ -1,6 +1,6 @@
 import { ShieldCheck, Star } from 'lucide-react';
 import { Badge, Card } from '../../shared/components';
-import { getCategoryNameHe } from '../../shared/api';
+import { formatCategorySummary } from '../../shared/api';
 import type { ProfessionalProfileResponse } from '../../shared/api';
 import { formatMonthYearLabel } from '../../shared/utils/formatDateTime';
 import { formatReviewCount } from '../../shared/utils/hebrewText';
@@ -9,9 +9,18 @@ import styles from './ProfessionalSummaryCard.module.css';
 export interface ProfessionalSummaryCardProps {
   professional: Pick<
     ProfessionalProfileResponse,
-    'fullName' | 'categoryId' | 'profileImageUrl' | 'averageRating' | 'reviewCount'
+    'fullName' | 'categoryIds' | 'profileImageUrl' | 'averageRating' | 'reviewCount'
   > &
-    Partial<Pick<ProfessionalProfileResponse, 'approvalStatus' | 'createdAt' | 'city' | 'serviceArea'>>;
+    Partial<
+      Pick<ProfessionalProfileResponse, 'approvalStatus' | 'createdAt' | 'city' | 'serviceRegionNameHe'>
+    >;
+  /**
+   * Opens this professional's full profile. When provided the whole card becomes one button;
+   * when omitted it renders exactly as before, as static identity. Deliberately a callback
+   * rather than a route: every surface that shows this card is a screen the customer should not
+   * be taken off.
+   */
+  onOpen?: () => void;
 }
 
 function initials(fullName: string): string {
@@ -33,11 +42,13 @@ function initials(fullName: string): string {
  * verification badge renders only for a genuinely `APPROVED` profile (§44).
  *
  * Purely presentational: it fetches nothing and owns no state, so a caller that already has a
- * profile in hand can render it directly.
+ * profile in hand can render it directly. With `onOpen` it also becomes the affordance for
+ * opening the full profile in place — the card already *is* the professional's identity on these
+ * screens, so making it the target beats bolting a "view profile" link beside it.
  */
-export function ProfessionalSummaryCard({ professional }: ProfessionalSummaryCardProps) {
-  return (
-    <Card className={styles.card}>
+export function ProfessionalSummaryCard({ professional, onOpen }: ProfessionalSummaryCardProps) {
+  const body = (
+    <>
       {professional.profileImageUrl ? (
         <img src={professional.profileImageUrl} alt="" className={styles.photo} />
       ) : (
@@ -48,7 +59,8 @@ export function ProfessionalSummaryCard({ professional }: ProfessionalSummaryCar
 
       <div className={styles.body}>
         <p className={styles.name}>{professional.fullName}</p>
-        <p className={styles.category}>{getCategoryNameHe(professional.categoryId)}</p>
+        {/* MS4 §7: compact surface -- primary trade plus "+N", never a comma-joined dump. */}
+        <p className={styles.category}>{formatCategorySummary(professional.categoryIds)}</p>
 
         <div className={styles.signals}>
           {professional.averageRating !== null ? (
@@ -71,6 +83,26 @@ export function ProfessionalSummaryCard({ professional }: ProfessionalSummaryCar
           </Badge>
         )}
       </div>
-    </Card>
+    </>
+  );
+
+  if (!onOpen) {
+    return <Card className={styles.card}>{body}</Card>;
+  }
+
+  // A button *around* the card rather than a card that becomes a button: `Card` is a `div` by
+  // design and giving the shared primitive a polymorphic `as` prop for one call site would be a
+  // bigger change than this needs. `interactive` supplies §65's hover/press feedback.
+  return (
+    <button
+      type="button"
+      className={styles.cardButton}
+      onClick={onOpen}
+      aria-label={`צפייה בפרופיל של ${professional.fullName}`}
+    >
+      <Card className={styles.card} interactive>
+        {body}
+      </Card>
+    </button>
   );
 }

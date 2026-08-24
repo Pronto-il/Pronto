@@ -51,7 +51,7 @@ function eyebrowFor(status: SosRequestStatus): string {
  */
 export function SosSelectedProfessionalPanel({ request, candidate }: SosSelectedProfessionalPanelProps) {
   const name = candidate?.fullName ?? request.selectedProfessionalName ?? 'בעל המקצוע שנבחר';
-  const area = candidate?.serviceArea ?? candidate?.city ?? null;
+  const area = candidate?.serviceRegion ?? candidate?.city ?? null;
   /**
    * The request wins over the retained candidate row, and that ordering is the fix rather than a
    * preference. `candidate` is a snapshot taken before selection and never refreshed — the
@@ -70,6 +70,7 @@ export function SosSelectedProfessionalPanel({ request, candidate }: SosSelected
           fullName={name}
           imageClassName={styles.avatar}
           fallbackClassName={styles.avatarFallback}
+          enlargeable
         />
         <div className={styles.identity}>
           <p className={styles.eyebrow}>{eyebrowFor(request.status)}</p>

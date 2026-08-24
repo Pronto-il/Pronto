@@ -71,19 +71,19 @@ export const SOS_STATUS_COPY: Record<SosRequestStatus, SosStatusCopy> = {
   },
   MATCHING: {
     title: 'מחפשים עבורך בעל מקצוע זמין עכשיו',
-    description: 'סורקים בעלי מקצוע פנויים שיכולים להגיע אליך מיד.',
+    description: 'פונים לבעלי מקצוע מתאימים באזור שלכם.',
     badgeLabel: 'סורקים',
     badgeTone: 'info',
   },
   WAITING_FOR_PROFESSIONALS: {
-    title: 'שלחנו קריאה לבעלי מקצוע באזור',
-    description: 'כל מי שיאשר שהוא פנוי להגיע יופיע כאן מיד — בלי להמתין לכולם.',
+    title: 'פונים לבעלי מקצוע באזור',
+    description: 'רק מי שמאשר שהוא יכול להגיע יופיע כאן, עם זמן ההגעה שלו. ממשיכים לחפש בינתיים.',
     badgeLabel: 'ממתינים לתשובות',
     badgeTone: 'info',
   },
   WAITING_FOR_CUSTOMER_SELECTION: {
     title: 'אפשר לבחור כבר עכשיו',
-    description: 'בחרו את בעל המקצוע שיצא אליכם. הבחירה פתוחה לזמן מוגבל.',
+    description: 'בחרו מי שיצא אליכם — הבחירה נשארת פתוחה עד שתחליטו.',
     badgeLabel: 'הבחירה פתוחה',
     badgeTone: 'primary',
   },
@@ -165,8 +165,10 @@ export const SOS_ERROR_MESSAGES: Record<string, string> = {
   SOS_ALREADY_SELECTED: 'כבר נבחר בעל מקצוע לקריאה הזו.',
   SOS_CANDIDATE_NOT_AVAILABLE: 'בעל המקצוע הזה כבר לא זמין. אפשר לבחור מישהו אחר מהרשימה.',
   SOS_INVALID_STATE: 'הבקשה השתנתה בינתיים. רגע, מרעננים את המצב.',
-  // -- search expansion ("סרוק שוב") --
+  // -- search expansion (automatic since MS3; these codes are still reachable by a stale client) --
   SOS_EXPANSION_LIMIT_REACHED: 'הרחבנו את החיפוש עד הסוף. אפשר לבחור מבין מי שכבר אישר שהוא זמין.',
+  // -- professional side --
+  SOS_ETA_LOCKED: 'זמן ההגעה נקבע בעת אישור הזמינות ולא ניתן לשינוי.',
 };
 
 /**

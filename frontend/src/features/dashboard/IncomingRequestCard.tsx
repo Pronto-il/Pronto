@@ -24,6 +24,9 @@ export interface IncomingRequestCardProps {
    * existing cards, per `DESIGN_SYSTEM.md` §91).
    */
   isNew: boolean;
+  /** Opens the inline request-details view (`RequestDetailsModal`). The whole card is the
+   *  affordance — everything except the two decision buttons, which keep their own actions. */
+  onOpenDetails: (orderId: number) => void;
 }
 
 /**
@@ -48,6 +51,7 @@ export function IncomingRequestCard({
   onAccept,
   onReject,
   isNew,
+  onOpenDetails,
 }: IncomingRequestCardProps) {
   const isProcessing = isAccepting || isRejecting;
 
@@ -59,48 +63,69 @@ export function IncomingRequestCard({
   return (
     <motion.div variants={toastTransition} initial={isNew ? 'initial' : false} animate={cardAnimate}>
       <Card className={styles.card}>
-        <div className={styles.headerRow}>
-          {issue ? (
-            <span className={styles.category}>{getCategoryNameHe(issue.categoryId)}</span>
-          ) : (
-            <span className={styles.skeleton} />
-          )}
-          {issue?.urgencyType === 'SOS' && <span className={styles.sosTag}>SOS</span>}
-        </div>
-
-        {issue && <p className={styles.description}>“{issue.description}”</p>}
-
-        {/* One line, not the full brief: this is the accept/reject card, and "what is this
-            likely to be" is the single piece of Pronto analysis that changes that decision.
-            The full brief lives on the job screen. Rendered only when a hypothesis actually
-            survived validation — a PENDING or evidence-less brief shows nothing rather than a
-            placeholder. */}
-        {issue?.prontoAnalysis?.likelyIssue && (
-          <p className={styles.analysisLine}>
-            <span className={styles.analysisLabel}>ניתוח Pronto:</span>{' '}
-            {issue.prontoAnalysis.likelyIssue.description}
-          </p>
-        )}
-
-        {issue && issue.images.length > 0 && (
-          <div className={styles.photoRow}>
-            {issue.images.map((image) => (
-              <div key={image.id} className={styles.photoThumbWrapper}>
-                <img src={image.imageUrl} alt="" className={styles.photoThumb} />
-              </div>
-            ))}
+        {/* The card body opens the full request inline (design: never leave the feed). It's a
+            `div` with button semantics rather than a real `<button>` because it wraps
+            headings, an image row and other block content a button may not contain; the two
+            decision buttons below sit outside it, so they keep their own click targets with
+            no `stopPropagation` juggling. */}
+        <div
+          className={styles.clickableBody}
+          role="button"
+          tabIndex={0}
+          aria-label="פתיחת פרטי הבקשה"
+          onClick={() => onOpenDetails(order.id)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              onOpenDetails(order.id);
+            }
+          }}
+        >
+          <div className={styles.headerRow}>
+            {issue ? (
+              <span className={styles.category}>{getCategoryNameHe(issue.categoryId)}</span>
+            ) : (
+              <span className={styles.skeleton} />
+            )}
+            {issue?.urgencyType === 'SOS' && <span className={styles.sosTag}>SOS</span>}
           </div>
-        )}
 
-        <div className={styles.timeRow}>
-          <span className={styles.timeDate}>{formatDateLabel(order.bookedStart)}</span>
-          <span className={styles.timeRange}>
-            {formatTimeLabel(order.bookedStart)}
-            {order.bookedEnd ? `–${formatTimeLabel(order.bookedEnd)}` : ''}
-          </span>
+          {issue && <p className={styles.description}>“{issue.description}”</p>}
+
+          {/* One line, not the full brief: this is the accept/reject card, and "what is this
+              likely to be" is the single piece of Pronto analysis that changes that decision.
+              The full brief now lives one tap away, in the inline details view. Rendered only
+              when a hypothesis actually survived validation — a PENDING or evidence-less brief
+              shows nothing rather than a placeholder. */}
+          {issue?.prontoAnalysis?.likelyIssue && (
+            <p className={styles.analysisLine}>
+              <span className={styles.analysisLabel}>ניתוח Pronto:</span>{' '}
+              {issue.prontoAnalysis.likelyIssue.description}
+            </p>
+          )}
+
+          {issue && issue.images.length > 0 && (
+            <div className={styles.photoRow}>
+              {issue.images.map((image) => (
+                <div key={image.id} className={styles.photoThumbWrapper}>
+                  <img src={image.imageUrl} alt="" className={styles.photoThumb} />
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className={styles.timeRow}>
+            <span className={styles.timeDate}>{formatDateLabel(order.bookedStart)}</span>
+            <span className={styles.timeRange}>
+              {formatTimeLabel(order.bookedStart)}
+              {order.bookedEnd ? `–${formatTimeLabel(order.bookedEnd)}` : ''}
+            </span>
+          </div>
+
+          <p className={styles.priceRow}>₪{order.finalPrice}</p>
+
+          <p className={styles.detailsHint}>לצפייה בכל פרטי הבקשה — לחצו על הכרטיס</p>
         </div>
-
-        <p className={styles.priceRow}>₪{order.finalPrice}</p>
 
         <div className={styles.actions}>
           <Button variant="secondary" onClick={() => onReject(order.id)} disabled={isProcessing} loading={isRejecting}>

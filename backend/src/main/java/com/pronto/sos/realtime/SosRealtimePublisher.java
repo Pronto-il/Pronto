@@ -150,10 +150,12 @@ public class SosRealtimePublisher {
             case CANDIDATES_READY -> toCustomer(request, event, SosRealtimeEventType.CANDIDATES_UPDATED,
                     data("availableCandidateCount", availableCandidateCount(request.getId())));
 
+            // No deadline in the payload any more (MS3 follow-up): the choice does not expire,
+            // so there is nothing for a client to count down to. The count is what the customer's
+            // screen actually renders.
             case CUSTOMER_SELECTION_STARTED -> toCustomer(request, event,
                     SosRealtimeEventType.CUSTOMER_SELECTION_STARTED,
-                    data("availableCandidateCount", availableCandidateCount(request.getId()),
-                            "selectionExpiresAt", request.getSelectionExpiresAt()));
+                    data("availableCandidateCount", availableCandidateCount(request.getId())));
 
             case PROFESSIONAL_SELECTED -> publishSelection(request, event);
 

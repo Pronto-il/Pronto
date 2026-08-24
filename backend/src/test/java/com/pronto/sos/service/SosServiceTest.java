@@ -52,6 +52,10 @@ import static org.mockito.Mockito.when;
  */
 class SosServiceTest {
 
+    /** MS4: `professionals` no longer stores a category or free-text place -- see the entity. */
+    private static final long SERVICE_REGION_ID = 4L;
+    private static final long BASE_CITY_ID = 40L;
+
     private static final Long CUSTOMER_ID = 1L;
     private static final Long OTHER_CUSTOMER_ID = 99L;
     private static final Long ISSUE_ID = 2L;
@@ -124,7 +128,7 @@ class SosServiceTest {
                 request.getSelectedProfessionalId() == null
                         && request.getStatus().isAcceptingProfessionalResponses()
                         && request.getSearchExpansions() < 2,
-                request.getMatchingExpiresAt(), request.getSelectionExpiresAt(),
+                request.getMatchingExpiresAt(),
                 null, null, null, null, null, null, null, null);
     }
 
@@ -170,7 +174,7 @@ class SosServiceTest {
     }
 
     private static Professional professional() {
-        Professional professional = new Professional(PROFESSIONAL_USER_ID, CATEGORY_ID, "Center",
+        Professional professional = new Professional(PROFESSIONAL_USER_ID, SERVICE_REGION_ID, BASE_CITY_ID,
                 new BigDecimal("250.00"));
         setField(professional, "id", PROFESSIONAL_ID);
         return professional;
@@ -206,14 +210,14 @@ class SosServiceTest {
                     setField(saved, "id", REQUEST_ID);
                     return saved;
                 });
-        when(sosRequestRepository.startMatching(eq(REQUEST_ID), any(), any())).thenReturn(1);
+        when(sosRequestRepository.startMatching(eq(REQUEST_ID), any(), any(), any())).thenReturn(1);
         when(sosRequestRepository.findById(REQUEST_ID))
                 .thenReturn(Optional.of(request(SosRequestStatus.MATCHING)));
 
         SosRequestResponse response = service.create(CUSTOMER_ID, createRequest());
 
         assertThat(response.id()).isEqualTo(REQUEST_ID);
-        verify(sosRequestRepository).startMatching(eq(REQUEST_ID), any(), any());
+        verify(sosRequestRepository).startMatching(eq(REQUEST_ID), any(), any(), any());
         verify(sosDispatchService).dispatch(any(SosRequest.class));
         verify(sosEventService).recordCustomer(eq(REQUEST_ID), eq(CUSTOMER_ID), eq(SosEventType.SOS_CREATED),
                 any(), eq(SosRequestStatus.CREATED), any());
@@ -231,7 +235,7 @@ class SosServiceTest {
             setField(saved, "id", REQUEST_ID);
             return saved;
         });
-        when(sosRequestRepository.startMatching(anyLong(), any(), any())).thenReturn(1);
+        when(sosRequestRepository.startMatching(anyLong(), any(), any(), any())).thenReturn(1);
         when(sosRequestRepository.findById(REQUEST_ID))
                 .thenReturn(Optional.of(request(SosRequestStatus.MATCHING)));
 
@@ -305,7 +309,6 @@ class SosServiceTest {
 
     private void stubSelectableRequest() {
         SosRequest request = request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
-        setField(request, "selectionExpiresAt", Instant.now().plusSeconds(60));
         when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(request));
         when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.ACCEPTED)));
         when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional()));
@@ -334,7 +337,7 @@ class SosServiceTest {
     }
 
     private static Professional professional(Long id, Long userId) {
-        Professional professional = new Professional(userId, CATEGORY_ID, "Center", new BigDecimal("250.00"));
+        Professional professional = new Professional(userId, SERVICE_REGION_ID, BASE_CITY_ID, new BigDecimal("250.00"));
         setField(professional, "id", id);
         return professional;
     }
@@ -544,9 +547,14 @@ class SosServiceTest {
         verify(orderRepository).saveAndFlush(any(Order.class));
     }
 
-    /** 0 rows with nobody selected means the deadline lapsed between the read and the write. */
+    /**
+     * 0 affected rows with nobody selected means the request left
+     * {@code WAITING_FOR_CUSTOMER_SELECTION} between the read and the write — cancelled, or
+     * ended because every offer lapsed. Reported as {@code SOS_WINDOW_EXPIRED} (410), which now
+     * means "this request is over", never "you took too long".
+     */
     @Test
-    void selectAfterTheWindowClosedReportsWindowExpired() {
+    void selectOnARequestThatEndedMidFlightReportsWindowExpired() {
         stubSelectableRequest();
         when(sosRequestRepository.selectProfessional(anyLong(), anyLong(), anyLong(), anyLong(), any()))
                 .thenReturn(0);
@@ -559,10 +567,12 @@ class SosServiceTest {
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.SOS_WINDOW_EXPIRED));
     }
 
+    /**
+     * A request the customer may choose from. Note what it no longer needs: a deadline. Being in
+     * {@code WAITING_FOR_CUSTOMER_SELECTION} is the whole condition since the MS3 follow-up.
+     */
     private static SosRequest selectableRequest() {
-        SosRequest request = request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
-        setField(request, "selectionExpiresAt", Instant.now().plusSeconds(60));
-        return request;
+        return request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
     }
 
     // ------------------------------------------------------------------
@@ -581,8 +591,8 @@ class SosServiceTest {
         when(sosRequestRepository.findById(REQUEST_ID))
                 .thenReturn(Optional.of(searching))
                 .thenReturn(Optional.of(expanded));
-        when(sosRequestRepository.expandSearch(eq(REQUEST_ID), eq((short) 0), eq((short) 1), eq((short) 2),
-                any(), any(), any())).thenReturn(1);
+        when(sosRequestRepository.expandSearch(eq(REQUEST_ID), eq((short) 0), eq((short) 1), eq((short) 4),
+                any(), any())).thenReturn(1);
         when(sosDispatchService.expand(any(), any())).thenReturn(4);
 
         SosRequestResponse response = service.expandSearch(CUSTOMER_ID, REQUEST_ID);
@@ -603,7 +613,7 @@ class SosServiceTest {
     void scanAgainIsAllowedWhileTheSelectionWindowIsOpen() {
         when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(selectableRequest()));
         when(sosRequestRepository.expandSearch(anyLong(), Mockito.anyShort(), Mockito.anyShort(),
-                Mockito.anyShort(), any(), any(), any())).thenReturn(1);
+                Mockito.anyShort(), any(), any())).thenReturn(1);
 
         service.expandSearch(CUSTOMER_ID, REQUEST_ID);
 
@@ -625,14 +635,14 @@ class SosServiceTest {
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.SOS_ALREADY_SELECTED));
         verify(sosDispatchService, never()).expand(any(), any());
         verify(sosRequestRepository, never()).expandSearch(anyLong(), Mockito.anyShort(), Mockito.anyShort(),
-                Mockito.anyShort(), any(), any(), any());
+                Mockito.anyShort(), any(), any());
     }
 
     /** The bound is real: at the configured maximum there is no further expansion to be had. */
     @Test
     void scanAgainAtTheConfiguredMaximumIsRefused() {
         SosRequest maxed = request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
-        setField(maxed, "searchExpansions", (short) 2);
+        setField(maxed, "searchExpansions", (short) 4);
         when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(maxed));
 
         assertThatThrownBy(() -> service.expandSearch(CUSTOMER_ID, REQUEST_ID))
@@ -655,7 +665,7 @@ class SosServiceTest {
         when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(searching));
         // The CAS succeeds once and then loses, exactly as two racing callers would see it.
         when(sosRequestRepository.expandSearch(anyLong(), Mockito.anyShort(), Mockito.anyShort(),
-                Mockito.anyShort(), any(), any(), any())).thenReturn(1, 0);
+                Mockito.anyShort(), any(), any())).thenReturn(1, 0);
         when(sosRequestRepository.findById(REQUEST_ID))
                 .thenReturn(Optional.of(searching))
                 .thenReturn(Optional.of(expandedOnce))
@@ -671,27 +681,44 @@ class SosServiceTest {
     }
 
     /**
-     * A customer who asks to keep looking must not be expired seconds later by a clock set before
-     * they asked. Both deadlines are pushed out in the same guarded write.
+     * <b>Expansion moves no deadline (MS3).</b> The three timers are independent: the scan window
+     * was fixed at activation, each offer carries its own response deadline, and the customer's
+     * decision window is the customer's. Widening the search is not a reason to move any of them
+     * — it only schedules the next widening, in the same atomic write that counts this one.
      */
     @Test
-    void scanAgainExtendsTheDeadlineItIsSearchingAgainst() {
-        properties.setMatchingWindowSeconds(150);
-        properties.setSelectionWindowSeconds(120);
+    void expansionSchedulesTheNextOneAndTouchesNoDeadline() {
+        properties.setExpansionIntervalSeconds(120);
+        properties.setMaxSearchExpansions(4);
         when(sosRequestRepository.findById(REQUEST_ID))
                 .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
         when(sosRequestRepository.expandSearch(anyLong(), Mockito.anyShort(), Mockito.anyShort(),
-                Mockito.anyShort(), any(), any(), any())).thenReturn(1);
+                Mockito.anyShort(), any(), any())).thenReturn(1);
 
         service.expandSearch(CUSTOMER_ID, REQUEST_ID);
 
-        var matching = org.mockito.ArgumentCaptor.forClass(Instant.class);
-        var selection = org.mockito.ArgumentCaptor.forClass(Instant.class);
+        var nextExpansion = org.mockito.ArgumentCaptor.forClass(Instant.class);
         var now = org.mockito.ArgumentCaptor.forClass(Instant.class);
         verify(sosRequestRepository).expandSearch(eq(REQUEST_ID), Mockito.anyShort(), Mockito.anyShort(),
-                Mockito.anyShort(), matching.capture(), selection.capture(), now.capture());
-        assertThat(matching.getValue()).isEqualTo(now.getValue().plusSeconds(150));
-        assertThat(selection.getValue()).isEqualTo(now.getValue().plusSeconds(120));
+                Mockito.anyShort(), nextExpansion.capture(), now.capture());
+        assertThat(nextExpansion.getValue()).isEqualTo(now.getValue().plusSeconds(120));
+    }
+
+    /** At the ceiling the schedule is parked (null), so the sweep stops re-reading the row. */
+    @Test
+    void theLastExpansionParksTheSchedule() {
+        properties.setMaxSearchExpansions(1);
+        when(sosRequestRepository.findById(REQUEST_ID))
+                .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
+        when(sosRequestRepository.expandSearch(anyLong(), Mockito.anyShort(), Mockito.anyShort(),
+                Mockito.anyShort(), any(), any())).thenReturn(1);
+
+        service.expandSearch(CUSTOMER_ID, REQUEST_ID);
+
+        var nextExpansion = org.mockito.ArgumentCaptor.forClass(Instant.class);
+        verify(sosRequestRepository).expandSearch(eq(REQUEST_ID), Mockito.anyShort(), Mockito.anyShort(),
+                Mockito.anyShort(), nextExpansion.capture(), any());
+        assertThat(nextExpansion.getValue()).isNull();
     }
 
     @Test
@@ -770,18 +797,41 @@ class SosServiceTest {
     // ------------------------------------------------------------------
 
     /**
-     * The backend, not a frontend timer, is the source of truth: a request read after its
-     * selection deadline is expired on that read.
+     * <b>The deadline that used to be here is gone.</b> A request sitting in
+     * {@code WAITING_FOR_CUSTOMER_SELECTION} with a candidate on it is read, and read again much
+     * later, and nothing expires it — there is no elapsed-time input to that decision any more.
      */
     @Test
-    void readingAnOverdueSelectionWindowExpiresTheRequest() {
-        SosRequest overdue = request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
-        setField(overdue, "selectionExpiresAt", Instant.now().minus(1, ChronoUnit.MINUTES));
+    void readingARequestWithACandidateNeverExpiresItHoweverLongItHasBeenOpen() {
+        SosRequest choosing = request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
+        setField(choosing, "matchingExpiresAt", Instant.now().minus(2, ChronoUnit.HOURS));
+        setField(choosing, "candidatesReadyAt", Instant.now().minus(2, ChronoUnit.HOURS));
+        when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(choosing));
+        when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(1L);
+
+        SosRequestResponse response = service.getRequest(CUSTOMER_ID, UserRole.CUSTOMER.name(), REQUEST_ID);
+
+        assertThat(response.status()).isEqualTo(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
+        verify(sosRequestRepository, never()).expireIfStatus(anyLong(), any(), any());
+        verify(sosOfferRepository, never()).closeAllOpenOffers(anyLong(), any());
+    }
+
+    /**
+     * A request that <em>has</em> run out — scan closed, nobody accepted, nothing answerable — is
+     * still expired on the read that discovers it, with the same cleanup as before: offers
+     * closed, issue reopened, customer told.
+     */
+    @Test
+    void readingARequestWithNothingLeftExpiresItOnThatRead() {
+        SosRequest spent = request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
+        setField(spent, "matchingExpiresAt", Instant.now().minus(1, ChronoUnit.MINUTES));
         when(sosRequestRepository.findById(REQUEST_ID))
-                .thenReturn(Optional.of(overdue))
+                .thenReturn(Optional.of(spent))
                 .thenReturn(Optional.of(request(SosRequestStatus.EXPIRED)));
+        when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(0L);
+        when(sosOfferRepository.existsAnswerableOffer(eq(REQUEST_ID), any())).thenReturn(false);
         when(sosRequestRepository.expireIfStatus(eq(REQUEST_ID),
-                eq(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION), any())).thenReturn(1);
+                eq(SosRequestStatus.WAITING_FOR_PROFESSIONALS), any())).thenReturn(1);
 
         SosRequestResponse response = service.getRequest(CUSTOMER_ID, UserRole.CUSTOMER.name(), REQUEST_ID);
 
@@ -793,17 +843,45 @@ class SosServiceTest {
     }
 
     /**
-     * Selecting after the deadline is refused by the lazy expiry before any write is attempted,
-     * and reported as {@code SOS_WINDOW_EXPIRED} (410) rather than a generic conflict — this is
-     * the common real failure and the customer deserves to be told what actually happened.
+     * <b>Selection long after the scan ended still works.</b> The scan window closed two hours
+     * ago and the candidate accepted just as long ago; under the old decision timer this call was
+     * a {@code 410}. It now creates the order like any other selection.
      */
     @Test
-    void selectAfterTheDeadlineIsRefusedAsWindowExpired() {
-        SosRequest overdue = request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
-        setField(overdue, "selectionExpiresAt", Instant.now().minus(1, ChronoUnit.MINUTES));
+    void selectingHoursAfterTheScanEndedStillCreatesTheAssignment() {
+        SosRequest choosing = request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION);
+        setField(choosing, "matchingExpiresAt", Instant.now().minus(2, ChronoUnit.HOURS));
+        setField(choosing, "candidatesReadyAt", Instant.now().minus(2, ChronoUnit.HOURS));
+        when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(choosing));
+        when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(1L);
+        when(sosOfferRepository.findById(OFFER_ID)).thenReturn(Optional.of(offer(SosOfferStatus.ACCEPTED)));
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional()));
+        when(orderRepository.saveAndFlush(any(Order.class))).thenAnswer(inv -> {
+            Order order = inv.getArgument(0);
+            setField(order, "id", ORDER_ID);
+            return order;
+        });
+        when(sosRequestRepository.selectProfessional(anyLong(), anyLong(), anyLong(), anyLong(), any()))
+                .thenReturn(1);
+        when(sosOfferRepository.markSelected(eq(OFFER_ID), any())).thenReturn(1);
+
+        service.selectProfessional(CUSTOMER_ID, REQUEST_ID, OFFER_ID);
+
+        verify(orderRepository).saveAndFlush(any(Order.class));
+        verify(sosRequestRepository).selectProfessional(eq(REQUEST_ID), eq(PROFESSIONAL_ID), eq(OFFER_ID),
+                eq(ORDER_ID), any());
+    }
+
+    /** A request that genuinely ended cannot be chosen from, and nothing is written attempting it. */
+    @Test
+    void selectOnAnEndedRequestIsRefusedAndWritesNothing() {
+        SosRequest spent = request(SosRequestStatus.WAITING_FOR_PROFESSIONALS);
+        setField(spent, "matchingExpiresAt", Instant.now().minus(1, ChronoUnit.MINUTES));
         when(sosRequestRepository.findById(REQUEST_ID))
-                .thenReturn(Optional.of(overdue))
+                .thenReturn(Optional.of(spent))
                 .thenReturn(Optional.of(request(SosRequestStatus.EXPIRED)));
+        when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(0L);
+        when(sosOfferRepository.existsAnswerableOffer(eq(REQUEST_ID), any())).thenReturn(false);
         when(sosRequestRepository.expireIfStatus(anyLong(), any(), any())).thenReturn(1);
 
         assertThatThrownBy(() -> service.selectProfessional(CUSTOMER_ID, REQUEST_ID, OFFER_ID))
@@ -826,11 +904,11 @@ class SosServiceTest {
                 .thenReturn(Optional.of(overdue))
                 .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_CUSTOMER_SELECTION)));
         when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(1L);
-        when(sosRequestRepository.openSelectionWindow(eq(REQUEST_ID), any(), any())).thenReturn(1);
+        when(sosRequestRepository.openSelectionWindow(eq(REQUEST_ID), any())).thenReturn(1);
 
         service.getRequest(CUSTOMER_ID, UserRole.CUSTOMER.name(), REQUEST_ID);
 
-        verify(sosRequestRepository).openSelectionWindow(eq(REQUEST_ID), any(), any());
+        verify(sosRequestRepository).openSelectionWindow(eq(REQUEST_ID), any());
         verify(sosRequestRepository, never()).expireIfStatus(anyLong(), any(), any());
     }
 
@@ -865,7 +943,7 @@ class SosServiceTest {
         when(sosRequestRepository.findById(REQUEST_ID))
                 .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
         when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(1L);
-        when(sosRequestRepository.openSelectionWindow(eq(REQUEST_ID), any(), any())).thenReturn(1);
+        when(sosRequestRepository.openSelectionWindow(eq(REQUEST_ID), any())).thenReturn(1);
 
         assertThat(service.maybeOpenSelectionWindow(REQUEST_ID, false)).isTrue();
         verify(sosEventService).recordSystem(eq(REQUEST_ID), eq(SosEventType.CANDIDATES_READY), any(), any(), any());
@@ -880,7 +958,7 @@ class SosServiceTest {
         when(sosRequestRepository.findById(REQUEST_ID))
                 .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
         when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(3L);
-        when(sosRequestRepository.openSelectionWindow(eq(REQUEST_ID), any(), any())).thenReturn(1);
+        when(sosRequestRepository.openSelectionWindow(eq(REQUEST_ID), any())).thenReturn(1);
 
         assertThat(service.maybeOpenSelectionWindow(REQUEST_ID, false)).isTrue();
     }
@@ -894,7 +972,7 @@ class SosServiceTest {
 
         assertThat(service.maybeOpenSelectionWindow(REQUEST_ID, false)).isFalse();
         assertThat(service.maybeOpenSelectionWindow(REQUEST_ID, true)).isFalse();
-        verify(sosRequestRepository, never()).openSelectionWindow(anyLong(), any(), any());
+        verify(sosRequestRepository, never()).openSelectionWindow(anyLong(), any());
     }
 
     @Test
@@ -903,35 +981,42 @@ class SosServiceTest {
                 .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
         when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED))
                 .thenReturn(1L, 0L);
-        when(sosRequestRepository.openSelectionWindow(eq(REQUEST_ID), any(), any())).thenReturn(1);
+        when(sosRequestRepository.openSelectionWindow(eq(REQUEST_ID), any())).thenReturn(1);
 
         assertThat(service.maybeOpenSelectionWindow(REQUEST_ID, true)).isTrue();
         assertThat(service.maybeOpenSelectionWindow(REQUEST_ID, true)).isFalse();
     }
 
+    /**
+     * Opening the choice writes <b>no deadline</b>. There is nothing to count down to any more:
+     * the customer's ability to choose ends when they act, not when a clock does.
+     */
     @Test
-    void selectionWindowUsesTheConfiguredDuration() {
-        properties.setSelectionWindowSeconds(90);
+    void openingTheChoiceWritesNoDeadline() {
         when(sosRequestRepository.findById(REQUEST_ID))
                 .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
         when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(3L);
-        when(sosRequestRepository.openSelectionWindow(eq(REQUEST_ID), any(), any())).thenReturn(1);
+        when(sosRequestRepository.openSelectionWindow(eq(REQUEST_ID), any())).thenReturn(1);
 
         service.maybeOpenSelectionWindow(REQUEST_ID, false);
 
-        var now = org.mockito.ArgumentCaptor.forClass(Instant.class);
-        var expires = org.mockito.ArgumentCaptor.forClass(Instant.class);
-        verify(sosRequestRepository).openSelectionWindow(eq(REQUEST_ID), now.capture(), expires.capture());
-        assertThat(expires.getValue()).isEqualTo(now.getValue().plusSeconds(90));
+        // The statement takes one instant, for `candidates_ready_at`. A second instant argument
+        // would be the deadline coming back.
+        verify(sosRequestRepository).openSelectionWindow(eq(REQUEST_ID), any());
     }
 
     // ------------------------------------------------------------------
     // Candidates
     // ------------------------------------------------------------------
 
+    /**
+     * <b>Every professional who accepted is returned (MS3).</b> The shortlist cap is gone: with
+     * the search widening by itself up to four times, a cap would routinely hide people who had
+     * said yes, and the redesign's rule is that an accepted professional stays visible and
+     * selectable until the customer decides.
+     */
     @Test
-    void candidatesAreCappedAtTheTargetCount() {
-        properties.setTargetCandidateCount(3);
+    void everyAcceptedProfessionalIsReturnedWithNoCap() {
         SosRequest request = selectableRequest();
         when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(request));
         when(sosOfferRepository.findBySosRequestIdAndStatusOrderByIdAsc(REQUEST_ID, SosOfferStatus.ACCEPTED))
@@ -941,36 +1026,13 @@ class SosServiceTest {
 
         SosCandidatesResponse response = service.getCandidates(CUSTOMER_ID, REQUEST_ID);
 
-        assertThat(response.candidates()).hasSize(3);
+        assertThat(response.candidates()).hasSize(5);
         assertThat(response.selectionOpen()).isTrue();
     }
 
-    /** Each expansion buys the shortlist one more slot, so a widened search has somewhere to put
-     *  what it finds. */
+    /** A late acceptance appears alongside the earlier ones rather than displacing any of them. */
     @Test
-    void theCandidateCapGrowsWithEachExpansion() {
-        properties.setTargetCandidateCount(3);
-        SosRequest request = selectableRequest();
-        setField(request, "searchExpansions", (short) 2);
-        when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(request));
-        when(sosOfferRepository.findBySosRequestIdAndStatusOrderByIdAsc(REQUEST_ID, SosOfferStatus.ACCEPTED))
-                .thenReturn(List.of(offer(SosOfferStatus.ACCEPTED), offer(SosOfferStatus.ACCEPTED),
-                        offer(SosOfferStatus.ACCEPTED), offer(SosOfferStatus.ACCEPTED),
-                        offer(SosOfferStatus.ACCEPTED), offer(SosOfferStatus.ACCEPTED)));
-
-        assertThat(service.getCandidates(CUSTOMER_ID, REQUEST_ID).candidates()).hasSize(5);
-    }
-
-    /**
-     * The property the expansion flow depends on: <b>a candidate already on screen is never
-     * pushed off by a faster newcomer.</b> The shortlist is filled first-come (ascending offer
-     * id) and only then sorted by ETA for display — so the two early responders survive the cap
-     * even though the late arrival has the best ETA of the three, and the display order still
-     * leads with whoever gets there soonest.
-     */
-    @Test
-    void anEarlierCandidateIsNeverEvictedByAFasterLaterOne() {
-        properties.setTargetCandidateCount(2);
+    void aLaterAcceptanceNeverDisplacesAnEarlierCandidate() {
         when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(selectableRequest()));
         when(sosOfferRepository.findBySosRequestIdAndStatusOrderByIdAsc(REQUEST_ID, SosOfferStatus.ACCEPTED))
                 .thenReturn(List.of(offerWith(201L, 40), offerWith(202L, 30), offerWith(203L, 5)));
@@ -978,7 +1040,9 @@ class SosServiceTest {
 
         SosCandidatesResponse response = service.getCandidates(CUSTOMER_ID, REQUEST_ID);
 
-        assertThat(response.candidates()).extracting(SosCandidate::offerId).containsExactly(202L, 201L);
+        // All three, soonest-arriving first.
+        assertThat(response.candidates()).extracting(SosCandidate::offerId)
+                .containsExactly(203L, 202L, 201L);
     }
 
     /** Polling before anyone has accepted is normal, not an error. */
@@ -1160,7 +1224,7 @@ class SosServiceTest {
             setField(saved, "id", REQUEST_ID);
             return saved;
         });
-        when(sosRequestRepository.startMatching(eq(REQUEST_ID), any(), any())).thenReturn(1);
+        when(sosRequestRepository.startMatching(eq(REQUEST_ID), any(), any(), any())).thenReturn(1);
         when(sosRequestRepository.findById(REQUEST_ID))
                 .thenReturn(Optional.of(request(SosRequestStatus.MATCHING)));
 

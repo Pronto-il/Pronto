@@ -1,5 +1,7 @@
 package com.pronto.users.service;
 
+import java.util.List;
+import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
@@ -38,6 +40,10 @@ import static org.mockito.Mockito.when;
  */
 class UsersServiceTest {
 
+    /** MS4: `professionals` no longer stores a category or free-text place -- see the entity. */
+    private static final long SERVICE_REGION_ID = 4L;
+    private static final long BASE_CITY_ID = 40L;
+
     private static final Long CALLER_ID = 1L;
     private static final Long PROFESSIONAL_ID = 50L;
     private static final Long CATEGORY_ID = 3L;
@@ -45,6 +51,7 @@ class UsersServiceTest {
     private UserRepository userRepository;
     private ProfessionalRepository professionalRepository;
     private StorageService storageService;
+    private ProfessionalCoverageService professionalCoverageService;
     private UsersService usersService;
 
     private final AuthenticatedUser customerCaller = new AuthenticatedUser(CALLER_ID, "CUSTOMER");
@@ -55,7 +62,22 @@ class UsersServiceTest {
         userRepository = Mockito.mock(UserRepository.class);
         professionalRepository = Mockito.mock(ProfessionalRepository.class);
         storageService = Mockito.mock(StorageService.class);
-        usersService = new UsersService(userRepository, professionalRepository, storageService);
+        professionalCoverageService = Mockito.mock(ProfessionalCoverageService.class);
+        usersService = new UsersService(userRepository, professionalRepository, storageService,
+                professionalCoverageService);
+        // MS4: every pre-existing test in this class describes an ordinary, fully-configured
+        // professional, so coverage and categories are stubbed to a sane default here; the tests
+        // that care override them per-test. ProfessionalCoverageService's own rules are covered by
+        // ProfessionalCoverageServiceTest, not by re-asserting them through every consumer.
+        Mockito.lenient().when(professionalCoverageService.load(Mockito.any()))
+                .thenReturn(new ProfessionalCoverageService.CoverageView(SERVICE_REGION_ID, "גוש דן",
+                        BASE_CITY_ID, "תל אביב", List.of(BASE_CITY_ID), List.of("תל אביב"),
+                        List.of(CATEGORY_ID)));
+        Mockito.lenient().when(professionalCoverageService.categoryIds(Mockito.anyLong()))
+                .thenReturn(List.of(CATEGORY_ID));
+        Mockito.lenient().when(professionalCoverageService.baseCityName(Mockito.any())).thenReturn("תל אביב");
+        Mockito.lenient().when(professionalCoverageService.servesCategory(Mockito.anyLong(), Mockito.anyLong()))
+                .thenReturn(true);
 
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
     }
@@ -135,7 +157,7 @@ class UsersServiceTest {
         setField(user, "id", CALLER_ID);
         when(userRepository.findById(CALLER_ID)).thenReturn(Optional.of(user));
 
-        Professional professional = new Professional(CALLER_ID, CATEGORY_ID, "תל אביב", BigDecimal.TEN);
+        Professional professional = new Professional(CALLER_ID, SERVICE_REGION_ID, BASE_CITY_ID, BigDecimal.TEN);
         setField(professional, "id", PROFESSIONAL_ID);
         professional.setProfileImageKey("professionals/50/profile/abc.jpg");
         when(professionalRepository.findByUserId(CALLER_ID)).thenReturn(Optional.of(professional));
@@ -154,7 +176,7 @@ class UsersServiceTest {
         setField(user, "id", CALLER_ID);
         when(userRepository.findById(CALLER_ID)).thenReturn(Optional.of(user));
 
-        Professional professional = new Professional(CALLER_ID, CATEGORY_ID, "תל אביב", BigDecimal.TEN);
+        Professional professional = new Professional(CALLER_ID, SERVICE_REGION_ID, BASE_CITY_ID, BigDecimal.TEN);
         setField(professional, "id", PROFESSIONAL_ID);
         when(professionalRepository.findByUserId(CALLER_ID)).thenReturn(Optional.of(professional));
 

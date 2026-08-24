@@ -82,13 +82,14 @@ public class DemoDataSeeder implements ApplicationRunner {
 
         long startedAt = System.currentTimeMillis();
         DemoDatasetWriter.SeedSummary summary = writer.seed();
-        log.info("demo.seed.done professionals={} bookable={} pending={} rejected={} approvedIncomplete={} "
-                        + "sosAvailable={} customers={} orders={} reviews={} favorites={} perCategory=[{}] "
-                        + "elapsedMs={}",
-                summary.professionals(), summary.bookable(), summary.pending(), summary.rejected(),
-                summary.approvedIncomplete(), summary.sosAvailable(), summary.customers(),
-                summary.orders(), summary.reviews(), summary.favorites(), summary.perCategory(),
-                System.currentTimeMillis() - startedAt);
+        log.info("demo.seed.done professionals={} bookable={} multiCategory={} pending={} rejected={} "
+                        + "approvedIncomplete={} sosAvailable={} customers={} regions={} orders={} reviews={} "
+                        + "favorites={} withProfilePhoto={} noProfilePhoto={} perCategory=[{}] elapsedMs={}",
+                summary.professionals(), summary.bookable(), summary.multiCategory(), summary.pending(),
+                summary.rejected(), summary.approvedIncomplete(), summary.sosAvailable(), summary.customers(),
+                summary.regions(), summary.orders(), summary.reviews(), summary.favorites(),
+                summary.withProfilePhoto(), summary.professionals() - summary.withProfilePhoto(),
+                summary.perCategory(), System.currentTimeMillis() - startedAt);
         log.info("demo.seed.notice This database now contains SYNTHETIC data only (accounts under @{}). "
                 + "It must never be treated as, promoted to, or copied into production data.",
                 DemoDatasetWriter.DEMO_EMAIL_DOMAIN);

@@ -1,0 +1,25 @@
+/*
+ * ZoomableImage — a bare, shape-only button around a caller-styled thumbnail. See
+ * `ZoomableImage.tsx`'s doc comment.
+ *
+ * Deliberately carries no size: the thumbnail inside it is already sized by whichever surface
+ * rendered it, and the button shrink-wraps that. Adding dimensions here would silently override
+ * five different avatar sizes.
+ */
+
+.trigger {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  /* Every consumer today is a circular avatar; a square one passes its own `className`. */
+  border-radius: 50%;
+  /* Without this the inline image contributes a descender gap and the circle sits off-centre. */
+  line-height: 0;
+  cursor: zoom-in;
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}

@@ -1,6 +1,7 @@
 package com.pronto.bookings.repository;
 
 import com.pronto.bookings.dto.ProfessionalCard;
+import com.pronto.professionals.ProfessionalCategoryMatch;
 import com.pronto.professionals.ProfessionalEligibility;
 import com.pronto.professionals.entity.Professional;
 import org.springframework.data.jpa.repository.Query;
@@ -40,9 +41,9 @@ import java.util.List;
 public interface ProfessionalListingRepository extends Repository<Professional, Long> {
 
     /**
-     * §2.2 step 6: {@code professionals} joined to {@code users} where {@code category_id =
-     * issue.categoryId} and {@code users.deleted_at IS NULL}, ordered by {@code base_price
-     * ASC} (cheapest first — judgment call, §7 of the contract doc).
+     * §2.2 step 6: {@code professionals} joined to {@code users}, restricted to professionals
+     * who serve {@code issue.categoryId}, with {@code users.deleted_at IS NULL}, ordered by
+     * {@code base_price ASC} (cheapest first — judgment call, §7 of the contract doc).
      *
      * <p><b>MS1:</b> additionally filtered by {@link ProfessionalEligibility#ELIGIBLE_JPQL} —
      * approval plus completed onboarding, concatenated from the one constant that also drives
@@ -51,15 +52,30 @@ public interface ProfessionalListingRepository extends Repository<Professional, 
      * surface, and MS0 recorded that it had no approval filter of any kind. The
      * {@code u.deletedAt IS NULL} clause is left where it already was, outside the fragment, per
      * that constant's alias/scope contract.
+     *
+     * <p><b>MS4:</b> the category filter is no longer {@code p.categoryId = :categoryId} — a
+     * professional holds a <em>set</em> of categories now, and is eligible if the requested one
+     * is anywhere in it, not only if it is their first. The membership test is concatenated from
+     * {@link ProfessionalCategoryMatch#SERVES_CATEGORY_JPQL}, the same constant the SOS hard
+     * filter uses, so the two surfaces cannot answer "does this plumber-and-handyman serve
+     * handyman work?" differently. The region/base-city labels are joined in from the closed
+     * {@code service_regions}/{@code service_cities} catalogue via {@code LEFT JOIN} — left,
+     * because {@code V44} leaves both ids null on any pre-MS4 row whose free text named no
+     * recognisable place, and dropping those professionals out of the listing would be a
+     * de-listing this migration explicitly refused to perform.
      */
-    @Query("SELECT new com.pronto.bookings.dto.ProfessionalCard(p.id, u.fullName, p.serviceArea, "
-            + "p.basePrice, p.reliabilityScore, p.city, p.profileImageKey, "
+    @Query("SELECT new com.pronto.bookings.dto.ProfessionalCard(p.id, u.fullName, sr.nameHe, "
+            + "p.basePrice, p.reliabilityScore, sc.nameHe, p.profileImageKey, "
             + "(SELECT AVG(r.rating) FROM com.pronto.reviews.entity.Review r WHERE r.professionalId = p.id), "
             + "(SELECT COUNT(r) FROM com.pronto.reviews.entity.Review r WHERE r.professionalId = p.id), "
             + "(SELECT COUNT(f) FROM com.pronto.favorites.entity.Favorite f "
             + "WHERE f.customerId = :customerId AND f.professionalId = p.id)) "
-            + "FROM Professional p, com.pronto.users.entity.User u "
-            + "WHERE p.userId = u.id AND p.categoryId = :categoryId AND u.deletedAt IS NULL "
+            + "FROM Professional p "
+            + "JOIN com.pronto.users.entity.User u ON u.id = p.userId "
+            + "LEFT JOIN com.pronto.locations.entity.ServiceRegion sr ON sr.id = p.serviceRegionId "
+            + "LEFT JOIN com.pronto.locations.entity.ServiceCity sc ON sc.id = p.baseCityId "
+            + "WHERE u.deletedAt IS NULL "
+            + "AND " + ProfessionalCategoryMatch.SERVES_CATEGORY_JPQL + " "
             + "AND " + ProfessionalEligibility.ELIGIBLE_JPQL + " "
             + "ORDER BY p.basePrice ASC")
     List<ProfessionalCard> listByCategory(@Param("categoryId") Long categoryId, @Param("customerId") Long customerId);

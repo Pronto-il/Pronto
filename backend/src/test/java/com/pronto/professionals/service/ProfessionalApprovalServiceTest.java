@@ -1,5 +1,6 @@
 package com.pronto.professionals.service;
 
+import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
@@ -46,6 +47,11 @@ import static org.mockito.Mockito.when;
  */
 class ProfessionalApprovalServiceTest {
 
+    /** MS4: `professionals` no longer stores a category or free-text place -- see the entity. */
+    private static final long SERVICE_REGION_ID = 4L;
+    private static final long BASE_CITY_ID = 40L;
+    private static final long CATEGORY_ID = 3L;
+
     private static final Long PROFESSIONAL_ID = 50L;
     private static final Long PROFESSIONAL_USER_ID = 10L;
     private static final Long OPERATOR_ID = 7L;
@@ -54,6 +60,7 @@ class ProfessionalApprovalServiceTest {
     private ProfessionalRepository professionalRepository;
     private ProfessionalSubServiceRepository professionalSubServiceRepository;
     private UserRepository userRepository;
+    private ProfessionalCoverageService professionalCoverageService;
     private StorageClient storageClient;
     private ProfessionalApprovalService service;
     private final AuthenticatedUser operator = new AuthenticatedUser(OPERATOR_ID, UserRole.ADMIN.name());
@@ -63,10 +70,24 @@ class ProfessionalApprovalServiceTest {
         professionalRepository = Mockito.mock(ProfessionalRepository.class);
         professionalSubServiceRepository = Mockito.mock(ProfessionalSubServiceRepository.class);
         userRepository = Mockito.mock(UserRepository.class);
+        professionalCoverageService = Mockito.mock(ProfessionalCoverageService.class);
         storageClient = Mockito.mock(StorageClient.class);
         StorageService storageService = new StorageService(storageClient, Optional.empty(), 300L);
         service = new ProfessionalApprovalService(professionalRepository, professionalSubServiceRepository,
-                userRepository, storageService);
+                userRepository, storageService, professionalCoverageService);
+        // MS4: every pre-existing test in this class describes an ordinary, fully-configured
+        // professional, so coverage and categories are stubbed to a sane default here; the tests
+        // that care override them per-test. ProfessionalCoverageService's own rules are covered by
+        // ProfessionalCoverageServiceTest, not by re-asserting them through every consumer.
+        Mockito.lenient().when(professionalCoverageService.load(Mockito.any()))
+                .thenReturn(new ProfessionalCoverageService.CoverageView(SERVICE_REGION_ID, "גוש דן",
+                        BASE_CITY_ID, "תל אביב", List.of(BASE_CITY_ID), List.of("תל אביב"),
+                        List.of(CATEGORY_ID)));
+        Mockito.lenient().when(professionalCoverageService.categoryIds(Mockito.anyLong()))
+                .thenReturn(List.of(CATEGORY_ID));
+        Mockito.lenient().when(professionalCoverageService.baseCityName(Mockito.any())).thenReturn("תל אביב");
+        Mockito.lenient().when(professionalCoverageService.servesCategory(Mockito.anyLong(), Mockito.anyLong()))
+                .thenReturn(true);
 
         when(userRepository.findById(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(professionalUser()));
         when(professionalSubServiceRepository.findByProfessionalId(PROFESSIONAL_ID)).thenReturn(List.of());
@@ -92,7 +113,7 @@ class ProfessionalApprovalServiceTest {
 
     private Professional pendingProfessional() {
         Professional professional =
-                new Professional(PROFESSIONAL_USER_ID, 3L, "Tel Aviv", new BigDecimal("250.00"));
+                new Professional(PROFESSIONAL_USER_ID, SERVICE_REGION_ID, BASE_CITY_ID, new BigDecimal("250.00"));
         setField(professional, "id", PROFESSIONAL_ID);
         professional.setVerificationDocumentKey(DOCUMENT_KEY);
         return professional;

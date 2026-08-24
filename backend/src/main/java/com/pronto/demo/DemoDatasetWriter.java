@@ -29,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -92,12 +93,14 @@ class DemoDatasetWriter {
 
     /**
      * Tables {@link #reset()} never touches: Flyway's own history (deleting it would make the
-     * database claim it has no schema) and the two reference tables that are schema-owned seed
+     * database claim it has no schema) and the reference tables that are schema-owned seed
      * data, not demo data — {@code categories} and {@code sub_services} arrive via {@code V10},
-     * {@code V29} and {@code V31}, and every professional row points at them.
+     * {@code V29} and {@code V31}, {@code service_regions}/{@code service_cities} via
+     * {@code V43}, and every professional row points at them.
      */
     private static final Set<String> PRESERVED_TABLES =
-            Set.of("flyway_schema_history", "categories", "sub_services");
+            Set.of("flyway_schema_history", "categories", "sub_services",
+                    "service_regions", "service_cities");
 
     /**
      * All wall-clock times in the dataset are built in Israel local time — the same zone
@@ -141,7 +144,38 @@ class DemoDatasetWriter {
     };
 
     /** How many demo customers exist to file issues, hold orders and write the reviews. */
-    private static final int CUSTOMER_COUNT = 14;
+    private static final int CUSTOMER_COUNT = 20;
+
+    /**
+     * MS4: how many professionals hold more than one category, and how many each holds.
+     *
+     * <p>Cycled by index, so the multi-category cohort is a deterministic mix of two- and
+     * three-trade professionals rather than a uniform block. Their category <em>combinations</em>
+     * come from {@link #MULTI_CATEGORY_COMBINATIONS} — real-world adjacent trades, not arbitrary
+     * pairs, because a demo where somebody is a locksmith and a painter tells a QA engineer
+     * nothing about whether multi-category matching behaves sensibly.
+     */
+    private static final int MULTI_CATEGORY_COHORT_SIZE = 22;
+
+    /**
+     * The trade combinations the multi-category cohort is built from, by {@code categories.code}.
+     * Every pair is one a real Israeli tradesperson plausibly offers together, and the list
+     * deliberately includes the brief's own worked example (plumbing + handyman) so the MS4
+     * matching QA case can be run against the seeded data directly.
+     *
+     * <p>A combination naming a category the database does not have is skipped rather than
+     * failing the seed — same "the database owns the catalogue, this file only dresses it up"
+     * contract {@link DemoContent#forCategory} documents.
+     */
+    private static final List<List<String>> MULTI_CATEGORY_COMBINATIONS = List.of(
+            List.of("plumbing", "general_handyman"),
+            List.of("electrical", "ac_hvac"),
+            List.of("general_handyman", "painting"),
+            List.of("appliance_repair", "electrical"),
+            List.of("plumbing", "ac_hvac"),
+            List.of("locksmith", "general_handyman"),
+            List.of("electrical", "appliance_repair", "ac_hvac"),
+            List.of("plumbing", "general_handyman", "painting"));
 
     private final JdbcTemplate jdbcTemplate;
     private final PasswordEncoder passwordEncoder;
@@ -213,6 +247,11 @@ class DemoDatasetWriter {
             throw new IllegalStateException("Refusing to seed: no usable category was found. The Flyway "
                     + "migrations must have run (and seeded categories/sub_services) first.");
         }
+        List<RegionSeed> regions = loadRegions();
+        if (regions.isEmpty()) {
+            throw new IllegalStateException("Refusing to seed: no usable service region was found. The Flyway "
+                    + "migrations must have run (and seeded service_regions/service_cities) first.");
+        }
 
         // One BCrypt evaluation for the whole run. See DemoDataProperties#password.
         String passwordHash = passwordEncoder.encode(properties.getPassword());
@@ -224,57 +263,103 @@ class DemoDatasetWriter {
 
         List<BookableProfessional> bookable = new ArrayList<>();
         Map<String, int[]> perCategory = new LinkedHashMap<>();
+        categories.forEach(category -> perCategory.put(category.code(), new int[]{0, 0}));
         int index = 0;
         int sosAvailableTotal = 0;
 
-        // ---- the bookable population: one pool per category, read from the database ----
+        // ---- the bookable population, part 1: single-category pools, one per category as the
+        //      database actually has them ----
         for (int position = 0; position < categories.size(); position++) {
             CategorySeed category = categories.get(position);
             int poolSize = bookablePoolSize(position);
             int sosCount = sosAvailableCount(position, poolSize);
             for (int i = 0; i < poolSize; i++) {
-                SeededProfessional seeded = insertProfessional(index++, passwordHash, category,
-                        "APPROVED", adminUserId, null, true, true, true, i < sosCount);
+                SeededProfessional seeded = insertProfessional(index++, passwordHash, List.of(category),
+                        regions, "APPROVED", adminUserId, null, true, true, true, i < sosCount);
                 bookable.add(new BookableProfessional(seeded.id(), category, seeded.basePrice()));
             }
-            perCategory.put(category.code(), new int[]{poolSize, sosCount});
+            perCategory.get(category.code())[0] += poolSize;
+            perCategory.get(category.code())[1] += sosCount;
             sosAvailableTotal += sosCount;
+        }
+
+        // ---- part 2 (MS4): professionals who serve several trades. Seeded as a separate cohort
+        //      rather than by widening the pools above, so "how many professionals does category
+        //      X have?" stays answerable and every combination in MULTI_CATEGORY_COMBINATIONS is
+        //      guaranteed to appear rather than emerging by chance. ----
+        int multiCategory = 0;
+        for (int i = 0; i < MULTI_CATEGORY_COHORT_SIZE; i++) {
+            List<CategorySeed> combination = resolveCombination(
+                    MULTI_CATEGORY_COMBINATIONS.get(i % MULTI_CATEGORY_COMBINATIONS.size()), categories);
+            if (combination.size() < 2) {
+                continue;   // the database does not have these categories; nothing honest to seed
+            }
+            boolean sosAvailable = i % 3 != 2;   // two in three, so SOS has multi-trade candidates too
+            SeededProfessional seeded = insertProfessional(index++, passwordHash, combination, regions,
+                    "APPROVED", adminUserId, null, true, true, true, sosAvailable);
+            // The review history hangs off one category's content pack; the first is as good a
+            // choice as any and keeps issue descriptions coherent with the order they back.
+            bookable.add(new BookableProfessional(seeded.id(), combination.get(0), seeded.basePrice()));
+            multiCategory++;
+            for (CategorySeed category : combination) {
+                perCategory.get(category.code())[0]++;
+                if (sosAvailable) {
+                    perCategory.get(category.code())[1]++;
+                }
+            }
+            if (sosAvailable) {
+                sosAvailableTotal++;
+            }
         }
 
         // ---- the approval-lifecycle cohort: what the operator queue and D4 need to be
         //      demonstrable. None of these is bookable, each for a different, real reason. ----
         int pending = 0;
         for (int i = 0; i < 6; i++) { // awaiting review, onboarding complete
-            insertProfessional(index++, passwordHash, categories.get(i % categories.size()),
-                    "PENDING", null, null, true, true, true, false);
+            insertProfessional(index++, passwordHash, List.of(categories.get(i % categories.size())),
+                    regions, "PENDING", null, null, true, true, true, false);
             pending++;
         }
         int rejected = 0;
         for (int i = 0; i < 2; i++) { // reviewed and refused
-            insertProfessional(index++, passwordHash, categories.get((i + 2) % categories.size()),
-                    "REJECTED", adminUserId,
+            insertProfessional(index++, passwordHash, List.of(categories.get((i + 2) % categories.size())),
+                    regions, "REJECTED", adminUserId,
                     "המסמך שהועלה אינו תעודה בתוקף. יש להעלות תעודה מקצועית עדכנית ולהגיש שוב.",
                     true, true, true, false);
             rejected++;
         }
         // APPROVED, and still not bookable — the point of D4. One row per missing onboarding element.
-        insertProfessional(index++, passwordHash, categories.get(0), "APPROVED", adminUserId, null,
-                true, true, false, false);   // no sub-service under their own category
-        insertProfessional(index++, passwordHash, categories.get(1 % categories.size()), "APPROVED",
-                adminUserId, null, true, false, true, false);   // no enabled working-hours day
-        insertProfessional(index++, passwordHash, categories.get(2 % categories.size()), "APPROVED",
-                adminUserId, null, false, true, true, false);   // no verification document
+        insertProfessional(index++, passwordHash, List.of(categories.get(0)), regions, "APPROVED",
+                adminUserId, null, true, true, false, false);   // no sub-service under their own category
+        insertProfessional(index++, passwordHash, List.of(categories.get(1 % categories.size())), regions,
+                "APPROVED", adminUserId, null, true, false, true, false);   // no enabled working-hours day
+        insertProfessional(index++, passwordHash, List.of(categories.get(2 % categories.size())), regions,
+                "APPROVED", adminUserId, null, false, true, true, false);   // no verification document
         int approvedIncomplete = 3;
 
         int[] history = seedReviewHistory(bookable, customers);
         int favorites = seedFavorites(customers, bookable);
 
+        // Counted from the rows themselves rather than from the mapping's size, so the number the
+        // seed reports is the number a QA engineer would get by querying the database.
+        Integer withPhoto = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM professionals WHERE profile_image_key IS NOT NULL", Integer.class);
+
         String perCategoryReport = perCategory.entrySet().stream()
                 .map(entry -> entry.getKey() + "=" + entry.getValue()[0] + "(sos:" + entry.getValue()[1] + ")")
                 .collect(Collectors.joining(", "));
 
-        return new SeedSummary(index, bookable.size(), pending, rejected, approvedIncomplete,
-                customers.size(), history[0], history[1], favorites, sosAvailableTotal, perCategoryReport);
+        return new SeedSummary(index, bookable.size(), multiCategory, pending, rejected, approvedIncomplete,
+                customers.size(), history[0], history[1], favorites, sosAvailableTotal, perCategoryReport,
+                regions.size(), withPhoto == null ? 0 : withPhoto);
+    }
+
+    /** The {@link CategorySeed}s named by a combination, in order, skipping any the database lacks. */
+    private static List<CategorySeed> resolveCombination(List<String> codes, List<CategorySeed> categories) {
+        return codes.stream()
+                .map(code -> categories.stream().filter(c -> c.code().equals(code)).findFirst().orElse(null))
+                .filter(java.util.Objects::nonNull)
+                .toList();
     }
 
     // ------------------------------------------------------------------ categories
@@ -309,8 +394,88 @@ class DemoDatasetWriter {
     }
 
     /**
-     * How many bookable professionals the category at {@code position} (0-based, by
-     * {@code display_order}) gets.
+     * The service regions, and their cities, <b>as {@code V43} actually seeded them</b> — same
+     * read-the-database-not-this-file contract as {@link #loadCategories()}, and for the same
+     * reason: a hardcoded region list here would become a second, competing definition of where
+     * Pronto operates the first time a migration touched the catalogue.
+     *
+     * <p>A region with no cities cannot place a professional, so it is skipped with a warning
+     * rather than silently producing rows with a base city drawn from nowhere.
+     */
+    private List<RegionSeed> loadRegions() {
+        Map<Long, List<CitySeed>> citiesByRegion = new LinkedHashMap<>();
+        for (Object[] row : jdbcTemplate.query(
+                "SELECT id, region_id, name_he FROM service_cities ORDER BY region_id, display_order, id",
+                (rs, rowNum) -> new Object[]{rs.getLong(1), rs.getLong(2), rs.getString(3)})) {
+            citiesByRegion.computeIfAbsent((Long) row[1], key -> new ArrayList<>())
+                    .add(new CitySeed((Long) row[0], (String) row[2]));
+        }
+
+        List<RegionSeed> regions = new ArrayList<>();
+        for (Object[] row : jdbcTemplate.query(
+                "SELECT id, code FROM service_regions ORDER BY display_order, id",
+                (rs, rowNum) -> new Object[]{rs.getLong(1), rs.getString(2)})) {
+            List<CitySeed> cities = citiesByRegion.getOrDefault((Long) row[0], List.of());
+            if (cities.isEmpty()) {
+                log.warn("demo.seed.region-skipped code={} reason=no-cities", row[1]);
+                continue;
+            }
+            regions.add(new RegionSeed((Long) row[0], (String) row[1], cities));
+        }
+        return regions;
+    }
+
+    /**
+     * The region the dataset concentrates in: גוש דן, because its first city is
+     * {@code DemoContent.CITIES.get(0)} — the city a majority of demo <em>customers</em> also
+     * live in. That coincidence is the whole point; see {@link DemoContent#CITIES} for why
+     * exercising both branches of {@code ApproximateDistanceEtaStrategy} is a requirement of this
+     * dataset rather than a detail.
+     */
+    private static RegionSeed primaryRegion(List<RegionSeed> regions) {
+        return regions.stream()
+                .filter(region -> "gush_dan".equals(region.code()))
+                .findFirst()
+                .orElse(regions.get(0));
+    }
+
+    /** Three professionals in five are based in {@link #primaryRegion}; the rest spread evenly. */
+    private static RegionSeed regionFor(List<RegionSeed> regions, int index) {
+        RegionSeed primary = primaryRegion(regions);
+        if (index % 5 < 3 || regions.size() == 1) {
+            return primary;
+        }
+        List<RegionSeed> others = regions.stream()
+                .filter(region -> !region.code().equals(primary.code()))
+                .toList();
+        return others.get((index / 5) % others.size());
+    }
+
+    /**
+     * Two to five cities from {@code region}, contiguous in catalogue order and wrapping, so the
+     * set is always distinct and always inside the one region a professional declared —
+     * {@code ServiceCoverageValidator} enforces exactly that on the real registration path, and
+     * seed data that could not pass the application's own validator would be worthless for QA.
+     *
+     * <p>The first entry becomes the base city, and for the same three-in-five indices that land
+     * in {@link #primaryRegion} it is that region's first city — so a majority of professionals
+     * are based in the same city as a majority of customers.
+     */
+    private static List<CitySeed> serviceCitiesFor(RegionSeed region, int index) {
+        List<CitySeed> available = region.cities();
+        int start = index % 5 < 3 ? 0 : (index / 3) % available.size();
+        int count = Math.min(available.size(), 2 + index % 4);
+        List<CitySeed> chosen = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            chosen.add(available.get((start + i) % available.size()));
+        }
+        return chosen;
+    }
+
+    /**
+     * How many <em>single-category</em> bookable professionals the category at {@code position}
+     * (0-based, by {@code display_order}) gets. The multi-category cohort adds to several
+     * categories on top of this.
      *
      * <p>The first category deliberately gets far more than the rest, and that number is not
      * arbitrary: the SOS defaults are {@code candidate-pool-size=8} and
@@ -319,14 +484,21 @@ class DemoDatasetWriter {
      * eligible, SOS-available professionals in one category. 20 with 18 SOS-available produces 8
      * offers initially, 8 more on the first expansion and the final 2 on the second — every wave
      * finding somebody new, with no SOS rule bent to make it happen.
+     *
+     * <p><b>MS4</b> raises the floor for every other category from 7 to 12. The old figure was
+     * enough to prove a listing rendered; it was not enough to exercise sorting, filtering or a
+     * multi-candidate SOS wave in a category that is not the first one — which is what MS4 §16
+     * asks for. It is deliberately flat rather than tapering: "category 7 has fewer
+     * professionals" was an artifact of the old {@code 11 - position} formula, not a product
+     * statement, and it made the last categories in the catalogue the least testable.
      */
     private static int bookablePoolSize(int position) {
-        return position == 0 ? 20 : Math.max(7, 11 - position);
+        return position == 0 ? 20 : 12;
     }
 
-    /** SOS-available share: nearly all of the first category (see {@link #bookablePoolSize}), half elsewhere. */
+    /** SOS-available share: nearly all of the first category (see {@link #bookablePoolSize}), two-thirds elsewhere. */
     private static int sosAvailableCount(int position, int poolSize) {
-        return position == 0 ? poolSize - 2 : (poolSize + 1) / 2;
+        return position == 0 ? poolSize - 2 : (poolSize * 2) / 3;
     }
 
     // ------------------------------------------------------------------ people
@@ -349,16 +521,26 @@ class DemoDatasetWriter {
      * Creates one professional and everything a professional owns. The three onboarding booleans
      * are exactly the elements {@code ProfessionalEligibility} tests, exposed individually so the
      * lifecycle cohort can omit one at a time and prove the rule bites.
+     *
+     * <p><b>MS4:</b> takes a <em>list</em> of categories (one for the single-trade pools, two or
+     * three for the multi-category cohort) and writes them to {@code professional_categories};
+     * place is a {@code service_regions}/{@code service_cities} selection rather than free text,
+     * with the whole coverage set written to {@code professional_service_cities} and the base
+     * city recorded on the row itself.
      */
-    private SeededProfessional insertProfessional(int index, String passwordHash, CategorySeed category,
-                                                    String approvalStatus, Long reviewerUserId,
-                                                    String rejectionReason, boolean withDocument,
-                                                    boolean withWorkingHours, boolean withSubServices,
-                                                    boolean sosAvailable) {
-        CategoryContent content = DemoContent.forCategory(category.code());
+    private SeededProfessional insertProfessional(int index, String passwordHash, List<CategorySeed> categories,
+                                                    List<RegionSeed> regions, String approvalStatus,
+                                                    Long reviewerUserId, String rejectionReason,
+                                                    boolean withDocument, boolean withWorkingHours,
+                                                    boolean withSubServices, boolean sosAvailable) {
+        CategorySeed primary = categories.get(0);
+        CategoryContent content = DemoContent.forCategory(primary.code());
         String name = fullName(index);
-        String city = cityFor(index);
         BigDecimal basePrice = basePrice(content, index);
+
+        RegionSeed region = regionFor(regions, index);
+        List<CitySeed> serviceCities = serviceCitiesFor(region, index);
+        CitySeed baseCity = serviceCities.get(0);
 
         long userId = insertUser(name, "demo.pro." + (index + 1) + "@" + DEMO_EMAIL_DOMAIN,
                 passwordHash, "PROFESSIONAL", null, null, null, null);
@@ -367,23 +549,37 @@ class DemoDatasetWriter {
         OffsetDateTime reviewedAt = reviewed ? OffsetDateTime.now().minusDays(5 + index % 40) : null;
 
         Long professionalId = jdbcTemplate.queryForObject("""
-                        INSERT INTO professionals (user_id, category_id, service_area, approval_status,
-                                reliability_score, base_price, bio, city, verification_document_key,
+                        INSERT INTO professionals (user_id, service_region_id, base_city_id, approval_status,
+                                reliability_score, base_price, bio, verification_document_key,
                                 approval_reviewed_at, approval_reviewed_by, approval_rejection_reason)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         RETURNING id""",
                 Long.class,
-                userId, category.id(), city + " והסביבה", approvalStatus,
+                userId, region.id(), baseCity.id(), approvalStatus,
                 reliabilityScore(index), basePrice,
-                content.bios().get(index % content.bios().size()), city,
+                content.bios().get(index % content.bios().size()),
                 withDocument ? uploadVerificationDocument(userId, name) : null,
                 reviewedAt, reviewed ? reviewerUserId : null, rejectionReason);
+
+        jdbcTemplate.batchUpdate(
+                "INSERT INTO professional_categories (professional_id, category_id) VALUES (?, ?)",
+                categories.stream().map(c -> new Object[]{professionalId, c.id()}).toList());
+        jdbcTemplate.batchUpdate(
+                "INSERT INTO professional_service_cities (professional_id, city_id) VALUES (?, ?)",
+                serviceCities.stream().map(c -> new Object[]{professionalId, c.id()}).toList());
+
+        // MS4 §15: a marketplace where every professional has a photo cannot demonstrate the
+        // no-photo fallback the cards were built with, and one where none does cannot demonstrate
+        // the photo. Which of the two a given professional shows is decided, per seed index, by
+        // DemoProfilePhotos — not by an arithmetic rule here, because the choice is now bound to a
+        // specific photograph of a specific apparent trade and gender presentation.
+        uploadProfileImage(professionalId, index);
 
         if (withWorkingHours) {
             insertWorkingHours(professionalId, index);
         }
         if (withSubServices) {
-            insertSubServices(professionalId, category, index);
+            insertSubServices(professionalId, categories, index);
         }
         // data-model.md §2.6: one sos_availability row per professional from creation, exactly as
         // AuthService#register does it — an absent row is excluded by SosCandidateRepository's
@@ -422,17 +618,23 @@ class DemoDatasetWriter {
     }
 
     /**
-     * Two to four sub-services, taken from {@code category}'s own list and nowhere else. The
-     * eligibility predicate joins {@code sub_services.category_id = p.category_id}, so a
-     * cross-category selection here would produce a professional who looks fully onboarded and is
-     * still, correctly, invisible.
+     * Two to four sub-services from <em>each</em> of the professional's own categories, and
+     * nowhere else. The eligibility predicate requires a sub-service under a category the
+     * professional actually holds, so a cross-category selection here would produce a
+     * professional who looks fully onboarded and is still, correctly, invisible.
+     *
+     * <p>Per category, not merely per professional: a plumber-and-handyman with sub-services only
+     * under plumbing would pass eligibility while looking, on their profile, like they had never
+     * finished setting up the second trade.
      */
-    private void insertSubServices(long professionalId, CategorySeed category, int index) {
-        List<Long> available = category.subServiceIds();
-        int count = Math.min(available.size(), 2 + index % 3);
+    private void insertSubServices(long professionalId, List<CategorySeed> categories, int index) {
         Set<Long> chosen = new LinkedHashSet<>();
-        for (int i = 0; i < count; i++) {
-            chosen.add(available.get((index + i) % available.size()));
+        for (int c = 0; c < categories.size(); c++) {
+            List<Long> available = categories.get(c).subServiceIds();
+            int count = Math.min(available.size(), 2 + (index + c) % 3);
+            for (int i = 0; i < count; i++) {
+                chosen.add(available.get((index + c + i) % available.size()));
+            }
         }
         jdbcTemplate.batchUpdate(
                 "INSERT INTO professional_sub_services (professional_id, sub_service_id) VALUES (?, ?)",
@@ -557,6 +759,34 @@ class DemoDatasetWriter {
         return key;
     }
 
+    /**
+     * Gives the professional at {@code index} their fictional profile photograph, if
+     * {@link DemoProfilePhotos} assigns them one — writing it through the real
+     * {@link StorageClient} and under the same {@code professionals/{id}/profile/...} key
+     * template {@code ProfessionalsService#uploadProfileImage} uses in production, so what the
+     * cards then exercise is the production presigned-URL path and not a demo shortcut.
+     *
+     * <p>A professional with no assignment is left with {@code profile_image_key = null} and
+     * nothing is written to storage: that is the no-photo state, and it has to be the genuine
+     * absence of a key rather than a key pointing at a placeholder, or the fallback UI would
+     * never render.
+     *
+     * <p>The key is deterministic (no {@code UUID}), so re-seeding overwrites the same object
+     * instead of accumulating orphans, and the same professional keeps the same face across
+     * every reset. The extension is real: {@code LocalDiskStorageClient} re-derives the
+     * {@code Content-Type} it serves from the key's extension, so a {@code .jpg} object must not
+     * be filed under a {@code .png} key.
+     */
+    private void uploadProfileImage(long professionalId, int index) {
+        Optional<String> fileName = DemoProfilePhotos.fileFor(index);
+        if (fileName.isEmpty()) {
+            return;
+        }
+        String key = "professionals/" + professionalId + "/profile/demo-profile.jpg";
+        storageClient.upload(key, DemoProfilePhotos.read(fileName.get()), "image/jpeg");
+        jdbcTemplate.update("UPDATE professionals SET profile_image_key = ? WHERE id = ?", key, professionalId);
+    }
+
     private static byte[] renderPlaceholderDocument(String professionalName) {
         BufferedImage image = new BufferedImage(760, 420, BufferedImage.TYPE_INT_RGB);
         Graphics2D graphics = image.createGraphics();
@@ -653,6 +883,13 @@ class DemoDatasetWriter {
     private record CategorySeed(long id, String code, String nameHe, List<Long> subServiceIds) {
     }
 
+    /** One {@code service_regions} row and its cities, in {@code display_order}. */
+    private record RegionSeed(long id, String code, List<CitySeed> cities) {
+    }
+
+    private record CitySeed(long id, String nameHe) {
+    }
+
     private record SeededProfessional(long id, BigDecimal basePrice) {
     }
 
@@ -662,9 +899,18 @@ class DemoDatasetWriter {
     private record DemoCustomer(long userId, String city, String street, String houseNumber) {
     }
 
-    /** What {@link DemoDataSeeder} logs after a successful run. Counts only, no personal data. */
-    record SeedSummary(int professionals, int bookable, int pending, int rejected, int approvedIncomplete,
-                        int customers, int orders, int reviews, int favorites, int sosAvailable,
-                        String perCategory) {
+    /**
+     * What {@link DemoDataSeeder} logs after a successful run. Counts only, no personal data.
+     *
+     * @param multiCategory how many bookable professionals serve more than one trade (MS4).
+     *                      Reported separately because {@code perCategory} counts them once per
+     *                      category, so its totals deliberately exceed {@code bookable}.
+     * @param withProfilePhoto how many professionals carry a fictional profile photograph. The
+     *                      remainder ({@code professionals - withProfilePhoto}) intentionally
+     *                      render the no-photo fallback; see {@link DemoProfilePhotos}.
+     */
+    record SeedSummary(int professionals, int bookable, int multiCategory, int pending, int rejected,
+                        int approvedIncomplete, int customers, int orders, int reviews, int favorites,
+                        int sosAvailable, String perCategory, int regions, int withProfilePhoto) {
     }
 }

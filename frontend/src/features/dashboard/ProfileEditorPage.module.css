@@ -33,27 +33,6 @@
   flex-direction: column;
 }
 
-.readonlyRow {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-1);
-  width: 100%;
-  padding-block-start: var(--space-4);
-  border-top: 1px solid var(--color-border);
-}
-
-.readonlyLabel {
-  font-size: 14px;
-  color: var(--color-text-secondary);
-}
-
-.readonlyValue {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-
 .banner {
   padding: var(--space-4);
   border-radius: var(--radius-md);
@@ -89,6 +68,31 @@
   font-weight: 600;
   color: var(--color-text-primary);
   padding-inline: var(--space-2);
+}
+
+/* MS4: the region-change notice. Deliberately not `.banner` — that carries the error
+   background, and dropping cities the professional can restore by switching back is a heads-up,
+   not a failure. */
+.warningBanner {
+  padding: var(--space-3) var(--space-4);
+  margin-block-end: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface-secondary);
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+
+/* MS4: one heading per selected category above its own sub-service checklist. */
+.subServiceGroup {
+  margin-block-end: var(--space-4);
+}
+
+.subServiceGroupTitle {
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
 }
 
 .subServicesList {

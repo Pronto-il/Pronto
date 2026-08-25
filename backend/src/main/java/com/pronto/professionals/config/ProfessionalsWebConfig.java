@@ -38,7 +38,14 @@ public class ProfessionalsWebConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.PROFESSIONAL.name()))
                 .addPathPatterns("/api/professionals/me", "/api/professionals/me/profile-image",
-                        "/api/professionals/me/sub-services");
+                        "/api/professionals/me/sub-services",
+                        // Production MS2: the professional's current device position
+                        // (professionals.controller.ProfessionalLocationController). Added to
+                        // this literal list for the same reason every other route here is --
+                        // the list does not pick up new routes by itself, and an ungated
+                        // location endpoint would let any authenticated account write a
+                        // position row.
+                        "/api/professionals/me/location");
         // Both patterns, deliberately: the collection route itself has no trailing segment, and
         // relying on a particular path-matcher's treatment of "/**" against the bare prefix is not
         // a thing to leave to interpretation when the answer decides whether an endpoint is gated.

@@ -4,6 +4,7 @@ import com.pronto.availability.dto.CalendarSegment;
 import com.pronto.availability.dto.SegmentType;
 import com.pronto.availability.repository.AvailabilitySlotRepository;
 import com.pronto.availability.service.AvailabilityDerivationService;
+import com.pronto.bookings.dto.ArrivalRequest;
 import com.pronto.bookings.dto.AvailableWindow;
 import com.pronto.bookings.dto.AvailableWindowsResponse;
 import com.pronto.bookings.dto.CreateOrderRequest;
@@ -26,6 +27,13 @@ import com.pronto.issues.entity.Issue;
 import com.pronto.issues.entity.IssueStatus;
 import com.pronto.issues.entity.IssueUrgencyType;
 import com.pronto.issues.repository.IssueRepository;
+import com.pronto.maps.GeoCoordinates;
+import com.pronto.maps.GeocodeResult;
+import com.pronto.maps.PostalAddress;
+import com.pronto.maps.RouteUnavailableReason;
+import com.pronto.maps.config.LocationProperties;
+import com.pronto.maps.service.ArrivalVerifier;
+import com.pronto.maps.service.ServiceAddressGeocoder;
 import com.pronto.matching.DistanceEtaStrategy;
 import com.pronto.matching.EtaResult;
 import com.pronto.matching.ServiceLocation;
@@ -34,11 +42,14 @@ import com.pronto.notifications.service.NotificationService;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.professionals.service.ProfessionalCoverageService;
+import com.pronto.professionals.service.ProfessionalLocationService;
 import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.service.ContactVerificationGuard;
 import com.pronto.users.entity.UserRole;
 import com.pronto.users.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -67,6 +78,8 @@ import java.util.stream.Collectors;
  */
 @Service
 public class BookingsService {
+
+    private static final Logger log = LoggerFactory.getLogger(BookingsService.class);
 
     /** §4.5 of {@code api-contract-notifications.md} — hardcoded, no migration. */
     private static final Duration STANDARD_PENDING_TIMEOUT = Duration.ofMinutes(15);
@@ -121,6 +134,10 @@ public class BookingsService {
     private final AvailabilityDerivationService availabilityDerivationService;
     private final ProfessionalCoverageService professionalCoverageService;
     private final ContactVerificationGuard contactVerificationGuard;
+    private final ServiceAddressGeocoder serviceAddressGeocoder;
+    private final ProfessionalLocationService professionalLocationService;
+    private final LocationProperties locationProperties;
+    private final ArrivalVerifier arrivalVerifier;
 
     public BookingsService(IssueRepository issueRepository,
                             ProfessionalRepository professionalRepository,
@@ -133,7 +150,15 @@ public class BookingsService {
                             StorageService storageService,
                             AvailabilityDerivationService availabilityDerivationService,
                             ProfessionalCoverageService professionalCoverageService,
-                            ContactVerificationGuard contactVerificationGuard) {
+                            ContactVerificationGuard contactVerificationGuard,
+                            ServiceAddressGeocoder serviceAddressGeocoder,
+                            ProfessionalLocationService professionalLocationService,
+                            LocationProperties locationProperties,
+                            ArrivalVerifier arrivalVerifier) {
+        this.serviceAddressGeocoder = serviceAddressGeocoder;
+        this.professionalLocationService = professionalLocationService;
+        this.locationProperties = locationProperties;
+        this.arrivalVerifier = arrivalVerifier;
         this.issueRepository = issueRepository;
         this.professionalRepository = professionalRepository;
         this.professionalListingRepository = professionalListingRepository;
@@ -295,6 +320,18 @@ public class BookingsService {
                 request.serviceApartment(), request.serviceFloor(), request.serviceEntrance(),
                 request.serviceAddressNotes(), basePriceSnapshot, sosSurcharge);
 
+        // Production MS2: snapshot the destination coordinates alongside the address text, once,
+        // here. This is the moment the address becomes an agreement -- from now on the customer
+        // may edit their default address freely without moving an order that already exists, and
+        // arrival will be verified against exactly this point. See Order#snapshotServiceCoordinates
+        // and V50's header.
+        //
+        // A null result is accepted rather than fatal. The order is still perfectly valid; it
+        // simply cannot have its arrival geofence-verified later. Refusing to create an order
+        // because a geocoding provider was unreachable would let an external dependency take down
+        // the platform's core flow, which is a far worse failure than an unverifiable arrival.
+        order.snapshotServiceCoordinates(resolveOrderDestination(callerId, request, now));
+
         // Step 5: the insert is protected by ck_orders_no_overlap -- the sole authoritative
         // backstop for the true concurrency race (two simultaneous createOrder calls for the
         // same professional with overlapping ranges, both passing step 2's pre-check before
@@ -424,10 +461,29 @@ public class BookingsService {
 
     /**
      * §2.16, extended by the active-booking-floating-indicator design to also compute and
-     * persist {@code expectedArrivalAt} at the moment of transition, reusing the same
-     * {@link DistanceEtaStrategy#calculate} call {@link #enrichAndSort} already makes for
-     * listing-card ETA. See {@code docs/architecture/active-booking-floating-indicator.md}
-     * §1.4/§0.1 (supersedes the prior "ETA never persisted" ruling).
+     * persist {@code expectedArrivalAt} at the moment of transition. See
+     * {@code docs/architecture/active-booking-floating-indicator.md} §1.4/§0.1 (supersedes the
+     * prior "ETA never persisted" ruling).
+     *
+     * <h2>Production MS2</h2>
+     *
+     * The estimate is now a real routed duration from the professional's fresh device position to
+     * the order's snapshotted destination — not a base-city string comparison. Two consequences
+     * worth being explicit about:
+     *
+     * <ul>
+     *   <li><b>{@code expectedArrivalAt} may be {@code null}.</b> If the professional has no
+     *       usable position, or the address was never geocodable, or the provider is down, the
+     *       transition still succeeds and the column stays empty. The alternative — refusing to
+     *       let a professional start driving because a maps API is unreachable — would make an
+     *       external dependency able to halt the platform's core flow. The customer's tracking
+     *       screen shows the job is under way without a countdown, which is honest.</li>
+     *   <li><b>It remains a snapshot.</b> Computed once, here, and never recomputed as the
+     *       professional's GPS moves. Live location exists to make the estimate <em>better before
+     *       it is promised</em>, not to make a promise that slides around for the rest of the
+     *       journey — a countdown that jumps every thirty seconds is worse than a slightly wrong
+     *       fixed one.</li>
+     * </ul>
      */
     @Transactional
     public OrderResponse onTheWay(Long callerId, Long orderId) {
@@ -438,14 +494,13 @@ public class BookingsService {
         }
 
         Instant now = Instant.now();
-        Professional professional = professionalRepository.findById(professionalId)
-                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND,
-                        "Professional " + professionalId + " not found."));
-        ServiceLocation customerLocation = new ServiceLocation(order.getServiceCity(), order.getServiceStreet(),
-                order.getServiceHouseNumber(), order.getServiceApartment());
-        EtaResult eta = distanceEtaStrategy.calculate(
-                professionalCoverageService.baseCityName(professional), customerLocation, now);
-        Instant expectedArrivalAt = now.plus(Duration.ofMinutes(eta.etaMinutes()));
+        EtaResult eta = distanceEtaStrategy.calculate(professionalId, order.serviceCoordinates(), now);
+        Instant expectedArrivalAt = eta.available()
+                ? now.plus(Duration.ofMinutes(eta.etaMinutes()))
+                : null;
+        if (!eta.available()) {
+            log.info("bookings.on-the-way.no-eta orderId={} reason={}", orderId, eta.unavailableReasonName());
+        }
 
         int affected = orderRepository.onTheWayIfConfirmed(orderId, now, expectedArrivalAt);
         if (affected == 0) {
@@ -454,6 +509,89 @@ public class BookingsService {
         // issues.status is not touched -- stays BOOKED (§2.16 step 5).
         notificationService.recordOrderNotification(orderId, order.getCustomerId(),
                 NotificationMessageType.ORDER_ON_THE_WAY);
+        return toOrderResponse(loadOrder(orderId));
+    }
+
+    /**
+     * <b>Production MS2 — {@code POST /api/bookings/orders/{orderId}/arrived}.</b> The
+     * {@code ON_THE_WAY -> ARRIVED} transition, and the only status change in this platform gated
+     * on a physical fact.
+     *
+     * <p>The flow, in the order it must happen:
+     * <ol>
+     *   <li>Authorize: the caller is the professional on this order (403 otherwise).</li>
+     *   <li>Validate the submitted fix — coordinates in range, accuracy positive and plausible,
+     *       {@code capturedAt} present and not implausibly in the future ({@code 400}).</li>
+     *   <li>Reject a fix that is too old ({@code pronto.location.arrival-max-age}) or too
+     *       imprecise ({@code pronto.location.arrival-max-accuracy-meters}) —
+     *       {@code 422 LOCATION_QUALITY_INSUFFICIENT}. Note this bar is much stricter than the
+     *       routing bar: routing asks "roughly where are you", this asks "are you at this
+     *       door".</li>
+     *   <li>Load the order's <b>immutable destination snapshot</b>. Absent ⇒
+     *       {@code 409 ORDER_DESTINATION_UNKNOWN}, because there is nothing to verify against and
+     *       no amount of retrying will change that.</li>
+     *   <li>Measure the great-circle distance server-side ({@code maps.GeoDistance}) and compare
+     *       it to {@code pronto.location.arrival-radius-meters}. Outside ⇒
+     *       {@code 422 ARRIVAL_OUT_OF_RANGE}.</li>
+     *   <li>Only then perform the atomic transition and write the evidence.</li>
+     * </ol>
+     *
+     * <h2>Why the backend is authoritative, and what that does and does not prove</h2>
+     *
+     * The customer's coordinates never leave the server. A design that sent them to the
+     * professional's client to compare locally would leak the address to anyone holding an offer
+     * and would let any modified client claim to be anywhere — the check would be decoration.
+     *
+     * <p>What this <b>does</b> prove is that the position the professional's device reported,
+     * moments ago and with an accuracy it also reported, is within the geofence. What it does
+     * <b>not</b> prove is that the device was telling the truth: browser geolocation originates on
+     * the client and can be spoofed by a determined user. MS2 makes no claim to be fraud-proof,
+     * and deliberately builds no device attestation — see the maps README's anti-spoofing note.
+     * The honest description of this feature is "server-validated proximity based on a fresh
+     * geolocation reading supplied by the professional's device", and that is what the report
+     * says.
+     *
+     * <p>There is <b>no manual override</b>. Adding one silently would hand every professional a
+     * way to bypass the check that justifies the feature existing; if operations later needs one,
+     * it belongs on the operator surface as an audited exception, not as a flag on this endpoint.
+     */
+    @Transactional
+    public OrderResponse arrived(Long callerId, Long orderId, ArrivalRequest request) {
+        Order order = loadOrder(orderId);
+        Long professionalId = resolveProfessionalId(callerId);
+        if (!order.getProfessionalId().equals(professionalId)) {
+            throw forbidden();
+        }
+        if (order.getOrderStatus() != OrderStatus.ON_THE_WAY) {
+            throw orderNotArrivable(orderId);
+        }
+
+        Instant now = Instant.now();
+
+        // Steps 2-5, all of them, in one place: shape, freshness, precision, proximity. Shared
+        // verbatim with the SOS flow (sos.service.SosOfferService#arrived) through
+        // maps.service.ArrivalVerifier -- "the professional pressed הגעתי" has to mean exactly the
+        // same thing on the calm flow and on the urgent one, and two copies of a geofence rule is
+        // how that stops being true. Throws 400/422 with the specific reason; the verified
+        // distance comes back for the evidence record.
+        BigDecimal distanceMeters = arrivalVerifier.verify(professionalId, order.serviceCoordinates(),
+                request.latitude(), request.longitude(), request.accuracyMeters(), request.capturedAt(),
+                now, "order:" + orderId);
+        GeoCoordinates position = arrivalVerifier.positionOf(request.latitude(), request.longitude());
+
+        // Step 6 -- transition, then evidence, in that order. 0 rows means somebody else moved the
+        // order between the load and here; refusing rather than restamping keeps arrived_at the
+        // record of the FIRST verified arrival.
+        int affected = orderRepository.arrivedIfOnTheWay(orderId, now);
+        if (affected == 0) {
+            throw orderNotArrivable(orderId);
+        }
+        Order fresh = loadOrder(orderId);
+        fresh.recordArrivalEvidence(position, request.accuracyMeters(), distanceMeters, now);
+        orderRepository.save(fresh);
+
+        notificationService.recordOrderNotification(orderId, order.getCustomerId(),
+                NotificationMessageType.ORDER_ARRIVED);
         return toOrderResponse(loadOrder(orderId));
     }
 
@@ -745,52 +883,151 @@ public class BookingsService {
      * resolves each card's raw {@code profileImageUrl} slot (currently the raw
      * {@code profile_image_key} column value, per {@code ProfessionalCard}'s Javadoc) to a
      * presigned URL via {@link StorageService#getPresignedUrl(Long, String)} (backend MS9,
-     * {@code docs/architecture/backend-ms9-presigned-image-urls-design.md} §9.1), and computes
-     * distance/ETA via {@link DistanceEtaStrategy#calculate} using a single, uniform
-     * {@code requestTime = Instant.now()} for the whole listing — applied unconditionally
-     * regardless of {@code sort} (§7). When {@code sort == FASTEST}, the resulting list is
-     * re-sorted by {@code etaMinutes} ascending; when {@code sort == RECOMMENDED}, by
-     * {@code averageRating} descending (professionals with no reviews yet sort last), then
-     * {@code reviewCount} descending as a tiebreak; {@code CHEAPEST} leaves the DB's
-     * {@code base_price ASC} order untouched.
+     * {@code docs/architecture/backend-ms9-presigned-image-urls-design.md} §9.1), and attaches
+     * real travel figures.
+     *
+     * <h2>Production MS2 — two calls, not two per card</h2>
+     *
+     * The customer's address is geocoded <b>once</b> for the whole listing (and, for their saved
+     * default address, usually not at all — the coordinates are already persisted), and
+     * {@link DistanceEtaStrategy#calculateBatch} then routes every candidate in one batched
+     * provider request. The pre-MS2 code called {@code calculate} inside the per-card
+     * {@code map}, which was free only because the implementation was a string comparison; doing
+     * the same against a real provider would be one HTTP round trip per card. See the
+     * {@code maps} README's call-budget section.
+     *
+     * <p>Business filters have already run before this method is reached — the SQL listing query
+     * has narrowed to the issue's category and to marketplace-eligible professionals — so only
+     * plausible candidates are ever routed.
+     *
+     * <h2>Sorting</h2>
+     *
+     * {@code FASTEST} sorts by real driving duration ascending, with <b>professionals whose ETA is
+     * unavailable last</b> and a deterministic id tie-break. That ordering rule is not a detail:
+     * with the pre-MS2 model every professional had an ETA, so "fastest" could never be wrong
+     * about who was missing one. Now that unavailable is a real outcome, sorting {@code null}
+     * anywhere but last would let a professional the platform cannot route win a tab whose entire
+     * promise is arrival speed. {@code RECOMMENDED} and {@code CHEAPEST} are unchanged — see
+     * {@link #sortCards}.
      */
     private List<ProfessionalCard> enrichAndSort(Long callerId, List<ProfessionalCard> cards,
                                                   ServiceLocation location, ProfessionalSort sort) {
         Instant requestTime = Instant.now();
+        List<Long> professionalIds = cards.stream().map(ProfessionalCard::professionalId).toList();
+
         // MS4: one batched professional_categories read for the whole page, before the per-card
         // pass -- a card has to be able to say a professional serves several trades, and JPQL
         // cannot project a collection into the listing's SELECT NEW (see ProfessionalCard).
-        Map<Long, List<Long>> categoryIdsByProfessional = professionalCoverageService
-                .categoryIdsByProfessional(cards.stream().map(ProfessionalCard::professionalId).toList());
+        Map<Long, List<Long>> categoryIdsByProfessional =
+                professionalCoverageService.categoryIdsByProfessional(professionalIds);
+
+        // MS2: one geocode for the listing, then one batched routing call for every candidate.
+        GeoCoordinates destination = resolveListingDestination(callerId, location);
+        Map<Long, EtaResult> etaByProfessional =
+                distanceEtaStrategy.calculateBatch(professionalIds, destination, requestTime);
 
         List<ProfessionalCard> enriched = cards.stream()
                 .map(card -> {
                     String profileImageUrl = card.profileImageUrl() == null
                             ? null
                             : storageService.getPresignedUrl(callerId, card.profileImageUrl());
-                    EtaResult eta = distanceEtaStrategy.calculate(card.city(), location, requestTime);
+                    EtaResult eta = etaByProfessional.getOrDefault(card.professionalId(),
+                            EtaResult.unavailable(RouteUnavailableReason.PROVIDER_UNAVAILABLE));
                     return new ProfessionalCard(card.professionalId(), card.fullName(), card.serviceRegion(),
                             card.basePrice(), card.reliabilityScore(), card.city(), profileImageUrl,
                             card.averageRating(), card.reviewCount(), card.favorited(),
                             categoryIdsByProfessional.getOrDefault(card.professionalId(), List.of()),
-                            eta.sameCity(), eta.distanceKm(), eta.baseTravelTimeMinutes(),
-                            eta.trafficAdjustmentMinutes(), eta.etaMinutes());
+                            eta.distanceKm(), eta.etaMinutes(), eta.trafficAware(), eta.unavailableReasonName());
                 })
                 .toList();
 
+        return sortCards(enriched, sort);
+    }
+
+    /**
+     * The listing's destination coordinates.
+     *
+     * <p>Two sources, in order of preference, and the ordering is entirely about cost. If the
+     * customer is booking to their own saved default address — overwhelmingly the common case —
+     * the coordinates are already persisted on their {@code users} row from the write path that
+     * accepted the address, and no provider call happens at all. Only an address with no usable
+     * stored result is geocoded live, and then once, here, rather than once per card.
+     *
+     * <p><b>This method never persists, and the reason is not stylistic.</b>
+     * {@link #listProfessionals} runs in a {@code readOnly = true} transaction, so an entity
+     * mutation here would be silently discarded at flush time — the geocode would be paid for on
+     * every single listing request and its result thrown away every time, with nothing failing
+     * loudly enough to notice. Persisting a resolved address is therefore the job of the write
+     * paths that accept one ({@code auth.service.AuthService#register},
+     * {@code users.service.UsersService#updateMe}, {@link #createOrder}), and this read path only
+     * ever reads what they stored, or resolves transiently when they stored nothing.
+     *
+     * <p>Returns {@code null} when the address cannot be resolved. That is not an error: the
+     * listing still renders, every card simply reports no ETA with reason
+     * {@code DESTINATION_UNKNOWN}, and the customer can still browse and book. Failing the whole
+     * request because a geocoder was unavailable would be a much worse trade.
+     */
+    private GeoCoordinates resolveListingDestination(Long callerId, ServiceLocation location) {
+        User customer = userRepository.findById(callerId).orElse(null);
+        PostalAddress requested = location == null ? null : location.toPostalAddress();
+
+        if (customer != null) {
+            PostalAddress defaultAddress = new PostalAddress(customer.getDefaultCity(),
+                    customer.getDefaultStreet(), customer.getDefaultHouseNumber());
+            boolean wantsDefaultAddress = requested == null || !requested.isGeocodable()
+                    || (defaultAddress.isGeocodable()
+                        && requested.contentHash().equals(defaultAddress.contentHash()));
+            if (wantsDefaultAddress) {
+                GeoCoordinates stored = serviceAddressGeocoder.storedCustomerDefault(customer, Instant.now());
+                if (stored != null) {
+                    return stored;
+                }
+                // Nothing usable stored (a legacy row, or an address the write path could not
+                // resolve at the time). Resolve transiently so this listing still works; the next
+                // write path to touch the address will persist it properly.
+                requested = defaultAddress;
+            }
+        }
+
+        if (requested == null || !requested.isGeocodable()) {
+            return null;
+        }
+        GeocodeResult result = serviceAddressGeocoder.resolve(requested);
+        return result.isResolved() ? result.coordinates() : null;
+    }
+
+    /**
+     * The three sort modes, extracted so the {@code FASTEST} null-handling rule is stated once and
+     * testable on its own.
+     *
+     * <ul>
+     *   <li><b>{@code FASTEST}</b> — real driving duration ascending; unavailable ETAs last;
+     *       professional id ascending as a deterministic final tie-break, so two runs over
+     *       identical data produce identical output and a disputed ordering is reproducible.
+     *       Base city plays no part, hidden or otherwise.</li>
+     *   <li><b>{@code RECOMMENDED}</b> — unchanged by MS2, and deliberately so: it ranks on
+     *       {@code averageRating} then {@code reviewCount} and has never had a distance or ETA
+     *       component, so there was nothing here for real routing to replace.</li>
+     *   <li><b>{@code CHEAPEST}</b> — unchanged; leaves the query's {@code base_price ASC}
+     *       ordering alone. Price-driven, as it should be.</li>
+     * </ul>
+     */
+    static List<ProfessionalCard> sortCards(List<ProfessionalCard> cards, ProfessionalSort sort) {
         if (sort == ProfessionalSort.FASTEST) {
-            return enriched.stream()
-                    .sorted(Comparator.comparingInt(ProfessionalCard::etaMinutes))
+            return cards.stream()
+                    .sorted(Comparator.comparing(ProfessionalCard::etaMinutes,
+                                    Comparator.nullsLast(Comparator.naturalOrder()))
+                            .thenComparing(ProfessionalCard::professionalId))
                     .toList();
         }
         if (sort == ProfessionalSort.RECOMMENDED) {
-            return enriched.stream()
+            return cards.stream()
                     .sorted(Comparator.comparing(ProfessionalCard::averageRating,
                                     Comparator.nullsLast(Comparator.reverseOrder()))
                             .thenComparing(Comparator.comparingLong(ProfessionalCard::reviewCount).reversed()))
                     .toList();
         }
-        return enriched;
+        return cards;
     }
 
     private OrderResponse toOrderResponse(Order order) {
@@ -867,6 +1104,38 @@ public class BookingsService {
 
     private ApiException orderNotOnTheWay(Long orderId) {
         return new ApiException(ErrorCode.ORDER_NOT_ON_THE_WAY,
-                "Order " + orderId + " is not in ON_THE_WAY status and cannot be completed.");
+                "Order " + orderId + " is not in ON_THE_WAY or ARRIVED status and cannot be completed.");
+    }
+
+    /** Production MS2 — {@code ARRIVED} is reachable only from {@code ON_THE_WAY}. */
+    private ApiException orderNotArrivable(Long orderId) {
+        return new ApiException(ErrorCode.ORDER_NOT_ARRIVABLE,
+                "Order " + orderId + " is not in ON_THE_WAY status and cannot be marked as arrived.");
+    }
+
+    /**
+     * The destination coordinates to snapshot onto a new order.
+     *
+     * <p>Same two-source preference as {@link #resolveListingDestination}, and for the same
+     * reason: an order to the customer's own saved address costs no provider call at all, because
+     * those coordinates are already persisted and still current for that exact address text. Only
+     * a one-off address typed for this booking is geocoded live — once, here, at write time.
+     */
+    private GeoCoordinates resolveOrderDestination(Long callerId, CreateOrderRequest request, Instant now) {
+        PostalAddress requested = new PostalAddress(request.serviceCity(), request.serviceStreet(),
+                request.serviceHouseNumber());
+        if (!requested.isGeocodable()) {
+            return null;
+        }
+        User customer = userRepository.findById(callerId).orElse(null);
+        if (customer != null) {
+            PostalAddress defaultAddress = new PostalAddress(customer.getDefaultCity(), customer.getDefaultStreet(),
+                    customer.getDefaultHouseNumber());
+            if (defaultAddress.isGeocodable() && requested.contentHash().equals(defaultAddress.contentHash())) {
+                return serviceAddressGeocoder.resolveCustomerDefault(customer, now);
+            }
+        }
+        GeocodeResult result = serviceAddressGeocoder.resolve(requested);
+        return result.isResolved() ? result.coordinates() : null;
     }
 }

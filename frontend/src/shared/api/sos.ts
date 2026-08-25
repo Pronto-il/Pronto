@@ -1,4 +1,5 @@
 import { httpClient } from './httpClient';
+import type { ArrivalRequest } from './bookings';
 
 /**
  * Pronto SOS — the customer half of `/api/sos/**`.
@@ -596,8 +597,11 @@ export function markSosOnTheWay(sosRequestId: number): Promise<SosRequestRespons
 }
 
 /** `POST /api/sos/requests/{id}/arrived` — SOS-only; `orders` has no equivalent status. */
-export function markSosArrived(sosRequestId: number): Promise<SosRequestResponse> {
-  return httpClient.post<SosRequestResponse>(`/api/sos/requests/${sosRequestId}/arrived`);
+export function markSosArrived(
+  sosRequestId: number,
+  fix: ArrivalRequest,
+): Promise<SosRequestResponse> {
+  return httpClient.post<SosRequestResponse>(`/api/sos/requests/${sosRequestId}/arrived`, fix);
 }
 
 /** `POST /api/sos/requests/{id}/complete` — completes the request, its order and its issue. */

@@ -88,6 +88,7 @@ export {
   rejectOrder,
   cancelOrder,
   markOnTheWay,
+  markArrived,
   completeOrder,
   getOrder,
   getMyOrders,
@@ -103,6 +104,7 @@ export type {
   AvailableWindowsResponse,
   CreateOrderRequest,
   OrderResponse,
+  ArrivalRequest,
   OrderDetailResponse,
   OrderSummary,
   MyOrdersResponse,
@@ -153,6 +155,8 @@ export {
   getCategoriesWithSubServices,
   getMySubServices,
   updateMySubServices,
+  updateMyLocation,
+  getMyLocationStatus,
 } from './professionals';
 export type {
   ProfessionalProfileResponse,
@@ -161,6 +165,8 @@ export type {
   SubServiceResponse,
   CategoryWithSubServicesResponse,
   MySubServicesResponse,
+  UpdateProfessionalLocationRequest,
+  ProfessionalLocationStatusResponse,
 } from './professionals';
 
 export {

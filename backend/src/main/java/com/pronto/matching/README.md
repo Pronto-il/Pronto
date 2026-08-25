@@ -2,138 +2,157 @@
 
 ## Purpose
 
-Distance/ETA approximation between a professional's registered city and a customer's
-service-address input, plus the "fastest" sort mode this powers on professional-listing
-endpoints. Pure computation only — no persistence, no controller, no endpoint of its own.
+The seam every distance and arrival-time figure in Pronto comes through — professional listing
+cards, the `FASTEST` sort, SOS ranking and its geographic filter, and
+`orders.expected_arrival_at`.
 
-Implements the distance/ETA design in
-`docs/architecture/api-contract-professionals-reviews.md` §6, consumed by
-`bookings.service.BookingsService` per §7 of that same doc.
+**Production MS2 replaced what is behind that seam entirely.** The interface survived; the
+implementation, the inputs, the output shape and this document's previous claims about all three
+did not.
 
-**Scope note, load-bearing**: this package exists because a prior "ETA display is out of
-v1.0 scope, permanent" ruling (`docs/architecture/data-model.md` §4) was **explicitly
-overridden by direct user instruction, 2026-08-15** — see
-`docs/architecture/api-contract-professionals-reviews.md` §5 for the full override record.
-GPS/live-location tracking remains a separate, still-valid, permanent exclusion — nothing in
-this package does real routing, live position tracking, or map integration; every figure it
-produces is a coarse, documented approximation.
+## What this package used to say, and why it is gone
 
-**Updated scope note (Active Booking Floating Indicator feature, 2026-08-17)**: this
-package's own "never persisted, no table of its own" posture is **unchanged** — every
-`EtaResult` is still computed fresh per `calculate()` call, and `matching` still owns no
-table, no migration, no `@Repository`. What changed is one **caller**: as of this feature,
-`bookings.service.BookingsService.onTheWay` derives `expectedArrivalAt = now +
-eta.etaMinutes()` from a single `calculate()` result and persists that derived value onto
-`orders.expected_arrival_at` (new column, `V23`) at the `ON_THE_WAY` transition. This is a
-narrow, caller-side persistence of one computation's result, once, at one specific state
-transition — not a new responsibility inside this package. See
-`docs/architecture/active-booking-floating-indicator.md` §0.1 for the full record (it also
-amends `overview.md` §2 and `data-model.md` §4's "ETA is never persisted" ruling, which this
-note's first paragraph above still otherwise correctly describes for every other caller/
-context — the professional-listing enrichment `enrichAndSort` performs is genuinely still
-never persisted).
+This README previously described a package that was *"pure computation only — no persistence, no
+controller, no endpoint of its own"*, whose `DistanceEtaStrategy` was *"pure/stateless by
+contract, no I/O"*, and whose sole implementation produced:
+
+- 15 (later 34) minutes and 8.0 km when the professional's registered city string equalled the
+  customer's;
+- 40 minutes and 35.0 km otherwise;
+- plus 20 or 30 minutes inside two hardcoded windows, `[08:00, 11:00)` and `[15:00, 18:00)`.
+
+Four possible ETAs and two possible distances, for every professional and every address in the
+country. **All of it is deleted.** `ApproximateDistanceEtaStrategy` and its unit test no longer
+exist — not disabled, not behind a flag, not retained as a fallback. There is no configuration,
+environment or failure path that can reach those numbers, because the code that produced them is
+not in the repository.
+
+The peak-hour heuristic is gone with it, and was not replaced with anything of its own: when the
+routing provider supplies a traffic-aware duration the platform uses it, and when it does not the
+platform reports an honest non-traffic duration rather than adding an invented adjustment on top.
 
 ## Responsibilities
 
-- Defines `DistanceEtaStrategy`, a one-method interface (`calculate(professionalCity,
-  customerLocation, requestTime) -> EtaResult`) — pure/stateless by contract, no I/O, no
-  persistence, so any implementation is trivially unit-testable without a Spring context or
-  database.
-- Provides `ApproximateDistanceEtaStrategy`, the sole v1.0 implementation, a
-  `@Component` Spring bean injected into `bookings.service.BookingsService`. Deterministic:
-  no randomness, no external routing/GPS/traffic-provider API call.
-- The approximation model, exactly as implemented:
-  - **Same city** (case-insensitive, trimmed string equality): base travel time 15 min,
-    placeholder distance 8.0 km.
-  - **Different city** (or either city is null/blank): base travel time 40 min, placeholder
-    distance 35.0 km.
-  - **Peak hours**, evaluated against `Asia/Jerusalem` local time specifically (hardcoded,
-    not the JVM's default timezone — deliberate, since this is an Israel-only app and the
-    server's own timezone can't be assumed to match): two half-open windows,
-    `[08:00, 11:00)` and `[15:00, 18:00)`. Inside either: +20 min (same city) or +30 min
-    (different city) added to the base. Outside both: +0.
-  - `etaMinutes = baseTravelTimeMinutes + trafficAdjustmentMinutes`.
-- A `null` professional city is treated as **different city**, never as "matches
-  everywhere" — a deliberate conservative default (see "Assumptions" below).
+- Defines **`DistanceEtaStrategy`**, still a seam and still the single thing consumers call, now
+  with two methods:
+  - `calculate(professionalId, destination, requestTime)` — one pair.
+  - `calculateBatch(professionalIds, destination, requestTime)` — **the primary method**, and the
+    reason a fifty-professional listing costs one provider request rather than fifty.
+- Provides **`RoutedDistanceEtaStrategy`**, the sole implementation: real road distance and real
+  driving duration, from the professional's fresh device position to geocoded destination
+  coordinates, via `maps.RoutingProvider`.
+- Defines **`EtaResult`**, now nullable-by-construction.
+- Defines **`ServiceLocation`**, the customer's address text — no longer a routing input at all,
+  only the thing that gets geocoded once on write.
+
+## The three contract changes, and why each was necessary
+
+**1. The origin is a live position, not a city name.**
+A professional is usually coming from another job, not from home, so their registered base city
+cannot produce a true arrival estimate. The strategy therefore resolves the origin *itself*, from
+`professionals.service.ProfessionalLocationService`, and only when that position is fresh and
+precise enough. Callers **cannot pass an origin in** — which is exactly what makes it impossible
+for any call site to route from a stale fix or from a base-city centroid. `base_city_id` remains
+business coverage data (which region they serve, what their card says); it is never a routing
+origin.
+
+**2. The destination is coordinates, not an address record.**
+Geocoding happens once, at write time, where the address is accepted — never once per
+professional card. `ServiceLocation.toPostalAddress()` is the bridge, and
+`maps.service.ServiceAddressGeocoder` owns the policy.
+
+**3. There is I/O, and the documentation says so.**
+An external routing provider, an in-process cache and a database read. The implementation is a
+Spring bean with dependencies, not a pure function, and its tests exercise it with a fake
+provider rather than by calling a static method. The old "pure/stateless by contract" wording is
+removed rather than left to mislead the next reader — it stopped being true the moment real
+routing landed, and a comment that is confidently wrong is worse than no comment.
+
+## `EtaResult` — the shape change that carries the milestone
+
+| Before | After |
+|---|---|
+| `sameCity: boolean` | *(gone)* — a string comparison masquerading as geography |
+| `distanceKm: BigDecimal` | `distanceKm: BigDecimal` — **nullable** |
+| `baseTravelTimeMinutes: int` | *(gone)* — half of a hardcoded surcharge |
+| `trafficAdjustmentMinutes: int` | *(gone)* — the other half |
+| `etaMinutes: int` | `etaMinutes: Integer` — **nullable** |
+| — | `trafficAware: boolean` — carried from the provider, never assumed |
+| — | `unavailableReason: RouteUnavailableReason` |
+
+An `EtaResult` is either available *with* both figures, or unavailable *with* a reason —
+**enforced in the compact constructor**. That is the type-level half of MS2's central rule: a
+caller that wants a number has to acknowledge the possibility that there is not one. The old
+primitive `int etaMinutes` had no value meaning "unknown", which is precisely why the old
+implementation had to invent 34.
+
+## The four gates a figure passes
+
+`RoutedDistanceEtaStrategy` produces a number only if all four hold; otherwise it produces a
+reason.
+
+1. **Destination known** — no geocoded coordinates ⇒ `DESTINATION_UNKNOWN`. Never a centroid.
+2. **Origin usable** — `ProfessionalLocationService` applies the freshness and accuracy rules.
+   Missing, stale or coarse ⇒ the specific reason. Never approximated.
+3. **Budget** — at most `pronto.maps.max-routed-candidates` per evaluation; overflow is reported
+   unavailable **and logged at WARN**, because a silent cap reads downstream as "these people
+   have no GPS".
+4. **Provider answered** — timeout, error or no-route ⇒ the provider's reason. Never substituted.
 
 ## Key classes
 
 | Class | Role |
 |---|---|
-| `DistanceEtaStrategy` | The strategy interface — allows a future, more precise implementation (e.g. a real geocoding/routing API) to be swapped in later without changing `bookings`' call site, mirroring the `StorageClient`/`AiClassificationClient` swappable-abstraction pattern already used elsewhere in this codebase. |
-| `ApproximateDistanceEtaStrategy` | The sole implementation. Every numeric constant (15/40 min base, 8.0/35.0 km, +20/+30 min peak surcharge) is a `static final` field with a Javadoc explicitly labeling it an approximation/placeholder, not sourced routing data — see "Assumptions" below for which figures came from the user's own instruction vs. which were `pronto-coding`-chosen. |
-| `EtaResult` | The output record — `(sameCity, distanceKm, baseTravelTimeMinutes, trafficAdjustmentMinutes, etaMinutes)`. This record itself is never persisted anywhere, and this package owns no table/migration for it — recomputed fresh on every call. **As of the Active Booking Floating Indicator feature**: one caller, `bookings.service.BookingsService.onTheWay`, derives `expectedArrivalAt = now + etaMinutes` from a single result and persists that derived value onto `orders.expected_arrival_at` — the caller's own persisted value, not a change to this record or this package (see the "Updated scope note" above). |
-| `ServiceLocation` | The customer-side input record — `(city, street, houseNumber, apartment)`. Only `city` is actually read by `ApproximateDistanceEtaStrategy`'s computation; the other three fields are carried through for shape-compatibility with `orders.service_*` (owned by `bookings`/`Order`, a separate, persisted concept — see this doc's package-info for the precise relationship) and for forward-compatibility with a future, more address-precise strategy implementation. |
+| `DistanceEtaStrategy` | The seam. Batch-first by design, so the N+1 failure mode is structurally hard rather than merely discouraged. |
+| `RoutedDistanceEtaStrategy` | The sole implementation. Cache first, then one batched matrix call for the misses. |
+| `EtaResult` | Figures **or** a reason, never both, never neither. |
+| `ServiceLocation` | The customer's address text. Carried through for the snapshot and geocoded once; no longer read by any computation. |
 
 ## Interactions with other packages
 
-- Consumed by `bookings.service.BookingsService` (constructor-injected `DistanceEtaStrategy`)
-  to enrich every `bookings.dto.ProfessionalCard` on `GET /api/bookings/professionals`/
-  `sos-professionals` with `sameCity`/`distanceKm`/`baseTravelTimeMinutes`/
-  `trafficAdjustmentMinutes`/`etaMinutes`, and to power the `sort=FASTEST` in-memory re-sort
-  (`etaMinutes` is never a database column, so no SQL `ORDER BY` could sort by it). **As of
-  the Active Booking Floating Indicator feature**: also consumed by
-  `BookingsService.onTheWay` — one additional call site (same `DistanceEtaStrategy#calculate`
-  method, same `ServiceLocation`/`EtaResult` types), whose result is used to derive and
-  persist `orders.expected_arrival_at` (see "Updated scope note" above). Still exactly one
-  method on the interface, no new method added to `DistanceEtaStrategy` for this.
-- Reads `professionals.city` (via the `Professional` entity/`ProfessionalCard` projection,
-  not by depending on `professionals` directly — `bookings` already owns that dependency) and
-  the customer-supplied `ServiceLocation` parsed from `BookingsController`'s new query
-  params.
-- **Owns no table, no migration, no controller, no `@Repository`** — the only package in this
-  feature set (and one of very few in the whole codebase) with zero persistence surface at
-  all. Not consumed by `reviews`/`favorites`/`professionals` — `favorites`' listing endpoint
-  deliberately carries no distance/ETA fields at all (see `favorites/README.md`'s DTO note).
+- **`bookings`** — `listProfessionals` geocodes the destination once and calls `calculateBatch`
+  for the whole page; `onTheWay` calls `calculate` once for the committed
+  `expected_arrival_at` snapshot.
+- **`sos`** — `SosMatchingService` calls `calculateBatch` for the candidate pool after the SQL
+  eligibility filter, then applies the radius filter to the **real** kilometres.
+- **`maps`** — supplies `RoutingProvider`, `RouteCache` and the coordinate types.
+- **`professionals`** — supplies the current-position lookup and the freshness/accuracy verdict.
 
-## Data model
+This package still **owns no table, no migration, no controller and no repository**. One caller
+persists one derived value (`orders.expected_arrival_at`, from a single `calculate` result at the
+`ON_THE_WAY` transition), exactly as it did before MS2.
 
-None. This package owns no table. `EtaResult` is computed fresh on every request and never
-written to any column — the persisted service-address snapshot on `orders` (`service_city`/
-`service_street`/`service_house_number`/`service_apartment`, `V18`) is a structurally similar
-but functionally distinct concept owned entirely by `bookings`/`Order`, not by this package
-(see `docs/architecture/api-contract-professionals-reviews.md` §8 for the precise
-relationship between the two).
+## `expectedArrivalAt` is still a snapshot
 
-## Assumptions / judgment calls made during implementation
+Computed once, at the `ON_THE_WAY` transition, and never recomputed as the professional's GPS
+moves. Live location exists to make the estimate **better before it is promised**, not to make a
+promise that slides around for the rest of the journey — a countdown that jumps every thirty
+seconds is worse than a slightly wrong fixed one.
 
-- **Peak-hour windows and their surcharge minutes (`[08:00,11:00)`/`[15:00,18:00)`,
-  +20/+30 min) were given directly by the user's own explicit instruction**, not invented —
-  distinguished here from the base-travel-time/distance figures below, which were not.
-- **Base travel times (15/40 min) and placeholder distances (8.0/35.0 km) are
-  `pronto-coding`-chosen approximations**, since no source document specified exact figures
-  for those — reasonable, defensible placeholders good enough to produce a stable ordering
-  signal, not claimed to be accurate real-world travel estimates.
-- **`Asia/Jerusalem` is hardcoded, not configurable** — no multi-region deployment exists or
-  is planned for v1.0; using `ZoneId.systemDefault()` instead would have been wrong on any
-  server not itself running in this timezone, so this was a deliberate, documented choice,
-  not an oversight.
-- **A `null`/blank professional or customer city is treated as "different city"** — the
-  conservative direction to be wrong in (never silently understating distance/ETA for a
-  professional whose location is genuinely unknown). See `implementation-plan.md`'s
-  Milestone 8 entry and this package's parent design doc §9 for the concrete, accepted
-  consequence this produces for newly-registered professionals (`professionals.city` stays
-  `NULL` until they self-edit their profile — `auth.service.AuthService#register` was not
-  changed by this feature set).
-- **City matching is case-insensitive and trimmed**, string equality only — no fuzzy
-  matching, no normalization against a fixed city list (no such reference table exists for
-  cities, unlike `categories`).
+It may now be `null`: if the professional has no usable position, or the address never geocoded,
+or the provider is unreachable, the transition still succeeds and the column stays empty. The
+alternative — refusing to let a professional start driving because a maps API is down — would let
+an external dependency halt the platform's core flow.
+
+## `FASTEST` sorting
+
+Real driving duration ascending, **professionals with no ETA last**, professional id ascending as
+a deterministic final tie-break. Base city plays no part, hidden or otherwise.
+
+The null-handling rule is not a detail. Before MS2 every professional had a (fabricated) ETA, so
+"fastest" could never be wrong about who was missing one. Now that unavailable is a real outcome,
+sorting it anywhere but last would let somebody the platform cannot route win the one tab whose
+entire promise is arrival speed.
+
+`RECOMMENDED` and `CHEAPEST` are **unchanged**, and deliberately so: `RECOMMENDED` ranks on
+`averageRating` then `reviewCount` and has never had a distance or ETA component, so there was
+nothing here for real routing to replace; `CHEAPEST` leaves the query's `base_price ASC` ordering
+alone.
 
 ## Status
 
-Implemented and QA-signed-off (zero bugs found on functionality/security) as part of the
-professional-profile/reviews/favorites/matching feature set, 2026-08-15 (branch `MS7`, not
-yet committed at the time this doc was written). See
-`docs/architecture/implementation-plan.md`'s Milestone 8 entry for the full QA summary and
-`docs/architecture/api-contract-professionals-reviews.md` §5-§6 for the complete design
-record, including the explicit ETA-scope-override this package exists to implement. Unit-
-tested (`matching.ApproximateDistanceEtaStrategyTest`) — 12 cases covering every
-same/different-city × peak/off-peak combination, case-insensitive/trimmed city matching,
-`null`-professional-city handling, and all 6 named half-open-interval boundary times
-(`08:00:00`/`10:59:59`/`11:00:00`/`15:00:00`/`17:59:59`/`18:00:00`).
-
-**Active Booking Floating Indicator feature (2026-08-17)**: this package itself received
-**zero code changes** — QA-passed (12/12 checklist items, zero bugs) as part of that
-feature's sign-off, which added a new caller (`BookingsService.onTheWay`) and a new `orders`
-column (`V23`), both owned by `bookings`, not here. See "Updated scope note" above and
-`docs/architecture/active-booking-floating-indicator.md` for the full design/QA record.
+Implemented in Production MS2, replacing the v1.0 approximation entirely. Tested by
+`matching.RoutedDistanceEtaStrategyTest` (18 cases — the four gates, no-fake-fallback, batching,
+budget truncation, cache behaviour and the contract's "every requested id is accounted for"
+promise), with sorting covered in `bookings.service.BookingsServiceTest` and the geometry itself
+in `maps.GeoDistanceTest`. See `docs/production-roadmap/reports/prod-MS2-report.md`.

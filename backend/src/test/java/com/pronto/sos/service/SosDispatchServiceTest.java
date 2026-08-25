@@ -142,12 +142,22 @@ class SosDispatchServiceTest {
         assertThat(service.priceOffer(new BigDecimal("33.33")).commission()).isEqualByComparingTo("6.25");
     }
 
+
+    /**
+     * MS2: matching returns a {@code MatchingOutcome} rather than a bare list, because "we asked
+     * and nobody qualifies" and "we could not ask" now need to be told apart. These pre-existing
+     * cases are all the first kind.
+     */
+    private static SosMatchingService.MatchingOutcome ranked(List<RankedCandidate> candidates) {
+        return new SosMatchingService.MatchingOutcome(candidates, null);
+    }
+
     // ---- dispatch ----
 
     @Test
     void createsOneOfferPerCandidateAndNotifiesEachOne() {
         when(sosMatchingService.findCandidates(any(), any(), any()))
-                .thenReturn(List.of(candidate(1, "250"), candidate(2, "300")));
+                .thenReturn(ranked(List.of(candidate(1, "250"), candidate(2, "300"))));
 
         int dispatched = service.dispatch(request());
 
@@ -162,7 +172,7 @@ class SosDispatchServiceTest {
 
     @Test
     void offersCarryTheSnapshottedPricingAndRankingFigures() {
-        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(List.of(candidate(1, "250")));
+        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(ranked(List.of(candidate(1, "250"))));
 
         service.dispatch(request());
 
@@ -181,7 +191,7 @@ class SosDispatchServiceTest {
     @Test
     void ranksAreOneBasedAndSequential() {
         when(sosMatchingService.findCandidates(any(), any(), any()))
-                .thenReturn(List.of(candidate(1, "250"), candidate(2, "250"), candidate(3, "250")));
+                .thenReturn(ranked(List.of(candidate(1, "250"), candidate(2, "250"), candidate(3, "250"))));
 
         service.dispatch(request());
 
@@ -194,7 +204,7 @@ class SosDispatchServiceTest {
     @Test
     void offersExpireAfterTheConfiguredTtl() {
         properties.setOfferTtlSeconds(90);
-        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(List.of(candidate(1, "250")));
+        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(ranked(List.of(candidate(1, "250"))));
 
         service.dispatch(request());
 
@@ -207,7 +217,7 @@ class SosDispatchServiceTest {
     /** Nobody eligible is FAILED, not EXPIRED — a different product problem entirely. */
     @Test
     void noCandidatesFailsTheRequestAndTellsTheCustomer() {
-        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(List.of());
+        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(ranked(List.of()));
 
         int dispatched = service.dispatch(request());
 
@@ -222,7 +232,7 @@ class SosDispatchServiceTest {
 
     @Test
     void offersSentEventIsRecordedOnASuccessfulWave() {
-        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(List.of(candidate(1, "250")));
+        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(ranked(List.of(candidate(1, "250"))));
 
         service.dispatch(request());
 
@@ -236,7 +246,7 @@ class SosDispatchServiceTest {
         SosOffer existing = new SosOffer(REQUEST_ID, 5L, 1, new BigDecimal("0.9"), null, null,
                 null, BigDecimal.ZERO, BigDecimal.ZERO, java.time.Instant.now(), java.time.Instant.now());
         when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(REQUEST_ID)).thenReturn(List.of(existing));
-        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(List.of(candidate(1, "250")));
+        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(ranked(List.of(candidate(1, "250"))));
 
         service.dispatch(request());
 
@@ -254,7 +264,7 @@ class SosDispatchServiceTest {
     @Test
     void expandWritesOffersAndNotifiesWithoutTransitioningTheRequest() {
         when(sosMatchingService.findCandidates(any(), any(), any()))
-                .thenReturn(List.of(candidate(1, "250"), candidate(2, "250")));
+                .thenReturn(ranked(List.of(candidate(1, "250"), candidate(2, "250"))));
 
         int dispatched = service.expand(request(), SosSearchScope.forLevel(1, SosUrgency.URGENT, properties));
 
@@ -276,7 +286,7 @@ class SosDispatchServiceTest {
      */
     @Test
     void anExpansionThatFindsNobodyNewNeverFailsTheRequest() {
-        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(List.of());
+        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(ranked(List.of()));
 
         int dispatched = service.expand(request(), SosSearchScope.forLevel(2, SosUrgency.URGENT, properties));
 
@@ -293,7 +303,7 @@ class SosDispatchServiceTest {
         SosOffer existing = new SosOffer(REQUEST_ID, 5L, 1, new BigDecimal("0.9"), null, null,
                 null, BigDecimal.ZERO, BigDecimal.ZERO, java.time.Instant.now(), java.time.Instant.now());
         when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(REQUEST_ID)).thenReturn(List.of(existing));
-        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(List.of(candidate(1, "250")));
+        when(sosMatchingService.findCandidates(any(), any(), any())).thenReturn(ranked(List.of(candidate(1, "250"))));
 
         service.expand(request(), SosSearchScope.forLevel(1, SosUrgency.URGENT, properties));
 

@@ -4,7 +4,11 @@
     "target": "es2023",
     "lib": ["ES2023", "DOM"],
     "module": "esnext",
-    "types": ["vite/client"],
+    /* Production MS2 added a test runner (see vitest.config.ts). `vitest/globals` supplies
+       describe/it/expect without a per-file import, and `@testing-library/jest-dom` augments
+       expect with the DOM matchers -- both are type-only additions and neither reaches the
+       application bundle. */
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"],
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
 

@@ -73,10 +73,25 @@ public class SosDispatchService {
     @Transactional
     public int dispatch(SosRequest request) {
         Instant now = Instant.now();
-        int dispatched = writeWave(request, SosSearchScope.initial(request.getUrgency(), properties), now);
+        WaveResult wave = writeWave(request, SosSearchScope.initial(request.getUrgency(), properties), now);
+        int dispatched = wave.dispatched();
 
         if (dispatched == 0) {
-            failNoProfessionals(request, now);
+            // Production MS2: two different failures, and the customer is told which one happened.
+            //
+            // "Nobody eligible" is a fact about the marketplace. "We could not reach the routing
+            // provider" is a fact about Pronto. Before MS2 only the first could occur, because
+            // distance was a string comparison that could not fail; now that candidate distance
+            // comes from an external provider, collapsing the second into the first would tell a
+            // customer with a burst pipe that no plumber is available when the truth is that the
+            // platform could not measure how far away the available ones are. Different fact,
+            // different recovery ("try again in a moment" rather than "nobody is coming"),
+            // different message.
+            if (wave.degradation() != null) {
+                failDegraded(request, wave.degradation(), now);
+            } else {
+                failNoProfessionals(request, now);
+            }
             return 0;
         }
 
@@ -126,10 +141,18 @@ public class SosDispatchService {
      */
     @Transactional
     public int expand(SosRequest request, SosSearchScope scope) {
-        int dispatched = writeWave(request, scope, Instant.now());
+        WaveResult wave = writeWave(request, scope, Instant.now());
+        // An expansion never terminates a request -- see this method's contract above -- so a
+        // degradation here is logged and otherwise treated exactly like an empty wave. A provider
+        // blip during one expansion must not destroy candidates the customer already has on
+        // screen, and the next expansion will simply try again.
+        if (wave.degradation() != null) {
+            log.warn("sos.dispatch.expansion-degraded sosRequestId={} scopeLevel={} degradation={}",
+                    request.getId(), scope.level(), wave.degradation());
+        }
         log.info("sos.dispatch.expanded sosRequestId={} scopeLevel={} poolSize={} newOffers={}",
-                request.getId(), scope.level(), scope.poolSize(), dispatched);
-        return dispatched;
+                request.getId(), scope.level(), scope.poolSize(), wave.dispatched());
+        return wave.dispatched();
     }
 
     /**
@@ -139,15 +162,17 @@ public class SosDispatchService {
      *
      * @return the number of offers written
      */
-    private int writeWave(SosRequest request, SosSearchScope scope, Instant now) {
+    private WaveResult writeWave(SosRequest request, SosSearchScope scope, Instant now) {
         Set<Long> alreadyOffered = new HashSet<>(
                 sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(request.getId()).stream()
                         .map(SosOffer::getProfessionalId)
                         .toList());
 
-        List<RankedCandidate> candidates = sosMatchingService.findCandidates(request, alreadyOffered, scope);
+        SosMatchingService.MatchingOutcome outcome =
+                sosMatchingService.findCandidates(request, alreadyOffered, scope);
+        List<RankedCandidate> candidates = outcome.candidates();
         if (candidates.isEmpty()) {
-            return 0;
+            return new WaveResult(0, outcome.degradation());
         }
 
         Instant expiresAt = now.plus(Duration.ofSeconds(properties.getOfferTtlSeconds()));
@@ -187,7 +212,43 @@ public class SosDispatchService {
             notificationService.recordSosNotification(request.getId(), recipientUserId,
                     NotificationMessageType.SOS_OFFER_RECEIVED);
         }
-        return recipientUserIds.size();
+        return new WaveResult(recipientUserIds.size(), outcome.degradation());
+    }
+
+    /**
+     * What one wave produced: how many offers, and whether the evaluation was degraded rather
+     * than merely empty. See {@link #dispatch} on why those two must not be the same value.
+     */
+    private record WaveResult(int dispatched, SosMatchingService.SosMatchingDegradation degradation) {
+    }
+
+    /**
+     * Terminate a request that could not be evaluated, saying so.
+     *
+     * <p>Same terminal {@code FAILED} status as {@link #failNoProfessionals} — a request nobody
+     * can be dispatched for is over either way, and leaving it in {@code MATCHING} would strand it
+     * (nothing re-drives that status). What differs is the history detail and the customer's
+     * notification, which is the part that has to be true.
+     */
+    private void failDegraded(SosRequest request, SosMatchingService.SosMatchingDegradation degradation,
+                               Instant now) {
+        int failed = sosRequestRepository.markFailed(request.getId(), now);
+        if (failed == 0) {
+            return;
+        }
+        String detail = switch (degradation) {
+            case ROUTING_UNAVAILABLE -> "The routing provider could not be reached, so no candidate's real "
+                    + "distance or arrival time could be evaluated. This is a platform failure, not an "
+                    + "absence of available professionals.";
+            case DESTINATION_UNKNOWN -> "The service address could not be resolved to coordinates, so no "
+                    + "candidate's distance could be measured.";
+        };
+        sosEventService.recordSystem(request.getId(), SosEventType.FAILED, SosRequestStatus.MATCHING,
+                SosRequestStatus.FAILED, detail);
+        notificationService.recordSosNotification(request.getId(), request.getCustomerId(),
+                NotificationMessageType.SOS_TEMPORARILY_UNAVAILABLE);
+        log.error("sos.dispatch.failed-degraded sosRequestId={} categoryId={} degradation={}",
+                request.getId(), request.getCategoryId(), degradation);
     }
 
     private void failNoProfessionals(SosRequest request, Instant now) {

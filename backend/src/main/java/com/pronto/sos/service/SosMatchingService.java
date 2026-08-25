@@ -1,5 +1,7 @@
 package com.pronto.sos.service;
 
+import com.pronto.maps.GeoCoordinates;
+import com.pronto.maps.RouteUnavailableReason;
 import com.pronto.matching.DistanceEtaStrategy;
 import com.pronto.matching.EtaResult;
 import com.pronto.matching.ServiceLocation;
@@ -134,7 +136,7 @@ public class SosMatchingService {
      * and no expansion has happened yet.
      */
     @Transactional(readOnly = true)
-    public List<RankedCandidate> findCandidates(SosRequest request, Set<Long> alreadyOfferedProfessionalIds) {
+    public MatchingOutcome findCandidates(SosRequest request, Set<Long> alreadyOfferedProfessionalIds) {
         return findCandidates(request, alreadyOfferedProfessionalIds,
                 SosSearchScope.initial(request.getUrgency(), properties));
     }
@@ -160,14 +162,24 @@ public class SosMatchingService {
      *                                       what "wider" means in this implementation
      */
     @Transactional(readOnly = true)
-    public List<RankedCandidate> findCandidates(SosRequest request, Set<Long> alreadyOfferedProfessionalIds,
-                                                 SosSearchScope scope) {
+    public MatchingOutcome findCandidates(SosRequest request, Set<Long> alreadyOfferedProfessionalIds,
+                                            SosSearchScope scope) {
         Instant now = Instant.now();
         int remainingPoolSlots = scope.poolSize() - alreadyOfferedProfessionalIds.size();
         if (remainingPoolSlots <= 0) {
             log.info("sos.matching.pool-full sosRequestId={} scopeLevel={} poolSize={} alreadyOffered={}",
                     request.getId(), scope.level(), scope.poolSize(), alreadyOfferedProfessionalIds.size());
-            return List.of();
+            return MatchingOutcome.empty();
+        }
+
+        // MS2: the destination the whole evaluation is measured to. Filled at request creation by
+        // the client's own fix or by geocoding the service address (SosService). Absent means the
+        // address never resolved -- which is a platform-side problem, not "nobody is nearby", and
+        // must be reported as such rather than producing an empty candidate list.
+        GeoCoordinates destination = GeoCoordinates.ofNullable(request.getLatitude(), request.getLongitude());
+        if (destination == null) {
+            log.warn("sos.matching.degraded sosRequestId={} reason=destination-unknown", request.getId());
+            return MatchingOutcome.degraded(SosMatchingDegradation.DESTINATION_UNKNOWN);
         }
 
         List<Long> excluded = alreadyOfferedProfessionalIds.isEmpty()
@@ -178,7 +190,7 @@ public class SosMatchingService {
         if (eligible.isEmpty()) {
             log.info("sos.matching.empty sosRequestId={} categoryId={} reason=no-eligible-professionals",
                     request.getId(), request.getCategoryId());
-            return List.of();
+            return MatchingOutcome.empty();
         }
 
         // Second exclusion pass, in Java rather than in the query above: a professional already
@@ -204,17 +216,55 @@ public class SosMatchingService {
         Map<Long, Double> acceptanceRates = loadAcceptanceRates(
                 available.stream().map(EligibleProfessional::professionalId).toList(), now);
 
-        ServiceLocation location = toServiceLocation(request);
+        // MS2: one batched routing call for the whole candidate set. Business filters have already
+        // run -- category, marketplace eligibility, SOS availability, not-already-offered,
+        // not-busy -- so only plausible candidates reach the provider. See the maps README's
+        // call-budget section.
+        List<Long> candidateIds = available.stream().map(EligibleProfessional::professionalId).toList();
+        Map<Long, EtaResult> etaByProfessional =
+                distanceEtaStrategy.calculateBatch(candidateIds, destination, now);
+
         BigDecimal maxRadius = scope.maxRadiusKm();
-
         List<RankedCandidate> ranked = new ArrayList<>();
-        for (EligibleProfessional professional : available) {
-            EtaResult eta = distanceEtaStrategy.calculate(professional.city(), location, now);
+        int excludedNoLocation = 0;
+        int excludedProviderFailure = 0;
+        int excludedOutsideRadius = 0;
 
-            // The geographic hard filter. Applied here rather than in SQL because distance is
-            // computed in Java by DistanceEtaStrategy, per this codebase's established rule that
-            // distance/ETA never appear in a query.
-            if (maxRadius != null && eta.distanceKm() != null && eta.distanceKm().compareTo(maxRadius) > 0) {
+        for (EligibleProfessional professional : available) {
+            EtaResult eta = etaByProfessional.get(professional.professionalId());
+
+            // ---- MS2's stricter SOS rule ----
+            //
+            // A professional without a sufficiently fresh, usable current position does NOT
+            // participate in geographic SOS matching. Not approximated from their base city, not
+            // given a default distance, not ranked with a neutral ETA score -- excluded.
+            //
+            // This is deliberately harsher than the normal marketplace listing, which still shows
+            // such a professional with no ETA. The two flows are promising different things: a
+            // standard listing is "book this person for Tuesday", where being unroutable right
+            // now is irrelevant; SOS is "this person will reach you soon", which is a claim the
+            // platform cannot make about somebody whose position it does not know. Dispatching
+            // them anyway is how a customer with a burst pipe ends up waiting for a plumber who
+            // was never nearby.
+            if (eta == null || !eta.available()) {
+                RouteUnavailableReason reason = eta == null
+                        ? RouteUnavailableReason.PROVIDER_UNAVAILABLE
+                        : eta.unavailableReason();
+                if (reason.isProviderFailure()) {
+                    excludedProviderFailure++;
+                } else {
+                    excludedNoLocation++;
+                }
+                continue;
+            }
+
+            // The geographic hard filter, now against a REAL road distance. This is what finally
+            // makes SOS_MAX_DISPATCH_RADIUS_KM and the expansion multiplier mean something: the
+            // pre-MS2 implementation returned 8 km same-city / 35 km otherwise against a 40 km
+            // ceiling, so widening the ceiling changed nothing observable. The lifecycle around it
+            // is untouched -- only the number being compared is now true.
+            if (maxRadius != null && eta.distanceKm().compareTo(maxRadius) > 0) {
+                excludedOutsideRadius++;
                 continue;
             }
 
@@ -222,9 +272,20 @@ public class SosMatchingService {
         }
 
         if (ranked.isEmpty()) {
-            log.info("sos.matching.empty sosRequestId={} categoryId={} reason=all-outside-radius radiusKm={}",
-                    request.getId(), request.getCategoryId(), maxRadius);
-            return List.of();
+            // The distinction this branch draws is the whole of MS2's SOS failure policy. If every
+            // candidate fell out because the provider could not answer, the honest statement is
+            // "we could not evaluate anyone", NOT "nobody is within range" -- the second is a
+            // claim about geography that the platform just demonstrated it cannot make.
+            if (excludedProviderFailure > 0 && excludedOutsideRadius == 0 && excludedNoLocation == 0) {
+                log.error("sos.matching.degraded sosRequestId={} categoryId={} reason=provider-unavailable "
+                                + "candidates={}", request.getId(), request.getCategoryId(), available.size());
+                return MatchingOutcome.degraded(SosMatchingDegradation.ROUTING_UNAVAILABLE);
+            }
+            log.info("sos.matching.empty sosRequestId={} categoryId={} reason=no-usable-candidates radiusKm={} "
+                            + "noLocation={} providerFailure={} outsideRadius={}",
+                    request.getId(), request.getCategoryId(), maxRadius,
+                    excludedNoLocation, excludedProviderFailure, excludedOutsideRadius);
+            return MatchingOutcome.empty();
         }
 
         List<RankedCandidate> pool = ranked.stream()
@@ -235,11 +296,13 @@ public class SosMatchingService {
                 .limit(remainingPoolSlots)
                 .toList();
 
-        log.info("sos.matching.ranked sosRequestId={} scopeLevel={} eligible={} scored={} dispatching={} "
-                        + "poolSize={} remainingSlots={}",
-                request.getId(), scope.level(), eligible.size(), ranked.size(), pool.size(),
-                scope.poolSize(), remainingPoolSlots);
-        return pool;
+        log.info("sos.matching.ranked sosRequestId={} scopeLevel={} eligible={} routable={} scored={} "
+                        + "dispatching={} poolSize={} remainingSlots={} noLocation={} providerFailure={} "
+                        + "outsideRadius={}",
+                request.getId(), scope.level(), eligible.size(), available.size() - excludedNoLocation
+                        - excludedProviderFailure, ranked.size(), pool.size(), scope.poolSize(),
+                remainingPoolSlots, excludedNoLocation, excludedProviderFailure, excludedOutsideRadius);
+        return MatchingOutcome.of(pool);
     }
 
     /** Exposed for the dispatcher, which needs the same address shape to price offers. */
@@ -249,15 +312,64 @@ public class SosMatchingService {
     }
 
     /**
+     * Why one evaluation could produce nothing for a reason that is not about professionals.
+     *
+     * <p>Exists so that {@code SosDispatchService} can tell a customer the truth. Both values mean
+     * "the platform could not do its job", never "no professional is available".
+     */
+    public enum SosMatchingDegradation {
+
+        /** The routing provider could not be reached for any candidate. */
+        ROUTING_UNAVAILABLE,
+
+        /** The request's service address never resolved to coordinates, so nothing can be measured. */
+        DESTINATION_UNKNOWN
+    }
+
+    /**
+     * The result of one matching evaluation: candidates, or an explicit degradation.
+     *
+     * <p>Replaces a bare {@code List<RankedCandidate>}, and the reason is the same one that runs
+     * through the rest of MS2: an empty list conflates "we asked and nobody qualifies" with "we
+     * could not ask", and those two need opposite things said to the customer. A caller holding
+     * this type has to decide which happened.
+     */
+    public record MatchingOutcome(List<RankedCandidate> candidates, SosMatchingDegradation degradation) {
+
+        static MatchingOutcome of(List<RankedCandidate> candidates) {
+            return new MatchingOutcome(candidates, null);
+        }
+
+        static MatchingOutcome empty() {
+            return new MatchingOutcome(List.of(), null);
+        }
+
+        static MatchingOutcome degraded(SosMatchingDegradation degradation) {
+            return new MatchingOutcome(List.of(), degradation);
+        }
+
+        public boolean isDegraded() {
+            return degradation != null;
+        }
+
+        public boolean isEmpty() {
+            return candidates.isEmpty();
+        }
+    }
+
+    /**
      * The weighted sum. Each component is normalized to {@code [0, 1]} first, so the weights
      * above genuinely express relative importance rather than being distorted by the different
      * natural scales of minutes, kilometres and star ratings.
      */
     private RankedCandidate score(EligibleProfessional professional, EtaResult eta, Double acceptanceRate) {
+        // MS2: eta is guaranteed available here -- findCandidates excludes every candidate without
+        // a real route before scoring. The pre-MS2 version had to defend against a null distance
+        // with a neutral 0.5, which was a quiet way of ranking somebody the platform could not
+        // locate as merely average rather than as unknown. That branch is gone because the
+        // situation it handled is now an exclusion, not a score.
         double etaScore = inverseNormalized(eta.etaMinutes(), ETA_CEILING_MINUTES);
-        double distanceScore = eta.distanceKm() == null
-                ? 0.5
-                : inverseNormalized(eta.distanceKm().doubleValue(), DISTANCE_CEILING_KM.doubleValue());
+        double distanceScore = inverseNormalized(eta.distanceKm().doubleValue(), DISTANCE_CEILING_KM.doubleValue());
         // reviews.rating is 1-5; map onto [0,1] by (r-1)/4 so a 1-star is genuinely zero rather
         // than 0.2 -- the bottom of the scale should score bottom.
         double ratingScore = professional.averageRating() == null

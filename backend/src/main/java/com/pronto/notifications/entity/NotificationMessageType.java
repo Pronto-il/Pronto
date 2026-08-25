@@ -16,6 +16,13 @@ public enum NotificationMessageType {
     ORDER_CREATED,
     ORDER_CONFIRMED,
     ORDER_ON_THE_WAY,
+    /**
+     * <b>Production MS2, {@code V51}.</b> The professional's arrival at the customer's address has
+     * been verified by the backend against the order's destination snapshot. The Standard flow had
+     * no equivalent before MS2 because it had no arrival step to announce; the SOS flow's
+     * {@link #SOS_ARRIVED} has existed since {@code V35}.
+     */
+    ORDER_ARRIVED,
     ORDER_COMPLETED,
     ORDER_CANCELLED,
     ORDER_REJECTED,
@@ -37,5 +44,19 @@ public enum NotificationMessageType {
     SOS_COMPLETED,
     SOS_CANCELLED,
     SOS_EXPIRED,
-    SOS_NO_PROFESSIONALS
+    SOS_NO_PROFESSIONALS,
+
+    /**
+     * <b>Production MS2, {@code V51}.</b> The SOS request could not be matched because the routing
+     * provider could not be reached — not because nobody is available.
+     *
+     * <p>Its own value rather than a reuse of {@link #SOS_NO_PROFESSIONALS}, because the two are
+     * different facts with different recoveries and the difference matters most to the person
+     * least able to tolerate a wrong one. Before MS2, SOS could only fail one way: distance was a
+     * string comparison and could not fail. Now that candidate distance comes from an external
+     * provider, telling a customer with a burst pipe "no plumber is available" when the truth is
+     * "we could not measure how far away the available plumbers are" would be both false and
+     * actively harmful.
+     */
+    SOS_TEMPORARILY_UNAVAILABLE
 }

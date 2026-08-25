@@ -10,12 +10,14 @@ import { useAuth, useOrderStatus, useEtaCountdown, useActiveOrder } from '../../
 import {
   cancelOrder,
   markOnTheWay,
+  markArrived,
   completeOrder,
   getIssue,
   getProfessionalProfile,
   ApiError,
   GENERIC_ERROR_MESSAGE,
 } from '../../shared/api';
+import { performArrival } from './arrivalAction';
 import type { OrderStatus, IssueDetailResponse, ProfessionalProfileResponse } from '../../shared/api';
 import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
 import styles from './OrderTrackingPage.module.css';
@@ -26,6 +28,10 @@ const ORDER_ACTION_ERROR_MESSAGES: Record<string, string> = {
   ORDER_NOT_CANCELLABLE: 'לא ניתן לבטל את ההזמנה הזו כרגע.',
   ORDER_NOT_CONFIRMED: 'לא ניתן לסמן את ההזמנה כ’בדרך’ כרגע.',
   ORDER_NOT_ON_THE_WAY: 'לא ניתן לסמן את ההזמנה כהושלמה כרגע.',
+
+  // Production MS2's arrival refusals are NOT listed here: they live in `arrivalAction.ts`
+  // alongside the flow that raises them, so the Standard screen and the professional SOS screen
+  // cannot end up wording the same 422 differently.
 };
 
 /** Router-state shape passed by `WeeklyCalendarGrid`'s `BOOKED`-segment click-through (design
@@ -172,6 +178,46 @@ export default function OrderTrackingPage() {
     }
   }
 
+  /**
+   * Production MS2 — `הגעתי`, and the one action on this screen that is not simply a state
+   * change the professional is entitled to make.
+   *
+   * Two steps, in this order and for a reason:
+   *
+   * 1. **Take a fresh, high-quality fix on the device** (`getArrivalFix`, which forces a new
+   *    reading rather than a cached one and applies the strict arrival accuracy floor). Every
+   *    way this can fail — unsupported, denied, unavailable, timed out, too coarse — comes back
+   *    with a Hebrew sentence, so the professional never gets a spinner that does not end or an
+   *    error that does not say what to do.
+   * 2. **Send it and let the backend decide.** The client does not know where the customer is
+   *    and must not: the geofence comparison happens entirely server-side. This function cannot
+   *    tell you whether you are close enough, and that is the design, not a limitation.
+   */
+  async function handleArrived() {
+    setStatusActionError(null);
+    setIsUpdatingStatus(true);
+    try {
+      // `performArrival` owns the whole dance -- fresh fix, submit, map the refusal to a Hebrew
+      // sentence -- and is shared verbatim with the professional SOS screen, because the backend
+      // holds both flows to one geofence rule and two client copies is how they drift apart.
+      const outcome = await performArrival((fix) => markArrived(orderId, fix));
+      if (!outcome.ok) {
+        setStatusActionError(outcome.message);
+        // A device-side failure sent nothing, so the order is unchanged and there is nothing to
+        // refetch. A server-side refusal did change nothing either, but the order may have moved
+        // for an unrelated reason (that is what ORDER_NOT_ARRIVABLE means), so it is worth
+        // re-reading.
+        if (outcome.stage === 'server') {
+          refetch();
+        }
+        return;
+      }
+      refetch();
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  }
+
   async function handleComplete() {
     setStatusActionError(null);
     setIsUpdatingStatus(true);
@@ -191,7 +237,16 @@ export default function OrderTrackingPage() {
 
   const canCancel = user?.role === 'CUSTOMER' && order && CUSTOMER_CANCELLABLE_STATUSES.includes(order.orderStatus);
   const canMarkOnTheWay = user?.role === 'PROFESSIONAL' && order?.orderStatus === 'CONFIRMED';
-  const canComplete = user?.role === 'PROFESSIONAL' && order?.orderStatus === 'ON_THE_WAY';
+  const canMarkArrived = user?.role === 'PROFESSIONAL' && order?.orderStatus === 'ON_THE_WAY';
+  /**
+   * MS2: completion stays reachable from `ON_THE_WAY` as well as `ARRIVED`, matching the
+   * backend (`OrderRepository.completeIfOnTheWay` accepts both). Arrival is a verification
+   * step, not a toll gate — a professional whose phone cannot get a usable fix, or who is
+   * working an order created before MS2, must still be able to finish the job.
+   */
+  const canComplete =
+    user?.role === 'PROFESSIONAL' &&
+    (order?.orderStatus === 'ON_THE_WAY' || order?.orderStatus === 'ARRIVED');
   const canReview = user?.role === 'CUSTOMER' && order?.orderStatus === 'COMPLETED';
 
   // §43: a booked-block click-through from the calendar carries the visible week via router
@@ -355,8 +410,27 @@ export default function OrderTrackingPage() {
             </Button>
           )}
 
+          {canMarkArrived && (
+            <>
+              <Button onClick={handleArrived} loading={isUpdatingStatus} fullWidth>
+                הגעתי
+              </Button>
+              <p className={styles.arrivalHint}>
+                נאמת את המיקום שלך מול כתובת הלקוח. יש לאפשר שירותי מיקום.
+              </p>
+            </>
+          )}
+
           {canComplete && (
-            <Button onClick={handleComplete} loading={isUpdatingStatus} fullWidth>
+            <Button
+              onClick={handleComplete}
+              loading={isUpdatingStatus}
+              fullWidth
+              /* Secondary while `הגעתי` is still the expected next step, so the two full-width
+                 buttons are not competing for the same tap. Once arrival is recorded (or was
+                 skipped), completion is the only action left and becomes primary again. */
+              variant={canMarkArrived ? 'secondary' : 'primary'}
+            >
               סיום העבודה
             </Button>
           )}

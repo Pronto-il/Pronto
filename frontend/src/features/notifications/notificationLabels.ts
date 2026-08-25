@@ -27,6 +27,10 @@ const MESSAGE_TYPE_LABELS: Record<NotificationMessageType, string> = {
   ORDER_CREATED: 'בקשה חדשה התקבלה',
   ORDER_CONFIRMED: 'ההזמנה שלך אושרה',
   ORDER_ON_THE_WAY: 'בעל המקצוע בדרך אליך',
+  // Production MS2 -- the verified-arrival notification. Reads as a statement because the
+  // backend checked it, unlike every other status message here, which reports what somebody
+  // said they were doing.
+  ORDER_ARRIVED: 'בעל המקצוע הגיע לכתובת שלך',
   ORDER_COMPLETED: 'העבודה הושלמה',
   ORDER_CANCELLED: 'ההזמנה בוטלה',
   ORDER_REJECTED: 'הבקשה שלך נדחתה',
@@ -52,6 +56,11 @@ const MESSAGE_TYPE_LABELS: Record<NotificationMessageType, string> = {
   SOS_COMPLETED: 'הטיפול הושלם',
   SOS_CANCELLED: 'קריאת ה-SOS בוטלה',
   SOS_EXPIRED: 'קריאת ה-SOS פגה',
+  // Production MS2. Deliberately NOT worded as "no professionals available": this fires when
+  // the routing provider could not be reached, so nobody's distance could be measured. Telling
+  // a customer with a burst pipe that nobody is available, when the truth is that Pronto could
+  // not do the arithmetic, would be both false and actively harmful.
+  SOS_TEMPORARILY_UNAVAILABLE: 'לא הצלחנו לחפש בעלי מקצוע כרגע — אפשר לנסות שוב',
   SOS_NO_PROFESSIONALS: 'לא נמצא בעל מקצוע בזמן',
 };
 

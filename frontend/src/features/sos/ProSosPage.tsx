@@ -14,6 +14,7 @@ import {
   rejectSosOffer,
 } from '../../shared/api';
 import type { SosOfferResponse } from '../../shared/api';
+import { performArrival } from '../booking/arrivalAction';
 import { SosEtaModal } from './SosEtaModal';
 import { SosJobPanel } from './SosJobPanel';
 import { SosOfferCard } from './SosOfferCard';
@@ -149,7 +150,18 @@ export default function ProSosPage() {
       } else if (action === 'on-the-way') {
         await markSosOnTheWay(sosRequestId);
       } else if (action === 'arrived') {
-        await markSosArrived(sosRequestId);
+        // Production MS2. `הגעתי` is geofence-verified server-side on this flow too, and for a
+        // stronger reason than on the Standard one: SOS is the flow whose entire promise is
+        // arrival speed, so taking somebody's word for it here while verifying it there would
+        // leave the guarantee where it matters least.
+        //
+        // Shared with the Standard tracking screen (`performArrival`) rather than reimplemented,
+        // matching the backend, which runs both through one `ArrivalVerifier`.
+        const outcome = await performArrival((fix) => markSosArrived(sosRequestId, fix));
+        if (!outcome.ok) {
+          setJobError(outcome.message);
+          return;
+        }
       } else {
         await completeSosRequest(sosRequestId);
       }

@@ -65,7 +65,7 @@ class UsersServiceTest {
         storageService = Mockito.mock(StorageService.class);
         professionalCoverageService = Mockito.mock(ProfessionalCoverageService.class);
         usersService = new UsersService(userRepository, professionalRepository, storageService,
-                professionalCoverageService, new PhoneNumberNormalizer("IL"));
+                professionalCoverageService, new PhoneNumberNormalizer("IL"), Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class));
         // MS4: every pre-existing test in this class describes an ordinary, fully-configured
         // professional, so coverage and categories are stubbed to a sane default here; the tests
         // that care override them per-test. ProfessionalCoverageService's own rules are covered by

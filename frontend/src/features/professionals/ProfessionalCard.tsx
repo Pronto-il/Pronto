@@ -165,13 +165,34 @@ export function ProfessionalCard({
       )}
 
       <div className={styles.meta}>
-        <span className={`${styles.metaItem} ${styles.eta} ${sort === 'FASTEST' ? styles.etaEmphasis : ''}`}>
-          <Zap size={16} aria-hidden="true" />
-          יכול להגיע תוך כ־{etaMinutes} דקות
-        </span>
+        {/*
+          Production MS2. `etaMinutes`/`distanceKm` are nullable now, and the null case is a
+          real, ordinary outcome rather than an edge: the professional's device position may be
+          missing, stale or too coarse to route from, or the maps provider may be unreachable.
+
+          What is NOT done here is the tempting thing -- rendering `0 דקות` / `0.0 ק״מ`, or
+          silently hiding the professional. The first is a lie the customer would act on; the
+          second removes somebody perfectly bookable for next Tuesday because their phone is in
+          a basement right now. So the card stays, and the travel line says plainly that the
+          figure is unavailable.
+        */}
+        {etaMinutes !== null ? (
+          <span className={`${styles.metaItem} ${styles.eta} ${sort === 'FASTEST' ? styles.etaEmphasis : ''}`}>
+            <Zap size={16} aria-hidden="true" />
+            יכול להגיע תוך כ־{etaMinutes} דקות
+          </span>
+        ) : (
+          <span className={`${styles.metaItem} ${styles.etaUnavailable}`}>
+            <Zap size={16} aria-hidden="true" />
+            זמן הגעה לא זמין כרגע
+          </span>
+        )}
         <span className={styles.metaItem}>
           <MapPin size={15} aria-hidden="true" />
-          {serviceRegion ?? 'אזור לא הוגדר'} · {distanceKm.toFixed(1)} ק״מ ממך
+          {serviceRegion ?? 'אזור לא הוגדר'}
+          {/* The distance clause is dropped entirely rather than replaced with a placeholder --
+              the region is genuine information and reads perfectly well on its own. */}
+          {distanceKm !== null && ` · ${distanceKm.toFixed(1)} ק״מ ממך`}
         </span>
       </div>
 

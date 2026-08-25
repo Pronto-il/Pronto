@@ -84,14 +84,39 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
                              @Param("expectedArrivalAt") Instant expectedArrivalAt);
 
     /**
-     * §2.17 step 4 (Milestone 6). {@code 0} affected rows means the order wasn't
-     * {@code ON_THE_WAY} — including the deliberately-disallowed {@code CONFIRMED ->
-     * COMPLETED} skip-ahead attempt, which fails this guard exactly like any other
-     * non-{@code ON_THE_WAY} order would.
+     * <b>Production MS2.</b> {@code ON_THE_WAY -> ARRIVED}, the atomic half of verified arrival.
+     *
+     * <p>Called only after {@code BookingsService#arrived} has measured the professional's
+     * verified position against the order's destination snapshot and found it inside the
+     * geofence — this statement records that decision, it does not make it. {@code 0} affected
+     * rows means the order left {@code ON_THE_WAY} between the check and this write (a cancel, or
+     * a duplicate arrival claim from a second tab), which is a {@code 409}, not a silent success:
+     * a second claim must not restamp {@code arrived_at} and move the evidence.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE Order o SET o.orderStatus = com.pronto.bookings.entity.OrderStatus.ARRIVED, "
+            + "o.updatedAt = :now WHERE o.id = :orderId "
+            + "AND o.orderStatus = com.pronto.bookings.entity.OrderStatus.ON_THE_WAY")
+    int arrivedIfOnTheWay(@Param("orderId") Long orderId, @Param("now") Instant now);
+
+    /**
+     * §2.17 step 4 (Milestone 6), <b>widened by Production MS2 to accept {@code ARRIVED}</b>.
+     *
+     * <p>{@code ARRIVED} is an optional intermediate state ({@code V51}): a professional whose
+     * device has no usable GPS never reaches it, and every order in flight when MS2 shipped is
+     * still {@code ON_THE_WAY}. Completion therefore has to be legal from both, and narrowing it
+     * to {@code ARRIVED} only would have made verified arrival a toll gate capable of stranding a
+     * professional mid-job — exactly what {@code OrderStatus.ARRIVED}'s Javadoc says it must not
+     * be.
+     *
+     * <p>{@code 0} affected rows still means the order was in neither status — including the
+     * deliberately-disallowed {@code CONFIRMED -> COMPLETED} skip-ahead, which fails this guard
+     * exactly as it always did.
      */
     @Modifying(clearAutomatically = true)
     @Query("UPDATE Order o SET o.orderStatus = com.pronto.bookings.entity.OrderStatus.COMPLETED, "
-            + "o.updatedAt = :now WHERE o.id = :orderId AND o.orderStatus = com.pronto.bookings.entity.OrderStatus.ON_THE_WAY")
+            + "o.updatedAt = :now WHERE o.id = :orderId AND o.orderStatus IN "
+            + "(com.pronto.bookings.entity.OrderStatus.ON_THE_WAY, com.pronto.bookings.entity.OrderStatus.ARRIVED)")
     int completeIfOnTheWay(@Param("orderId") Long orderId, @Param("now") Instant now);
 
     /**

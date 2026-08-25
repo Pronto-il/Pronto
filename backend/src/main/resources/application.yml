@@ -238,6 +238,103 @@ pronto:
     # characters.
     pepper: ${OTP_PEPPER:local-dev-only-insecure-otp-pepper-please-override-via-OTP_PEPPER-env-var-before-any-real-deployment}
 
+  maps:
+    # ---------------------------------------------------------------------------------
+    # Production MS2 -- the real geocoding/routing provider. See the maps package README
+    # for the provider decision and docs/production-roadmap/reports/prod-MS2-report.md.
+    # ---------------------------------------------------------------------------------
+    #
+    # fake | google
+    #   fake    Offline and deterministic: real coordinates for the largest Israeli cities,
+    #           a hash-derived offset within the city, and straight-line-times-a-detour-factor
+    #           routing. Genuinely a function of real geometry -- so ordering, radius and
+    #           threshold tests exercise the real comparison logic -- but it is not a road
+    #           network and it reports trafficAware=false so nothing can mistake it for one.
+    #   google  Google Maps Platform: Geocoding API + Routes API (computeRouteMatrix,
+    #           routingPreference=TRAFFIC_AWARE).
+    #
+    # auth.config.ProviderModeStartupGuard refuses to start with mode=fake in any environment
+    # other than local/test/demo. A Production instance running the fake provider would quote
+    # confident distances and arrival times describing no real journey, silently and
+    # convincingly -- which is exactly the defect this milestone exists to end.
+    mode: ${MAPS_MODE:fake}
+    # Never committed -- env-var-sourced only, same treatment as JWT_SECRET/OPENAI_API_KEY.
+    # Required (and startup-checked) whenever mode is not 'fake'. The key needs BOTH the
+    # Geocoding API and the Routes API enabled on it, and billing enabled on the project.
+    api-key: ${MAPS_API_KEY:}
+    # ISO 3166-1 alpha-2 region bias for geocoding. A bias, not a filter -- maps.PostalAddress
+    # also appends the country to every query, which is the part that is not merely a hint.
+    region: ${MAPS_REGION:il}
+    # Language for the provider's own formatted-address strings. Diagnostic only: a geocoder's
+    # rendering of an address NEVER overwrites the customer's own address text.
+    language: ${MAPS_LANGUAGE:he}
+    # Bounds a customer-facing request thread against an unresponsive provider, same reason
+    # EMAIL_TIMEOUT_MS exists. Deliberately short: a listing that takes eight seconds to admit
+    # it has no ETA is worse than one that says so in two.
+    timeout-ms: ${MAPS_TIMEOUT_MS:4000}
+    # ---- provider-call budget (roadmap §15: no N+1 routing explosion) ----
+    # Origins per route-matrix request. Sized from Pronto's own pools rather than from the
+    # provider ceiling: SOS contacts at most 8 (15 emergency) and expands to at most 40, and a
+    # normal listing is pre-filtered by category/coverage/eligibility before anything is routed.
+    matrix-batch-size: ${MAPS_MATRIX_BATCH_SIZE:25}
+    # Hard cap on candidates routed for ONE listing or dispatch evaluation. Overflow is reported
+    # as ETA-unavailable and LOGGED AT WARN -- a silent cap reads downstream as "these people
+    # have no GPS", which is a completely different operational problem.
+    max-routed-candidates: ${MAPS_MAX_ROUTED_CANDIDATES:50}
+    # ---- caching (roadmap §16) ----
+    # Two TTLs because the two facts age differently. Road distance between two points is
+    # effectively constant, so re-asking is pure cost. A traffic-aware duration is a claim about
+    # right now; caching one for hours would put back the very defect MS2 removes -- a confident
+    # number that stopped being true. In-process only: no Redis, per roadmap §16.
+    distance-cache-ttl-seconds: ${MAPS_DISTANCE_CACHE_TTL_SECONDS:86400}
+    traffic-duration-cache-ttl-seconds: ${MAPS_TRAFFIC_CACHE_TTL_SECONDS:180}
+    route-cache-max-entries: ${MAPS_ROUTE_CACHE_MAX_ENTRIES:5000}
+    # How long a persisted geocoding result may be reused before the address is resolved again.
+    # 30 days because GOOGLE MAPS PLATFORM'S TERMS RESTRICT RETENTION OF ITS GEOCODING CONTENT
+    # -- an operational/legal bound, not a technical one, which is why it is a property. The
+    # exact terms in force MUST be confirmed against live provider documentation before
+    # production launch; see the MS2 report's provider-decision section.
+    geocode-cache-max-age-days: ${MAPS_GEOCODE_CACHE_MAX_AGE_DAYS:30}
+
+  location:
+    # ---------------------------------------------------------------------------------
+    # Production MS2 -- what Pronto considers a trustworthy position, and how close counts
+    # as "arrived". Deliberately separate from pronto.maps.*: that block is about a vendor,
+    # this one is about product rules. See maps.config.LocationProperties for the full
+    # rationale on each figure -- every one is a judgement call about physical reality and
+    # will need adjusting from operational evidence, which is why none of them is a constant
+    # buried in a service.
+    # ---------------------------------------------------------------------------------
+    #
+    # How recent a professional's fix must be to be used as a ROUTING ORIGIN. Evaluated
+    # against BOTH the device's captured_at and the server's updated_at, taking the stricter --
+    # so a client with a wrong (or dishonest) clock cannot make a stale fix look fresh.
+    professional-freshness: ${LOCATION_PROFESSIONAL_FRESHNESS:10m}
+    # Worst device-reported accuracy still usable for routing. Loose on purpose: half a
+    # kilometre changes a 20-minute ETA by a minute or two, so this rejects only the genuinely
+    # useless (coarse wifi/IP geolocation reporting kilometres), not honest GPS.
+    max-accuracy-meters: ${LOCATION_MAX_ACCURACY_METERS:500}
+    # ---- arrival verification (roadmap §22) ----
+    # How close to the order's destination counts as arrived. 150 m from what actually happens:
+    # professionals park where they can, the destination coordinate is a geocoder's idea of a
+    # building, and a phone in a built-up street has tens of metres of error of its own. A 25 m
+    # radius would reject honest arrivals constantly.
+    arrival-radius-meters: ${LOCATION_ARRIVAL_RADIUS_METERS:150}
+    # Much stricter than max-accuracy-meters above, because the question is different: routing
+    # asks "roughly where are you", arrival asks "are you at this door". A fix whose own error
+    # circle is wider than the geofence cannot answer that. Startup fails if this exceeds
+    # arrival-radius-meters, which would make the geofence decorative.
+    arrival-max-accuracy-meters: ${LOCATION_ARRIVAL_MAX_ACCURACY_METERS:100}
+    # How recent the fix submitted WITH an arrival claim must be. Far tighter than the routing
+    # freshness: this fix is not estimating something, it is the entire evidence for a claim
+    # about where a person is right now. Generous for taking a fresh reading (seconds), far too
+    # short to replay one captured at the address earlier in the day.
+    arrival-max-age: ${LOCATION_ARRIVAL_MAX_AGE:2m}
+    # Client clock skew tolerated on a device-supplied captured_at. Modest future skew is
+    # clamped to now; a wildly future timestamp is refused as malformed rather than treated as
+    # maximally fresh, which is the direction an attacker would push.
+    max-clock-skew: ${LOCATION_MAX_CLOCK_SKEW:2m}
+
   phone:
     # CLDR region used to interpret phone numbers typed in local form, i.e. with no country code
     # (auth.service.PhoneNumberNormalizer). IL so an Israeli customer can type 050-1234567 exactly
@@ -310,10 +407,14 @@ pronto:
     # customer with a burst pipe can be left on. Was hardcoded on SosService until the SOS
     # final-readiness pass; every other SOS deadline was already tunable per environment.
     confirmation-grace-seconds: ${SOS_CONFIRMATION_GRACE_SECONDS:180}
-    # Geographic eligibility cap, compared against matching.EtaResult#distanceKm. That v1
-    # figure is a coarse same-city/different-city approximation, so today this behaves as a
-    # same-city preference rather than a true radius; kept as km so real geocoding can be
-    # swapped in later with no config or API change.
+    # Geographic eligibility cap, compared against matching.EtaResult#distanceKm.
+    #
+    # PRODUCTION MS2 MADE THIS REAL. It used to be compared against a coarse
+    # same-city/different-city approximation (8 km / 35 km against a 40 km ceiling), so it
+    # behaved as a same-city preference rather than a radius. It is now compared against actual
+    # road distance from the professional's fresh device position to the customer's geocoded
+    # address, so 40.0 finally means 40 kilometres. The value itself is unchanged and the
+    # lifecycle around it was not redesigned -- only the number being compared is now true.
     max-dispatch-radius-km: ${SOS_MAX_DISPATCH_RADIUS_KM:40.0}
     # ---- automatic search expansion ----
     # The search widens BY ITSELF on this cadence for as long as the scan window is open; there
@@ -332,12 +433,13 @@ pronto:
     # means "we asked further down the ranked list". Defaults give 8 contacted initially and at
     # most 24 in total.
     expansion-pool-increment: ${SOS_EXPANSION_POOL_INCREMENT:8}
-    # The factor max-dispatch-radius-km is multiplied by per expansion step. A SEAM, not a
-    # feature: the v1 distance model returns 8 km same-city / 35 km otherwise against a 40 km
-    # ceiling, so this changes nothing observable today and no customer-facing copy quotes a
-    # radius. It exists so that when real geocoding lands, "expand the search" becomes a genuine
-    # radius expansion by changing one strategy rather than by redesigning the flow. 1 leaves the
-    # radius untouched.
+    # The factor max-dispatch-radius-km is multiplied by per expansion step.
+    #
+    # PRODUCTION MS2: this was documented as an inert seam -- with an 8/35 km distance model it
+    # changed nothing observable. It is now live. Expansion widens a genuine geographic radius:
+    # level 1 reaches 60 km, level 2 90 km, and so on, against real road distances. The seam was
+    # designed for exactly this swap and needed no change to the expansion flow itself.
+    # 1 leaves the radius untouched.
     expansion-radius-multiplier: ${SOS_EXPANSION_RADIUS_MULTIPLIER:1.5}
 
 server:

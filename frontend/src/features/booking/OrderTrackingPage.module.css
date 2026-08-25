@@ -196,3 +196,17 @@
   font-weight: 700;
   color: var(--color-text-secondary);
 }
+
+/*
+ * Production MS2 — the one-line explanation under the `הגעתי` button.
+ *
+ * Says what pressing it will do *before* the browser's permission prompt appears, which is the
+ * difference between a professional granting location access and dismissing a prompt they did
+ * not expect. Muted and small: it is a note, not a warning, and nothing has gone wrong.
+ */
+.arrivalHint {
+  margin: calc(var(--space-2) * -1) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}

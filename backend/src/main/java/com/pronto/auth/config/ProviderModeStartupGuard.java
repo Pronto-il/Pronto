@@ -9,7 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Fail-fast startup guard: a Production-like environment may not run fake Email or SMS.
+ * Fail-fast startup guard: a Production-like environment may not run fake Email, SMS or Maps.
  *
  * <p>Roadmap rule §1.6 — "the application must never silently run with development/test behavior".
  * For MS1 that has a very specific meaning. Every security property this milestone adds rests on a
@@ -33,11 +33,23 @@ import java.util.List;
  * web server is already accepting connections, leaving a window in which the application serves
  * traffic it should never have served. This runs during bean initialization, before the port is
  * bound.
+ *
+ * <p><b>Production MS2 adds Maps to this guard rather than creating a second one.</b> The rule is
+ * identical in shape — a Production-like environment may not run a fake provider — and the reason
+ * it belongs here is that the MS1 Javadoc above already states it in general terms: the
+ * application must never silently run with development behaviour. The maps-specific version of
+ * "worse than a crash, because it is silent" is a platform that keeps serving confident distances
+ * and arrival times computed from invented geography, which customers act on and professionals are
+ * dispatched by. That is precisely the defect MS2 exists to end, and a boot that quietly restored
+ * it would undo the whole milestone.
  */
 @Component
 public class ProviderModeStartupGuard {
 
     private static final String LOG_MODE = "log";
+
+    /** The maps equivalent of {@link #LOG_MODE} — see {@code maps.config.MapsProperties}. */
+    private static final String FAKE_MODE = "fake";
 
     private final ProntoEnvironment environment;
     private final String emailMode;
@@ -45,19 +57,25 @@ public class ProviderModeStartupGuard {
     private final String smsMode;
     private final String smsRegion;
     private final String demoDataMode;
+    private final String mapsMode;
+    private final String mapsApiKey;
 
     public ProviderModeStartupGuard(ProntoEnvironment environment,
                                      @Value("${pronto.email.mode:log}") String emailMode,
                                      @Value("${pronto.email.from:}") String emailFrom,
                                      @Value("${pronto.sms.mode:log}") String smsMode,
                                      @Value("${pronto.sms.region:}") String smsRegion,
-                                     @Value("${pronto.demo-data.mode:off}") String demoDataMode) {
+                                     @Value("${pronto.demo-data.mode:off}") String demoDataMode,
+                                     @Value("${pronto.maps.mode:fake}") String mapsMode,
+                                     @Value("${pronto.maps.api-key:}") String mapsApiKey) {
         this.environment = environment;
         this.emailMode = emailMode == null ? "" : emailMode.trim();
         this.emailFrom = emailFrom == null ? "" : emailFrom.trim();
         this.smsMode = smsMode == null ? "" : smsMode.trim();
         this.smsRegion = smsRegion == null ? "" : smsRegion.trim();
         this.demoDataMode = demoDataMode == null ? "off" : demoDataMode.trim();
+        this.mapsMode = mapsMode == null ? "" : mapsMode.trim();
+        this.mapsApiKey = mapsApiKey == null ? "" : mapsApiKey.trim();
     }
 
     @PostConstruct
@@ -74,6 +92,27 @@ public class ProviderModeStartupGuard {
                 failures.add("pronto.sms.mode=log (SMS_MODE). Phone verification and phone login codes "
                         + "would never be delivered. Set SMS_MODE=aws.");
             }
+            // Production MS2. The failure this prevents is the one the whole milestone exists to
+            // end: the fake provider invents coordinates from a city lookup table and derives
+            // travel time from straight-line geometry, so a Production instance running it would
+            // quote confident distances and arrival times that describe no real journey -- and
+            // would do so silently, indefinitely, and convincingly.
+            if (FAKE_MODE.equalsIgnoreCase(mapsMode)) {
+                failures.add("pronto.maps.mode=fake (MAPS_MODE). Distances, ETAs, geocoding and the "
+                        + "arrival geofence would all be computed from invented geography rather than from "
+                        + "a real mapping provider, and nothing in the product would look broken. Set "
+                        + "MAPS_MODE=google and supply MAPS_API_KEY.");
+            }
+        }
+
+        // Not environment-specific: a real maps mode with no credential cannot work anywhere. Every
+        // geocode and route would fail, which degrades to "no ETA available" everywhere rather than
+        // to an error -- exactly the kind of quiet, total loss of a feature that is better caught at
+        // boot than inferred from a support ticket.
+        if (!FAKE_MODE.equalsIgnoreCase(mapsMode) && mapsApiKey.isEmpty()) {
+            failures.add("pronto.maps.mode=" + mapsMode + " but pronto.maps.api-key (MAPS_API_KEY) is empty. "
+                    + "Every geocode and route request would be rejected by the provider, silently removing "
+                    + "distance, ETA and arrival verification from the entire platform.");
         }
 
         if ("ses".equalsIgnoreCase(emailMode) && emailFrom.isEmpty()) {

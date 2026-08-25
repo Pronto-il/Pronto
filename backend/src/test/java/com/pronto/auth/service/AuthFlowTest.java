@@ -89,7 +89,7 @@ class AuthFlowTest {
                 Mockito.mock(com.pronto.availability.repository.ProfessionalWorkingHoursRepository.class),
                 Mockito.mock(com.pronto.storage.service.StorageService.class),
                 passwordEncoder, new PhoneNumberNormalizer("IL"),
-                Mockito.mock(LoginAttemptRecorder.class), otpService);
+                Mockito.mock(LoginAttemptRecorder.class), otpService, Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class));
 
         authService = new AuthService(userRepository, accountWriter, otpService, jwtService,
                 passwordEncoder,

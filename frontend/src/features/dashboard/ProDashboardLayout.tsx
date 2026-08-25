@@ -3,6 +3,7 @@ import { Inbox, ClipboardList, CalendarDays, Siren, User } from 'lucide-react';
 import { Badge } from '../../shared/components';
 import { PendingRequestsProvider, ProSosProvider, useProSos, usePendingRequests } from '../../shared/hooks';
 import { OnboardingStatusNotice } from './OnboardingStatusNotice';
+import { LocationStatusNotice } from './LocationStatusNotice';
 import styles from './ProDashboardLayout.module.css';
 
 /**
@@ -54,6 +55,14 @@ export default function ProDashboardLayout() {
                   to notice it on the screen where the work isn't arriving. Renders nothing at
                   all once the account is eligible. */}
               <OnboardingStatusNotice />
+              {/* Production MS2. Mounted here, above every `/pro/*` screen, for the same reason
+                  the onboarding notice is: a professional whose location Pronto cannot see is
+                  most likely to notice the consequence on the screen where the urgent work
+                  isn't arriving. Mounting it here is also what starts the location sync at all
+                  -- the hook lives inside this component -- so a professional who opens the
+                  dashboard and never navigates anywhere is still routable. Renders nothing once
+                  the position is usable. */}
+              <LocationStatusNotice />
               <Outlet />
             </div>
           </div>

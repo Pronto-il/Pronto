@@ -24,15 +24,14 @@ import java.math.RoundingMode;
  *       offered and continues the same rank sequence, a wider pool means literally "we asked
  *       further down the ranked list of people who can do this job". That is a true statement
  *       about a real, bounded set, and it needs no data the platform does not have.</li>
- *   <li><b>{@link #maxRadiusKm} — the seam that is inert today.</b> Multiplied by
- *       {@code expansion-radius-multiplier} per level. The only distance implementation in this
- *       codebase ({@code matching.ApproximateDistanceEtaStrategy}) returns 8 km for a same-city
- *       professional and 35 km otherwise against a 40 km ceiling, so widening that ceiling
- *       currently changes nothing observable — and <b>no customer-facing copy quotes a radius or
- *       a distance</b>, precisely because it would be inventing precision the platform has not
- *       earned. Real geographic radius is a Production-roadmap milestone (Maps/GPS); this field
- *       is where it will land, so that swapping the strategy turns expansion into a genuine
- *       radius expansion without redesigning this flow.</li>
+ *   <li><b>{@link #maxRadiusKm} — live as of Production MS2.</b> Multiplied by
+ *       {@code expansion-radius-multiplier} per level. This entry used to describe an inert
+ *       seam: the only distance implementation returned 8 km for a same-city professional and
+ *       35 km otherwise against a 40 km ceiling, so widening the ceiling changed nothing
+ *       observable. Distance is now real road distance from the professional's fresh device
+ *       position ({@code matching.RoutedDistanceEtaStrategy}), so an expansion genuinely reaches
+ *       further out — 40 km, then 60, then 90. The seam was designed for exactly this
+ *       replacement and the expansion flow needed no change to accommodate it.</li>
  * </ul>
  *
  * <p>Deliberately <b>not</b> a growing time window or a relaxed eligibility rule. Eligibility

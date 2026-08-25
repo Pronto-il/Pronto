@@ -234,7 +234,66 @@ public enum ErrorCode {
      * outage in monitoring instead of being buried in the generic error rate. The challenge itself
      * may still exist — the client's recovery is a resend, not a restart.
      */
-    OTP_DELIVERY_FAILED(HttpStatus.BAD_GATEWAY);
+    OTP_DELIVERY_FAILED(HttpStatus.BAD_GATEWAY),
+
+    // ---------------------------------------------------------------------------------
+    // Production MS2 (Real Maps, Geocoding, Distance, ETA & Professional Live Location).
+    // See docs/production-roadmap/reports/prod-MS2-report.md.
+    // ---------------------------------------------------------------------------------
+
+    /**
+     * The device position supplied with this request exists and is well-formed, but is not good
+     * enough to act on — too old, or reporting an accuracy worse than
+     * {@code pronto.location.arrival-max-accuracy-meters}.
+     *
+     * <p><b>{@code 422}, and this enum's first.</b> Not {@code 400}: nothing about the request is
+     * malformed, and telling a professional standing at the right door that they "sent a bad
+     * request" is both false and unactionable. Not {@code 409} either: no state conflicts, the
+     * evidence is simply insufficient. 422 says exactly what happened — the request was
+     * understood and could not be processed as given — and the recovery is genuinely different
+     * from both alternatives: wait a moment for a better fix and press again.
+     */
+    LOCATION_QUALITY_INSUFFICIENT(HttpStatus.UNPROCESSABLE_ENTITY),
+
+    /**
+     * The professional's verified position is further from the order's destination than
+     * {@code pronto.location.arrival-radius-meters}. The backend will not record an arrival it
+     * has just measured as not having happened.
+     *
+     * <p>Separate from {@link #LOCATION_QUALITY_INSUFFICIENT} because the two need opposite
+     * advice: that one means "your fix is not good enough yet, try again in a moment", this one
+     * means "your fix is fine and it says you are not there". A client that conflated them would
+     * invite a professional to retry indefinitely from the wrong place.
+     *
+     * <p>Deliberately does <b>not</b> tell the caller how far away they are or in which
+     * direction. The customer's coordinates are not the professional's to triangulate, and a
+     * refusal that reports the miss distance is a refusal that can be used to search for the
+     * address. See the maps README's privacy section.
+     */
+    ARRIVAL_OUT_OF_RANGE(HttpStatus.UNPROCESSABLE_ENTITY),
+
+    /**
+     * The order has no destination coordinates, so arrival cannot be verified geographically at
+     * all. Distinct from {@link #ARRIVAL_OUT_OF_RANGE}: nothing the professional does with their
+     * phone can fix it — the address was never resolvable — and it is an operational data
+     * problem rather than a field one.
+     */
+    ORDER_DESTINATION_UNKNOWN(HttpStatus.CONFLICT),
+
+    /** The order is not in a status from which arrival may be recorded ({@code ON_THE_WAY}). */
+    ORDER_NOT_ARRIVABLE(HttpStatus.CONFLICT),
+
+    /**
+     * The maps provider could not be reached, so a figure that must be real could not be
+     * produced.
+     *
+     * <p>{@code 502}, for the same reason {@link #OTP_DELIVERY_FAILED} is: nothing went wrong in
+     * this application, an upstream dependency did, and collapsing that into a 500 hides a
+     * provider outage inside the generic error rate. Raised only where the platform would
+     * otherwise have to invent a number — never for a listing, which degrades to "ETA
+     * unavailable" and stays useful.
+     */
+    ROUTING_UNAVAILABLE(HttpStatus.BAD_GATEWAY);
 
     private final HttpStatus httpStatus;
 

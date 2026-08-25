@@ -20,6 +20,10 @@ const STATUS_CONFIG: Record<OrderStatus, { label: string; tone: BadgeTone }> = {
   PENDING: { label: 'ממתין לאישור', tone: 'info' },
   CONFIRMED: { label: 'אושר', tone: 'primary' },
   ON_THE_WAY: { label: 'בדרך', tone: 'info' },
+  // Production MS2. `primary` rather than `info`, deliberately: "בדרך" and "הגיע" are adjacent
+  // states and the customer's whole question at that moment is which one they are in. Sharing
+  // a tone would make the most important transition on the tracking screen the least visible.
+  ARRIVED: { label: 'הגיע', tone: 'primary' },
   COMPLETED: { label: 'הושלם', tone: 'success' },
   CANCELLED: { label: 'בוטל', tone: 'neutral' },
   REJECTED: { label: 'נדחה', tone: 'error' },

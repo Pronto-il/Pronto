@@ -2,6 +2,7 @@ package com.pronto.auth.service;
 
 import com.pronto.auth.dto.CustomerRegistrationData;
 import com.pronto.auth.dto.DefaultAddressRequest;
+import com.pronto.maps.service.ServiceAddressGeocoder;
 import com.pronto.auth.dto.LoginRequest;
 import com.pronto.auth.dto.OtpSubmissionRequest;
 import com.pronto.auth.dto.ProfessionalRegistrationData;
@@ -89,6 +90,8 @@ public class AuthAccountWriter {
      */
     private final String dummyPasswordHash;
 
+    private final ServiceAddressGeocoder serviceAddressGeocoder;
+
     public AuthAccountWriter(UserRepository userRepository,
                               ProfessionalRepository professionalRepository,
                               SosAvailabilityRepository sosAvailabilityRepository,
@@ -100,7 +103,9 @@ public class AuthAccountWriter {
                               PasswordEncoder passwordEncoder,
                               PhoneNumberNormalizer phoneNumberNormalizer,
                               LoginAttemptRecorder loginAttemptRecorder,
-                              OtpService otpService) {
+                              OtpService otpService,
+                              ServiceAddressGeocoder serviceAddressGeocoder) {
+        this.serviceAddressGeocoder = serviceAddressGeocoder;
         this.userRepository = userRepository;
         this.professionalRepository = professionalRepository;
         this.sosAvailabilityRepository = sosAvailabilityRepository;
@@ -250,6 +255,20 @@ public class AuthAccountWriter {
         user.setDefaultFloor(address.floor());
         user.setDefaultEntrance(address.entrance());
         user.setDefaultAddressNotes(address.addressNotes());
+
+        // Production MS2. Geocode the address at the moment it is accepted, so every later
+        // read -- every professional listing, every booking -- costs no provider call at all.
+        //
+        // This is the write path the whole "geocode on write, never on read" policy rests on:
+        // a listing runs in a readOnly transaction where a mutation would be silently discarded
+        // at flush, so a read path that resolved-and-persisted would pay for a geocode on every
+        // request and throw the result away every time.
+        //
+        // Deliberately best-effort. An unreachable geocoder, or an address that does not
+        // resolve, leaves the coordinates null and the registration completes normally -- the
+        // customer simply has no ETA on their first listing until the address is next written.
+        // Refusing to create an account because a maps API was down would be a far worse trade.
+        serviceAddressGeocoder.resolveCustomerDefault(user, Instant.now());
     }
 
     // ------------------------------------------------------------------ verification

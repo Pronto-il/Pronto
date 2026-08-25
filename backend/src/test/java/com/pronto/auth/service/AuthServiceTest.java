@@ -206,7 +206,7 @@ class AuthServiceTest {
                 sosAvailabilityRepository, professionalSubServiceRepository,
                 professionalCategoryRepository, professionalServiceCityRepository,
                 professionalWorkingHoursRepository, storageService, passwordEncoder,
-                new PhoneNumberNormalizer("IL"), loginAttemptRecorder, otpService);
+                new PhoneNumberNormalizer("IL"), loginAttemptRecorder, otpService, Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class));
 
         authService = new AuthService(userRepository, accountWriter, otpService, jwtService,
                 passwordEncoder, professionalCoverageService, serviceCoverageValidator,
@@ -570,7 +570,7 @@ class AuthServiceTest {
                 sosAvailabilityRepository, professionalSubServiceRepository,
                 professionalCategoryRepository, professionalServiceCityRepository,
                 professionalWorkingHoursRepository, failingStorageService, passwordEncoder,
-                new PhoneNumberNormalizer("IL"), loginAttemptRecorder, otpService);
+                new PhoneNumberNormalizer("IL"), loginAttemptRecorder, otpService, Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class));
         AuthService serviceWithFailingStorage = new AuthService(userRepository, failingWriter, otpService,
                 jwtService, passwordEncoder,
                 new ProfessionalCoverageService(professionalCategoryRepository, professionalServiceCityRepository,

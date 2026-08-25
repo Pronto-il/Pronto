@@ -2,6 +2,7 @@ package com.pronto.users.service;
 
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
+import com.pronto.maps.service.ServiceAddressGeocoder;
 import com.pronto.common.security.AuthenticatedUser;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRepository;
@@ -32,11 +33,14 @@ public class UsersService {
     private final StorageService storageService;
     private final ProfessionalCoverageService professionalCoverageService;
     private final PhoneNumberNormalizer phoneNumberNormalizer;
+    private final ServiceAddressGeocoder serviceAddressGeocoder;
 
     public UsersService(UserRepository userRepository, ProfessionalRepository professionalRepository,
                          StorageService storageService,
                          ProfessionalCoverageService professionalCoverageService,
-                         PhoneNumberNormalizer phoneNumberNormalizer) {
+                         PhoneNumberNormalizer phoneNumberNormalizer,
+                         ServiceAddressGeocoder serviceAddressGeocoder) {
+        this.serviceAddressGeocoder = serviceAddressGeocoder;
         this.userRepository = userRepository;
         this.professionalRepository = professionalRepository;
         this.storageService = storageService;
@@ -111,6 +115,23 @@ public class UsersService {
         user.setDefaultFloor(address.floor());
         user.setDefaultEntrance(address.entrance());
         user.setDefaultAddressNotes(address.addressNotes());
+
+        // Production MS2. An address edit invalidates the coordinates immediately and then
+        // re-resolves them, in that order and inside this same transaction.
+        //
+        // The invalidation is strictly redundant -- ServiceAddressGeocoder compares an address
+        // digest and would notice the change by itself -- and it is here anyway, deliberately.
+        // It makes the handling visible in the edit path rather than requiring a reader to know
+        // about a hash comparison three packages away, and it clears the old coordinates
+        // synchronously, so a read that lands between the edit and the re-resolve cannot route to
+        // where the customer used to live.
+        //
+        // Geocoding HERE rather than on the listing read is the point: this is a read-write
+        // transaction, so the resolved coordinates actually persist. A read path cannot do it --
+        // a listing runs readOnly, where the mutation would be discarded at flush and the geocode
+        // paid for again on every single request.
+        serviceAddressGeocoder.invalidateCustomerDefault(user);
+        serviceAddressGeocoder.resolveCustomerDefault(user, Instant.now());
         userRepository.save(user);
 
         return getMe(user.getId());

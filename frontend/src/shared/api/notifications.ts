@@ -10,7 +10,7 @@ import { httpClient } from './httpClient';
  */
 
 /**
- * Mirrors `notifications.entity.NotificationMessageType` in full — all 20 values.
+ * Mirrors `notifications.entity.NotificationMessageType` in full — all 22 values.
  *
  * **This type going stale is not a type error, it is a silent product bug.** The 12 `SOS_*`
  * values were added to the backend enum with Pronto SOS (`V35`) and never mirrored here, so
@@ -27,6 +27,9 @@ export type NotificationMessageType =
   | 'ORDER_CREATED'
   | 'ORDER_CONFIRMED'
   | 'ORDER_ON_THE_WAY'
+  /** Production MS2 → customer: arrival at their address, verified server-side against the
+   *  order's destination snapshot. Not "the professional said they arrived". */
+  | 'ORDER_ARRIVED'
   | 'ORDER_COMPLETED'
   | 'ORDER_CANCELLED'
   | 'ORDER_REJECTED'
@@ -56,7 +59,11 @@ export type NotificationMessageType =
   /** → customer: the request ran out of time. */
   | 'SOS_EXPIRED'
   /** → customer: matching found nobody eligible to ask. */
-  | 'SOS_NO_PROFESSIONALS';
+  | 'SOS_NO_PROFESSIONALS'
+  /** Production MS2 → customer: the routing provider could not be reached, so no candidate's
+   *  distance could be measured. Deliberately distinct from `SOS_NO_PROFESSIONALS`, which is a
+   *  claim about the marketplace rather than about Pronto. */
+  | 'SOS_TEMPORARILY_UNAVAILABLE';
 
 /**
  * Shared by `GET /api/notifications`'s list items and `POST /api/notifications/{id}/read`

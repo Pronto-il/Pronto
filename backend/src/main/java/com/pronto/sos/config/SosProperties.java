@@ -105,14 +105,13 @@ public class SosProperties {
     /**
      * The factor {@link #maxDispatchRadiusKm} is multiplied by per expansion step.
      *
-     * <p><b>A seam, deliberately, not a feature.</b> The only distance implementation in this
-     * codebase ({@code matching.ApproximateDistanceEtaStrategy}) returns one of two placeholder
-     * figures — 8 km same-city, 35 km otherwise — so multiplying a 40 km ceiling changes nothing
-     * observable today, and no customer-facing copy quotes a radius. It exists so that when real
-     * geocoding replaces that strategy, "expand the search" becomes a genuine radius expansion by
-     * changing one implementation rather than by redesigning this flow. Documented as inert
-     * rather than removed, because removing it would mean re-deciding where expansion hooks into
-     * matching at exactly the moment that decision is hardest to revisit.
+     * <p><b>Production MS2 made this live.</b> It was documented here as a deliberately inert
+     * seam: the only distance implementation was a placeholder returning 8 km same-city and 35 km
+     * otherwise, so multiplying a 40 km ceiling changed nothing observable. Distance is now real
+     * road distance from the professional's fresh device position
+     * ({@code matching.RoutedDistanceEtaStrategy}), so expansion widens a genuine geographic
+     * radius — 40 km, then 60, then 90 — and the flow needed no redesign to get there, which is
+     * what the seam was for.
      */
     private BigDecimal expansionRadiusMultiplier = new BigDecimal("1.5");
 
@@ -171,11 +170,14 @@ public class SosProperties {
     private int confirmationGraceSeconds = 180;
 
     /**
-     * Only professionals whose approximated distance is at or under this are eligible.
-     * Compared against {@code matching.EtaResult#distanceKm}, whose v1 implementation is a
-     * coarse same-city/different-city approximation — so in practice this currently behaves as
-     * a same-city preference rather than a true radius. Kept as a distance in km, not a
-     * boolean, so swapping in real geocoding later needs no config or API change.
+     * Only professionals whose distance is at or under this are eligible.
+     *
+     * <p><b>Production MS2 made this mean what it says.</b> It was compared against a coarse
+     * same-city/different-city approximation, so it behaved as a same-city preference rather than
+     * a radius. It is now compared against real road distance from the professional's fresh
+     * current position to the customer's geocoded address, so 40.0 is forty kilometres. The value
+     * and the surrounding lifecycle are unchanged — keeping it as a distance in km rather than a
+     * boolean is exactly what made the swap free.
      */
     private BigDecimal maxDispatchRadiusKm = new BigDecimal("40.0");
 

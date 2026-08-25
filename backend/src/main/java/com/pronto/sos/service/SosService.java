@@ -10,6 +10,9 @@ import com.pronto.issues.entity.Issue;
 import com.pronto.issues.entity.IssueStatus;
 import com.pronto.issues.entity.IssueUrgencyType;
 import com.pronto.issues.repository.IssueRepository;
+import com.pronto.maps.GeocodeResult;
+import com.pronto.maps.PostalAddress;
+import com.pronto.maps.service.ServiceAddressGeocoder;
 import com.pronto.notifications.entity.NotificationMessageType;
 import com.pronto.notifications.service.NotificationService;
 import com.pronto.professionals.entity.Professional;
@@ -78,6 +81,8 @@ public class SosService {
     private final SosProperties properties;
     private final ContactVerificationGuard contactVerificationGuard;
 
+    private final ServiceAddressGeocoder serviceAddressGeocoder;
+
     public SosService(SosRequestRepository sosRequestRepository,
                        SosOfferRepository sosOfferRepository,
                        IssueRepository issueRepository,
@@ -88,7 +93,9 @@ public class SosService {
                        SosResponseAssembler assembler,
                        NotificationService notificationService,
                        SosProperties properties,
-                       ContactVerificationGuard contactVerificationGuard) {
+                       ContactVerificationGuard contactVerificationGuard,
+                       ServiceAddressGeocoder serviceAddressGeocoder) {
+        this.serviceAddressGeocoder = serviceAddressGeocoder;
         this.sosRequestRepository = sosRequestRepository;
         this.sosOfferRepository = sosOfferRepository;
         this.issueRepository = issueRepository;
@@ -186,6 +193,28 @@ public class SosService {
                 request.issueSummary(), urgency, request.serviceCity(), request.serviceStreet(),
                 request.serviceHouseNumber(), request.serviceApartment(), request.serviceFloor(),
                 request.serviceEntrance(), request.serviceAddressNotes(), request.latitude(), request.longitude());
+
+        // Production MS2: the destination every candidate's real driving distance will be measured
+        // to. Geocoded once, here, at creation -- never per candidate during matching.
+        //
+        // A client-supplied fix wins and skips this entirely: the customer's own device knows
+        // where they are better than any geocode of the address they typed, and this is the one
+        // flow where the customer is standing at the emergency. Only when they have not supplied
+        // one is the address resolved.
+        //
+        // Failure is non-fatal at this point. The request is created either way and the address
+        // text is untouched; what a missing destination costs is the ability to match
+        // geographically, which SosDispatchService reports honestly as a platform failure rather
+        // than as "nobody is available".
+        if (sosRequest.getLatitude() == null || sosRequest.getLongitude() == null) {
+            GeocodeResult geocode = serviceAddressGeocoder.resolve(
+                    new PostalAddress(request.serviceCity(), request.serviceStreet(), request.serviceHouseNumber()));
+            sosRequest.applyGeocode(
+                    geocode.isResolved() ? geocode.coordinates().latitude() : null,
+                    geocode.isResolved() ? geocode.coordinates().longitude() : null,
+                    geocode.status());
+        }
+
         try {
             sosRequest = sosRequestRepository.saveAndFlush(sosRequest);
         } catch (DataIntegrityViolationException e) {

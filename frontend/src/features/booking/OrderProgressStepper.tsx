@@ -15,6 +15,13 @@ const STAGES: { key: OrderStatus; label: string }[] = [
   { key: 'PENDING', label: 'בטיפול' },
   { key: 'CONFIRMED', label: 'אושרה' },
   { key: 'ON_THE_WAY', label: 'בדרך אליך' },
+  // Production MS2. A real stage rather than a variant of "בדרך אליך", because it is a
+  // genuinely new fact about the world: the platform has verified that this person is at the
+  // customer's address. Note it is OPTIONAL in the backend -- ON_THE_WAY -> COMPLETED is still
+  // legal for a professional whose device has no usable fix -- and the stepper handles that
+  // correctly without special-casing: an order that jumps straight to COMPLETED simply has both
+  // preceding stages behind its index and renders them all as done.
+  { key: 'ARRIVED', label: 'הגיע אליך' },
   { key: 'COMPLETED', label: 'הושלמה' },
 ];
 

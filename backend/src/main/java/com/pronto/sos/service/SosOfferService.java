@@ -5,6 +5,8 @@ import com.pronto.common.dto.FieldError;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.issues.repository.IssueRepository;
+import com.pronto.bookings.dto.ArrivalRequest;
+import com.pronto.maps.service.ArrivalVerifier;
 import com.pronto.notifications.entity.NotificationMessageType;
 import com.pronto.notifications.service.NotificationService;
 import com.pronto.professionals.entity.Professional;
@@ -57,6 +59,8 @@ public class SosOfferService {
     private final SosResponseAssembler assembler;
     private final NotificationService notificationService;
 
+    private final ArrivalVerifier arrivalVerifier;
+
     public SosOfferService(SosOfferRepository sosOfferRepository,
                             SosRequestRepository sosRequestRepository,
                             ProfessionalRepository professionalRepository,
@@ -65,7 +69,9 @@ public class SosOfferService {
                             SosService sosService,
                             SosEventService sosEventService,
                             SosResponseAssembler assembler,
-                            NotificationService notificationService) {
+                            NotificationService notificationService,
+                            ArrivalVerifier arrivalVerifier) {
+        this.arrivalVerifier = arrivalVerifier;
         this.sosOfferRepository = sosOfferRepository;
         this.sosRequestRepository = sosRequestRepository;
         this.professionalRepository = professionalRepository;
@@ -330,18 +336,38 @@ public class SosOfferService {
     }
 
     /**
-     * {@code POST /api/sos/requests/{id}/arrived}. SOS-only — {@code orders} has no
-     * {@code ARRIVED} status, so the order deliberately stays {@code ON_THE_WAY} here. Adding a
-     * status to the shared order state machine for one flow's benefit would be a far larger
-     * change than this beat is worth.
+     * {@code POST /api/sos/requests/{id}/arrived}.
+     *
+     * <p><b>Production MS2 — this is now geofence-verified, exactly like the Standard flow.</b>
+     * It previously moved the request to {@code ARRIVED} because a professional pressed a button,
+     * which was the only thing it could do: the platform had no coordinates for the customer and
+     * no position for the professional. It now runs the identical check
+     * ({@code maps.service.ArrivalVerifier}) against the SOS request's own destination
+     * coordinates — the same point every candidate's distance was measured to when they were
+     * dispatched.
+     *
+     * <p>Sharing the verifier rather than reimplementing it is the point. If the calm flow
+     * verified arrival and the urgent one took somebody's word for it, the guarantee would be
+     * worth very little: SOS is the flow where arrival speed is the entire promise.
+     *
+     * <p>The {@code orders} row deliberately stays {@code ON_THE_WAY}. {@code orders} does now
+     * have an {@code ARRIVED} status ({@code V51}), but the SOS lifecycle tracks its own state on
+     * {@code sos_requests} and moving both would give this flow two sources of truth about the
+     * same fact — see {@code SosStateMachine}. Completion still reconciles the two.
      */
     @Transactional
-    public SosRequestResponse arrived(Long callerId, Long sosRequestId) {
+    public SosRequestResponse arrived(Long callerId, Long sosRequestId, ArrivalRequest arrival) {
         SosRequest request = sosService.loadRequest(sosRequestId);
         Long professionalId = requireSelectedProfessional(callerId, request);
         SosStateMachine.validate(sosRequestId, request.getStatus(), SosRequestStatus.ARRIVED);
 
-        int affected = sosRequestRepository.markArrived(sosRequestId, professionalId, Instant.now());
+        Instant now = Instant.now();
+        arrivalVerifier.verify(professionalId,
+                com.pronto.maps.GeoCoordinates.ofNullable(request.getLatitude(), request.getLongitude()),
+                arrival.latitude(), arrival.longitude(), arrival.accuracyMeters(), arrival.capturedAt(),
+                now, "sos:" + sosRequestId);
+
+        int affected = sosRequestRepository.markArrived(sosRequestId, professionalId, now);
         if (affected == 0) {
             throw invalidState(request, SosRequestStatus.ARRIVED);
         }

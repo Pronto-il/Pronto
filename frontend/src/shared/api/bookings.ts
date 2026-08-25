@@ -10,7 +10,21 @@ import { httpClient } from './httpClient';
  * Divergences are called out per-type below.
  */
 
-export type OrderStatus = 'PENDING' | 'CONFIRMED' | 'ON_THE_WAY' | 'COMPLETED' | 'CANCELLED' | 'REJECTED' | 'EXPIRED';
+/**
+ * Production MS2 adds `ARRIVED` between `ON_THE_WAY` and `COMPLETED` — the professional is at
+ * the customer's address and the **backend has verified it geographically**. It is optional:
+ * `ON_THE_WAY -> COMPLETED` remains legal, so a professional whose device cannot get a usable
+ * fix is never stranded mid-job.
+ */
+export type OrderStatus =
+  | 'PENDING'
+  | 'CONFIRMED'
+  | 'ON_THE_WAY'
+  | 'ARRIVED'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'REJECTED'
+  | 'EXPIRED';
 export type CancelledBy = 'CUSTOMER' | 'PROFESSIONAL' | 'SYSTEM';
 export type ProfessionalSort = 'CHEAPEST' | 'RECOMMENDED' | 'FASTEST';
 
@@ -44,11 +58,31 @@ export interface ProfessionalCard {
   favorited: boolean;
   /** MS4: every category this professional serves, in catalogue display order. */
   categoryIds: number[];
-  sameCity: boolean;
-  distanceKm: number;
-  baseTravelTimeMinutes: number;
-  trafficAdjustmentMinutes: number;
-  etaMinutes: number;
+  /**
+   * ## Production MS2 — these are now nullable, and that is the point
+   *
+   * The card used to carry `sameCity`, `baseTravelTimeMinutes`, `trafficAdjustmentMinutes` and a
+   * non-nullable `etaMinutes`. All four were artefacts of a placeholder model: `sameCity` was a
+   * string comparison between two city names, and the middle two were the halves of a hardcoded
+   * peak-hour surcharge. The figures they produced were fixed — 8 or 35 km, 34/40/54/70 minutes —
+   * regardless of where anybody actually was.
+   *
+   * They are replaced by real road distance and real driving duration, **or by `null`**, when the
+   * professional's device position is missing, stale or too imprecise to route from, or when the
+   * provider could not be reached. A card with `null` here must render honest degraded copy — see
+   * `ProfessionalCard.tsx` — never `0.0 ק״מ` or `0 דקות`.
+   */
+  distanceKm: number | null;
+  etaMinutes: number | null;
+  /** Whether `etaMinutes` accounts for traffic. Carried from the provider, never assumed. */
+  etaTrafficAware: boolean;
+  /**
+   * A `maps.RouteUnavailableReason` name when the figures are absent, `null` otherwise —
+   * `PROFESSIONAL_LOCATION_MISSING`, `PROFESSIONAL_LOCATION_STALE`,
+   * `PROFESSIONAL_LOCATION_INACCURATE`, `DESTINATION_UNKNOWN`, `PROVIDER_UNAVAILABLE`,
+   * `NO_ROUTE`. A stable code, branched on rather than displayed raw.
+   */
+  etaUnavailableReason: string | null;
 }
 
 export interface ProfessionalListingResponse {
@@ -277,6 +311,39 @@ export function cancelOrder(orderId: number): Promise<OrderResponse> {
 /** `POST /api/bookings/orders/{orderId}/on-the-way` — PROFESSIONAL only. */
 export function markOnTheWay(orderId: number): Promise<OrderResponse> {
   return httpClient.post<OrderResponse>(`/api/bookings/orders/${orderId}/on-the-way`);
+}
+
+/**
+ * Body of `POST /api/bookings/orders/{orderId}/arrived` — the professional's device position at
+ * the moment they claim to have arrived.
+ *
+ * The reading is sent rather than read from the professional's stored position because the
+ * stored one is up to ten minutes old by design: fine for estimating a journey, nowhere near
+ * good enough to be the sole evidence for "I am at this door right now".
+ *
+ * **The customer's coordinates never come back.** The comparison happens entirely on the server;
+ * an endpoint that returned the destination for the client to check would both leak the address
+ * and let any modified client claim to be anywhere.
+ */
+export interface ArrivalRequest {
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number;
+  capturedAt: string;
+}
+
+/**
+ * `POST /api/bookings/orders/{orderId}/arrived` — PROFESSIONAL only, `ON_THE_WAY -> ARRIVED`.
+ *
+ * Rejections the caller must handle, all `ApiError`:
+ * - `LOCATION_QUALITY_INSUFFICIENT` (422) — the fix is too old or too imprecise. Retryable.
+ * - `ARRIVAL_OUT_OF_RANGE` (422) — the fix is fine and says they are not there. Not retryable
+ *   from the same place.
+ * - `ORDER_DESTINATION_UNKNOWN` (409) — the order's address never resolved to coordinates.
+ * - `ORDER_NOT_ARRIVABLE` (409) — the order is not `ON_THE_WAY`.
+ */
+export function markArrived(orderId: number, fix: ArrivalRequest): Promise<OrderResponse> {
+  return httpClient.post<OrderResponse>(`/api/bookings/orders/${orderId}/arrived`, fix);
 }
 
 /** `POST /api/bookings/orders/{orderId}/complete` — PROFESSIONAL only. */

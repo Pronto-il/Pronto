@@ -1,5 +1,6 @@
 package com.pronto.bookings.controller;
 
+import com.pronto.bookings.dto.ArrivalRequest;
 import com.pronto.bookings.dto.AvailableWindowsResponse;
 import com.pronto.bookings.dto.CreateOrderRequest;
 import com.pronto.bookings.dto.OrderDetailResponse;
@@ -106,6 +107,22 @@ public class BookingsController {
                                                     @PathVariable("orderId") String orderIdRaw) {
         Long orderId = parsePathId(orderIdRaw);
         return ResponseEntity.ok(bookingsService.onTheWay(principal.id(), orderId));
+    }
+
+    /**
+     * <b>Production MS2</b> — {@code ON_THE_WAY -> ARRIVED}, gated on a backend proximity check.
+     *
+     * <p>The only order-action route on this controller that takes a body, because it is the only
+     * one asserting a fact about the physical world rather than an intention. See
+     * {@code ArrivalRequest} for why the fix is sent rather than read from the professional's
+     * stored position, and {@code BookingsService#arrived} for the verification itself.
+     */
+    @PostMapping("/orders/{orderId}/arrived")
+    public ResponseEntity<OrderResponse> arrived(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                   @PathVariable("orderId") String orderIdRaw,
+                                                   @Valid @RequestBody ArrivalRequest request) {
+        Long orderId = parsePathId(orderIdRaw);
+        return ResponseEntity.ok(bookingsService.arrived(principal.id(), orderId, request));
     }
 
     @PostMapping("/orders/{orderId}/complete")

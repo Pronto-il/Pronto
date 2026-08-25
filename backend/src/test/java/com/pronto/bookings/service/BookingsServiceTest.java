@@ -2,6 +2,7 @@ package com.pronto.bookings.service;
 
 import com.pronto.users.service.ContactVerificationGuard;
 import com.pronto.professionals.service.ProfessionalCoverageService;
+import com.pronto.professionals.service.ProfessionalLocationService;
 import com.pronto.availability.dto.CalendarSegment;
 import com.pronto.availability.repository.AvailabilitySlotRepository;
 import com.pronto.availability.service.AvailabilityDerivationService;
@@ -22,6 +23,10 @@ import com.pronto.issues.entity.Issue;
 import com.pronto.issues.entity.IssueStatus;
 import com.pronto.issues.entity.IssueUrgencyType;
 import com.pronto.issues.repository.IssueRepository;
+import com.pronto.maps.GeocodeResult;
+import com.pronto.maps.RouteUnavailableReason;
+import com.pronto.maps.config.LocationProperties;
+import com.pronto.maps.service.ServiceAddressGeocoder;
 import com.pronto.matching.DistanceEtaStrategy;
 import com.pronto.matching.EtaResult;
 import com.pronto.matching.ServiceLocation;
@@ -46,6 +51,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,6 +61,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -86,6 +93,9 @@ class BookingsServiceTest {
     private StorageService storageService;
     private AvailabilityDerivationService availabilityDerivationService;
     private ProfessionalCoverageService professionalCoverageService;
+    private ServiceAddressGeocoder serviceAddressGeocoder;
+    private ProfessionalLocationService professionalLocationService;
+    private LocationProperties locationProperties;
     private BookingsService bookingsService;
 
     @BeforeEach
@@ -101,10 +111,23 @@ class BookingsServiceTest {
         storageService = Mockito.mock(StorageService.class);
         availabilityDerivationService = Mockito.mock(AvailabilityDerivationService.class);
         professionalCoverageService = Mockito.mock(ProfessionalCoverageService.class);
+        serviceAddressGeocoder = Mockito.mock(ServiceAddressGeocoder.class);
+        professionalLocationService = Mockito.mock(ProfessionalLocationService.class);
+        locationProperties = new LocationProperties();
         bookingsService = new BookingsService(issueRepository, professionalRepository, professionalListingRepository,
                 availabilitySlotRepository, orderRepository, userRepository,
                 notificationService, distanceEtaStrategy, storageService, availabilityDerivationService,
-                professionalCoverageService, Mockito.mock(ContactVerificationGuard.class));
+                professionalCoverageService, Mockito.mock(ContactVerificationGuard.class),
+                serviceAddressGeocoder, professionalLocationService, locationProperties,
+                new com.pronto.maps.service.ArrivalVerifier(professionalLocationService, locationProperties));
+        // MS2: geocoding is stubbed to "unresolvable" by default. Every pre-existing test in this
+        // class is about booking mechanics, not geography, and a default that quietly produced
+        // coordinates would make them silently depend on a provider they never mention. The MS2
+        // tests below stub it explicitly.
+        Mockito.lenient().when(serviceAddressGeocoder.resolve(Mockito.any()))
+                .thenReturn(GeocodeResult.failed());
+        Mockito.lenient().when(serviceAddressGeocoder.resolveCustomerDefault(Mockito.any(), Mockito.any()))
+                .thenReturn(null);
         // MS1: every pre-existing test in this class describes a world of ordinary, verified
         // professionals, so eligibility is stubbed true by default. The MS1 tests at the bottom of
         // the class override it per-test -- lenient() because most tests here never reach the
@@ -493,19 +516,20 @@ class BookingsServiceTest {
 
         // DB order (cheapest first) puts "SlowCity" ahead of "FastCity" by base price.
         ProfessionalCard slowCard = new ProfessionalCard(10L, "Slow Pro", "Area", new BigDecimal("50.00"), null,
-                "SlowCity", null, null, 0, false, List.of(CATEGORY_ID), false, BigDecimal.ZERO, 0, 0, 0);
+                "SlowCity", null, null, 0, false, List.of(CATEGORY_ID), null, null, false, null);
         ProfessionalCard fastCard = new ProfessionalCard(20L, "Fast Pro", "Area", new BigDecimal("80.00"), null,
-                "FastCity", null, null, 0, false, List.of(CATEGORY_ID), false, BigDecimal.ZERO, 0, 0, 0);
+                "FastCity", null, null, 0, false, List.of(CATEGORY_ID), null, null, false, null);
         when(professionalListingRepository.listByCategory(CATEGORY_ID, CUSTOMER_ID))
                 .thenReturn(List.of(slowCard, fastCard));
 
-        // SlowCity has a large base-travel-time AND a large traffic adjustment (peak);
-        // FastCity has a small base-travel-time. Final etaMinutes crosses the base-price
-        // (DB) order, proving FASTEST genuinely sorts by the post-adjustment value.
-        when(distanceEtaStrategy.calculate(eq("SlowCity"), any(), any()))
-                .thenReturn(new EtaResult(false, new BigDecimal("35.0"), 40, 30, 70));
-        when(distanceEtaStrategy.calculate(eq("FastCity"), any(), any()))
-                .thenReturn(new EtaResult(true, new BigDecimal("8.0"), 15, 0, 15));
+        // MS2: real routed durations, keyed by professional id rather than by city string --
+        // the city a professional is registered in no longer has anything to do with how long
+        // they take to arrive. The ETA order crosses the base-price (DB) order, so passing this
+        // requires FASTEST to genuinely sort on duration.
+        when(distanceEtaStrategy.calculateBatch(any(), any(), any()))
+                .thenReturn(Map.of(
+                        10L, EtaResult.available(new BigDecimal("35.0"), 70, true),
+                        20L, EtaResult.available(new BigDecimal("8.0"), 15, true)));
 
         ServiceLocation location = new ServiceLocation("AnyCity", "St", "1", null);
         ProfessionalListingResponse response =
@@ -518,20 +542,74 @@ class BookingsServiceTest {
     }
 
     @Test
+    void listProfessionals_fastestSort_putsProfessionalsWithNoEtaLast_neverFirst() {
+        // The rule that did not need to exist before MS2, because every professional always had
+        // a (fabricated) ETA. Now that "we cannot route this person" is a real outcome, sorting
+        // it anywhere but last would let somebody the platform cannot locate win the one tab
+        // whose entire promise is arrival speed.
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+
+        ProfessionalCard noGps = new ProfessionalCard(10L, "No GPS", "Area", new BigDecimal("50.00"), null,
+                "City", null, null, 0, false, List.of(CATEGORY_ID), null, null, false, null);
+        ProfessionalCard slow = new ProfessionalCard(20L, "Slow", "Area", new BigDecimal("60.00"), null,
+                "City", null, null, 0, false, List.of(CATEGORY_ID), null, null, false, null);
+        when(professionalListingRepository.listByCategory(CATEGORY_ID, CUSTOMER_ID))
+                .thenReturn(List.of(noGps, slow));
+        when(distanceEtaStrategy.calculateBatch(any(), any(), any()))
+                .thenReturn(Map.of(
+                        10L, EtaResult.unavailable(RouteUnavailableReason.PROFESSIONAL_LOCATION_STALE),
+                        20L, EtaResult.available(new BigDecimal("40.0"), 88, true)));
+
+        ProfessionalListingResponse response = bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID,
+                new ServiceLocation("AnyCity", "St", "1", null), "FASTEST");
+
+        assertThat(response.professionals()).extracting(ProfessionalCard::professionalId)
+                .containsExactly(20L, 10L);
+        // ...and the unroutable one says so truthfully rather than reporting 0 km / 0 minutes.
+        ProfessionalCard last = response.professionals().get(1);
+        assertThat(last.etaMinutes()).isNull();
+        assertThat(last.distanceKm()).isNull();
+        assertThat(last.etaUnavailableReason()).isEqualTo("PROFESSIONAL_LOCATION_STALE");
+    }
+
+    @Test
+    void listProfessionals_routesEveryCandidateInOneBatchedCall_notOncePerCard() {
+        // Roadmap §15. The pre-MS2 code called the strategy inside the per-card map, which was
+        // free only because the implementation was a string comparison; against a real provider
+        // that is one HTTP round trip per card on every search.
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        List<ProfessionalCard> cards = new java.util.ArrayList<>();
+        for (long id = 1; id <= 25; id++) {
+            cards.add(new ProfessionalCard(id, "Pro " + id, "Area", new BigDecimal("50.00"), null,
+                    "City", null, null, 0, false, List.of(CATEGORY_ID), null, null, false, null));
+        }
+        when(professionalListingRepository.listByCategory(CATEGORY_ID, CUSTOMER_ID)).thenReturn(cards);
+        when(distanceEtaStrategy.calculateBatch(any(), any(), any())).thenReturn(Map.of());
+
+        bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID,
+                new ServiceLocation("AnyCity", "St", "1", null), "FASTEST");
+
+        verify(distanceEtaStrategy, times(1)).calculateBatch(any(), any(), any());
+        verify(distanceEtaStrategy, never()).calculate(anyLong(), any(), any());
+    }
+
+    @Test
     void listProfessionals_cheapestSort_leavesDbOrderUnchangedRegardlessOfEta() {
         Issue issue = openIssue(IssueUrgencyType.STANDARD);
         when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
 
         ProfessionalCard cheapButSlow = new ProfessionalCard(10L, "Cheap Pro", "Area", new BigDecimal("50.00"), null,
-                "SlowCity", null, null, 0, false, List.of(CATEGORY_ID), false, BigDecimal.ZERO, 0, 0, 0);
+                "SlowCity", null, null, 0, false, List.of(CATEGORY_ID), null, null, false, null);
         ProfessionalCard pricyButFast = new ProfessionalCard(20L, "Pricy Pro", "Area", new BigDecimal("80.00"), null,
-                "FastCity", null, null, 0, false, List.of(CATEGORY_ID), false, BigDecimal.ZERO, 0, 0, 0);
+                "FastCity", null, null, 0, false, List.of(CATEGORY_ID), null, null, false, null);
         when(professionalListingRepository.listByCategory(CATEGORY_ID, CUSTOMER_ID))
                 .thenReturn(List.of(cheapButSlow, pricyButFast));
-        when(distanceEtaStrategy.calculate(eq("SlowCity"), any(), any()))
-                .thenReturn(new EtaResult(false, new BigDecimal("35.0"), 40, 30, 70));
-        when(distanceEtaStrategy.calculate(eq("FastCity"), any(), any()))
-                .thenReturn(new EtaResult(true, new BigDecimal("8.0"), 15, 0, 15));
+        when(distanceEtaStrategy.calculateBatch(any(), any(), any()))
+                .thenReturn(Map.of(
+                        10L, EtaResult.available(new BigDecimal("35.0"), 70, true),
+                        20L, EtaResult.available(new BigDecimal("8.0"), 15, true)));
 
         ServiceLocation location = new ServiceLocation("AnyCity", "St", "1", null);
         ProfessionalListingResponse response =
@@ -546,25 +624,22 @@ class BookingsServiceTest {
     // ---- onTheWay: expectedArrivalAt computation/persistence ----
 
     @Test
-    void onTheWay_confirmedOrder_computesExpectedArrivalAtFromEtaAndPersistsIt() {
+    void onTheWay_confirmedOrder_computesExpectedArrivalAtFromRealRoutedEtaAndPersistsIt() {
         Order order = confirmedOrder();
         when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
         Professional professional = activeProfessional();
         when(professionalRepository.findByUserId(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(professional));
         when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
-        when(distanceEtaStrategy.calculate(eq("Tel Aviv"), any(ServiceLocation.class), any()))
-                .thenReturn(new EtaResult(true, new BigDecimal("5.0"), 18, 0, 18));
+        // MS2: routed from the professional's own live position to the ORDER'S snapshotted
+        // destination -- the strategy is asked about a professional id and a coordinate pair, not
+        // about a city name and an address record.
+        when(distanceEtaStrategy.calculate(eq(PROFESSIONAL_ID), any(), any()))
+                .thenReturn(EtaResult.available(new BigDecimal("5.0"), 18, true));
         when(orderRepository.onTheWayIfConfirmed(eq(ORDER_ID), any(), any())).thenReturn(1);
 
         Instant before = Instant.now();
         OrderResponse response = bookingsService.onTheWay(PROFESSIONAL_USER_ID, ORDER_ID);
         Instant after = Instant.now();
-
-        ArgumentCaptor<ServiceLocation> locationCaptor = ArgumentCaptor.forClass(ServiceLocation.class);
-        verify(distanceEtaStrategy).calculate(eq("Tel Aviv"), locationCaptor.capture(), any());
-        assertThat(locationCaptor.getValue().city()).isEqualTo("Tel Aviv");
-        assertThat(locationCaptor.getValue().street()).isEqualTo("Herzl");
-        assertThat(locationCaptor.getValue().houseNumber()).isEqualTo("10");
 
         ArgumentCaptor<Instant> expectedArrivalCaptor = ArgumentCaptor.forClass(Instant.class);
         verify(orderRepository).onTheWayIfConfirmed(eq(ORDER_ID), any(), expectedArrivalCaptor.capture());
@@ -577,14 +652,35 @@ class BookingsServiceTest {
     }
 
     @Test
+    void onTheWay_withNoRoutableEta_stillTransitions_butLeavesExpectedArrivalAtNull() {
+        // MS2's failure policy at its sharpest. A professional whose GPS is off, or whose route
+        // could not be computed, must still be able to start driving -- refusing the transition
+        // would let an external maps dependency halt the platform's core flow. What must NOT
+        // happen is a fabricated countdown.
+        Order order = confirmedOrder();
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
+        Professional professional = activeProfessional();
+        when(professionalRepository.findByUserId(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(professional));
+        when(distanceEtaStrategy.calculate(eq(PROFESSIONAL_ID), any(), any()))
+                .thenReturn(EtaResult.unavailable(RouteUnavailableReason.PROFESSIONAL_LOCATION_MISSING));
+        when(orderRepository.onTheWayIfConfirmed(eq(ORDER_ID), any(), any())).thenReturn(1);
+
+        bookingsService.onTheWay(PROFESSIONAL_USER_ID, ORDER_ID);
+
+        ArgumentCaptor<Instant> captor = ArgumentCaptor.forClass(Instant.class);
+        verify(orderRepository).onTheWayIfConfirmed(eq(ORDER_ID), any(), captor.capture());
+        assertThat(captor.getValue()).isNull();
+    }
+
+    @Test
     void onTheWay_orderNotConfirmed_throwsOrderNotConfirmedAndNeverNotifies() {
         Order order = confirmedOrder();
         when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order));
         Professional professional = activeProfessional();
         when(professionalRepository.findByUserId(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(professional));
         when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(professional));
-        when(distanceEtaStrategy.calculate(eq("Tel Aviv"), any(ServiceLocation.class), any()))
-                .thenReturn(new EtaResult(true, new BigDecimal("5.0"), 18, 0, 18));
+        when(distanceEtaStrategy.calculate(eq(PROFESSIONAL_ID), any(), any()))
+                .thenReturn(EtaResult.available(new BigDecimal("5.0"), 18, true));
         when(orderRepository.onTheWayIfConfirmed(eq(ORDER_ID), any(), any())).thenReturn(0);
 
         assertThatThrownBy(() -> bookingsService.onTheWay(PROFESSIONAL_USER_ID, ORDER_ID))

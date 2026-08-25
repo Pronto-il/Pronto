@@ -1,5 +1,6 @@
 package com.pronto.sos.controller;
 
+import com.pronto.bookings.dto.ArrivalRequest;
 import com.pronto.common.security.AuthenticatedUser;
 import com.pronto.sos.dto.AcceptSosOfferRequest;
 import com.pronto.sos.dto.SosOfferResponse;
@@ -101,11 +102,18 @@ public class SosProfessionalController {
         return ResponseEntity.ok(sosOfferService.onTheWay(principal.id(), sosRequestId));
     }
 
+    /**
+     * Production MS2: this action now carries the professional's device position, because the
+     * transition is geofence-verified server-side rather than taken on trust. Same
+     * {@code ArrivalRequest} body and same rules as the Standard flow's
+     * {@code POST /api/bookings/orders/{id}/arrived} -- see {@code maps.service.ArrivalVerifier}.
+     */
     @PostMapping("/requests/{sosRequestId}/arrived")
     public ResponseEntity<SosRequestResponse> arrived(@AuthenticationPrincipal AuthenticatedUser principal,
-                                                        @PathVariable("sosRequestId") String sosRequestIdRaw) {
+                                                        @PathVariable("sosRequestId") String sosRequestIdRaw,
+                                                        @Valid @RequestBody ArrivalRequest request) {
         Long sosRequestId = SosCustomerController.parsePathId(sosRequestIdRaw);
-        return ResponseEntity.ok(sosOfferService.arrived(principal.id(), sosRequestId));
+        return ResponseEntity.ok(sosOfferService.arrived(principal.id(), sosRequestId, request));
     }
 
     @PostMapping("/requests/{sosRequestId}/complete")

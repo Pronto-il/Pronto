@@ -39,7 +39,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SosSchemaConstraintTest {
 
     private static final String SOS_MIGRATION = "db/migration/V34__create_sos.sql";
-    private static final String NOTIFICATIONS_MIGRATION = "db/migration/V35__alter_notifications_add_sos.sql";
+    /**
+     * The migration that most recently rewrote {@code ck_notifications_message_type} wholesale.
+     *
+     * <p>Was {@code V35} (which added the SOS values); Production MS2's {@code V51} rewrote it
+     * again to add {@code ORDER_ARRIVED} and {@code SOS_TEMPORARILY_UNAVAILABLE}. This constant
+     * tracks the LATEST rewrite deliberately -- the invariant being tested is "the enum and the
+     * live constraint agree", and pointing it at a superseded migration would assert agreement
+     * with a constraint no database has any more.
+     */
+    private static final String NOTIFICATIONS_MIGRATION = "db/migration/V51__alter_orders_add_arrived.sql";
     private static final String RETRY_MIGRATION = "db/migration/V36__replace_sos_request_issue_uniqueness.sql";
     /**
      * V37 drops and recreates {@code ck_sos_events_type} and {@code ux_sos_events_singleton}, so
@@ -146,9 +155,10 @@ class SosSchemaConstraintTest {
     }
 
     /**
-     * V35 rewrites this constraint wholesale, so it must reproduce every pre-existing order and
-     * auth message type as well as the new SOS ones. Dropping one would silently break the
-     * bookings flow, not just SOS.
+     * The migration that owns this constraint rewrites it wholesale, so it must reproduce every
+     * pre-existing order, auth and SOS message type as well as whatever it adds. Dropping one
+     * would silently break the bookings flow, not just SOS -- which is exactly the risk a
+     * wholesale rewrite carries and this test exists to remove.
      */
     @Test
     void notificationMessageTypeMatchesTheRewrittenCheckConstraint() {

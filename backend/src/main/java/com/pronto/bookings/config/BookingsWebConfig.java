@@ -51,6 +51,15 @@ public class BookingsWebConfig implements WebMvcConfigurer {
                         "/api/bookings/orders");
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.PROFESSIONAL.name()))
                 .addPathPatterns("/api/bookings/orders/*/accept", "/api/bookings/orders/*/reject",
-                        "/api/bookings/orders/*/on-the-way", "/api/bookings/orders/*/complete");
+                        "/api/bookings/orders/*/on-the-way",
+                        // Production MS2. Same "literal list doesn't pick up new routes
+                        // automatically" reasoning as the Milestone 4/6 additions above -- and
+                        // this one carries a device position, so an ungated route would let any
+                        // authenticated account submit a location claim against somebody else's
+                        // order (the service's own party-to-order check would still refuse it,
+                        // but a role gate that silently stopped covering the newest route is not
+                        // a thing to leave to a second line of defence).
+                        "/api/bookings/orders/*/arrived",
+                        "/api/bookings/orders/*/complete");
     }
 }

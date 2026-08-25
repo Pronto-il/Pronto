@@ -77,6 +77,7 @@ class SosServiceTest {
     private SosResponseAssembler assembler;
     private NotificationService notificationService;
     private SosProperties properties;
+    private com.pronto.maps.service.ServiceAddressGeocoder serviceAddressGeocoder;
     private SosService service;
 
     @BeforeEach
@@ -91,9 +92,15 @@ class SosServiceTest {
         assembler = Mockito.mock(SosResponseAssembler.class);
         notificationService = Mockito.mock(NotificationService.class);
         properties = new SosProperties();
+        serviceAddressGeocoder = Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class);
         service = new SosService(sosRequestRepository, sosOfferRepository, issueRepository, orderRepository,
                 professionalRepository, sosDispatchService, sosEventService, assembler, notificationService,
-                properties, Mockito.mock(ContactVerificationGuard.class));
+                properties, Mockito.mock(ContactVerificationGuard.class), serviceAddressGeocoder);
+        // MS2: the SOS destination is geocoded once at creation. Stubbed unresolvable by default --
+        // these tests are about lifecycle and timing, and a default that quietly produced
+        // coordinates would make them silently depend on geography they never mention.
+        Mockito.lenient().when(serviceAddressGeocoder.resolve(any()))
+                .thenReturn(com.pronto.maps.GeocodeResult.failed());
 
         when(assembler.toRequestResponse(any(), any()))
                 .thenAnswer(inv -> stubResponse(inv.getArgument(0), inv.getArgument(1)));

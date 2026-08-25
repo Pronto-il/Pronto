@@ -83,6 +83,45 @@ public class User {
     private String defaultAddressNotes;
 
     /**
+     * Production MS2 — the geocoded coordinates of the default address above, and the state of
+     * that resolution ({@code V50}).
+     *
+     * <p>Added <b>beside</b> the address text, never instead of it: the text is what a
+     * professional reads to find the door, and a geocoder's rendering of an address is not the
+     * customer's address. Nullable for legacy rows, and for any address the geocoder could not
+     * resolve — every consumer already handles absent coordinates, because a live geocode can
+     * fail too.
+     *
+     * <p>{@link #defaultAddressHash} is what makes reuse safe and invalidation automatic: it is a
+     * digest of the exact text these coordinates were resolved from, so an address edit is
+     * self-detecting rather than something every edit path must remember to announce. See
+     * {@code maps.service.ServiceAddressGeocoder}.
+     */
+    @Column(name = "default_latitude", precision = 9, scale = 6)
+    private java.math.BigDecimal defaultLatitude;
+
+    @Column(name = "default_longitude", precision = 9, scale = 6)
+    private java.math.BigDecimal defaultLongitude;
+
+    /** One of {@code maps.GeocodeStatus}' names, or {@code null} for "never attempted". */
+    @Column(name = "default_geocode_status", length = 20)
+    private String defaultGeocodeStatus;
+
+    @Column(name = "default_geocoded_at")
+    private Instant defaultGeocodedAt;
+
+    @Column(name = "default_address_hash", length = 64)
+    private String defaultAddressHash;
+
+    /**
+     * Advisory reconciliation of the free-text {@link #defaultCity} against the closed
+     * {@code service_cities} catalogue. <b>Never gates anything</b> — a customer in a town outside
+     * the catalogue keeps working exactly as before. See {@code V50}'s header.
+     */
+    @Column(name = "default_service_city_id")
+    private Long defaultServiceCityId;
+
+    /**
      * Phone number in canonical E.164, e.g. {@code +972501234567}.
      *
      * <p><b>Production MS1 changed what this column means.</b> It arrived (V28) as free-text
@@ -265,6 +304,64 @@ public class User {
 
     public void setDefaultAddressNotes(String defaultAddressNotes) {
         this.defaultAddressNotes = defaultAddressNotes;
+    }
+
+    // ---- Production MS2: default-address geocoding state ----
+
+    public java.math.BigDecimal getDefaultLatitude() {
+        return defaultLatitude;
+    }
+
+    public java.math.BigDecimal getDefaultLongitude() {
+        return defaultLongitude;
+    }
+
+    public String getDefaultGeocodeStatus() {
+        return defaultGeocodeStatus;
+    }
+
+    public Instant getDefaultGeocodedAt() {
+        return defaultGeocodedAt;
+    }
+
+    public String getDefaultAddressHash() {
+        return defaultAddressHash;
+    }
+
+    public Long getDefaultServiceCityId() {
+        return defaultServiceCityId;
+    }
+
+    public void setDefaultServiceCityId(Long defaultServiceCityId) {
+        this.defaultServiceCityId = defaultServiceCityId;
+    }
+
+    /**
+     * Record the outcome of one geocoding attempt.
+     *
+     * <p>Written as a single method rather than six setters because the fields are one fact and
+     * must move together — {@code ck_users_default_geocode_consistency} refuses a row where the
+     * status says {@code RESOLVED} and the coordinates are absent, or vice versa, and six
+     * independent setters is how a caller ends up writing half of that.
+     */
+    public void applyDefaultGeocode(java.math.BigDecimal latitude, java.math.BigDecimal longitude,
+                                     String status, Instant geocodedAt, String addressHash) {
+        this.defaultLatitude = latitude;
+        this.defaultLongitude = longitude;
+        this.defaultGeocodeStatus = status;
+        this.defaultGeocodedAt = geocodedAt;
+        this.defaultAddressHash = addressHash;
+    }
+
+    /**
+     * Back to "never attempted", clearing the coordinates immediately.
+     *
+     * <p>Called when the address is edited. The coordinates go first and synchronously, so no read
+     * between the edit and the next resolve can route to where the customer used to live.
+     */
+    public void clearDefaultGeocode() {
+        applyDefaultGeocode(null, null, null, null, null);
+        this.defaultServiceCityId = null;
     }
 
     public String getPhone() {

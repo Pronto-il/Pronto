@@ -150,6 +150,19 @@
   color: var(--color-primary);
 }
 
+/*
+ * Production MS2 — the travel line when no real ETA could be computed.
+ *
+ * Muted rather than styled as an error: nothing has gone wrong from the customer's point of
+ * view, and a red or warning-toned line would read as "something is broken with this
+ * professional" rather than "we cannot tell you this right now". Same size and position as the
+ * available variant, so the card's height and rhythm are unchanged whichever way it renders.
+ */
+.etaUnavailable {
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-regular);
+}
+
 .bottom {
   display: flex;
   align-items: center;

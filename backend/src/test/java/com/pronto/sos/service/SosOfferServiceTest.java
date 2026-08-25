@@ -74,11 +74,24 @@ class SosOfferServiceTest {
         assembler = Mockito.mock(SosResponseAssembler.class);
         notificationService = Mockito.mock(NotificationService.class);
         service = new SosOfferService(sosOfferRepository, sosRequestRepository, professionalRepository,
-                orderRepository, issueRepository, sosService, sosEventService, assembler, notificationService);
+                orderRepository, issueRepository, sosService, sosEventService, assembler, notificationService,
+                Mockito.mock(com.pronto.maps.service.ArrivalVerifier.class));
 
         when(professionalRepository.findByUserId(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(professional()));
         when(professionalRepository.findByUserId(OTHER_PROFESSIONAL_USER_ID))
                 .thenReturn(Optional.of(otherProfessional()));
+    }
+
+    /**
+     * Production MS2: the SOS arrival action now carries the professional's device position,
+     * because the transition is geofence-verified. These tests mock {@code ArrivalVerifier}, so
+     * the fix itself is inert here -- the geofence rule has its own tests
+     * ({@code BookingsArrivalTest}, {@code maps.GeoDistanceTest}) and re-asserting it through
+     * every consumer would only couple those tests to this flow.
+     */
+    private static com.pronto.bookings.dto.ArrivalRequest arrivalFix() {
+        return new com.pronto.bookings.dto.ArrivalRequest(new java.math.BigDecimal("32.077000"),
+                new java.math.BigDecimal("34.773900"), new java.math.BigDecimal("12"), java.time.Instant.now());
     }
 
     // ---- fixtures ----
@@ -445,7 +458,7 @@ class SosOfferServiceTest {
 
         assertThatThrownBy(() -> service.onTheWay(OTHER_PROFESSIONAL_USER_ID, REQUEST_ID))
                 .isInstanceOf(ApiException.class);
-        assertThatThrownBy(() -> service.arrived(OTHER_PROFESSIONAL_USER_ID, REQUEST_ID))
+        assertThatThrownBy(() -> service.arrived(OTHER_PROFESSIONAL_USER_ID, REQUEST_ID, arrivalFix()))
                 .isInstanceOf(ApiException.class);
         assertThatThrownBy(() -> service.complete(OTHER_PROFESSIONAL_USER_ID, REQUEST_ID))
                 .isInstanceOf(ApiException.class);
@@ -499,7 +512,7 @@ class SosOfferServiceTest {
         when(sosRequestRepository.markArrived(eq(REQUEST_ID), eq(PROFESSIONAL_ID), any())).thenReturn(1);
         when(sosService.reload(REQUEST_ID)).thenReturn(selectedRequest(SosRequestStatus.ARRIVED));
 
-        service.arrived(PROFESSIONAL_USER_ID, REQUEST_ID);
+        service.arrived(PROFESSIONAL_USER_ID, REQUEST_ID, arrivalFix());
 
         verify(sosRequestRepository).markArrived(eq(REQUEST_ID), eq(PROFESSIONAL_ID), any());
         Mockito.verifyNoInteractions(orderRepository);

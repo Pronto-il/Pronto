@@ -27,12 +27,33 @@ import java.util.List;
  *
  * <p><b>MS4.</b> {@code serviceArea} became {@link #serviceRegion}: the Hebrew label of the
  * professional's canonical {@code service_regions} row, joined in, rather than whatever free
- * text they once typed. {@link #city} is unchanged in type and meaning — it is still the one
- * city ETA is measured from — but it is now the joined label of {@code professionals
- * .base_city_id} rather than a free-text column, so 'תל אביב' and 'תל-אביב' can no longer be two
- * different places. Both are nullable, for pre-MS4 rows {@code V44} could not canonicalise.
- * {@link #categoryIds} is new: a professional may serve several trades, and the card has to be
- * able to say so.
+ * text they once typed. {@link #city} is nullable, for pre-MS4 rows {@code V44} could not
+ * canonicalise. {@link #categoryIds} is new: a professional may serve several trades, and the
+ * card has to be able to say so.
+ *
+ * <p><b>Production MS2 — the travel fields changed shape, and had to.</b> The card used to carry
+ * {@code sameCity}/{@code baseTravelTimeMinutes}/{@code trafficAdjustmentMinutes} plus a
+ * primitive {@code int etaMinutes}. All four were artefacts of the placeholder model: the first
+ * was a string comparison between the professional's city and the customer's, and the middle two
+ * were the two halves of a hardcoded peak-hour surcharge that no real routing provider produces.
+ * They are removed rather than left populated with zeros, because a field that is always zero is
+ * a field a client will eventually render.
+ *
+ * <p>What replaces them is smaller and truthful: {@link #distanceKm} and {@link #etaMinutes},
+ * both <b>nullable</b>, plus {@link #etaUnavailableReason} saying why when they are absent. A
+ * professional whose device position is missing, stale or imprecise still appears — being
+ * unroutable right now is no reason to hide someone a customer could book for next Tuesday — but
+ * the card says so instead of quoting 8.0 km and 34 minutes. {@link #city} is still shown, and is
+ * still useful context; it is simply no longer what ETA is measured from.
+ *
+ * @param distanceKm           real road distance, or {@code null}
+ * @param etaMinutes           real driving duration in minutes, or {@code null}
+ * @param etaTrafficAware      whether {@link #etaMinutes} accounts for traffic. Never inferred:
+ *                             carried through from the provider, so the platform cannot present
+ *                             a plain duration as a traffic-aware one.
+ * @param etaUnavailableReason a {@code maps.RouteUnavailableReason} name, or {@code null}. A
+ *                             stable code the frontend branches on to choose honest Hebrew copy,
+ *                             the same convention {@code common.exception.ErrorCode} uses.
  */
 public record ProfessionalCard(
         Long professionalId,
@@ -46,11 +67,10 @@ public record ProfessionalCard(
         long reviewCount,
         boolean favorited,
         List<Long> categoryIds,
-        boolean sameCity,
         BigDecimal distanceKm,
-        int baseTravelTimeMinutes,
-        int trafficAdjustmentMinutes,
-        int etaMinutes
+        Integer etaMinutes,
+        boolean etaTrafficAware,
+        String etaUnavailableReason
 ) {
 
     /**
@@ -67,6 +87,13 @@ public record ProfessionalCard(
      * batched {@code professional_categories} lookup for the whole page rather than a correlated
      * subquery per card — JPQL cannot project a collection into a constructor expression, and
      * N+1 queries for a listing is not a trade worth making to pretend otherwise.
+     *
+     * <p><b>Production MS2:</b> the travel fields start <b>absent</b>, not zero. The pre-MS2
+     * version of this constructor seeded them with {@code false, BigDecimal.ZERO, 0, 0, 0} — a
+     * card that had not been enriched yet was structurally indistinguishable from one whose
+     * professional was zero kilometres away and would arrive in zero minutes. Starting from
+     * {@code null} means a card that somehow escapes enrichment renders as "unavailable", which is
+     * the safe direction to be wrong in.
      */
     public ProfessionalCard(Long professionalId, String fullName, String serviceRegion, BigDecimal basePrice,
                              BigDecimal reliabilityScore, String city, String profileImageKey,
@@ -75,6 +102,6 @@ public record ProfessionalCard(
                 averageRating == null ? null : BigDecimal.valueOf(averageRating).setScale(2, RoundingMode.HALF_UP),
                 reviewCount == null ? 0L : reviewCount,
                 favoritedCount != null && favoritedCount > 0,
-                List.of(), false, BigDecimal.ZERO, 0, 0, 0);
+                List.of(), null, null, false, null);
     }
 }

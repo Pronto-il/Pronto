@@ -82,6 +82,20 @@ public class SosRequest {
     @Column(name = "longitude", precision = 9, scale = 6)
     private BigDecimal longitude;
 
+    /**
+     * Production MS2 ({@code V50}) — whether {@link #latitude}/{@link #longitude} were resolved,
+     * and if not, why. One of {@code maps.GeocodeStatus}' names.
+     *
+     * <p>{@code V34}'s column comment described the coordinates above as "captured but unused".
+     * They are now load-bearing: every candidate's real driving distance is measured to this
+     * point, and the radius filter ({@code pronto.sos.max-dispatch-radius-km}) is applied against
+     * that distance. A request with no resolved destination cannot be matched geographically at
+     * all, and is failed with a message that says so rather than with "no professionals
+     * available" — see {@code SosDispatchService#failDegraded}.
+     */
+    @Column(name = "geocode_status", length = 20)
+    private String geocodeStatus;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 40)
     private SosRequestStatus status;
@@ -188,8 +202,35 @@ public class SosRequest {
         this.serviceAddressNotes = serviceAddressNotes;
         this.latitude = latitude;
         this.longitude = longitude;
+        // Production MS2: client-supplied coordinates arrive already resolved -- the customer's
+        // own device fix is a better answer than any geocode of their typed address. Everything
+        // else starts PENDING for the geocoder.
+        this.geocodeStatus = (latitude != null && longitude != null)
+                ? com.pronto.maps.GeocodeStatus.RESOLVED.name()
+                : com.pronto.maps.GeocodeStatus.PENDING.name();
         this.status = SosRequestStatus.CREATED;
         this.searchExpansions = 0;
+    }
+
+    /**
+     * Production MS2 — fill in the destination coordinates from a geocode of the service address.
+     *
+     * <p>Called once, at creation, only when the client supplied no fix of its own. There is no
+     * path that overwrites resolved coordinates afterwards: the SOS destination is a snapshot for
+     * exactly the same reason an order's is — professionals were dispatched, and their distances
+     * evaluated, against a specific point.
+     */
+    public void applyGeocode(BigDecimal latitude, BigDecimal longitude, com.pronto.maps.GeocodeStatus status) {
+        if (this.latitude != null && this.longitude != null) {
+            return;
+        }
+        this.latitude = latitude;
+        this.longitude = longitude;
+        this.geocodeStatus = status.name();
+    }
+
+    public String getGeocodeStatus() {
+        return geocodeStatus;
     }
 
     @PrePersist

@@ -145,3 +145,60 @@ export function getMySubServices(): Promise<MySubServicesResponse> {
 export function updateMySubServices(subServiceIds: number[]): Promise<MySubServicesResponse> {
   return httpClient.put<MySubServicesResponse>('/api/professionals/me/sub-services', { subServiceIds });
 }
+
+// ---------------------------------------------------------------------------------------
+// Production MS2 -- the professional's current device position.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * Body of `PUT /api/professionals/me/location`, mirroring
+ * `professionals.dto.UpdateProfessionalLocationRequest` exactly.
+ *
+ * There is deliberately no `professionalId`: the subject is always the caller. `accuracyMeters`
+ * is required, because a fix with no accuracy figure cannot be quality-checked, and MS2's whole
+ * position is that an unqualified fix must not be treated as a precise one.
+ */
+export interface UpdateProfessionalLocationRequest {
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number;
+  /** ISO-8601, device clock. The server stamps its own receive time and trusts the stricter. */
+  capturedAt: string;
+}
+
+/**
+ * Response of `PUT`/`GET /api/professionals/me/location` — the professional's own view of their
+ * own position state.
+ *
+ * Carries **no coordinates**, by design: the client already knows where it is, so returning them
+ * would add nothing while creating a response shape that a later change could widen. What is
+ * useful is whether the platform currently considers them routable and, if not, why.
+ */
+export interface ProfessionalLocationStatusResponse {
+  usable: boolean;
+  /** Server receive time of the stored reading; `null` if none has ever been sent. */
+  updatedAt: string | null;
+  accuracyMeters: number | null;
+  /**
+   * A `maps.RouteUnavailableReason` name, or `null` when `usable`. Stable code — branch on it
+   * rather than on the message, exactly as with `ApiError.code`.
+   */
+  reason: string | null;
+  /**
+   * How long a reading stays usable, from `updatedAt`. Read from the server so the client
+   * schedules its next refresh from the server's own rule instead of hardcoding a duplicate.
+   */
+  staleAfterSeconds: number;
+}
+
+/** `PUT /api/professionals/me/location` — PROFESSIONAL only. Replace semantics, not append. */
+export function updateMyLocation(
+  request: UpdateProfessionalLocationRequest,
+): Promise<ProfessionalLocationStatusResponse> {
+  return httpClient.put<ProfessionalLocationStatusResponse>('/api/professionals/me/location', request);
+}
+
+/** `GET /api/professionals/me/location` — PROFESSIONAL only. */
+export function getMyLocationStatus(): Promise<ProfessionalLocationStatusResponse> {
+  return httpClient.get<ProfessionalLocationStatusResponse>('/api/professionals/me/location');
+}

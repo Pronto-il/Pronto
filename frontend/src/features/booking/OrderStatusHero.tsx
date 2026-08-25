@@ -153,6 +153,16 @@ function describe(
         mascot: 'running',
         tone: 'positive',
       };
+    case 'ARRIVED':
+      return {
+        // Production MS2. Said as a fact rather than an estimate, because for the first time it
+        // is one: the backend measured this person's position against the order's address before
+        // writing the status. No countdown is shown -- there is nothing left to count.
+        headline: `${professionalName} הגיע/ה`,
+        support: 'בעל המקצוע נמצא בכתובת שלך.',
+        mascot: 'found',
+        tone: 'positive',
+      };
     case 'COMPLETED':
       return {
         headline: 'העבודה הושלמה',

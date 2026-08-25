@@ -7,7 +7,9 @@ import {
   RegisterChoicePage,
   CustomerRegisterPage,
   ProfessionalRegisterPage,
-  VerifyPage,
+  AuthChallengePage,
+  PasswordResetPage,
+  PhoneCapturePage,
   LoginPage,
 } from '../features/auth';
 import { NewIssuePage, ProfessionMatchPage } from '../features/issues';
@@ -113,12 +115,16 @@ export const router = createBrowserRouter([
       { path: 'register', element: <RegisterChoicePage /> },
       { path: 'register/customer', element: <CustomerRegisterPage /> },
       { path: 'register/professional', element: <ProfessionalRegisterPage /> },
-      { path: 'verify', element: <VerifyPage /> },
+      { path: 'verify', element: <AuthChallengePage /> },
+      { path: 'password-reset', element: <PasswordResetPage /> },
       { path: 'login', element: <LoginPage /> },
       {
         element: <RequireAuth />,
         children: [
           { path: 'profile', element: <ProfilePage /> },
+          // Production MS1: authenticated, and reachable by anyone the PHONE_VERIFICATION_REQUIRED
+          // gate turns away -- see features/auth/PhoneCapturePage.
+          { path: 'verify-phone', element: <PhoneCapturePage /> },
           { path: 'orders/:orderId', element: <OrderTrackingPage /> },
           { path: 'professionals/:professionalId', element: <ProfessionalProfilePage /> },
         ],

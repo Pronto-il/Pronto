@@ -42,12 +42,19 @@ export interface UserMeResponse {
   emailVerified: boolean;
   professional: ProfessionalInfo | null;
   defaultAddress: UserMeDefaultAddress | null;
-  /** `null` for a `PROFESSIONAL` caller and for a `CUSTOMER` with no recorded phone
-   *  (pre-V28 accounts) — mirrors `defaultAddress`'s own nullability convention. Present on
-   *  the backend response since the professional weekly availability calendar design's M2,
-   *  but was missing from this frontend type until the MS10 profile redesign added it (a
-   *  pre-existing gap, not new backend scope — `api-contract.md` §2.4 already documented it). */
+  /**
+   * Canonical E.164, e.g. `+972501234567`. Production MS1: returned for **every** role — it used to
+   * be blanked for a `PROFESSIONAL`, which was right while this was customer contact detail and
+   * wrong now that it is the account's second identity. `null` only on a legacy row that has never
+   * supplied one.
+   */
   phone: string | null;
+  /**
+   * Production MS1. Drives the phone-capture prompt, so a user is asked before they run into
+   * `PHONE_VERIFICATION_REQUIRED` rather than after. The prompt is UX; the rule itself is enforced
+   * by the backend (`users.service.ContactVerificationGuard`).
+   */
+  phoneVerified: boolean;
 }
 
 /** `GET /api/users/me` — either role, the caller's own profile. */

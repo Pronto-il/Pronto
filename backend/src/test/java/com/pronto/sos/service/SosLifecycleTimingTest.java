@@ -1,5 +1,6 @@
 package com.pronto.sos.service;
 
+import com.pronto.users.service.ContactVerificationGuard;
 import com.pronto.bookings.repository.OrderRepository;
 import com.pronto.issues.entity.Issue;
 import com.pronto.issues.entity.IssueStatus;
@@ -92,7 +93,7 @@ class SosLifecycleTimingTest {
         properties = new SosProperties();
         service = new SosService(sosRequestRepository, sosOfferRepository, issueRepository, orderRepository,
                 professionalRepository, sosDispatchService, sosEventService, assembler, notificationService,
-                properties);
+                properties, Mockito.mock(ContactVerificationGuard.class));
         Mockito.lenient().when(assembler.toRequestResponse(any(), any())).thenReturn(null);
     }
 

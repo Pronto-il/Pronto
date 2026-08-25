@@ -190,4 +190,73 @@ class GlobalExceptionHandlerTest {
         var ex = new HttpRequestMethodNotSupportedException("GET", Set.of("POST", "PUT"));
         assertThat(ex.getSupportedHttpMethods()).containsExactlyInAnyOrder(HttpMethod.POST, HttpMethod.PUT);
     }
+
+    // ---- Production MS1: unique-constraint races ----
+
+    private static org.springframework.dao.DataIntegrityViolationException constraintViolation(String detail) {
+        return new org.springframework.dao.DataIntegrityViolationException(
+                "could not execute statement", new java.sql.SQLException(detail));
+    }
+
+    /**
+     * Registration's duplicate check is check-then-act, so two simultaneous registrations of one
+     * address both pass it and one loses at {@code ux_users_email}. The database was already
+     * handling that correctly; what was missing was a handler, so the loser received
+     * {@code 500 INTERNAL_ERROR} for something that is plainly a {@code 409}.
+     */
+    @Test
+    void aDuplicateEmailRaceIsA409_notA500() {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/auth/register");
+
+        ResponseEntity<ErrorResponse> result = handler.handleDataIntegrityViolation(
+                constraintViolation("duplicate key value violates unique constraint \"ux_users_email\""),
+                request);
+
+        assertThat(result.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(result.getBody()).isNotNull();
+        assertThat(result.getBody().error().code()).isEqualTo(ErrorCode.DUPLICATE_EMAIL.name());
+    }
+
+    @Test
+    void aDuplicatePhoneRaceIsA409WithItsOwnCode() {
+        // Its own code, not a reuse of DUPLICATE_EMAIL: they are different fields on the same form,
+        // and a client that cannot tell them apart cannot highlight the right one.
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/auth/register");
+
+        ResponseEntity<ErrorResponse> result = handler.handleDataIntegrityViolation(
+                constraintViolation("duplicate key value violates unique constraint \"ux_users_phone\""),
+                request);
+
+        assertThat(result.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(result.getBody().error().code()).isEqualTo(ErrorCode.DUPLICATE_PHONE.name());
+    }
+
+    @Test
+    void anUnmappedConstraintViolationStaysA500_ratherThanBeingDressedUpAsAConflict() {
+        // A foreign key or a CHECK reaching this handler means the service layer failed to validate
+        // its input — a server-side bug. Reporting it as a conflict would tell the caller to retry
+        // something that will never work.
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/orders");
+
+        ResponseEntity<ErrorResponse> result = handler.handleDataIntegrityViolation(
+                constraintViolation("violates foreign key constraint \"fk_orders_issue\""), request);
+
+        assertThat(result.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        assertThat(result.getBody().error().code()).isEqualTo(ErrorCode.INTERNAL_ERROR.name());
+    }
+
+    @Test
+    void theConstraintDetailIsNeverEchoedToTheCaller() {
+        // Schema internals — table names, index names, column values — do not belong in a public
+        // error body.
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/auth/register");
+
+        ResponseEntity<ErrorResponse> result = handler.handleDataIntegrityViolation(
+                constraintViolation("duplicate key value violates unique constraint \"ux_users_email\" "
+                        + "Detail: Key (email)=(victim@example.com) already exists."), request);
+
+        assertThat(result.getBody().error().message())
+                .doesNotContain("victim@example.com")
+                .doesNotContain("ux_users_email");
+    }
 }

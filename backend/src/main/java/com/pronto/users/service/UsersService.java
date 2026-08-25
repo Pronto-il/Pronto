@@ -13,6 +13,7 @@ import com.pronto.users.dto.UpdateUserMeRequest;
 import com.pronto.users.dto.UserMeResponse;
 import com.pronto.users.entity.User;
 import com.pronto.users.entity.UserRole;
+import com.pronto.auth.service.PhoneNumberNormalizer;
 import com.pronto.users.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,14 +31,17 @@ public class UsersService {
     private final ProfessionalRepository professionalRepository;
     private final StorageService storageService;
     private final ProfessionalCoverageService professionalCoverageService;
+    private final PhoneNumberNormalizer phoneNumberNormalizer;
 
     public UsersService(UserRepository userRepository, ProfessionalRepository professionalRepository,
                          StorageService storageService,
-                         ProfessionalCoverageService professionalCoverageService) {
+                         ProfessionalCoverageService professionalCoverageService,
+                         PhoneNumberNormalizer phoneNumberNormalizer) {
         this.userRepository = userRepository;
         this.professionalRepository = professionalRepository;
         this.storageService = storageService;
         this.professionalCoverageService = professionalCoverageService;
+        this.phoneNumberNormalizer = phoneNumberNormalizer;
     }
 
     @Transactional(readOnly = true)
@@ -61,15 +65,13 @@ public class UsersService {
                     user.getDefaultEntrance(), user.getDefaultAddressNotes());
         }
 
-        // §9.1 of the professional weekly availability calendar design: same
-        // CUSTOMER-only/self-view convention as defaultAddress above -- always null for a
-        // PROFESSIONAL (the column itself is always null for that role, but the explicit
-        // role check mirrors defaultAddress's own defensive convention rather than relying
-        // on the column value alone).
-        String phone = user.getRole() == UserRole.CUSTOMER ? user.getPhone() : null;
-
+        // Production MS1: no longer blanked for a PROFESSIONAL. The CUSTOMER-only rule was right
+        // when this column held customer contact detail; phone is now the account's second identity
+        // and every role has one, so hiding it from its own owner would only mean a professional
+        // could not see the number they log in with. Still null on a legacy row that has none.
         return new UserMeResponse(user.getId(), user.getFullName(), user.getEmail(),
-                user.getRole(), user.isEmailVerified(), professionalInfo, defaultAddress, phone);
+                user.getRole(), user.isEmailVerified(), professionalInfo, defaultAddress,
+                user.getPhone(), user.isPhoneVerified());
     }
 
     /**
@@ -99,7 +101,7 @@ public class UsersService {
 
         User user = loadActiveUser(caller.id());
         user.setFullName(request.fullName());
-        user.setPhone(request.phone());
+        applyPhoneChange(user, request.phone());
 
         UpdateUserMeRequest.Address address = request.defaultAddress();
         user.setDefaultCity(address.city());
@@ -127,7 +129,43 @@ public class UsersService {
         user.setDeletedAt(Instant.now());
         user.setFullName("Deleted User");
         user.setEmail("deleted-user-" + user.getId() + "@pronto.invalid");
+        // Production MS1: release the phone number too. ux_users_phone is a total unique index, so
+        // leaving it on the tombstone would reserve that number forever and stop its actual owner
+        // from ever registering -- the identical problem the email rewrite above already solves.
+        user.setPhone(null);
+        user.setPhoneVerified(false);
         userRepository.save(user);
+    }
+
+    /**
+     * Applies a customer's self-service phone edit.
+     *
+     * <p>Production MS1 made this more than a field assignment. Phone is now a login identifier, so
+     * an edit has to normalize to E.164 (or the value would not match anything and would violate
+     * {@code ck_users_phone_e164}), has to check uniqueness (or it would collide at
+     * {@code ux_users_phone}), and -- the part that actually matters -- has to <b>drop the verified
+     * flag when the number changes</b>. Without that last rule this endpoint would be a complete
+     * bypass of phone verification: type any number, keep the verified flag you earned on a
+     * different one, and receive login codes at an address nobody proved you own.
+     *
+     * <p>A no-op edit (same canonical number resubmitted with the rest of the profile) deliberately
+     * leaves the flag alone, so saving the profile form does not cost the user their verification.
+     */
+    private void applyPhoneChange(User user, String submittedPhone) {
+        String phone = phoneNumberNormalizer.normalize(submittedPhone, "phone");
+        if (phone.equals(user.getPhone())) {
+            return;
+        }
+
+        userRepository.findByPhone(phone)
+                .filter(owner -> !owner.getId().equals(user.getId()))
+                .ifPresent(owner -> {
+                    throw new ApiException(ErrorCode.DUPLICATE_PHONE,
+                            "Phone number is already registered.");
+                });
+
+        user.setPhone(phone);
+        user.setPhoneVerified(false);
     }
 
     /**

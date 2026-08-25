@@ -83,13 +83,32 @@ public class User {
     private String defaultAddressNotes;
 
     /**
-     * Customer phone number, collected at registration (professional weekly availability
-     * calendar design §2.5/§9.1). Always {@code null} for a {@code PROFESSIONAL} account,
-     * same convention as {@code default_city} et al. Set via setter, not the constructor,
-     * mirroring how the default-address fields above are populated after construction.
+     * Phone number in canonical E.164, e.g. {@code +972501234567}.
+     *
+     * <p><b>Production MS1 changed what this column means.</b> It arrived (V28) as free-text
+     * contact detail collected for {@code CUSTOMER} registrations only. It is now an identity:
+     * unique ({@code ux_users_phone}), shape-constrained ({@code ck_users_phone_e164}), required at
+     * the API layer for every new registration of <em>every</em> role, and usable as a login
+     * identifier once {@link #phoneVerified}. Always written through
+     * {@code auth.service.PhoneNumberNormalizer} — never from raw user input.
+     *
+     * <p>Still nullable at the database level, and that nullability is doing real work: it is the
+     * legacy cohort. Every {@code PROFESSIONAL} and {@code ADMIN} row created before MS1 has no
+     * phone, as does any {@code CUSTOMER} predating V28 and any row whose stored text V46 could not
+     * canonicalize. Those accounts keep authenticating by email and are refused sensitive
+     * marketplace mutations ({@code PHONE_VERIFICATION_REQUIRED}) until they complete phone
+     * capture. A {@code NOT NULL} here would have meant inventing phone numbers for them.
      */
     @Column(name = "phone", length = 20)
     private String phone;
+
+    /**
+     * Whether an SMS OTP sent to {@link #phone} has actually been redeemed. Mirrors
+     * {@link #emailVerified} exactly, including defaulting to {@code false} for every pre-existing
+     * row: a legacy phone number was never confirmed, and V46 deliberately grandfathers nobody.
+     */
+    @Column(name = "phone_verified", nullable = false)
+    private boolean phoneVerified;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
@@ -107,6 +126,7 @@ public class User {
         this.passwordHash = passwordHash;
         this.role = role;
         this.emailVerified = false;
+        this.phoneVerified = false;
         this.failedLoginAttempts = 0;
     }
 
@@ -144,6 +164,15 @@ public class User {
 
     public String getPasswordHash() {
         return passwordHash;
+    }
+
+    /**
+     * Production MS1: password recovery needs to replace the hash. Deliberately takes the
+     * already-encoded value — this entity does not know what a {@code PasswordEncoder} is, and a
+     * setter that took a plaintext password would be one refactor away from storing one.
+     */
+    public void setPasswordHash(String passwordHash) {
+        this.passwordHash = passwordHash;
     }
 
     public UserRole getRole() {
@@ -244,6 +273,22 @@ public class User {
 
     public void setPhone(String phone) {
         this.phone = phone;
+    }
+
+    public boolean isPhoneVerified() {
+        return phoneVerified;
+    }
+
+    public void setPhoneVerified(boolean phoneVerified) {
+        this.phoneVerified = phoneVerified;
+    }
+
+    /**
+     * True only when both contact channels are confirmed. The single question every
+     * marketplace-mutation gate asks — see {@code auth.security.ContactVerificationGuard}.
+     */
+    public boolean isFullyVerified() {
+        return emailVerified && phoneVerified;
     }
 
     public Instant getCreatedAt() {

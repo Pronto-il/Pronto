@@ -1,5 +1,6 @@
 package com.pronto.bookings.service;
 
+import com.pronto.users.service.ContactVerificationGuard;
 import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.availability.dto.CalendarSegment;
 import com.pronto.availability.repository.AvailabilitySlotRepository;
@@ -103,7 +104,7 @@ class BookingsServiceTest {
         bookingsService = new BookingsService(issueRepository, professionalRepository, professionalListingRepository,
                 availabilitySlotRepository, orderRepository, userRepository,
                 notificationService, distanceEtaStrategy, storageService, availabilityDerivationService,
-                professionalCoverageService);
+                professionalCoverageService, Mockito.mock(ContactVerificationGuard.class));
         // MS1: every pre-existing test in this class describes a world of ordinary, verified
         // professionals, so eligibility is stubbed true by default. The MS1 tests at the bottom of
         // the class override it per-test -- lenient() because most tests here never reach the

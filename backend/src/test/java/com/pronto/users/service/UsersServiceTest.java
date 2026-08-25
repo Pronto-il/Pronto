@@ -1,5 +1,6 @@
 package com.pronto.users.service;
 
+import com.pronto.auth.service.PhoneNumberNormalizer;
 import java.util.List;
 import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.common.exception.ApiException;
@@ -64,7 +65,7 @@ class UsersServiceTest {
         storageService = Mockito.mock(StorageService.class);
         professionalCoverageService = Mockito.mock(ProfessionalCoverageService.class);
         usersService = new UsersService(userRepository, professionalRepository, storageService,
-                professionalCoverageService);
+                professionalCoverageService, new PhoneNumberNormalizer("IL"));
         // MS4: every pre-existing test in this class describes an ordinary, fully-configured
         // professional, so coverage and categories are stubbed to a sane default here; the tests
         // that care override them per-test. ProfessionalCoverageService's own rules are covered by
@@ -95,7 +96,7 @@ class UsersServiceTest {
     private static UpdateUserMeRequest validRequest() {
         return new UpdateUserMeRequest(
                 "ישראל ישראלי",
-                "0501234567",
+                "050-223-4567",
                 new UpdateUserMeRequest.Address("תל אביב", "אלנבי", "12", "4", "2", "א", "קוד כניסה 1234"));
     }
 
@@ -108,7 +109,9 @@ class UsersServiceTest {
         UserMeResponse response = usersService.updateMe(customerCaller, validRequest());
 
         assertThat(response.fullName()).isEqualTo("ישראל ישראלי");
-        assertThat(response.phone()).isEqualTo("0501234567");
+        // Production MS1: normalized to E.164 on the way in, so the response reports the
+        // canonical identity rather than the spelling the form happened to submit.
+        assertThat(response.phone()).isEqualTo("+972502234567");
         assertThat(response.defaultAddress()).isNotNull();
         assertThat(response.defaultAddress().city()).isEqualTo("תל אביב");
         assertThat(response.defaultAddress().street()).isEqualTo("אלנבי");
@@ -120,7 +123,11 @@ class UsersServiceTest {
 
         // Entity itself was mutated via setters, not replaced.
         assertThat(user.getFullName()).isEqualTo("ישראל ישראלי");
-        assertThat(user.getPhone()).isEqualTo("0501234567");
+        assertThat(user.getPhone()).isEqualTo("+972502234567");
+        // Changing the number drops the verified flag. Without that rule this endpoint would be a
+        // complete bypass of phone verification: submit any number, keep the flag earned on a
+        // different one, and receive login codes at an address nobody proved you own.
+        assertThat(user.isPhoneVerified()).isFalse();
         assertThat(user.getDefaultCity()).isEqualTo("תל אביב");
         verify(userRepository, times(1)).save(user);
     }

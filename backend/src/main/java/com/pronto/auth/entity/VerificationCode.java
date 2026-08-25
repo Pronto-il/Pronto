@@ -2,6 +2,8 @@ package com.pronto.auth.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -9,20 +11,33 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
+import java.util.UUID;
 
 /**
- * JPA entity for the {@code verification_codes} table. {@code userId} is a plain FK
- * column (no {@code @ManyToOne}) — this package only ever needs the id, never the related
- * {@code User} object graph. Mapping matches the already-applied
- * {@code V3__create_verification_codes.sql} migration exactly. See
+ * One issued one-time password — an OTP <em>challenge</em>, addressed by an opaque
+ * {@link #challengeId} rather than by the address it was sent to.
+ *
+ * <p>{@code userId} stays a plain FK column (no {@code @ManyToOne}): this package only ever needs
+ * the id. Mapping matches {@code V3} as amended by {@code V47}. See
  * {@code docs/architecture/data-model.md} §2.3.
+ *
+ * <p><b>The plaintext code is not here, and is nowhere else either.</b> Only
+ * {@link #codeHash} — SHA-256 hex — is persisted. The six digits exist in memory for as long as it
+ * takes to hand them to the Email/SMS provider and are then dropped; they are never written to a
+ * column, never returned in a response body, and never logged outside a {@code local} environment.
+ * A database disclosure therefore yields no usable credential.
+ *
+ * <p><b>Mutation happens in SQL, not here.</b> {@link #attempts} and {@link #consumedAt} both have
+ * getters and no setters, on purpose: both are the subject of a race that a read-modify-write
+ * through JPA loses. Two concurrent guesses that each load this entity, each see
+ * {@code attempts = 4}, and each write {@code 5} have collectively spent one attempt against a cap
+ * of five. They are advanced instead by the two conditional UPDATE statements on
+ * {@code VerificationCodeRepository}, where the row lock and the WHERE clause make the cap and the
+ * single-use rule hold under concurrency.
  */
 @Entity
 @Table(name = "verification_codes")
 public class VerificationCode {
-
-    /** Only value used in v1.0 — see {@code V3}'s {@code ck_verification_codes_purpose}. */
-    public static final String PURPOSE_EMAIL_VERIFICATION = "EMAIL_VERIFICATION";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -31,11 +46,20 @@ public class VerificationCode {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
-    @Column(name = "code", nullable = false, length = 10)
-    private String code;
+    /** SHA-256 hex of the dispatched code. 64 characters, always. */
+    @Column(name = "code_hash", nullable = false, length = 64)
+    private String codeHash;
 
+    /** Opaque public handle. Unique ({@code ux_verification_codes_challenge}). */
+    @Column(name = "challenge_id", nullable = false, updatable = false)
+    private UUID challengeId;
+
+    @Enumerated(EnumType.STRING)
     @Column(name = "purpose", nullable = false, length = 30)
-    private String purpose;
+    private OtpPurpose purpose;
+
+    @Column(name = "attempts", nullable = false)
+    private short attempts;
 
     @Column(name = "expires_at", nullable = false)
     private Instant expiresAt;
@@ -50,11 +74,19 @@ public class VerificationCode {
         // JPA
     }
 
-    public VerificationCode(Long userId, String code, Instant expiresAt) {
+    /**
+     * {@code challengeId} is supplied rather than generated here, because the keyed hash in
+     * {@code codeHash} is computed <em>over</em> it ({@code auth.service.OtpPepper}) — so the id has
+     * to exist before the hash does. It stays {@code updatable = false}: minted once, never changed.
+     */
+    public VerificationCode(Long userId, OtpPurpose purpose, UUID challengeId, String codeHash,
+                             Instant expiresAt) {
         this.userId = userId;
-        this.code = code;
-        this.purpose = PURPOSE_EMAIL_VERIFICATION;
+        this.purpose = purpose;
+        this.challengeId = challengeId;
+        this.codeHash = codeHash;
         this.expiresAt = expiresAt;
+        this.attempts = 0;
     }
 
     @PrePersist
@@ -70,12 +102,20 @@ public class VerificationCode {
         return userId;
     }
 
-    public String getCode() {
-        return code;
+    public String getCodeHash() {
+        return codeHash;
     }
 
-    public String getPurpose() {
+    public UUID getChallengeId() {
+        return challengeId;
+    }
+
+    public OtpPurpose getPurpose() {
         return purpose;
+    }
+
+    public short getAttempts() {
+        return attempts;
     }
 
     public Instant getExpiresAt() {
@@ -86,11 +126,12 @@ public class VerificationCode {
         return consumedAt;
     }
 
-    public void setConsumedAt(Instant consumedAt) {
-        this.consumedAt = consumedAt;
-    }
-
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    /** True while this challenge is still redeemable: never consumed and not yet expired. */
+    public boolean isActiveAt(Instant now) {
+        return consumedAt == null && expiresAt.isAfter(now);
     }
 }

@@ -182,9 +182,88 @@ pronto:
     timeout-ms: ${OPENAI_TIMEOUT_MS:10000}
 
   email:
-    # log | smtp (smtp not built this milestone — see docs/architecture/api-contract-notifications.md
-    # §4.4; LoggingEmailSender is the sole implementation for now).
+    # log | ses. LIVE configuration as of Production MS1 -- this property used to exist and be read
+    # by nothing at all, so setting it had no effect whatsoever. It now selects the EmailSender bean
+    # (@ConditionalOnProperty on auth.email.LoggingEmailSender / auth.email.SesEmailSender).
+    #
+    #   log   write the message to the application log; the OTP itself is only included when
+    #         pronto.environment=local. No real email is sent.
+    #   ses   Amazon SES v2. Requires `from` below to be a verified SES identity and the account to
+    #         be out of the SES sandbox for the target region.
+    #
+    # auth.config.ProviderModeStartupGuard refuses to start with mode=log in any environment other
+    # than local/test/demo: undelivered verification codes would leave every account unreachable.
     mode: ${EMAIL_MODE:log}
+    # Verified SES sender identity. Empty by default because there is no safe default -- required
+    # (and startup-checked) only when mode=ses. Never a secret, so it lives here rather than in
+    # Secrets Manager; the CREDENTIALS come from the AWS default provider chain / IAM role and
+    # appear nowhere in this repository.
+    from: ${EMAIL_FROM:}
+    ses-region: ${EMAIL_SES_REGION:eu-central-1}
+    # Bounds the inline send on the registration/login request path. Without it an unresponsive
+    # provider holds a request thread indefinitely.
+    timeout-ms: ${EMAIL_TIMEOUT_MS:10000}
+
+  sms:
+    # log | aws. New in Production MS1 -- this application had no SMS capability before it.
+    #
+    #   log   as above: logged, code included only when pronto.environment=local.
+    #   aws   AWS End User Messaging SMS, published via SNS (auth.sms.AwsSmsSender). Origination
+    #         identity, sender ID registration and spend limits are account-level AWS configuration,
+    #         not application configuration -- see the MS1 report §8 for the Israel-specific
+    #         requirements.
+    #
+    # Same startup guard as email. Additionally, the guard refuses to start with mode=aws while the
+    # demo dataset is enabled: the demo accounts' phone numbers are synthetic and may belong to real
+    # people who did not ask to receive Pronto verification codes.
+    mode: ${SMS_MODE:log}
+    region: ${AWS_SMS_REGION:eu-central-1}
+    # Optional alphanumeric sender ID. Left empty AWS selects an origination identity from the
+    # account's pool, which is the right default: several countries ignore or forbid alphanumeric
+    # sender IDs, and a hardcoded one would silently degrade delivery there.
+    sender-id: ${AWS_SMS_SENDER_ID:}
+    timeout-ms: ${SMS_TIMEOUT_MS:10000}
+
+  otp:
+    # Server-side key for the HMAC that protects stored one-time passwords
+    # (auth.service.OtpPepper). NOT a salt and not interchangeable with one: a 6-digit code has only
+    # 1,000,000 possible values, so an unkeyed digest -- salted or not -- is brute-forceable per row
+    # in milliseconds. Only a secret the database does not contain helps.
+    #
+    # Deliberately a DIFFERENT secret from pronto.jwt.secret: the two have different blast radii and
+    # rotating one must not force rotating the other. Never written to the database, never logged.
+    #
+    # Local-dev-only default below. auth.config.ProductionHardeningStartupGuard refuses to start any
+    # environment other than local/test/demo while this is still the placeholder, empty, or under 32
+    # characters.
+    pepper: ${OTP_PEPPER:local-dev-only-insecure-otp-pepper-please-override-via-OTP_PEPPER-env-var-before-any-real-deployment}
+
+  phone:
+    # CLDR region used to interpret phone numbers typed in local form, i.e. with no country code
+    # (auth.service.PhoneNumberNormalizer). IL so an Israeli customer can type 050-1234567 exactly
+    # as they would say it. A number written in full international form is unaffected.
+    default-region: ${PHONE_DEFAULT_REGION:IL}
+
+  security:
+    # Comma-separated CIDR blocks whose X-Forwarded-For header may be trusted for rate-limiting
+    # attribution (auth.security.ClientIpResolver). EMPTY BY DEFAULT, and that default is the safe
+    # one AGAINST SPOOFING: with no entries the resolver uses the direct peer address and ignores
+    # every X-Forwarded-For header, so a client cannot evade or misdirect rate limiting by forging
+    # one.
+    #
+    # It is NOT safe behind a load balancer, which is the opposite problem: every request then
+    # appears to come from the ALB and all users share a single rate-limit counter, capping
+    # registration platform-wide. Set this to the load balancer's SUBNET CIDRs -- e.g.
+    # TRUSTED_PROXIES=10.0.0.0/16 -- never its DNS name and never AWS's published public ranges.
+    #
+    # auth.config.ProductionHardeningStartupGuard refuses to start a production-like environment
+    # that leaves this empty while behind-proxy is true.
+    trusted-proxies: ${TRUSTED_PROXIES:}
+    # Whether this deployment sits behind a reverse proxy / load balancer. Defaults to true because
+    # the Pronto 1.0 target architecture is an AWS ALB; a deployment reached directly sets it to
+    # false and thereby states that decision explicitly rather than leaving it inferred from an
+    # empty TRUSTED_PROXIES.
+    behind-proxy: ${BEHIND_PROXY:true}
 
   sos:
     # Pronto SOS (broadcast-and-choose urgent dispatch). Every value below is read only at the
@@ -263,6 +342,14 @@ pronto:
 
 server:
   port: ${SERVER_PORT:8080}
+
+logging:
+  level:
+    # Production MS1 (pre-DONE audit). The AWS SDK logs full request bodies at DEBUG. For SNS that
+    # body is the SMS text, which contains the one-time password -- so a globally raised log level,
+    # or a well-meant "let's see the AWS traffic", would silently start writing live OTPs to the
+    # application log. Pinned here so that raising the root level cannot reach it.
+    software.amazon.awssdk: WARN
 
 management:
   endpoints:

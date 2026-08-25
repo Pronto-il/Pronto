@@ -1,5 +1,6 @@
 package com.pronto.issues.service;
 
+import com.pronto.users.service.ContactVerificationGuard;
 import com.pronto.ai.dto.CategoryCandidate;
 import com.pronto.ai.dto.ClarificationExchange;
 import com.pronto.ai.dto.ClarificationQuestion;
@@ -73,6 +74,7 @@ class IssuesServiceTest {
     private ProfessionalRepository professionalRepository;
     private OrderRepository orderRepository;
     private IssuesService issuesService;
+    private ContactVerificationGuard contactVerificationGuard;
 
     @BeforeEach
     void setUp() {
@@ -87,6 +89,8 @@ class IssuesServiceTest {
         professionalRepository = Mockito.mock(ProfessionalRepository.class);
         orderRepository = Mockito.mock(OrderRepository.class);
 
+        contactVerificationGuard = Mockito.mock(ContactVerificationGuard.class);
+
         issuesService = new IssuesService(
                 issueRepository,
                 issueImageRepository,
@@ -100,6 +104,7 @@ class IssuesServiceTest {
                 professionalRepository,
                 orderRepository,
                 Mockito.mock(UserRepository.class),
+                contactVerificationGuard,
                 eventPublisher);
     }
 
@@ -489,5 +494,41 @@ class IssuesServiceTest {
             return e;
         }
         throw new AssertionError("expected an ApiException");
+    }
+
+    // ---- Production MS1 pre-DONE audit: the phone gate on classification ----
+
+    @Test
+    void classify_requiresVerifiedContactChannels() {
+        // POST /api/issues was gated from the start; POST /api/issues/classify was not, which left an
+        // unverified account able to spend OpenAI requests indefinitely. The route is authenticated
+        // and CUSTOMER-only, so there is no anonymous classification flow this can break.
+        Mockito.doThrow(new ApiException(ErrorCode.PHONE_VERIFICATION_REQUIRED,
+                        "Verify your phone number before continuing."))
+                .when(contactVerificationGuard).requireVerifiedContactChannels(42L);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> issuesService.classify(42L,
+                new ClassifyRequest("המזגן מטפטף מים", List.of(), null, null)))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode())
+                        .isEqualTo(ErrorCode.PHONE_VERIFICATION_REQUIRED));
+
+        Mockito.verifyNoInteractions(classificationService);
+    }
+
+    @Test
+    void classify_proceedsForAVerifiedAccount() {
+        // The default mock guard does nothing, i.e. the account is verified — so the call reaches the
+        // classifier instead of being turned away. (The classifier itself is stubbed by the existing
+        // fixtures in this class; what matters here is only that the gate let the call through.)
+        try {
+            issuesService.classify(42L, new ClassifyRequest("המזגן מטפטף מים", List.of(), null, null));
+        } catch (RuntimeException ignored) {
+            // Downstream stubbing, not the gate. The verifications below are the assertion.
+        }
+
+        Mockito.verify(contactVerificationGuard).requireVerifiedContactChannels(42L);
+        Mockito.verify(classificationService)
+                .classify(Mockito.eq("המזגן מטפטף מים"), Mockito.anyList(), Mockito.isNull(), Mockito.anyList());
     }
 }

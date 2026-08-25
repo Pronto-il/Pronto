@@ -43,6 +43,48 @@ public class GlobalExceptionHandler {
         return build(ex.getCode(), ex.getCode().getHttpStatus(), ex.getMessage(), ex.getDetails(), request);
     }
 
+    /**
+     * Unique-constraint violations that a pre-insert check could not prevent.
+     *
+     * <p>Production MS1. Registration checks "is this email already taken?" and then inserts, which
+     * is a check-then-act: two simultaneous registrations of the same address both pass the check
+     * and one loses at the index. The database was already handling that correctly — it is exactly
+     * what {@code ux_users_email} is for — but the resulting
+     * {@code DataIntegrityViolationException} had no handler, so it fell through to the catch-all
+     * below and the loser received {@code 500 INTERNAL_ERROR}. Nothing had gone wrong on the server:
+     * the caller simply tried to register an address somebody else was registering at that instant,
+     * which is a {@code 409}.
+     *
+     * <p>The constraint name is what identifies which field lost, and it is read from the exception
+     * message because that is where PostgreSQL puts it. Anything unrecognized keeps the generic
+     * conflict response rather than guessing at a field — a wrong field name on an error is worse
+     * than no field name. This is deliberately NOT a licence to weaken the constraints: the indexes
+     * stay total and unique, and this handler only translates the outcome.
+     */
+    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(
+            org.springframework.dao.DataIntegrityViolationException ex, HttpServletRequest request) {
+        String detail = ex.getMostSpecificCause().getMessage();
+        String constraint = detail == null ? "" : detail.toLowerCase();
+
+        if (constraint.contains("ux_users_email")) {
+            return build(ErrorCode.DUPLICATE_EMAIL, ErrorCode.DUPLICATE_EMAIL.getHttpStatus(),
+                    "Email is already registered.", null, request);
+        }
+        if (constraint.contains("ux_users_phone")) {
+            return build(ErrorCode.DUPLICATE_PHONE, ErrorCode.DUPLICATE_PHONE.getHttpStatus(),
+                    "Phone number is already registered.", null, request);
+        }
+
+        // Anything else reaching here — a foreign key, a CHECK, a constraint added later without a
+        // branch above — is a server-side bug: the service layer should have rejected the input
+        // before the statement ran. Reported as 500 with the constraint logged, which is the honest
+        // answer, rather than dressed up as a conflict the caller could act on.
+        log.error("Unmapped data-integrity violation on {}: {}", request.getRequestURI(), detail, ex);
+        return build(ErrorCode.INTERNAL_ERROR, HttpStatus.INTERNAL_SERVER_ERROR,
+                "An unexpected error occurred.", null, request);
+    }
+
     /** {@code @Valid} bean-validation failures on {@code @RequestBody} DTOs. */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> handleValidation(MethodArgumentNotValidException ex,

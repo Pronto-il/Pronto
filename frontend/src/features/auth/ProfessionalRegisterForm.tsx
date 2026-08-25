@@ -27,12 +27,17 @@ import {
   getServiceAreas,
   citiesForRegion,
 } from '../../shared/api';
-import type { CategoryWithSubServicesResponse, ServiceRegionResponse } from '../../shared/api';
+import type {
+  AuthStepResponse,
+  CategoryWithSubServicesResponse,
+  ServiceRegionResponse,
+} from '../../shared/api';
 import { RegistrationWizardShell } from './RegistrationWizardShell';
 import styles from './formStyles.module.css';
 
 export interface ProfessionalRegisterFormProps {
-  onSuccess: (email: string) => void;
+  /** Production MS1: the registration response's OTP challenge — see CustomerRegisterForm. */
+  onSuccess: (response: AuthStepResponse) => void;
   /** Stage 1's back button — exits the wizard entirely (design doc §6.1). */
   onExit: () => void;
 }
@@ -40,6 +45,7 @@ export interface ProfessionalRegisterFormProps {
 interface FormErrors {
   fullName?: string;
   email?: string;
+  phone?: string;
   password?: string;
   confirmPassword?: string;
   categoryIds?: string;
@@ -103,6 +109,7 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
@@ -215,13 +222,19 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
     );
   }
 
-  function validateStage1(): Pick<FormErrors, 'fullName' | 'email' | 'password' | 'confirmPassword'> {
-    const next: Pick<FormErrors, 'fullName' | 'email' | 'password' | 'confirmPassword'> = {};
+  function validateStage1(): Pick<FormErrors, 'fullName' | 'email' | 'phone' | 'password' | 'confirmPassword'> {
+    const next: Pick<FormErrors, 'fullName' | 'email' | 'phone' | 'password' | 'confirmPassword'> = {};
     if (fullName.trim().length < 2) {
       next.fullName = 'יש להזין שם מלא (לפחות 2 תווים).';
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       next.email = 'יש להזין כתובת אימייל תקינה.';
+    }
+    // Presence only. Whether a number is a real, reachable Israeli mobile is decided by
+    // libphonenumber on the backend; a second, staler copy of the numbering plan here would
+    // only ever disagree with it.
+    if (!phone.trim()) {
+      next.phone = 'יש להזין מספר טלפון.';
     }
     if (password.length < 8) {
       next.password = 'הסיסמה חייבת להכיל לפחות 8 תווים.';
@@ -290,7 +303,7 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
 
   /** Same routing principle as the customer wizard (design doc §6.3) — jump back to whichever stage owns the offending field. */
   function routeFieldErrors(nextErrors: FormErrors) {
-    if (nextErrors.fullName || nextErrors.email || nextErrors.password) {
+    if (nextErrors.fullName || nextErrors.email || nextErrors.phone || nextErrors.password) {
       goToStage(1, -1);
     } else if (nextErrors.categoryIds || nextErrors.serviceRegionId || nextErrors.serviceCityIds) {
       goToStage(2, -1);
@@ -324,6 +337,7 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
         ...prev,
         fullName: stage1Errors.fullName,
         email: stage1Errors.email,
+        phone: stage1Errors.phone,
         password: stage1Errors.password,
         confirmPassword: stage1Errors.confirmPassword,
       }));
@@ -392,9 +406,10 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
     setBannerError(null);
     setIsSubmitting(true);
     try {
-      await registerProfessional({
+      const response = await registerProfessional({
         fullName: fullName.trim(),
         email: email.trim(),
+        phone: phone.trim(),
         password,
         categoryIds: selectedCategoryIds,
         serviceRegionId: serviceRegionId as number,
@@ -409,7 +424,7 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
         verificationDocument,
         profilePhoto: photo,
       });
-      onSuccess(email.trim());
+      onSuccess(response);
     } catch (error) {
       if (error instanceof ApiError && error.code === 'DUPLICATE_EMAIL') {
         const nextErrors: FormErrors = { email: 'כתובת האימייל הזו כבר רשומה במערכת.' };
@@ -483,6 +498,18 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
               onChange={(event) => setEmail(event.target.value)}
               error={errors.email}
               autoComplete="email"
+              required
+            />
+            <Input
+              label="טלפון נייד"
+              type="tel"
+              inputMode="tel"
+              dir="ltr"
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              error={errors.phone}
+              autoComplete="tel"
+              hint="למשל 050-1234567 — נאמת אותו בהמשך ההרשמה"
               required
             />
             <Input
@@ -693,6 +720,10 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
               <div className={styles.summaryRow}>
                 <dt>אימייל</dt>
                 <dd>{email}</dd>
+              </div>
+              <div className={styles.summaryRow}>
+                <dt>טלפון</dt>
+                <dd dir="ltr">{phone}</dd>
               </div>
               <div className={styles.summaryRow}>
                 <dt>תחומי שירות</dt>

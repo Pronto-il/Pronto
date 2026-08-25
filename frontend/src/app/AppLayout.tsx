@@ -1,6 +1,8 @@
-import { Link, Outlet } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Link, Outlet, useNavigate } from 'react-router-dom';
 import { LogOut, User, ClipboardList, LayoutDashboard, ShieldCheck, Wrench } from 'lucide-react';
 import { useAuth } from '../shared/hooks';
+import { setPhoneVerificationRequiredHandler } from '../shared/api';
 import { BookingDraftIndicator } from './BookingDraftIndicator';
 import { ActiveOrderIndicator } from './ActiveOrderIndicator';
 import { BottomNav } from './BottomNav';
@@ -62,6 +64,16 @@ import styles from './AppLayout.module.css';
  */
 export default function AppLayout() {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  // Production MS1. An account whose phone has never been verified authenticates normally but is
+  // refused the marketplace mutations that end with a professional at somebody's front door
+  // (users.service.ContactVerificationGuard). Registered here, inside the router, because that
+  // refusal can arrive from any of several screens and a per-screen copy is one that gets
+  // forgotten — the user lands on the one screen that can resolve it instead of on a dead end.
+  useEffect(() => {
+    setPhoneVerificationRequiredHandler(() => navigate('/verify-phone'));
+  }, [navigate]);
 
   const brandTarget =
     user?.role === 'PROFESSIONAL' ? '/pro' : user?.role === 'ADMIN' ? '/admin/professionals' : '/';

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { login as loginRequest } from '../api/auth';
+import type { AuthSession } from '../api/auth';
 import { getMe, type UserMeResponse } from '../api/users';
 import { ApiError, setAuthTokenGetter, setUnauthorizedHandler } from '../api/httpClient';
 import { AuthContext } from './authContext';
@@ -90,11 +90,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void rehydrate();
   }, []);
 
-  async function login(email: string, password: string): Promise<UserMeResponse> {
-    const response = await loginRequest({ email, password });
-    localStorage.setItem(TOKEN_STORAGE_KEY, response.token);
-    tokenRef.current = response.token;
-    setToken(response.token);
+  /**
+   * Production MS1. This provider no longer performs the login call itself, because there is no
+   * longer a single call that logs anyone in: `POST /api/auth/login` only checks the password and
+   * returns an OTP challenge, and the session arrives one step later from
+   * `POST /api/auth/login/otp` — or, at the end of registration, from
+   * `POST /api/auth/verify-phone`. Both hand the resulting session here.
+   *
+   * Keeping the token's storage and the `/me` bootstrap in one place is the part that mattered and
+   * is unchanged; what moved out is the knowledge of which endpoint produced the token.
+   */
+  async function establishSession(session: AuthSession): Promise<UserMeResponse> {
+    localStorage.setItem(TOKEN_STORAGE_KEY, session.token);
+    tokenRef.current = session.token;
+    setToken(session.token);
     const me = await getMe();
     setUser(me);
     return me;
@@ -124,7 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ token, user, isLoading, login, logout, refreshUser }}>
+    <AuthContext.Provider value={{ token, user, isLoading, establishSession, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

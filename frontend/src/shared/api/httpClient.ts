@@ -91,6 +91,27 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler): void {
   unauthorizedHandler = handler;
 }
 
+type PhoneVerificationRequiredHandler = () => void;
+
+let phoneVerificationRequiredHandler: PhoneVerificationRequiredHandler = () => {};
+
+/**
+ * Production MS1. Injected by `AppLayout`, called once per response carrying
+ * `403 PHONE_VERIFICATION_REQUIRED` — the backend's answer when an account whose phone has never
+ * been verified attempts a marketplace mutation (creating an issue or an order, activating SOS).
+ *
+ * Registered globally rather than handled per screen for the same reason the `401` handler is: the
+ * gate fires on four different endpoints reached from at least six screens, and a per-screen copy
+ * is one that gets forgotten on the seventh. The error is still thrown so the calling screen keeps
+ * its own error rendering; this only routes the user somewhere they can actually fix it.
+ *
+ * The handler is UX. The rule is `users.service.ContactVerificationGuard`, and it holds against a
+ * direct API call with a perfectly valid token whatever this client does.
+ */
+export function setPhoneVerificationRequiredHandler(handler: PhoneVerificationRequiredHandler): void {
+  phoneVerificationRequiredHandler = handler;
+}
+
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
@@ -152,6 +173,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       unauthorizedHandler();
     }
     const envelope = payload as ErrorEnvelope | null;
+    if (envelope?.error?.code === 'PHONE_VERIFICATION_REQUIRED') {
+      phoneVerificationRequiredHandler();
+    }
     throw new ApiError(
       envelope?.error?.code ?? 'UNKNOWN_ERROR',
       envelope?.error?.message ?? 'Request failed.',

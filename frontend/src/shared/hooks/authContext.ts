@@ -1,12 +1,22 @@
 import { createContext } from 'react';
+import type { AuthSession } from '../api/auth';
 import type { UserMeResponse } from '../api/users';
 
 export interface AuthContextValue {
   token: string | null;
   user: UserMeResponse | null;
   isLoading: boolean;
-  /** Resolves with the freshly-fetched `GET /api/users/me` user, or throws `ApiError`. */
-  login: (email: string, password: string) => Promise<UserMeResponse>;
+  /**
+   * Adopts a session the auth flow has already earned, and resolves with the freshly-fetched
+   * `GET /api/users/me` user.
+   *
+   * **Production MS1 replaced `login(email, password)` with this.** A password no longer produces a
+   * session — only redeeming a one-time password does — so the provider cannot own "log in" as a
+   * single call any more. It owns what it always really owned: holding a token once one exists. The
+   * two endpoints that mint one (`POST /api/auth/login/otp` and `POST /api/auth/verify-phone`) both
+   * hand their `AuthSession` here.
+   */
+  establishSession: (session: AuthSession) => Promise<UserMeResponse>;
   /** Client-side discard only — there is no server-side logout endpoint in v1.0. */
   logout: () => void;
   /**

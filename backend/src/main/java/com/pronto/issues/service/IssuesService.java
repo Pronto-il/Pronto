@@ -44,6 +44,7 @@ import com.pronto.storage.client.StorageClient;
 import com.pronto.storage.client.StorageException;
 import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
+import com.pronto.users.service.ContactVerificationGuard;
 import com.pronto.users.entity.UserRole;
 import com.pronto.users.repository.UserRepository;
 import org.springframework.context.ApplicationEventPublisher;
@@ -77,6 +78,7 @@ public class IssuesService {
     private final ProfessionalRepository professionalRepository;
     private final OrderRepository orderRepository;
     private final UserRepository userRepository;
+    private final ContactVerificationGuard contactVerificationGuard;
     private final ApplicationEventPublisher eventPublisher;
 
     public IssuesService(IssueRepository issueRepository,
@@ -91,6 +93,7 @@ public class IssuesService {
                           ProfessionalRepository professionalRepository,
                           OrderRepository orderRepository,
                           UserRepository userRepository,
+                          ContactVerificationGuard contactVerificationGuard,
                           ApplicationEventPublisher eventPublisher) {
         this.issueRepository = issueRepository;
         this.issueImageRepository = issueImageRepository;
@@ -104,6 +107,7 @@ public class IssuesService {
         this.professionalRepository = professionalRepository;
         this.orderRepository = orderRepository;
         this.userRepository = userRepository;
+        this.contactVerificationGuard = contactVerificationGuard;
         this.eventPublisher = eventPublisher;
     }
 
@@ -118,6 +122,13 @@ public class IssuesService {
      * guaranteed rather than enforced by throwing.
      */
     public ClassifyResponse classify(Long callerId, ClassifyRequest request) {
+        // Production MS1 (pre-DONE audit): classification is the first step of the marketplace
+        // issue flow and every call spends an OpenAI request. Gating only POST /api/issues left an
+        // unverified account able to drive the model indefinitely. The route is already
+        // authenticated and CUSTOMER-only (SecurityConfig + IssuesWebConfig) -- there is no
+        // anonymous classification flow this can break.
+        contactVerificationGuard.requireVerifiedContactChannels(callerId);
+
         List<String> imageKeys = validateImageKeys(callerId, request.imageKeys());
         List<ClarificationExchange> answers = toExchanges(request.clarificationAnswers());
 
@@ -146,6 +157,10 @@ public class IssuesService {
      */
     @Transactional
     public IssueResponse create(Long callerId, CreateIssueRequest request) {
+        // Production MS1: reporting an issue is the first step towards a professional arriving at
+        // this person's address, so it is the first step that requires a reachable phone number.
+        contactVerificationGuard.requireVerifiedContactChannels(callerId);
+
         if (!categoryRepository.existsById(request.categoryId())) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
                     List.of(new FieldError("categoryId", "must reference an existing category")));

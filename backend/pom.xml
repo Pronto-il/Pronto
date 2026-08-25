@@ -124,6 +124,41 @@
             <artifactId>s3</artifactId>
         </dependency>
 
+        <!-- Production MS1: real transactional email (auth.email.SesEmailSender, pronto.email.mode=ses).
+             SES v2 rather than the v1 "ses" coordinate: v1 is on AWS's own maintenance track and its
+             SendEmail shape is the legacy one. Version managed by the AWS SDK BOM above; no separate
+             credentials dependency is needed because the SDK's DefaultCredentialsProvider chain
+             (env -> profile -> container -> IMDS/IAM role) ships inside the core client. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sesv2</artifactId>
+        </dependency>
+
+        <!-- Production MS1: real SMS OTP delivery (auth.sms.AwsSmsSender, pronto.sms.mode=aws).
+             Amazon SNS is the publish surface of AWS End User Messaging SMS: SNS::Publish with a
+             PhoneNumber (rather than a TopicArn) is what actually sends the message, while the
+             origination identity / sender ID / registration it uses are account-level End User
+             Messaging configuration, not a different API. That is why there is no separate
+             "pinpoint-sms-voice" dependency here: adding one would introduce a second SDK client
+             for the same delivery path. Version managed by the AWS SDK BOM above. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sns</artifactId>
+        </dependency>
+
+        <!-- Production MS1: canonical E.164 phone identity (auth.service.PhoneNumberNormalizer).
+             Google's libphonenumber, the same library Android's dialer uses. Deliberately a real
+             library rather than a hand-rolled regex: "is 05X-XXXXXXX a valid Israeli mobile" is a
+             question about a numbering plan that changes (new mobile prefixes are allocated), and a
+             regex frozen in this repository would silently start rejecting legitimate customers.
+             It also gives us the 0/+972/00972 equivalence for free, which is the actual MS1
+             requirement: three input spellings, one stored identity. -->
+        <dependency>
+            <groupId>com.googlecode.libphonenumber</groupId>
+            <artifactId>libphonenumber</artifactId>
+            <version>8.13.50</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -134,6 +169,7 @@
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+
     </dependencies>
 
     <build>

@@ -221,3 +221,63 @@ see `docs/production-roadmap/reports/MS1-report.md`, Validations 12–14. **Know
 carried by this package's change**: there is no documented procedure anywhere in this
 repository for creating the first `ADMIN` account, precisely because registration refuses to —
 recorded in the MS1 report and owned by MS7.
+
+---
+
+## Production MS1 (2026-08-25) — Authentication & Contact Verification
+
+This package was restructured around one rule: **a password alone never issues a session.**
+
+### What changed
+
+`AuthService.login` used to return a JWT the moment BCrypt matched. It now checks the password and
+issues an OTP challenge. Exactly two methods in this package construct an `AuthSession` —
+`AuthService.verifyPhone` (registration completion) and `AuthService.loginOtp` — and both sit
+strictly behind a successful `OtpService.redeem`. That is deliberately auditable by reading two short
+methods rather than by tracing a flag.
+
+```
+register        -> account created, email code sent           (no token)
+verify-email    -> email proved, phone code sent              (no token)
+verify-phone    -> phone proved, registration complete        -> TOKEN
+
+login           -> password checked, code sent to the channel
+                   matching the identifier used               (no token)
+login/otp       -> code redeemed                              -> TOKEN
+```
+
+### New sub-packages and classes
+
+| Class | Responsibility |
+|---|---|
+| `service.OtpService` | The whole OTP lifecycle: generate, hash, dispatch, redeem, resend, invalidate. Every MS1 OTP rule is enforced here once, whichever of the nine endpoints is calling |
+| `service.OtpAttemptRecorder` | Commits the failed-attempt increment on its own `REQUIRES_NEW` transaction. **Without it the attempt cap would not exist** — every wrong-code path throws, and the rollback would undo the increment |
+| `service.PhoneNumberNormalizer` | Canonical E.164 via libphonenumber. Mobile-only: a number that cannot receive an SMS cannot be a second factor |
+| `service.EmailNormalizer` | Lowercase + trim, and destination masking. Deliberately not provider-specific canonicalization (Gmail dots, plus-tags) |
+| `entity.OtpPurpose` / `OtpChannel` | The five purposes, each carrying its channel and TTL. Constant names are the stored `verification_codes.purpose` values |
+| `email.SesEmailSender` / `sms.AwsSmsSender` | Real transports, selected by `pronto.email.mode` / `pronto.sms.mode`. AWS default credential chain only — no key material in configuration or in this repository |
+| `email.OtpMessageCopy` | All OTP copy, Hebrew, shared by both transports (`auth.sms` imports it) so the two cannot tell a user different stories about the same code. Owns the plain-text body, the explicitly right-to-left HTML body SES sends alongside it, and the SMS body — which is held inside one 70-character UCS-2 segment for every purpose |
+| `security.ClientIpResolver` | Trusted-proxy-aware client identity for rate limiting. Honours `X-Forwarded-For` only from configured CIDRs |
+| `config.ProviderModeStartupGuard` | Refuses to start with logging transports outside `local`/`test`/`demo`, and refuses the demo dataset together with real SMS |
+
+### Things that look like they could be simplified, and must not be
+
+- **`OtpAttemptRecorder` is a separate bean.** Spring's proxy-based `@Transactional` does not
+  intercept self-invocation, so a private method on `OtpService` would silently run on the caller's
+  transaction and reintroduce the bug it exists to fix. Same reasoning as the pre-existing
+  `LoginAttemptRecorder`.
+- **`VerificationCode.attempts`/`consumedAt` have getters and no setters.** Both are advanced by
+  conditional UPDATEs on the repository, because a read-modify-write loses the race that the attempt
+  cap and the single-use rule depend on.
+- **`OtpService.dispatch` catches provider failures and returns `delivered=false`** instead of
+  throwing. The right response differs per flow: registration rolls back on a failed dispatch, email
+  verification must not (the user really did prove their email), and password reset must report
+  success regardless or it becomes an existence oracle.
+- **The order of the two matchers in `SecurityConfig`.** `/api/auth/phone/capture` is matched
+  `.authenticated()` *before* the `permitAll` on `/api/auth/**`; Spring Security's first match wins,
+  so reversing the lines would silently open it.
+
+### Related documentation
+
+`docs/production-roadmap/reports/prod-MS1-report.md` (full rationale, security review, known
+limitations) · `docs/architecture/api-contract.md` "Production MS1" section · `V46`, `V47`, `V48`.

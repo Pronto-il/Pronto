@@ -24,7 +24,14 @@ export default function CustomerRegisterPage() {
     <motion.div className="focused-page" variants={pageTransition} initial="initial" animate={pageAnimate}>
       <CustomerRegisterForm
         onExit={() => navigate('/register')}
-        onSuccess={(email) => navigate(`/verify?email=${encodeURIComponent(email)}`)}
+        onSuccess={(response) =>
+          // Production MS1: registration ends on the verification challenge, carried in router
+          // state rather than in the URL -- a challenge id is a live authentication handle, not
+          // something to put in a shareable link or a browser history entry.
+          navigate('/verify', {
+            state: { nextStep: response.nextStep, challenge: response.challenge },
+          })
+        }
       />
     </motion.div>
   );

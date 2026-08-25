@@ -1,5 +1,64 @@
 # Pronto Production Roadmap — Milestone Tracker
 
+> **The active roadmap is the 7-milestone `Pronto 1.0 Production Roadmap`.** Its milestones are
+> tracked in the *Production 1.0* table below and its reports are named `prod-MSx-report.md`.
+>
+> The 10-milestone tracker further down is the **superseded** roadmap. It is kept because MS0 and its
+> MS1 (professional verification & marketplace eligibility) really were executed under it and their
+> reports are historical evidence — not because it is still being followed. Do not start work from
+> it, and do not renumber or overwrite its reports.
+
+## Production 1.0 milestones (active)
+
+| Milestone | Title | Status | Report |
+| --- | --- | --- | --- |
+| MS1 | Authentication & Contact Verification | **DONE** | [prod-MS1-report.md](reports/prod-MS1-report.md) |
+| MS2 | Real Maps, Geocoding, Distance & ETA | NOT STARTED | — |
+| MS3 | AI Classification Evaluation & Production Hardening | NOT STARTED | — |
+| MS4 | Production Security & Configuration Hardening | NOT STARTED | — |
+| MS5 | AWS Staging & Deployment Infrastructure | NOT STARTED | — |
+| MS6 | Production QA, Concurrency, Security & Failure Testing | NOT STARTED | — |
+| MS7 | Production Launch & Closed Beta | NOT STARTED | — |
+
+**MS1 is `DONE`.** Implementation, **990** automated tests, full local end-to-end validation and —
+the two items that held the milestone at `PARTIAL` — **live provider validation** are all complete:
+real email delivered through Amazon SES to a real inbox, and a real SMS delivered to an Israeli
+`+972` handset via AWS End User Messaging (`SNS::Publish`) with sender ID `PRONTO`. Both OTP
+verification flows were exercised end to end against those live providers.
+
+A pre-DONE security and architecture audit was run before requesting live provider validation. It
+found three HIGH and six MEDIUM issues — including that `demo`/`test` could not authenticate at all,
+that the OTP hash was an unkeyed SHA-256 of a 6-digit secret, and that the provider call ran inside
+an open database transaction. All eleven are fixed; see
+[Part 2 of the report](reports/prod-MS1-report.md). Live validation and the Hebrew-RTL/SMS copy
+cleanup are in [Part 3](reports/prod-MS1-report.md).
+
+### Production operational prerequisites before public launch
+
+`DONE` is the **implementation** gate. It is not a claim that Pronto is Production ready — MS2–MS7
+remain outstanding — and the following are AWS account-state and infrastructure tasks that no MS1
+code change can satisfy. **None of them is an open MS1 defect.**
+
+```text
+Production operational prerequisites before public launch:
+- Exit AWS SMS sandbox (request SMS Production Access)
+- Increase/review SMS spend limit
+- Validate a previously unverified +972 destination after sandbox exit
+- Configure TRUSTED_PROXIES with actual ALB subnet CIDRs
+```
+
+The account is **still in the SMS sandbox**, so today delivery reaches only destination numbers
+verified in the AWS console — arbitrary unverified customer numbers do not yet receive codes. The
+application already refuses to start production-like without `TRUSTED_PROXIES`
+(`auth.config.ProductionHardeningStartupGuard`), so that one cannot be forgotten silently. These are
+owned by MS5 (AWS Staging & Deployment Infrastructure).
+
+Per roadmap §1.2, MS2 may now begin — but **it has not been started.**
+
+---
+
+## Superseded 10-milestone tracker (historical)
+
 Governing document: [`Pronto_Production_Execution_Playbook.md`](../../Pronto_Production_Execution_Playbook.md)
 (repository root). Shared agent rules: [`.claude/pronto-production-rules.md`](../../.claude/pronto-production-rules.md).
 

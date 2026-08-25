@@ -32,6 +32,7 @@ import com.pronto.sos.entity.SosUrgency;
 import com.pronto.sos.repository.SosOfferRepository;
 import com.pronto.sos.repository.SosRequestRepository;
 import com.pronto.users.entity.UserRole;
+import com.pronto.users.service.ContactVerificationGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -75,6 +76,7 @@ public class SosService {
     private final SosResponseAssembler assembler;
     private final NotificationService notificationService;
     private final SosProperties properties;
+    private final ContactVerificationGuard contactVerificationGuard;
 
     public SosService(SosRequestRepository sosRequestRepository,
                        SosOfferRepository sosOfferRepository,
@@ -85,7 +87,8 @@ public class SosService {
                        SosEventService sosEventService,
                        SosResponseAssembler assembler,
                        NotificationService notificationService,
-                       SosProperties properties) {
+                       SosProperties properties,
+                       ContactVerificationGuard contactVerificationGuard) {
         this.sosRequestRepository = sosRequestRepository;
         this.sosOfferRepository = sosOfferRepository;
         this.issueRepository = issueRepository;
@@ -96,6 +99,7 @@ public class SosService {
         this.assembler = assembler;
         this.notificationService = notificationService;
         this.properties = properties;
+        this.contactVerificationGuard = contactVerificationGuard;
     }
 
     // ------------------------------------------------------------------
@@ -150,6 +154,10 @@ public class SosService {
      */
     @Transactional
     public SosRequestResponse create(Long callerId, CreateSosRequestRequest request) {
+        // Production MS1: SOS broadcasts this customer's emergency to a pool of professionals who
+        // will drop what they are doing. An unreachable requester is exactly what must not happen.
+        contactVerificationGuard.requireVerifiedContactChannels(callerId);
+
         Issue issue = issueRepository.findById(request.issueId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND,
                         "Issue " + request.issueId() + " not found."));

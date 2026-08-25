@@ -503,15 +503,23 @@ class DemoDatasetWriter {
 
     // ------------------------------------------------------------------ people
 
+    /**
+     * {@code +972502xxxxxx} for customers, {@code +972522xxxxxx} for professionals: disjoint by prefix,
+     * and both inside ranges libphonenumber accepts as valid Israeli mobile numbers -- so a seeded
+     * account is indistinguishable from a real registration as far as every validation path is
+     * concerned.
+     */
+    private static final String CUSTOMER_PHONE_PREFIX = "+972502";
+    private static final String PROFESSIONAL_PHONE_PREFIX = "+972522";
+
     private List<DemoCustomer> seedCustomers(String passwordHash) {
         List<DemoCustomer> customers = new ArrayList<>();
         for (int i = 0; i < CUSTOMER_COUNT; i++) {
             String city = cityFor(i);
             String street = DemoContent.STREETS.get((i * 5) % DemoContent.STREETS.size());
             String houseNumber = String.valueOf(3 + (i * 7) % 60);
-            String phone = "05" + (i % 5) + "-" + String.format("%07d", 2100000L + (i * 134579L) % 7000000L);
             long userId = insertUser(fullName(i + 40), "demo.customer." + (i + 1) + "@" + DEMO_EMAIL_DOMAIN,
-                    passwordHash, "CUSTOMER", phone, city, street, houseNumber);
+                    passwordHash, "CUSTOMER", demoPhone(CUSTOMER_PHONE_PREFIX, i), city, street, houseNumber);
             customers.add(new DemoCustomer(userId, city, street, houseNumber));
         }
         return customers;
@@ -542,8 +550,11 @@ class DemoDatasetWriter {
         List<CitySeed> serviceCities = serviceCitiesFor(region, index);
         CitySeed baseCity = serviceCities.get(0);
 
+        // Production MS1: professionals have phone numbers now, and ProfessionalEligibility
+        // requires a verified one -- a seeded professional with no phone would be invisible in every
+        // listing, which would silently gut the demo dataset.
         long userId = insertUser(name, "demo.pro." + (index + 1) + "@" + DEMO_EMAIL_DOMAIN,
-                passwordHash, "PROFESSIONAL", null, null, null, null);
+                passwordHash, "PROFESSIONAL", demoPhone(PROFESSIONAL_PHONE_PREFIX, index), null, null, null);
 
         boolean reviewed = reviewerUserId != null && !"PENDING".equals(approvalStatus);
         OffsetDateTime reviewedAt = reviewed ? OffsetDateTime.now().minusDays(5 + index % 40) : null;
@@ -589,14 +600,42 @@ class DemoDatasetWriter {
         return new SeededProfessional(professionalId, basePrice);
     }
 
+    /**
+     * Production MS1: seeds {@code phone_verified = true} alongside the pre-existing
+     * {@code email_verified = true}.
+     *
+     * <p>This is a seeder for a database the startup guard has already proven is the demo one, not a
+     * migration over real rows — the distinction matters, because {@code V46} deliberately
+     * grandfathers nobody. Here the accounts are synthetic and exist to be demonstrated: leaving
+     * them unverified would put every demo customer behind the
+     * {@code PHONE_VERIFICATION_REQUIRED} gate and remove every demo professional from the
+     * marketplace, so the dataset would no longer demonstrate the product.
+     */
     private long insertUser(String fullName, String email, String passwordHash, String role,
                              String phone, String city, String street, String houseNumber) {
         return jdbcTemplate.queryForObject("""
-                        INSERT INTO users (full_name, email, password_hash, role, email_verified, phone,
-                                default_city, default_street, default_house_number)
-                        VALUES (?, ?, ?, ?, true, ?, ?, ?, ?)
+                        INSERT INTO users (full_name, email, password_hash, role, email_verified,
+                                phone, phone_verified, default_city, default_street, default_house_number)
+                        VALUES (?, ?, ?, ?, true, ?, true, ?, ?, ?)
                         RETURNING id""",
                 Long.class, fullName, email, passwordHash, role, phone, city, street, houseNumber);
+    }
+
+    /**
+     * A canonical E.164 demo number, unique by construction.
+     *
+     * <p>{@code users.phone} is unique and {@code ck_users_phone_e164}-shaped as of {@code V46}, so
+     * the old {@code "05" + (i % 5) + "-" + pseudo-random-7-digits} formula would now fail twice
+     * over: it is not E.164, and its digits could collide across seed indices, which used to be
+     * harmless and is now a constraint violation that aborts seeding. A prefix plus the index is
+     * boring on purpose — it is provably collision-free and it reads as obviously synthetic.
+     *
+     * <p>These numbers are made up, which means some of them may correspond to real Israeli
+     * subscribers. Nothing ever texts them: {@code ProviderModeStartupGuard} refuses to start with
+     * the demo dataset enabled and {@code pronto.sms.mode=aws}.
+     */
+    private static String demoPhone(String prefix, int index) {
+        return prefix + String.format("%06d", index + 1);
     }
 
     /**

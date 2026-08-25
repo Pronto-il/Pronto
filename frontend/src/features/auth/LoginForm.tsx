@@ -2,35 +2,37 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button, Card, Input } from '../../shared/components';
-import { useAuth } from '../../shared/hooks';
-import { ApiError } from '../../shared/api';
+import { ApiError, login as loginRequest } from '../../shared/api';
 import { AccountLockoutBanner } from './AccountLockoutBanner';
 import { LoginRateLimitBanner } from './LoginRateLimitBanner';
+import type { AuthChallengeState } from './AuthChallengePage';
 import styles from './formStyles.module.css';
 
 export interface LoginFormProps {
-  initialEmail?: string;
+  initialIdentifier?: string;
 }
 
 /**
- * Email + password login. No "forgot password" link — out of scope for v1.0.
+ * Step one of login: identifier + password.
  *
- * **MS2 visual redesign (design doc §4.2)**: fields now wrap in a `<Card>` for real visual
- * hierarchy (today the form rendered bare against the page background); banners fade in via
- * the shared `motion-list-item` CSS utility on mount. **Zero logic changes** — every state
- * variable, validation rule, and `ApiError` code branch below is unchanged.
+ * <p><b>Production MS1 changed what this screen does.</b> It used to sign the user in. It now
+ * checks the password and nothing else — the session is issued one step later, at
+ * `/verify`, once the one-time password is redeemed. That is the milestone's central rule made
+ * visible in the UI: there is no path from this form directly to an authenticated screen.
+ *
+ * <p><b>One identifier field, not a toggle.</b> The field accepts an email address or a phone
+ * number and the server works out which; asking the user to classify their own identifier first is
+ * a question with no wrong answer worth collecting, and both resolve to the same account anyway.
  */
-export function LoginForm({ initialEmail = '' }: LoginFormProps) {
-  const { login } = useAuth();
+export function LoginForm({ initialIdentifier = '' }: LoginFormProps) {
   const navigate = useNavigate();
 
-  const [email, setEmail] = useState(initialEmail);
+  const [identifier, setIdentifier] = useState(initialIdentifier);
   const [password, setPassword] = useState('');
-  const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
+  const [fieldErrors, setFieldErrors] = useState<{ identifier?: string; password?: string }>({});
   const [bannerError, setBannerError] = useState<string | null>(null);
   const [lockedRetryAfterSeconds, setLockedRetryAfterSeconds] = useState<number | null>(null);
   const [rateLimitedRetryAfterSeconds, setRateLimitedRetryAfterSeconds] = useState<number | null>(null);
-  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(event: FormEvent) {
@@ -39,12 +41,11 @@ export function LoginForm({ initialEmail = '' }: LoginFormProps) {
     setBannerError(null);
     setLockedRetryAfterSeconds(null);
     setRateLimitedRetryAfterSeconds(null);
-    setUnverifiedEmail(null);
 
-    const trimmedEmail = email.trim();
-    const nextFieldErrors: { email?: string; password?: string } = {};
-    if (!trimmedEmail) {
-      nextFieldErrors.email = 'יש להזין כתובת אימייל.';
+    const trimmed = identifier.trim();
+    const nextFieldErrors: { identifier?: string; password?: string } = {};
+    if (!trimmed) {
+      nextFieldErrors.identifier = 'יש להזין אימייל או מספר טלפון.';
     }
     if (!password) {
       nextFieldErrors.password = 'יש להזין סיסמה.';
@@ -56,29 +57,32 @@ export function LoginForm({ initialEmail = '' }: LoginFormProps) {
 
     setIsSubmitting(true);
     try {
-      const user = await login(trimmedEmail, password);
-      // MS1: an ADMIN lands on the operator review queue — the only screen their role can reach.
-      // Sending them to `/` would show a customer-facing home page with nothing on it for them.
-      const landing =
-        user.role === 'PROFESSIONAL' ? '/pro' : user.role === 'ADMIN' ? '/admin/professionals' : '/';
-      navigate(landing, { replace: true });
+      const response = await loginRequest({ identifier: trimmed, password });
+      if (!response.challenge) {
+        setBannerError('משהו השתבש, נסו שוב.');
+        return;
+      }
+      // The server decides whether this is an ordinary second factor or a resumed registration
+      // (a correct password on an account that never verified its email).
+      const state: AuthChallengeState = {
+        nextStep: response.nextStep,
+        challenge: response.challenge,
+      };
+      navigate('/verify', { state });
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.code === 'ACCOUNT_LOCKED') {
           const details = error.details as { retryAfterSeconds?: number } | null;
           setLockedRetryAfterSeconds(details?.retryAfterSeconds ?? 0);
         } else if (error.code === 'RATE_LIMITED') {
-          // Backend `RateLimitDetails.retryAfterSeconds`. Read from the body's `details` —
-          // the same path `ACCOUNT_LOCKED` above already uses — rather than the `Retry-After`
-          // header, which carries the identical value but is not surfaced by `httpClient`
-          // (it parses the JSON envelope only, never response headers).
           const details = error.details as { retryAfterSeconds?: number } | null;
           setRateLimitedRetryAfterSeconds(details?.retryAfterSeconds ?? 0);
         } else if (error.code === 'INVALID_CREDENTIALS') {
-          setBannerError('אימייל או סיסמה שגויים.');
-        } else if (error.code === 'EMAIL_NOT_VERIFIED') {
-          setBannerError('יש לאמת את כתובת האימייל לפני ההתחברות.');
-          setUnverifiedEmail(trimmedEmail);
+          // Deliberately one message for "no such account" and "wrong password" — the backend does
+          // not distinguish them either, and a client that invented a distinction would undo that.
+          setBannerError('הפרטים שהוזנו אינם נכונים.');
+        } else if (error.code === 'OTP_DELIVERY_FAILED') {
+          setBannerError('לא הצלחנו לשלוח את קוד האימות. נסו שוב בעוד רגע.');
         } else {
           setBannerError('משהו השתבש, נסו שוב.');
         }
@@ -106,20 +110,16 @@ export function LoginForm({ initialEmail = '' }: LoginFormProps) {
         {bannerError && (
           <div className={`${styles.banner} motion-list-item`} role="alert">
             <p>{bannerError}</p>
-            {unverifiedEmail && (
-              <Link to={`/verify?email=${encodeURIComponent(unverifiedEmail)}`} className={styles.bannerLink}>
-                לאימות כתובת האימייל
-              </Link>
-            )}
           </div>
         )}
         <Input
-          label="אימייל"
-          type="email"
-          autoComplete="email"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          error={fieldErrors.email}
+          label="אימייל או טלפון"
+          type="text"
+          autoComplete="username"
+          value={identifier}
+          onChange={(event) => setIdentifier(event.target.value)}
+          error={fieldErrors.identifier}
+          hint="אפשר להתחבר עם כתובת האימייל או עם מספר הטלפון"
           required
         />
         <Input
@@ -132,8 +132,11 @@ export function LoginForm({ initialEmail = '' }: LoginFormProps) {
           required
         />
         <Button type="submit" loading={isSubmitting} fullWidth>
-          התחברות
+          המשך
         </Button>
+        <Link to="/password-reset" className={styles.footerLink}>
+          שכחתם סיסמה?
+        </Link>
       </form>
     </Card>
   );

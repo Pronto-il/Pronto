@@ -85,6 +85,13 @@ public class SecurityConfig {
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // Production MS1: the one authenticated route under /api/auth/**. Matched
+                        // BEFORE the permitAll below, because Spring Security evaluates these in
+                        // order and the first match wins — reversing the two lines would silently
+                        // open it. It has to be authenticated: it attaches a phone number to the
+                        // calling account, and an unauthenticated caller naming an account id would
+                        // be the entire vulnerability.
+                        .requestMatchers(HttpMethod.POST, "/api/auth/phone/capture").authenticated()
                         .requestMatchers("/actuator/health", "/api/auth/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/storage/images/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/categories").permitAll()

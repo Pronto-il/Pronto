@@ -1,44 +1,30 @@
 package com.pronto.auth.service;
 
-import com.pronto.auth.dto.CustomerRegistrationData;
-import com.pronto.auth.dto.DefaultAddressRequest;
+import com.pronto.auth.dto.AuthNextStep;
+import com.pronto.auth.dto.AuthSession;
+import com.pronto.auth.dto.AuthStepResponse;
+import com.pronto.auth.dto.CapturePhoneRequest;
 import com.pronto.auth.dto.LoginRequest;
-import com.pronto.auth.dto.LoginResponse;
+import com.pronto.auth.dto.OtpChallengeResponse;
+import com.pronto.auth.dto.OtpSubmissionRequest;
+import com.pronto.auth.dto.PasswordResetConfirmRequest;
+import com.pronto.auth.dto.PasswordResetRequest;
 import com.pronto.auth.dto.ProfessionalRegistrationData;
 import com.pronto.auth.dto.RegisterRequest;
-import com.pronto.auth.dto.RegisterResponse;
+import com.pronto.auth.dto.ResendOtpRequest;
 import com.pronto.auth.dto.UserSummary;
-import com.pronto.auth.dto.VerifyRequest;
-import com.pronto.auth.dto.VerifyResponse;
-import com.pronto.auth.email.EmailSender;
+import com.pronto.auth.entity.OtpChannel;
+import com.pronto.auth.entity.OtpPurpose;
 import com.pronto.auth.entity.VerificationCode;
-import com.pronto.auth.repository.VerificationCodeRepository;
 import com.pronto.auth.security.JwtService;
-import com.pronto.availability.dto.WorkingHoursItemRequest;
-import com.pronto.availability.entity.ProfessionalWorkingHours;
-import com.pronto.availability.entity.SosAvailability;
-import com.pronto.availability.repository.ProfessionalWorkingHoursRepository;
-import com.pronto.availability.repository.SosAvailabilityRepository;
+import com.pronto.auth.service.OtpService.IssuedChallenge;
 import com.pronto.availability.service.WorkingHoursValidator;
 import com.pronto.common.dto.FieldError;
-import com.pronto.common.dto.LockedDetails;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.locations.service.ServiceCoverageValidator;
-import com.pronto.professionals.entity.Professional;
-import com.pronto.professionals.entity.ProfessionalCategory;
-import com.pronto.professionals.entity.ProfessionalServiceCity;
-import com.pronto.professionals.entity.ProfessionalSubService;
-import com.pronto.professionals.repository.ProfessionalCategoryRepository;
-import com.pronto.professionals.repository.ProfessionalRepository;
-import com.pronto.professionals.repository.ProfessionalServiceCityRepository;
-import com.pronto.professionals.repository.ProfessionalSubServiceRepository;
 import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.professionals.service.SubServiceSelectionValidator;
-import com.pronto.storage.DocumentContentType;
-import com.pronto.storage.ImageContentType;
-import com.pronto.storage.client.StoredObject;
-import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.entity.UserRole;
 import com.pronto.users.repository.UserRepository;
@@ -48,346 +34,344 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
-import java.security.SecureRandom;
-import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
 /**
- * Registration, email verification, and login, per
- * {@code docs/architecture/api-contract.md} §2.1-2.3.
+ * Registration, contact verification, login and password recovery.
+ *
+ * <p><b>One rule shapes every flow here: a password alone never yields a session.</b>
+ *
+ * <pre>
+ * register  -> account created, email code sent            (no token)
+ * verify-email -> email proved, phone code sent            (no token)
+ * verify-phone -> phone proved, registration complete      -> TOKEN
+ *
+ * login     -> password checked, code sent to the channel
+ *              matching the identifier used                (no token)
+ * login/otp -> code redeemed                               -> TOKEN
+ * </pre>
+ *
+ * <p>Only {@link #verifyPhone} and {@link #loginOtp} construct an {@link AuthSession}, and both do
+ * so strictly after {@code OtpService#redeem} has succeeded. That is the entire structural
+ * guarantee, and it is deliberately visible in two short methods rather than spread across a flag.
+ *
+ * <p><b>The methods that dispatch an OTP are deliberately NOT {@code @Transactional}.</b> They are
+ * orchestrators: {@link AuthAccountWriter} performs the database work in its own committed
+ * transaction, {@link OtpService} then talks to SES/SNS with no connection held, and a short final
+ * transaction settles the challenge. Annotating these methods would reinstate exactly the defect
+ * that split them — a provider timeout holding a pooled connection for ten seconds. The three
+ * methods that never dispatch ({@link #verifyPhone}, {@link #loginOtp},
+ * {@link #confirmPasswordReset}) keep their transactions, because they are pure database work.
+ *
+ * <p>See {@code docs/architecture/api-contract.md} "Production MS1" and
+ * {@code docs/production-roadmap/reports/prod-MS1-report.md}.
  */
 @Service
 public class AuthService {
 
-    /** §2.1 step 5 / §3.3: verification code time-to-live. */
-    static final Duration VERIFICATION_CODE_TTL = Duration.ofMinutes(15);
-
-    /** data-model.md §4 (2026-08-13 decision): lockout threshold & auto-expiry window. */
-    static final int MAX_FAILED_LOGIN_ATTEMPTS = 5;
-    static final Duration LOCKOUT_DURATION = Duration.ofMinutes(15);
-
-    private static final SecureRandom RANDOM = new SecureRandom();
-
     private final UserRepository userRepository;
-    private final ProfessionalRepository professionalRepository;
-    private final SosAvailabilityRepository sosAvailabilityRepository;
+    private final AuthAccountWriter accountWriter;
+    private final OtpService otpService;
+    private final JwtService jwtService;
+    private final PasswordEncoder passwordEncoder;
     private final ProfessionalCoverageService professionalCoverageService;
     private final ServiceCoverageValidator serviceCoverageValidator;
-    private final VerificationCodeRepository verificationCodeRepository;
-    private final PasswordEncoder passwordEncoder;
-    private final EmailSender emailSender;
-    private final JwtService jwtService;
-    private final LoginAttemptRecorder loginAttemptRecorder;
-    private final StorageService storageService;
     private final SubServiceSelectionValidator subServiceSelectionValidator;
-    private final ProfessionalSubServiceRepository professionalSubServiceRepository;
-    private final ProfessionalCategoryRepository professionalCategoryRepository;
-    private final ProfessionalServiceCityRepository professionalServiceCityRepository;
-    private final ProfessionalWorkingHoursRepository professionalWorkingHoursRepository;
 
     public AuthService(UserRepository userRepository,
-                        ProfessionalRepository professionalRepository,
-                        SosAvailabilityRepository sosAvailabilityRepository,
+                        AuthAccountWriter accountWriter,
+                        OtpService otpService,
+                        JwtService jwtService,
+                        PasswordEncoder passwordEncoder,
                         ProfessionalCoverageService professionalCoverageService,
                         ServiceCoverageValidator serviceCoverageValidator,
-                        VerificationCodeRepository verificationCodeRepository,
-                        PasswordEncoder passwordEncoder,
-                        EmailSender emailSender,
-                        JwtService jwtService,
-                        LoginAttemptRecorder loginAttemptRecorder,
-                        StorageService storageService,
-                        SubServiceSelectionValidator subServiceSelectionValidator,
-                        ProfessionalSubServiceRepository professionalSubServiceRepository,
-                        ProfessionalCategoryRepository professionalCategoryRepository,
-                        ProfessionalServiceCityRepository professionalServiceCityRepository,
-                        ProfessionalWorkingHoursRepository professionalWorkingHoursRepository) {
+                        SubServiceSelectionValidator subServiceSelectionValidator) {
         this.userRepository = userRepository;
-        this.professionalRepository = professionalRepository;
-        this.sosAvailabilityRepository = sosAvailabilityRepository;
+        this.accountWriter = accountWriter;
+        this.otpService = otpService;
+        this.jwtService = jwtService;
+        this.passwordEncoder = passwordEncoder;
         this.professionalCoverageService = professionalCoverageService;
         this.serviceCoverageValidator = serviceCoverageValidator;
-        this.verificationCodeRepository = verificationCodeRepository;
-        this.passwordEncoder = passwordEncoder;
-        this.emailSender = emailSender;
-        this.jwtService = jwtService;
-        this.loginAttemptRecorder = loginAttemptRecorder;
-        this.storageService = storageService;
         this.subServiceSelectionValidator = subServiceSelectionValidator;
-        this.professionalSubServiceRepository = professionalSubServiceRepository;
-        this.professionalCategoryRepository = professionalCategoryRepository;
-        this.professionalServiceCityRepository = professionalServiceCityRepository;
-        this.professionalWorkingHoursRepository = professionalWorkingHoursRepository;
     }
 
+    // ------------------------------------------------------------------ registration
+
     /**
-     * {@code verificationDocument}/{@code profilePhoto} are the multipart file parts
-     * from {@code AuthController#register} — only consulted (and only validated) when
-     * {@code request.role() == PROFESSIONAL}; a Customer registration ignores both,
-     * even if a client mistakenly sends them (backend registration flow separation
-     * task §4-15).
+     * Creates the account and dispatches the email verification code. Returns no token.
+     *
+     * <p>{@code verificationDocument}/{@code profilePhoto} are the multipart file parts from
+     * {@code AuthController#register} — only consulted (and only validated) when
+     * {@code request.role() == PROFESSIONAL}; a Customer registration ignores both.
+     *
+     * <p><b>A delivery failure no longer discards the account.</b> Earlier in MS1 the whole
+     * registration was transactional, so a provider hiccup rolled back the {@code users} row (and
+     * orphaned the professional's already-uploaded verification document, and made them fill the
+     * form in again). The account now persists and the caller gets {@code OTP_DELIVERY_FAILED}; the
+     * recovery path is simply to log in, which returns a fresh {@code VERIFY_EMAIL} challenge for an
+     * account that never finished verifying. That is a better outcome for a professional who just
+     * uploaded a licence, and it is the same path an abandoned registration already used.
      */
-    @Transactional
-    public RegisterResponse register(RegisterRequest request, MultipartFile verificationDocument,
+    public AuthStepResponse register(RegisterRequest request, MultipartFile verificationDocument,
                                       MultipartFile profilePhoto) {
         validateRoleSpecificFields(request, verificationDocument);
 
-        if (userRepository.existsByEmailIgnoreCase(request.email())) {
-            // Includes soft-deleted rows — the unique index has no `WHERE deleted_at IS
-            // NULL` clause. See api-contract.md §2.1 step 1 / §4.
-            throw new ApiException(ErrorCode.DUPLICATE_EMAIL, "Email is already registered.");
-        }
+        User user = accountWriter.createAccount(request, verificationDocument, profilePhoto);
 
-        String passwordHash = passwordEncoder.encode(request.password());
-        User user = new User(request.fullName(), request.email(), passwordHash, request.role());
+        IssuedChallenge challenge = otpService.issue(user, OtpPurpose.EMAIL_VERIFICATION, false);
+        requireDelivered(challenge);
 
-        if (request.role() == UserRole.CUSTOMER) {
-            applyCustomerRegistrationData(user, request.customer());
-        }
-        user = userRepository.save(user);
-
-        if (request.role() == UserRole.PROFESSIONAL) {
-            ProfessionalRegistrationData professionalData = request.professional();
-            Professional professional = new Professional(user.getId(), professionalData.serviceRegionId(),
-                    professionalData.baseCityId(), professionalData.basePrice());
-            // Saved once here (IDENTITY generation assigns the id immediately) so the
-            // storage key templates below — same {professionalId}-keyed shape as
-            // professionals.service.ProfessionalsService#uploadProfileImage — have a
-            // real id to build on, then saved again once the keys are set.
-            professional = professionalRepository.save(professional);
-
-            String documentExtension = DocumentContentType.fromContentType(
-                            verificationDocument == null ? null : verificationDocument.getContentType())
-                    .map(DocumentContentType::extension)
-                    .orElse("bin"); // unresolved type: uploadDocumentWithKey rejects it below regardless.
-            String documentKey = "verification-documents/" + user.getId() + "/" + UUID.randomUUID()
-                    + "." + documentExtension;
-            StoredObject storedDocument = storageService.uploadDocumentWithKey(documentKey, verificationDocument);
-            professional.setVerificationDocumentKey(storedDocument.key());
-
-            if (profilePhoto != null && !profilePhoto.isEmpty()) {
-                String photoExtension = ImageContentType.fromContentType(profilePhoto.getContentType())
-                        .map(ImageContentType::extension)
-                        .orElse("bin"); // unresolved type: uploadWithKey rejects it below regardless.
-                String photoKey = "professionals/" + professional.getId() + "/profile/" + UUID.randomUUID()
-                        + "." + photoExtension;
-                StoredObject storedPhoto = storageService.uploadWithKey(photoKey, profilePhoto);
-                professional.setProfileImageKey(storedPhoto.key());
-            }
-
-            professional = professionalRepository.save(professional);
-            // data-model.md §2.6 row-lifecycle requirement: one sos_availability row per
-            // professional from creation, defaulting to isAvailable = false, so a future
-            // SOS-matching query needs no NULL-handling for professionals who never toggled it.
-            sosAvailabilityRepository.save(new SosAvailability(professional.getId()));
-
-            // MS1 (D4/D7) + MS4: persist the onboarding the registrant actually supplied.
-            // Validated in full by validateRoleSpecificFields above, before the users row was
-            // written -- these loops insert, they do not decide. Nothing is defaulted or invented
-            // here: a registration that reaches this point carries at least one real category, at
-            // least one sub-service under one of those categories, a region with at least one of
-            // its own cities (including the base city), and a 7-day week with an enabled day.
-            persistCategories(professional.getId(), professionalData.categoryIds());
-            persistServiceCities(professional.getId(), professionalData.serviceCityIds());
-            persistSubServices(professional.getId(), professionalData.subServiceIds());
-            persistWorkingHours(professional.getId(), professionalData.workingHours());
-        }
-
-        String code = generateVerificationCode();
-        VerificationCode verificationCode = new VerificationCode(
-                user.getId(), code, Instant.now().plus(VERIFICATION_CODE_TTL));
-        verificationCodeRepository.save(verificationCode);
-        emailSender.sendVerificationCode(user.getEmail(), code);
-
-        return new RegisterResponse(user.getId(), user.getRole(), user.getEmail(), user.isEmailVerified());
+        return AuthStepResponse.challenge(AuthNextStep.VERIFY_EMAIL, toDto(challenge), false, false);
     }
 
     /**
-     * MS1: the registrant's sub-service selection, deduplicated while preserving the order they
-     * sent (so a duplicate id in the payload cannot become a primary-key violation on
-     * {@code professional_sub_services}). Every id was proven to exist and to belong to this
-     * professional's own category before the {@code users} row was written.
+     * Redeems the email verification code and, when the account has a phone number, immediately
+     * issues the phone code. Returns no token — registration is not complete until both channels
+     * are proved.
+     *
+     * <p><b>A failure to send the phone code does NOT undo the email verification.</b> The user
+     * genuinely proved their email address; taking that back because an SMS gateway hiccuped would
+     * make them redeem the same email code twice. The response carries
+     * {@code challenge.delivered = false} instead, and the client leads with "resend".
      */
-    private void persistSubServices(Long professionalId, List<Long> subServiceIds) {
-        for (Long subServiceId : new LinkedHashSet<>(subServiceIds)) {
-            professionalSubServiceRepository.save(new ProfessionalSubService(professionalId, subServiceId));
+    public AuthStepResponse verifyEmail(OtpSubmissionRequest request) {
+        User user = accountWriter.redeemEmailVerification(request);
+
+        if (user.getPhone() == null || user.isPhoneVerified()) {
+            // A pre-MS1 account with no phone on file. Nothing to send a code to, so it stops here
+            // and picks a phone up later through the PHONE_VERIFICATION_REQUIRED gate.
+            return AuthStepResponse.goToLogin(true, user.isPhoneVerified());
         }
+
+        IssuedChallenge challenge = otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false);
+        return AuthStepResponse.challenge(AuthNextStep.VERIFY_PHONE, toDto(challenge), true, false);
     }
 
     /**
-     * MS4: the registrant's chosen trades. Same dedupe-preserving-order treatment, and for the
-     * same reason, as {@link #persistSubServices} — a duplicate id in the payload must not become
-     * a primary-key violation on {@code professional_categories}.
+     * Redeems the phone verification code. This is where registration completes and where the first
+     * session is issued.
+     *
+     * <p>The email check is the sequence guard: a phone code cannot be redeemed by an account that
+     * has not already proved its email. In practice a {@code PHONE_VERIFICATION} challenge is only
+     * ever issued by {@link #verifyEmail} or by {@link #capturePhone} (which requires a JWT), so
+     * this is defence in depth rather than the only lock — but "no token before BOTH verifications"
+     * is the milestone's headline rule and it is worth asserting where the token is minted.
      */
-    private void persistCategories(Long professionalId, List<Long> categoryIds) {
-        for (Long categoryId : new LinkedHashSet<>(categoryIds)) {
-            professionalCategoryRepository.save(new ProfessionalCategory(professionalId, categoryId));
-        }
-    }
-
-    /** MS4: the registrant's chosen service cities. See {@link #persistCategories}. */
-    private void persistServiceCities(Long professionalId, List<Long> cityIds) {
-        for (Long cityId : new LinkedHashSet<>(cityIds)) {
-            professionalServiceCityRepository.save(new ProfessionalServiceCity(professionalId, cityId));
-        }
-    }
-
-    /**
-     * MS1: the registrant's weekly working hours — all 7 weekdays, exactly as
-     * {@code AvailabilityService#updateWorkingHours} writes them, including the
-     * "{@code startTime}/{@code endTime} are {@code null} on a disabled day" rule that
-     * {@code ck_professional_working_hours_times} enforces at the database.
-     */
-    private void persistWorkingHours(Long professionalId, List<WorkingHoursItemRequest> workingHours) {
-        for (WorkingHoursItemRequest item : workingHours) {
-            professionalWorkingHoursRepository.save(new ProfessionalWorkingHours(professionalId, item.weekday(),
-                    item.enabled(), item.enabled() ? item.startTime() : null,
-                    item.enabled() ? item.endTime() : null));
-        }
-    }
-
-    /**
-     * §9.1 of the professional weekly availability calendar design: also persists
-     * {@code phone} alongside the pre-existing default-address fields — same
-     * required-at-registration/read-only-after treatment, same source object.
-     */
-    private void applyCustomerRegistrationData(User user, CustomerRegistrationData customer) {
-        DefaultAddressRequest address = customer.defaultAddress();
-        user.setDefaultCity(address.city());
-        user.setDefaultStreet(address.street());
-        user.setDefaultHouseNumber(address.houseNumber());
-        user.setDefaultApartment(address.apartment());
-        user.setDefaultFloor(address.floor());
-        user.setDefaultEntrance(address.entrance());
-        user.setDefaultAddressNotes(address.addressNotes());
-        user.setPhone(customer.phone());
-    }
-
     @Transactional
-    public VerifyResponse verify(VerifyRequest request) {
-        // Deliberately generic on "email not found" — don't reveal registration status.
-        User user = userRepository.findByEmailIgnoreCase(request.email())
-                .orElseThrow(() -> new ApiException(ErrorCode.INVALID_CODE, "Invalid verification code."));
+    public AuthStepResponse verifyPhone(OtpSubmissionRequest request) {
+        Long userId = otpService.redeem(request.challengeId(), request.code(),
+                OtpPurpose.PHONE_VERIFICATION);
+        User user = accountWriter.loadActive(userId);
 
-        if (user.isEmailVerified()) {
-            throw new ApiException(ErrorCode.EMAIL_ALREADY_VERIFIED, "Email is already verified.");
+        if (!user.isEmailVerified()) {
+            throw new ApiException(ErrorCode.EMAIL_NOT_VERIFIED,
+                    "Verify your email address before your phone number.");
+        }
+        if (user.isPhoneVerified()) {
+            throw new ApiException(ErrorCode.PHONE_ALREADY_VERIFIED, "Phone number is already verified.");
         }
 
-        VerificationCode code = verificationCodeRepository
-                .findFirstByUserIdAndPurposeAndCodeOrderByCreatedAtDesc(
-                        user.getId(), VerificationCode.PURPOSE_EMAIL_VERIFICATION, request.code())
-                .orElseThrow(() -> new ApiException(ErrorCode.INVALID_CODE, "Invalid verification code."));
-
-        if (code.getConsumedAt() != null) {
-            throw new ApiException(ErrorCode.CODE_ALREADY_CONSUMED, "Verification code has already been used.");
-        }
-        if (!code.getExpiresAt().isAfter(Instant.now())) {
-            throw new ApiException(ErrorCode.CODE_EXPIRED, "Verification code has expired.");
-        }
-
-        code.setConsumedAt(Instant.now());
-        user.setEmailVerified(true);
-        verificationCodeRepository.save(code);
+        user.setPhoneVerified(true);
         userRepository.save(user);
 
-        return new VerifyResponse(user.getId(), user.isEmailVerified());
+        return AuthStepResponse.authenticated(session(user), true, true);
     }
 
-    @Transactional
-    public LoginResponse login(LoginRequest request) {
-        // Step 1: unknown email or soft-deleted account -> indistinguishable from a
-        // wrong password (no user enumeration). api-contract.md §2.3.
-        User user = userRepository.findByEmailIgnoreCase(request.email())
-                .filter(u -> u.getDeletedAt() == null)
-                .orElseThrow(() -> new ApiException(ErrorCode.INVALID_CREDENTIALS, "Invalid email or password."));
+    // ------------------------------------------------------------------ login
 
-        Instant now = Instant.now();
+    /**
+     * Verifies the password and issues a second-factor challenge. <b>Never returns a token.</b>
+     *
+     * <p>An account that never finished verifying its email gets an {@code EMAIL_VERIFICATION}
+     * challenge instead of a login challenge — a correct password is sufficient evidence to resume
+     * an abandoned registration, and it means there is no separate "I never got my code" flow to
+     * build or to abuse.
+     */
+    public AuthStepResponse login(LoginRequest request) {
+        AuthAccountWriter.VerifiedLogin verified = accountWriter.verifyPassword(request);
+        User user = verified.user();
 
-        // Step 2: still-locked -> reject immediately, without checking the password and
-        // without incrementing failed_login_attempts further.
-        if (user.getLockedUntil() != null && user.getLockedUntil().isAfter(now)) {
-            throw lockedException(user.getLockedUntil(), now);
-        }
-
-        // Step 3: lock has time-expired -> fresh 5-attempt budget before continuing.
-        if (user.getLockedUntil() != null) {
-            user.setFailedLoginAttempts((short) 0);
-            user.setLockedUntil(null);
-        }
-
-        // Step 4: password check.
-        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            user.setFailedLoginAttempts((short) (user.getFailedLoginAttempts() + 1));
-            if (user.getFailedLoginAttempts() >= MAX_FAILED_LOGIN_ATTEMPTS) {
-                Instant lockedUntil = now.plus(LOCKOUT_DURATION);
-                user.setLockedUntil(lockedUntil);
-                // Committed on its own transaction (see LoginAttemptRecorder) so the write
-                // survives the ApiException thrown below rolling back this method's own
-                // @Transactional.
-                loginAttemptRecorder.persistLockoutState(
-                        user.getId(), user.getFailedLoginAttempts(), lockedUntil);
-                throw lockedException(lockedUntil, now);
-            }
-            loginAttemptRecorder.persistLockoutState(user.getId(), user.getFailedLoginAttempts(), null);
-            throw new ApiException(ErrorCode.INVALID_CREDENTIALS, "Invalid email or password.");
-        }
-
-        // Step 5: correct password, but email not verified yet. Still needs to persist
-        // (independently of the throw below) in case step 3 just reset the counters.
         if (!user.isEmailVerified()) {
-            loginAttemptRecorder.persistLockoutState(
-                    user.getId(), user.getFailedLoginAttempts(), user.getLockedUntil());
-            throw new ApiException(ErrorCode.EMAIL_NOT_VERIFIED, "Email address has not been verified yet.");
+            IssuedChallenge challenge = otpService.issue(user, OtpPurpose.EMAIL_VERIFICATION, false);
+            requireDelivered(challenge);
+            return AuthStepResponse.challenge(AuthNextStep.VERIFY_EMAIL, toDto(challenge),
+                    false, user.isPhoneVerified());
         }
 
-        // Step 6: success.
+        OtpPurpose purpose = verified.byPhone() ? OtpPurpose.PHONE_LOGIN_OTP : OtpPurpose.EMAIL_LOGIN_OTP;
+        IssuedChallenge challenge = otpService.issue(user, purpose, false);
+        requireDelivered(challenge);
+        return AuthStepResponse.challenge(AuthNextStep.LOGIN_OTP, toDto(challenge),
+                true, user.isPhoneVerified());
+    }
+
+    /** Redeems a login OTP. The only other place besides {@link #verifyPhone} that mints a token. */
+    @Transactional
+    public AuthStepResponse loginOtp(OtpSubmissionRequest request) {
+        // The purpose is a property of the challenge, not of the request: a client that could name
+        // the purpose could try to redeem a PHONE_VERIFICATION code here and skip a step.
+        OtpPurpose purpose = otpService.findChallenge(request.challengeId())
+                .map(VerificationCode::getPurpose)
+                .filter(OtpPurpose::isLoginOtp)
+                .orElseThrow(() -> new ApiException(ErrorCode.INVALID_CODE, "Invalid or expired code."));
+
+        Long userId = otpService.redeem(request.challengeId(), request.code(), purpose);
+        User user = accountWriter.loadActive(userId);
+
+        return AuthStepResponse.authenticated(session(user), user.isEmailVerified(), user.isPhoneVerified());
+    }
+
+    // ------------------------------------------------------------------ resend
+
+    /**
+     * Replaces an outstanding challenge with a fresh code, subject to the cooldown and hourly cap.
+     *
+     * <p>If the provider refuses the new code, {@code OtpService} abandons it and the caller's
+     * previous code is still live — so a failing gateway cannot strand a user who already holds a
+     * usable code. The {@code OTP_DELIVERY_FAILED} below reports the failure without having
+     * destroyed anything.
+     */
+    public OtpChallengeResponse resend(ResendOtpRequest request) {
+        VerificationCode challenge = otpService.findChallenge(request.challengeId())
+                .orElseThrow(() -> new ApiException(ErrorCode.INVALID_CODE, "Invalid or expired code."));
+        User user = accountWriter.loadActive(challenge.getUserId());
+        OtpPurpose purpose = challenge.getPurpose();
+
+        // Refuse to re-send a code for something already done. Without these, a stale tab holding an
+        // old challenge id could keep issuing verification codes to an account that finished
+        // verifying days ago — real messages, real cost, and a confusing one to receive.
+        if (purpose == OtpPurpose.EMAIL_VERIFICATION && user.isEmailVerified()) {
+            throw new ApiException(ErrorCode.EMAIL_ALREADY_VERIFIED, "Email is already verified.");
+        }
+        if (purpose == OtpPurpose.PHONE_VERIFICATION && user.isPhoneVerified()) {
+            throw new ApiException(ErrorCode.PHONE_ALREADY_VERIFIED, "Phone number is already verified.");
+        }
+        if (purpose.channel() == OtpChannel.SMS && user.getPhone() == null) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "No phone number is on file for this account.",
+                    List.of(new FieldError("phone", "is required")));
+        }
+
+        IssuedChallenge reissued = otpService.issue(user, purpose, true);
+        requireDelivered(reissued);
+        return toDto(reissued);
+    }
+
+    // ------------------------------------------------------------------ phone capture (legacy)
+
+    /**
+     * Attaches a phone number to the authenticated account and sends a verification code.
+     *
+     * <p>The path out of the legacy cohort. Also the path for correcting a mistyped number: an
+     * account may call this repeatedly, and each call replaces the unverified number. It refuses to
+     * touch a number that is already verified — changing a proved identity is a different, more
+     * dangerous operation than supplying a missing one, and it deliberately has no endpoint in MS1.
+     */
+    public OtpChallengeResponse capturePhone(Long userId, CapturePhoneRequest request) {
+        User user = accountWriter.attachPhone(userId, request.phone());
+        IssuedChallenge challenge = otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false);
+        requireDelivered(challenge);
+        return toDto(challenge);
+    }
+
+    // ------------------------------------------------------------------ password recovery
+
+    /**
+     * Starts a password reset. <b>Answers identically whether or not the account exists.</b>
+     *
+     * <p>Everything that could betray existence is neutralized: an unknown identifier gets a
+     * well-formed challenge id that maps to no row (and therefore fails at confirm with the same
+     * {@code INVALID_CODE} a wrong code produces), a rate-limit refusal is swallowed rather than
+     * returned, and {@code delivered} is always reported {@code true} — even when the provider
+     * actually failed, because "delivery failed" is only answerable for an address that exists.
+     *
+     * <p><b>Timing.</b> The decoy branch performs one BCrypt verification
+     * ({@link AuthAccountWriter#burnEquivalentPasswordWork}) so that "no such account" is not an
+     * instant answer while a real account pays for a hash, an insert and a provider round trip.
+     * <b>Residual, stated honestly:</b> this equalises the order of magnitude, not the exact
+     * duration — a slow or timing-out provider still makes the real branch measurably longer. Fully
+     * closing that gap means decoupling dispatch from the response, which is a queue, and MS1
+     * deliberately introduces no queue. Revisit in MS4.
+     *
+     * <p>That last point is a real, accepted cost: a user whose mail provider is rejecting our
+     * messages gets no feedback here and will simply see no email. Enumeration-neutrality was the
+     * explicit requirement, and it cannot coexist with honest per-account delivery reporting on an
+     * unauthenticated endpoint.
+     */
+    public OtpChallengeResponse requestPasswordReset(PasswordResetRequest request) {
+        Optional<User> account = accountWriter.resolveIdentifier(request.identifier()).user()
+                .filter(u -> u.getDeletedAt() == null)
+                .filter(User::isEmailVerified);
+
+        if (account.isPresent()) {
+            try {
+                IssuedChallenge challenge = otpService.issue(account.get(), OtpPurpose.PASSWORD_RESET, false);
+                return new OtpChallengeResponse(challenge.challengeId(), OtpChannel.EMAIL,
+                        challenge.destinationMasked(), challenge.expiresInSeconds(), true);
+            } catch (ApiException e) {
+                // Rate limited, or any other refusal specific to this account. Falling through to the
+                // decoy below is the point: a caller must not be able to tell "you have asked five
+                // times in the last hour" (an account exists) from "no such account".
+            }
+        }
+
+        accountWriter.burnEquivalentPasswordWork();
+        return decoyChallenge(request.identifier());
+    }
+
+    /**
+     * Completes a password reset: new BCrypt hash, lockout counters cleared, and every outstanding
+     * challenge for the account destroyed.
+     *
+     * <p>The invalidation sweep is the part that matters. An attacker who knew the old password may
+     * already hold a live login challenge; without this, resetting the password would leave that
+     * challenge redeemable and the reset would not actually end their access.
+     *
+     * <p><b>Known limitation, deferred to MS4:</b> JWTs already issued remain valid until they
+     * expire. Revoking them needs a token version or a denylist, which is session-management work
+     * that belongs with the refresh/rotation decisions MS4 owns, not with contact verification.
+     */
+    @Transactional
+    public void confirmPasswordReset(PasswordResetConfirmRequest request) {
+        Long userId = otpService.redeem(request.challengeId(), request.code(), OtpPurpose.PASSWORD_RESET);
+        User user = accountWriter.loadActive(userId);
+
+        user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
         user.setFailedLoginAttempts((short) 0);
         user.setLockedUntil(null);
         userRepository.save(user);
 
-        String token = jwtService.generateToken(user);
-        UserSummary summary = new UserSummary(user.getId(), user.getFullName(), user.getEmail(), user.getRole());
-        return new LoginResponse(token, "Bearer", jwtService.getExpirationSeconds(), summary);
+        otpService.invalidateAll(userId, OtpPurpose.EMAIL_LOGIN_OTP);
+        otpService.invalidateAll(userId, OtpPurpose.PHONE_LOGIN_OTP);
+        otpService.invalidateAll(userId, OtpPurpose.PASSWORD_RESET);
     }
 
-    private ApiException lockedException(Instant lockedUntil, Instant now) {
-        long retryAfterSeconds = Math.max(0, Duration.between(now, lockedUntil).getSeconds());
-        LockedDetails details = new LockedDetails(lockedUntil, retryAfterSeconds);
-        return new ApiException(ErrorCode.ACCOUNT_LOCKED,
-                "Account is temporarily locked due to too many failed login attempts. Try again later.",
-                details);
-    }
+    // ------------------------------------------------------------------ validation
 
     /**
-     * Cross-field, role-conditional rules that plain Bean Validation annotations can't
-     * express on their own (backend registration flow separation task §6/§19):
-     * {@code customer}/{@code professional} — and, for a Professional, the
-     * {@code verificationDocument} multipart part — are required *iff* {@code role}
-     * matches. Field-level rules within an already-present {@link CustomerRegistrationData}
-     * (city/street/houseNumber non-blank, sizes) are instead enforced by {@code @Valid}
-     * cascading from {@link RegisterRequest}, since that nested object is unconditionally
-     * required once present.
+     * Cross-field, role-conditional rules that plain Bean Validation annotations can't express on
+     * their own: {@code customer}/{@code professional} — and, for a Professional, the
+     * {@code verificationDocument} multipart part — are required *iff* {@code role} matches.
      *
-     * <p><b>MS1 additions.</b> {@code role = ADMIN} is refused outright — see the guard below. A
-     * Professional registration additionally requires at least one category-valid sub-service and
-     * a full week of working hours with at least one enabled day (D4/D7); both are validated
-     * here, i.e. before any row is written, so a submission missing either leaves no half-created
-     * account behind.
+     * <p><b>{@code role = ADMIN} is refused outright.</b> {@code role} is typed as the enum, so
+     * Jackson binds "ADMIN" from a public, unauthenticated request the moment the constant exists —
+     * without this guard the operator role that approves professionals would be self-issuable by
+     * anyone who can reach {@code POST /api/auth/register}. Checked first and thrown immediately
+     * rather than collected alongside field errors: there is nothing else worth telling a caller who
+     * just tried to make themselves an administrator. An ADMIN row is created only by a deliberate
+     * operational step.
+     *
+     * <p>Runs before {@link AuthAccountWriter#createAccount} opens its transaction, so a submission
+     * that fails any of these leaves no row behind.
      */
     private void validateRoleSpecificFields(RegisterRequest request, MultipartFile verificationDocument) {
         List<FieldError> errors = new ArrayList<>();
 
-        // The security-critical half of adding UserRole.ADMIN. `role` is typed as the enum, so
-        // Jackson binds "ADMIN" from a public, unauthenticated request the moment the constant
-        // exists -- without this guard the operator role that approves professionals would be
-        // self-issuable by anyone who can reach POST /api/auth/register. Checked first and thrown
-        // immediately rather than collected alongside field errors: there is nothing else worth
-        // telling a caller who just tried to make themselves an administrator. An ADMIN row is
-        // created only by a deliberate operational step.
         if (request.role() == UserRole.ADMIN) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
                     List.of(new FieldError("role", "must be CUSTOMER or PROFESSIONAL")));
@@ -402,10 +386,6 @@ public class AuthService {
             if (professional == null) {
                 errors.add(new FieldError("professional", "is required for professional registration"));
             } else {
-                // MS4: presence/shape only here, exactly like subServiceIds below -- the
-                // "do these ids exist, and do these cities sit inside that region" rules run in
-                // validateProfessionalOnboarding, against the same validators the profile-edit
-                // endpoint uses.
                 if (professional.categoryIds() == null || professional.categoryIds().isEmpty()) {
                     errors.add(new FieldError("professional.categoryIds",
                             "at least one service category is required for professional registration"));
@@ -431,11 +411,6 @@ public class AuthService {
                     errors.add(new FieldError("professional.basePrice", "must have at most 2 decimal places"));
                 }
 
-                // MS1 (D4): onboarding is not complete without these, so registration is not
-                // complete without them either. Presence/shape is collected alongside every other
-                // field error; the deeper rules (existence, cross-category, the 7-day week) run
-                // after the collected throw below, since they only make sense once the payload is
-                // structurally sound.
                 if (professional.subServiceIds() == null || professional.subServiceIds().isEmpty()) {
                     errors.add(new FieldError("professional.subServiceIds",
                             "at least one sub-service is required for professional registration"));
@@ -461,31 +436,12 @@ public class AuthService {
     }
 
     /**
-     * MS1 (D4/D7): the two onboarding requirements registration now enforces, each delegated to
-     * the component that already owns the rule rather than reimplemented here — a second copy of
-     * "this sub-service belongs to your category" is precisely how a backend ends up enforcing it
-     * on the edit endpoint and not on the one that creates the account.
-     *
-     * <ul>
-     *   <li>Sub-services — {@code SubServiceSelectionValidator}, the same component
-     *       {@code ProfessionalsService#updateMySubServices} calls, with the same
-     *       {@code VALIDATION_ERROR}/{@code CATEGORY_MISMATCH} outcomes.</li>
-     *   <li>Working hours — {@code WorkingHoursValidator}, the same rules
-     *       {@code PUT /api/availability/working-hours} applies, plus the registration-only
-     *       "at least one enabled day". {@code ck_professional_working_hours_times} already
-     *       guarantees an enabled row carries valid non-null times with {@code end > start}, so
-     *       one enabled day is a sufficient test for "this week can actually be booked" — no
-     *       further time re-validation is needed.</li>
-     * </ul>
-     *
-     * <p>Runs before any row is written. Deliberately no sub-service <em>count</em> ceiling and no
-     * opinion about which days a professional works: the platform requires that onboarding be
-     * complete, not that it look a particular way.
+     * The two onboarding requirements registration enforces, each delegated to the component that
+     * already owns the rule rather than reimplemented here — a second copy of "this sub-service
+     * belongs to your category" is precisely how a backend ends up enforcing it on the edit endpoint
+     * and not on the one that creates the account.
      */
     private void validateProfessionalOnboarding(ProfessionalRegistrationData professional) {
-        // MS4: categories first -- the sub-service rule below is expressed relative to them, so
-        // validating sub-services against an unvalidated category set would report the wrong
-        // error for a registrant who simply picked a category id that does not exist.
         Set<Long> categoryIds = professionalCoverageService.validateCategories(
                 professional.categoryIds(), "professional.categoryIds");
         serviceCoverageValidator.validate(professional.serviceRegionId(), professional.serviceCityIds(),
@@ -503,8 +459,37 @@ public class AuthService {
                 "professional.workingHours");
     }
 
-    private String generateVerificationCode() {
-        int code = RANDOM.nextInt(1_000_000);
-        return String.format("%06d", code);
+    // ------------------------------------------------------------------ helpers
+
+    private AuthSession session(User user) {
+        String token = jwtService.generateToken(user);
+        UserSummary summary = new UserSummary(user.getId(), user.getFullName(), user.getEmail(), user.getRole());
+        return new AuthSession(token, "Bearer", jwtService.getExpirationSeconds(), summary);
+    }
+
+    private static OtpChallengeResponse toDto(IssuedChallenge challenge) {
+        return new OtpChallengeResponse(challenge.challengeId(), challenge.channel(),
+                challenge.destinationMasked(), challenge.expiresInSeconds(), challenge.delivered());
+    }
+
+    /**
+     * Turns a dispatch failure into a 502 for the flows where an undelivered code leaves the user
+     * with nothing to do. {@link #verifyEmail} deliberately does not call this — see its Javadoc.
+     */
+    private static void requireDelivered(IssuedChallenge challenge) {
+        if (!challenge.delivered()) {
+            throw new ApiException(ErrorCode.OTP_DELIVERY_FAILED,
+                    "We could not send your code. Please try again.");
+        }
+    }
+
+    /**
+     * A structurally valid challenge that refers to nothing, for a password-reset request naming an
+     * account that does not exist. Confirming against it fails exactly as a wrong code does.
+     */
+    private static OtpChallengeResponse decoyChallenge(String submittedIdentifier) {
+        return new OtpChallengeResponse(UUID.randomUUID(), OtpChannel.EMAIL,
+                EmailNormalizer.mask(submittedIdentifier),
+                OtpPurpose.PASSWORD_RESET.timeToLive().getSeconds(), true);
     }
 }

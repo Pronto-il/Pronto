@@ -3,11 +3,14 @@ import type { FormEvent } from 'react';
 import { Input, AddressFormFields, EMPTY_ADDRESS } from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
 import { registerCustomer, ApiError, getFieldErrorMessages, GENERIC_ERROR_MESSAGE } from '../../shared/api';
+import type { AuthStepResponse } from '../../shared/api';
 import { RegistrationWizardShell } from './RegistrationWizardShell';
 import styles from './formStyles.module.css';
 
 export interface CustomerRegisterFormProps {
-  onSuccess: (email: string) => void;
+  /** Production MS1: the registration response's OTP challenge, not the email address — the
+   *  next screen redeems a challenge, and the email is no longer part of that conversation. */
+  onSuccess: (response: AuthStepResponse) => void;
   /** Stage 1's back button — exits the wizard entirely (design doc §6.1). */
   onExit: () => void;
 }
@@ -136,7 +139,7 @@ export function CustomerRegisterForm({ onSuccess, onExit }: CustomerRegisterForm
     setBannerError(null);
     setIsSubmitting(true);
     try {
-      await registerCustomer({
+      const response = await registerCustomer({
         fullName: fullName.trim(),
         email: email.trim(),
         password,
@@ -151,7 +154,7 @@ export function CustomerRegisterForm({ onSuccess, onExit }: CustomerRegisterForm
           addressNotes: address.addressNotes,
         },
       });
-      onSuccess(email.trim());
+      onSuccess(response);
     } catch (error) {
       if (error instanceof ApiError && error.code === 'DUPLICATE_EMAIL') {
         const nextErrors: FormErrors = { email: 'כתובת האימייל הזו כבר רשומה במערכת.' };

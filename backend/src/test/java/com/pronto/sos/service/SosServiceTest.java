@@ -1,5 +1,6 @@
 package com.pronto.sos.service;
 
+import com.pronto.users.service.ContactVerificationGuard;
 import com.pronto.bookings.entity.Order;
 import com.pronto.bookings.repository.OrderRepository;
 import com.pronto.common.exception.ApiException;
@@ -92,7 +93,7 @@ class SosServiceTest {
         properties = new SosProperties();
         service = new SosService(sosRequestRepository, sosOfferRepository, issueRepository, orderRepository,
                 professionalRepository, sosDispatchService, sosEventService, assembler, notificationService,
-                properties);
+                properties, Mockito.mock(ContactVerificationGuard.class));
 
         when(assembler.toRequestResponse(any(), any()))
                 .thenAnswer(inv -> stubResponse(inv.getArgument(0), inv.getArgument(1)));

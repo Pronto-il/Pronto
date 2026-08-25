@@ -1,17 +1,38 @@
-export { ApiError, setAuthTokenGetter, setUnauthorizedHandler, httpClient, API_BASE_URL } from './httpClient';
+export {
+  ApiError,
+  setAuthTokenGetter,
+  setUnauthorizedHandler,
+  setPhoneVerificationRequiredHandler,
+  httpClient,
+  API_BASE_URL,
+} from './httpClient';
 
-export { registerCustomer, registerProfessional, verifyEmail, login } from './auth';
+export {
+  registerCustomer,
+  registerProfessional,
+  verifyEmail,
+  verifyPhone,
+  resendOtp,
+  login,
+  loginOtp,
+  capturePhone,
+  requestPasswordReset,
+  confirmPasswordReset,
+} from './auth';
 export type {
   UserRole,
   RegisterableRole,
   UserSummary,
   RegisterCustomerPayload,
   RegisterProfessionalPayload,
-  RegisterResponse,
-  VerifyPayload,
-  VerifyResponse,
   LoginPayload,
-  LoginResponse,
+  AuthNextStep,
+  AuthSession,
+  AuthStepResponse,
+  OtpChallenge,
+  OtpChannel,
+  OtpSubmission,
+  PasswordResetConfirmPayload,
 } from './auth';
 
 export * from './resourceKeys';

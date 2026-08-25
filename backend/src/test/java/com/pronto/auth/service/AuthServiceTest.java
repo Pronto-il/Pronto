@@ -15,8 +15,12 @@ import com.pronto.auth.dto.CustomerRegistrationData;
 import com.pronto.auth.dto.DefaultAddressRequest;
 import com.pronto.auth.dto.ProfessionalRegistrationData;
 import com.pronto.auth.dto.RegisterRequest;
-import com.pronto.auth.dto.RegisterResponse;
+import com.pronto.auth.dto.AuthNextStep;
+import com.pronto.auth.dto.AuthStepResponse;
 import com.pronto.auth.email.EmailSender;
+import com.pronto.auth.entity.OtpPurpose;
+import com.pronto.auth.entity.VerificationCode;
+import com.pronto.auth.sms.SmsSender;
 import com.pronto.auth.repository.VerificationCodeRepository;
 import com.pronto.auth.security.JwtService;
 import com.pronto.availability.dto.WorkingHoursItemRequest;
@@ -96,6 +100,9 @@ class AuthServiceTest {
     private VerificationCodeRepository verificationCodeRepository;
     private PasswordEncoder passwordEncoder;
     private EmailSender emailSender;
+    private SmsSender smsSender;
+    private OtpService otpService;
+    private AuthAccountWriter accountWriter;
     private JwtService jwtService;
     private LoginAttemptRecorder loginAttemptRecorder;
     private StorageService storageService;
@@ -117,6 +124,7 @@ class AuthServiceTest {
         verificationCodeRepository = Mockito.mock(VerificationCodeRepository.class);
         passwordEncoder = Mockito.mock(PasswordEncoder.class);
         emailSender = Mockito.mock(EmailSender.class);
+        smsSender = Mockito.mock(SmsSender.class);
         jwtService = Mockito.mock(JwtService.class);
         loginAttemptRecorder = Mockito.mock(LoginAttemptRecorder.class);
         // A real StorageService (not a mock) backed by a mocked StorageClient: exercises
@@ -178,14 +186,34 @@ class AuthServiceTest {
             return found;
         });
 
-        authService = new AuthService(userRepository, professionalRepository, sosAvailabilityRepository,
-                professionalCoverageService, serviceCoverageValidator, verificationCodeRepository,
-                passwordEncoder, emailSender, jwtService, loginAttemptRecorder, storageService,
-                subServiceSelectionValidator, professionalSubServiceRepository,
-                professionalCategoryRepository, professionalServiceCityRepository,
-                professionalWorkingHoursRepository);
+        // Production MS1: a REAL OtpService over the mocked repository and mocked transports,
+        // the same "real collaborator over the client boundary" choice this class already makes
+        // for StorageService -- so these tests exercise the actual issue/hash/dispatch path
+        // rather than a stub that would agree with anything.
+        otpService = new OtpService(verificationCodeRepository,
+                new OtpChallengeWriter(verificationCodeRepository),
+                Mockito.mock(OtpAttemptRecorder.class), OtpServiceTest.TEST_PEPPER,
+                emailSender, smsSender);
+        // save() returns the entity it was given: the challenge id is assigned in the entity's
+        // own constructor, so the caller reads back the same one it will later look up.
+        Mockito.lenient().when(verificationCodeRepository.save(any(VerificationCode.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
 
-        when(userRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
+        // Production MS1 pre-DONE audit: the account-side writes moved to AuthAccountWriter so the
+        // provider call could leave the transaction. A real instance is used here rather than a mock,
+        // because every registration rule this class asserts now lives inside it.
+        accountWriter = new AuthAccountWriter(userRepository, professionalRepository,
+                sosAvailabilityRepository, professionalSubServiceRepository,
+                professionalCategoryRepository, professionalServiceCityRepository,
+                professionalWorkingHoursRepository, storageService, passwordEncoder,
+                new PhoneNumberNormalizer("IL"), loginAttemptRecorder, otpService);
+
+        authService = new AuthService(userRepository, accountWriter, otpService, jwtService,
+                passwordEncoder, professionalCoverageService, serviceCoverageValidator,
+                subServiceSelectionValidator);
+
+        when(userRepository.existsByEmail(anyString())).thenReturn(false);
+        Mockito.lenient().when(userRepository.existsByPhone(anyString())).thenReturn(false);
         when(passwordEncoder.encode(anyString())).thenReturn("hashed");
         when(userRepository.save(any(User.class))).thenAnswer(inv -> {
             User user = inv.getArgument(0);
@@ -271,7 +299,9 @@ class AuthServiceTest {
         return subService;
     }
 
-    private static final String VALID_PHONE = "0501234567";
+    private static final String VALID_PHONE = "0502234567";
+    /** What {@link #VALID_PHONE} must become once stored (V46 / PhoneNumberNormalizer). */
+    private static final String CANONICAL_PHONE = "+972502234567";
 
     private static RegisterRequest customerRequest(DefaultAddressRequest address) {
         return customerRequest(address, VALID_PHONE);
@@ -279,7 +309,8 @@ class AuthServiceTest {
 
     private static RegisterRequest customerRequest(DefaultAddressRequest address, String phone) {
         return new RegisterRequest(UserRole.CUSTOMER, "Israel Israeli", "customer@example.com",
-                "StrongPassword123!", address == null ? null : new CustomerRegistrationData(address, phone), null);
+                phone, "StrongPassword123!",
+                address == null ? null : new CustomerRegistrationData(address), null);
     }
 
     private static DefaultAddressRequest fullAddress() {
@@ -287,8 +318,11 @@ class AuthServiceTest {
     }
 
     private static RegisterRequest professionalRequest(ProfessionalRegistrationData data) {
+        // Production MS1: a professional supplies a phone number too, on the same top-level
+        // field a customer uses. A different number from the customer fixture, since phone is
+        // now unique across every account.
         return new RegisterRequest(UserRole.PROFESSIONAL, "David Cohen", "professional@example.com",
-                "StrongPassword123!", null, data);
+                "0529876543", "StrongPassword123!", null, data);
     }
 
     private static ProfessionalRegistrationData validProfessionalData() {
@@ -325,9 +359,9 @@ class AuthServiceTest {
     void register_customer_validAddress_succeedsAndPersistsDefaultAddress() {
         RegisterRequest request = customerRequest(fullAddress());
 
-        RegisterResponse response = authService.register(request, null, null);
+        AuthStepResponse response = authService.register(request, null, null);
 
-        assertThat(response.role()).isEqualTo(UserRole.CUSTOMER);
+        assertThat(response.nextStep()).isEqualTo(AuthNextStep.VERIFY_EMAIL);
         ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(userCaptor.capture());
         User saved = userCaptor.getValue();
@@ -338,16 +372,16 @@ class AuthServiceTest {
         assertThat(saved.getDefaultFloor()).isEqualTo("2");
         assertThat(saved.getDefaultEntrance()).isEqualTo("A");
         assertThat(saved.getDefaultAddressNotes()).isEqualTo("Back entrance");
-        assertThat(saved.getPhone()).isEqualTo(VALID_PHONE);
+        assertThat(saved.getPhone()).as("stored canonical, not as typed").isEqualTo(CANONICAL_PHONE);
     }
 
     @Test
     void register_customer_optionalAddressFieldsOmitted_stillSucceeds() {
         DefaultAddressRequest minimal = new DefaultAddressRequest("Haifa", "Herzl", "5", null, null, null, null);
 
-        RegisterResponse response = authService.register(customerRequest(minimal), null, null);
+        AuthStepResponse response = authService.register(customerRequest(minimal), null, null);
 
-        assertThat(response.role()).isEqualTo(UserRole.CUSTOMER);
+        assertThat(response.nextStep()).isEqualTo(AuthNextStep.VERIFY_EMAIL);
     }
 
     @Test
@@ -368,9 +402,12 @@ class AuthServiceTest {
     @Test
     void register_customer_professionalPayloadNotRequired_evenIfCategoryRepositoryUnstubbedForIt() {
         // No professional-only validation should run at all for a CUSTOMER registration.
-        RegisterResponse response = authService.register(customerRequest(fullAddress()), null, null);
+        AuthStepResponse response = authService.register(customerRequest(fullAddress()), null, null);
 
         assertThat(response.emailVerified()).isFalse();
+        assertThat(response.phoneVerified()).isFalse();
+        assertThat(response.session())
+                .as("no token before both contact channels are verified").isNull();
         Mockito.verifyNoInteractions(categoryRepository);
     }
 
@@ -385,16 +422,17 @@ class AuthServiceTest {
 
         ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(userCaptor.capture());
-        assertThat(userCaptor.getValue().getPhone()).isNull();
+        assertThat(userCaptor.getValue().getPhone())
+                .as("MS1: professionals carry a phone number too").isEqualTo("+972529876543");
     }
 
     @Test
     void register_professional_valid_succeedsAndLinksProfessionalToUser() {
         stubValidCategory();
-        RegisterResponse response = authService.register(
+        AuthStepResponse response = authService.register(
                 professionalRequest(validProfessionalData()), pdfDocument(), null);
 
-        assertThat(response.role()).isEqualTo(UserRole.PROFESSIONAL);
+        assertThat(response.nextStep()).isEqualTo(AuthNextStep.VERIFY_EMAIL);
         ArgumentCaptor<Professional> professionalCaptor = ArgumentCaptor.forClass(Professional.class);
         verify(professionalRepository, times(2)).save(professionalCaptor.capture());
         Professional saved = professionalCaptor.getValue();
@@ -514,7 +552,7 @@ class AuthServiceTest {
     void register_professional_missingProfessionalPayload_rejected() {
         assertThatThrownBy(() -> authService.register(
                 new RegisterRequest(UserRole.PROFESSIONAL, "David Cohen", "professional@example.com",
-                        "StrongPassword123!", null, null),
+                        "0529876543", "StrongPassword123!", null, null),
                 pdfDocument(), null))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
@@ -528,16 +566,18 @@ class AuthServiceTest {
         StorageClient failingClient = Mockito.mock(StorageClient.class);
         when(failingClient.upload(anyString(), any(), anyString())).thenThrow(new StorageException("disk full", null));
         StorageService failingStorageService = new StorageService(failingClient, Optional.empty(), 300L);
-        AuthService serviceWithFailingStorage = new AuthService(userRepository, professionalRepository,
-                sosAvailabilityRepository,
+        AuthAccountWriter failingWriter = new AuthAccountWriter(userRepository, professionalRepository,
+                sosAvailabilityRepository, professionalSubServiceRepository,
+                professionalCategoryRepository, professionalServiceCityRepository,
+                professionalWorkingHoursRepository, failingStorageService, passwordEncoder,
+                new PhoneNumberNormalizer("IL"), loginAttemptRecorder, otpService);
+        AuthService serviceWithFailingStorage = new AuthService(userRepository, failingWriter, otpService,
+                jwtService, passwordEncoder,
                 new ProfessionalCoverageService(professionalCategoryRepository, professionalServiceCityRepository,
                         serviceRegionRepository, serviceCityRepository, categoryRepository,
                         new ServiceCoverageValidator(serviceRegionRepository, serviceCityRepository)),
                 new ServiceCoverageValidator(serviceRegionRepository, serviceCityRepository),
-                verificationCodeRepository, passwordEncoder, emailSender, jwtService, loginAttemptRecorder,
-                failingStorageService, new SubServiceSelectionValidator(subServiceRepository),
-                professionalSubServiceRepository, professionalCategoryRepository,
-                professionalServiceCityRepository, professionalWorkingHoursRepository);
+                new SubServiceSelectionValidator(subServiceRepository));
 
         assertThatThrownBy(() -> serviceWithFailingStorage.register(
                 professionalRequest(validProfessionalData()), pdfDocument(), null))
@@ -550,7 +590,7 @@ class AuthServiceTest {
         // to apply in a real deployment.
         verify(userRepository).save(any(User.class));
         verify(verificationCodeRepository, never()).save(any());
-        verify(emailSender, never()).sendVerificationCode(anyString(), anyString());
+        verify(emailSender, never()).sendOtp(anyString(), any(OtpPurpose.class), anyString());
     }
 
     // --- Security --------------------------------------------------------------
@@ -563,7 +603,7 @@ class AuthServiceTest {
         // quite happily -- AuthService's explicit guard is the only thing between that request and
         // an operator account able to approve professionals. Refused before any row is written.
         RegisterRequest request = new RegisterRequest(UserRole.ADMIN, "Sneaky Admin", "admin@example.com",
-                "StrongPassword123!", null, null);
+                VALID_PHONE, "StrongPassword123!", null, null);
 
         assertThatThrownBy(() -> authService.register(request, null, null))
                 .isInstanceOf(ApiException.class)
@@ -571,7 +611,7 @@ class AuthServiceTest {
         verify(userRepository, never()).save(any());
         verify(professionalRepository, never()).save(any());
         verify(verificationCodeRepository, never()).save(any());
-        verify(emailSender, never()).sendVerificationCode(anyString(), anyString());
+        verify(emailSender, never()).sendOtp(anyString(), any(OtpPurpose.class), anyString());
     }
 
     @Test
@@ -579,7 +619,7 @@ class AuthServiceTest {
         // The guard must not be reachable-around by making the rest of the body look legitimate:
         // it is checked before, and independently of, every role-conditional field rule.
         RegisterRequest request = new RegisterRequest(UserRole.ADMIN, "Sneaky Admin", "admin@example.com",
-                "StrongPassword123!", new CustomerRegistrationData(fullAddress(), VALID_PHONE), null);
+                VALID_PHONE, "StrongPassword123!", new CustomerRegistrationData(fullAddress()), null);
 
         assertThatThrownBy(() -> authService.register(request, null, null))
                 .isInstanceOf(ApiException.class)

@@ -771,3 +771,106 @@ an account exists, and it is a list of Israeli city names.
 7 regions, 96 cities. A client fetches the whole thing once and filters locally; `cities` nested
 under its region **is** the region→city filter, so no client needs a region→city map of its own.
 
+
+---
+
+## Production MS1 (2026-08-25) — Authentication & Contact Verification
+
+**This section supersedes §2.1–§2.3 and parts of §3.1.** Where the two disagree, this one is
+current; the earlier text is kept as the record of what the contract was before this milestone.
+Full rationale: `docs/production-roadmap/reports/prod-MS1-report.md`.
+
+### The rule everything else follows from
+
+A password alone never issues a session. Exactly two endpoints return a token —
+`POST /api/auth/login/otp` and `POST /api/auth/verify-phone` — and both sit strictly behind a
+redeemed one-time password.
+
+### Flows
+
+```
+register        -> account created, email code sent           (no token)
+verify-email    -> email proved, phone code sent              (no token)
+verify-phone    -> phone proved, registration complete        -> TOKEN
+
+login           -> password checked, code sent to the channel
+                   matching the identifier used               (no token)
+login/otp       -> code redeemed                              -> TOKEN
+```
+
+### Shared response shapes
+
+`AuthStepResponse` — returned by `register`, `verify-email`, `verify-phone`, `login`, `login/otp`:
+
+```json
+{
+  "nextStep": "VERIFY_EMAIL | VERIFY_PHONE | LOGIN_OTP | LOGIN | AUTHENTICATED",
+  "challenge": { "challengeId": "uuid", "channel": "EMAIL|SMS",
+                 "destinationMasked": "d***@example.com",
+                 "expiresInSeconds": 900, "delivered": true },
+  "session":   { "token": "...", "tokenType": "Bearer", "expiresIn": 86400, "user": {} },
+  "emailVerified": false,
+  "phoneVerified": false
+}
+```
+
+Exactly one of `challenge`/`session` is populated. `AUTHENTICATED` carries a session, `LOGIN` carries
+neither, every other step carries a challenge.
+
+`OtpChallenge` alone is returned by `otp/resend`, `phone/capture` and `password-reset/request`.
+
+A challenge is addressed only by its opaque `challengeId`. No OTP endpoint takes an email address or
+a phone number, which is what keeps these flows from becoming an account-existence oracle.
+
+### Endpoints
+
+| Method | Path | Auth | Body | Returns |
+|---|---|---|---|---|
+| POST | `/api/auth/register` | public | multipart; `data` gains top-level **`phone`**, required for **both** roles; `customer.phone` removed | `201 AuthStepResponse` (`VERIFY_EMAIL`) |
+| POST | `/api/auth/verify-email` | public | `{challengeId, code}` | `AuthStepResponse` (`VERIFY_PHONE` or `LOGIN`) |
+| POST | `/api/auth/verify-phone` | public | `{challengeId, code}` | `AuthStepResponse` (`AUTHENTICATED`) |
+| POST | `/api/auth/login` | public | `{identifier, password}` | `AuthStepResponse` (`LOGIN_OTP` or `VERIFY_EMAIL`) |
+| POST | `/api/auth/login/otp` | public | `{challengeId, code}` | `AuthStepResponse` (`AUTHENTICATED`) |
+| POST | `/api/auth/otp/resend` | public | `{challengeId}` | `OtpChallenge` |
+| POST | `/api/auth/phone/capture` | **JWT** | `{phone}` | `OtpChallenge` |
+| POST | `/api/auth/password-reset/request` | public | `{identifier}` | `OtpChallenge`, always |
+| POST | `/api/auth/password-reset/confirm` | public | `{challengeId, code, newPassword}` | `204` |
+
+`POST /api/auth/verify` is **removed**.
+
+`identifier` is an email address **or** a phone number; the server decides which. Phone resolution
+additionally requires `phone_verified` — an unverified number is contact detail, not a credential.
+
+`/api/auth/phone/capture` is the one authenticated route under this prefix and is matched
+`.authenticated()` *before* the `permitAll` on `/api/auth/**` (Spring Security's first match wins).
+
+### `GET /api/users/me`
+
+`phone` is now returned for **every** role, in canonical E.164 (it used to be blanked for a
+`PROFESSIONAL`). New field `phoneVerified: boolean`.
+
+### OTP rules
+
+6 digits from `SecureRandom`; SHA-256 at rest, never plaintext; single use; **5 attempts per
+challenge**; TTL 10 min (login) / 15 min (verification, reset); resend replaces its predecessor;
+60 s resend cooldown; 5 codes per purpose per user per hour. The code is never logged outside
+`pronto.environment=local`.
+
+### New error codes
+
+`DUPLICATE_PHONE` (409) · `PHONE_VERIFICATION_REQUIRED` (403) · `PHONE_ALREADY_VERIFIED` (409) ·
+`OTP_ATTEMPTS_EXCEEDED` (429) · `OTP_DELIVERY_FAILED` (502).
+
+`PHONE_VERIFICATION_REQUIRED` is returned by issue creation, order creation and SOS activation for an
+account whose phone is unverified — deliberately not a generic `403`, because the caller *may* do
+this as soon as they finish a thirty-second step, and the client needs to route them there rather
+than show a dead end. Professional marketplace eligibility enforces the same requirement differently:
+it is folded into `ProfessionalEligibility.ELIGIBLE_JPQL`, so an unverified professional is simply
+not discoverable.
+
+### Enumeration
+
+`password-reset/request` answers identically for accounts that exist and accounts that do not,
+including when rate-limited, and always reports `delivered: true`. An unknown identifier receives a
+well-formed challenge id that refers to nothing and fails at confirm exactly as a wrong code does.
+The accepted cost: a user who mistypes their address is told a code was sent and never receives one.

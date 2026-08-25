@@ -36,6 +36,7 @@ import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
+import com.pronto.users.service.ContactVerificationGuard;
 import com.pronto.users.entity.UserRole;
 import com.pronto.users.repository.UserRepository;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -119,6 +120,7 @@ public class BookingsService {
     private final StorageService storageService;
     private final AvailabilityDerivationService availabilityDerivationService;
     private final ProfessionalCoverageService professionalCoverageService;
+    private final ContactVerificationGuard contactVerificationGuard;
 
     public BookingsService(IssueRepository issueRepository,
                             ProfessionalRepository professionalRepository,
@@ -130,7 +132,8 @@ public class BookingsService {
                             DistanceEtaStrategy distanceEtaStrategy,
                             StorageService storageService,
                             AvailabilityDerivationService availabilityDerivationService,
-                            ProfessionalCoverageService professionalCoverageService) {
+                            ProfessionalCoverageService professionalCoverageService,
+                            ContactVerificationGuard contactVerificationGuard) {
         this.issueRepository = issueRepository;
         this.professionalRepository = professionalRepository;
         this.professionalListingRepository = professionalListingRepository;
@@ -142,6 +145,7 @@ public class BookingsService {
         this.storageService = storageService;
         this.availabilityDerivationService = availabilityDerivationService;
         this.professionalCoverageService = professionalCoverageService;
+        this.contactVerificationGuard = contactVerificationGuard;
     }
 
     /** §2.2, extended with the service-location/sort matching design. */
@@ -231,6 +235,10 @@ public class BookingsService {
      */
     @Transactional
     public OrderResponse createOrder(Long callerId, CreateOrderRequest request) {
+        // Production MS1: an order dispatches a named professional to this customer's address on a
+        // specific date. Both parties need a phone number that has actually been proved.
+        contactVerificationGuard.requireVerifiedContactChannels(callerId);
+
         Issue issue = issueRepository.findById(request.issueId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND,
                         "Issue " + request.issueId() + " not found."));

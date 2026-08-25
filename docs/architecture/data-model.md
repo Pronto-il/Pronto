@@ -1410,3 +1410,89 @@ erDiagram
         timestamptz created_at
     }
 ```
+
+---
+
+## Production MS1 (2026-08-25) — identity columns & OTP hardening
+
+**Supersedes §2.2's `phone` row and all of §2.3.** Migrations `V46`, `V47`, `V48`. Full rationale:
+`docs/production-roadmap/reports/prod-MS1-report.md`.
+
+### `users` (V46, V48)
+
+| Column | Change |
+|---|---|
+| `email` | Now stored **canonical** — lowercase, trimmed (`auth.service.EmailNormalizer`). `ux_users_email_lower` replaced by a plain unique `ux_users_email`, which is the index lookups can actually use; `findByEmailIgnoreCase` (rendered `upper(email) = upper(?)`, covered by no index, sequential scan on every login) replaced by `findByEmail` |
+| `phone` | Was free-text customer contact detail. Now **canonical E.164** (`ck_users_phone_e164`), **unique** (`ux_users_phone`), required at the API layer for every new registration of **every** role, and usable as a login identifier once verified. Written only through `auth.service.PhoneNumberNormalizer` (libphonenumber, default region `IL`) |
+| `phone_verified` | **New.** `BOOLEAN NOT NULL DEFAULT false`. Mirrors `email_verified` exactly, including the default — no pre-existing row is grandfathered into a verified phone |
+
+`phone` remains **nullable at the database level**, deliberately: that nullability is the legacy
+cohort (every pre-MS1 `PROFESSIONAL` and `ADMIN`, every `CUSTOMER` predating V28, and every row whose
+stored text V46 could not canonicalize). A `NOT NULL` would have meant inventing phone numbers.
+Those accounts authenticate by email and are refused marketplace mutations
+(`PHONE_VERIFICATION_REQUIRED`) until they complete phone capture.
+
+**V46 data policy** — deterministic, and it never fabricates: the three accepted Israeli spellings
+(`05X…`, `+972…`, `00972…`) are canonicalized; anything else becomes `NULL`; on a duplicate the
+**oldest** row (lowest id) keeps the number and later claimants become `NULL`.
+
+**V48 data policy** — aborts with a plpgsql `RAISE` if any two rows would collide after
+normalization. It will not merge accounts automatically; that would silently hand one person's
+bookings, orders and reviews to another.
+
+Both unique indexes are **total** (no `WHERE deleted_at IS NULL`), matching how email has always been
+treated. Releasing an identifier is an explicit act rather than a side effect of a tombstone:
+`UsersService.deleteMe` rewrites the email and (as of this milestone) nulls the phone.
+
+### `verification_codes` (V47)
+
+| Column | Change |
+|---|---|
+| `code` | **Dropped.** Plaintext OTPs are no longer stored anywhere |
+| `code_hash` | **New.** `VARCHAR(64) NOT NULL` — SHA-256 hex. A slow KDF is deliberately not used: the secret is a 6-digit number with a 15-minute maximum life and a hard 5-attempt cap, so the brute-force surface is bounded by the cap, not by hash cost |
+| `challenge_id` | **New.** `UUID NOT NULL`, unique (`ux_verification_codes_challenge`). The opaque public handle; the only identifier a client ever sends back |
+| `attempts` | **New.** `SMALLINT NOT NULL DEFAULT 0`. Advanced by a conditional UPDATE under the row lock, never by read-modify-write |
+| `purpose` | CHECK widened to `EMAIL_VERIFICATION`, `PHONE_VERIFICATION`, `EMAIL_LOGIN_OTP`, `PHONE_LOGIN_OTP`, `PASSWORD_RESET` |
+
+Migration note: `V47` **deletes** un-consumed rows before adding `NOT NULL`. Their hash cannot be
+computed backwards — that is the point of a one-way hash — and each had at most 15 minutes of life
+left. `users.email_verified` is untouched by that deletion.
+
+New index `idx_verification_codes_user_purpose_created (user_id, purpose, created_at DESC)` serves
+the resend-cooldown and hourly-ceiling reads.
+
+### Eligibility
+
+`ProfessionalEligibility.ELIGIBLE_JPQL` gains `PHONE_VERIFIED_JPQL` — an `EXISTS` over `users`, so
+the alias contract is unchanged and consumers that never joined `users` still do not have to.
+Consequence, stated plainly: immediately after `V46` every professional is ineligible until they
+verify a phone. Intended for a platform that has not launched; the TEST/DEMO dataset seeds its
+synthetic professionals as verified.
+
+### Production MS1 remediation (2026-08-25) — corrections to the section above
+
+The pre-DONE audit changed three details documented earlier in this file. Where they disagree, this
+is current.
+
+**OTP storage is a keyed hash, not a plain digest.** `verification_codes.code_hash` holds
+
+```
+HMAC-SHA256(pepper, challengeId + ":" + purpose + ":" + code)
+```
+
+keyed with `pronto.otp.pepper` (`OTP_PEPPER`), a server-side secret distinct from `JWT_SECRET` and
+never stored in the database. Plain `SHA-256` was replaced because a 6-digit code has only 1,000,000
+possible values: a ~32 MB precomputed table reverses every stored challenge by lookup. A per-row salt
+would not have helped — it defeats precomputation only, and 10⁶ candidates are brute-forceable per
+row in milliseconds. The output is still 64 hex characters, so the column is unchanged and **no new
+migration was needed**. A production-like environment refuses to start with the placeholder pepper
+(`auth.config.ProductionHardeningStartupGuard`).
+
+**`consumeIfValid` replaces `consume` on the redemption path**, adding `expires_at > :now` to the
+WHERE clause so expiry is decided by the write rather than by an earlier read. The unconditional
+`consume` remains, used only to abandon a challenge whose delivery failed.
+
+**`supersedeOtherOpenChallenges` is new**, and replaces the previous "invalidate before insert"
+ordering. A resend now inserts the new challenge, dispatches it, and only then supersedes its
+predecessor — so a provider failure abandons the new code and leaves the user's existing one working,
+instead of destroying a usable code and replacing it with one that never arrived.

@@ -30,6 +30,19 @@ public record RegisterRequest(
         @NotNull UserRole role,
         @NotBlank @Size(min = 2, max = 150) String fullName,
         @NotBlank @Email @Size(max = 255) String email,
+        /**
+         * <b>Production MS1.</b> Moved here from {@code customer.phone} and now required for
+         * <em>both</em> roles. Every real Pronto account has an email and a phone, and both belong
+         * to the same {@code users} row — a professional whose phone number lived nowhere could
+         * neither be reached nor use it to sign in. Accepted in ordinary Israeli spelling
+         * ({@code 050-123-4567}, {@code +972501234567}, {@code 00972501234567}); canonicalized to
+         * E.164 by {@code auth.service.PhoneNumberNormalizer} before it is stored, so all three
+         * become one identity.
+         *
+         * <p>Validated for shape and reachability by that normalizer rather than by an annotation
+         * here — {@code @Pattern} would be a second, staler copy of the Israeli numbering plan.
+         */
+        @NotBlank @Size(max = 32) String phone,
         @NotBlank @Size(min = 8) String password,
         @Valid CustomerRegistrationData customer,
         @Valid ProfessionalRegistrationData professional

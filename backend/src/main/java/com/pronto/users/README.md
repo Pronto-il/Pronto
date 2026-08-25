@@ -153,3 +153,52 @@ three-way branches that throw `403 FORBIDDEN` rather than resolving an operator 
 other two roles. No change to `entity.User`, `UserRepository`, the `/api/users/me` endpoints or
 this package's DTOs. See `docs/production-roadmap/reports/MS1-report.md` and
 `professionals/README.md`.
+
+---
+
+## Production MS1 (2026-08-25) — phone becomes an identity
+
+### `User`
+
+`phone` stopped being customer contact detail and became the account's second identity: canonical
+E.164, unique, required at the API layer for every new registration of every role, and usable as a
+login identifier once `phoneVerified`. New `phoneVerified` column mirrors `emailVerified`, including
+its `false` default — no pre-existing row is grandfathered. `isFullyVerified()` is the single
+question every gate asks.
+
+`setPasswordHash` was added for password recovery. It deliberately takes an already-encoded value:
+this entity does not know what a `PasswordEncoder` is, and a setter taking plaintext would be one
+refactor away from storing one.
+
+### `UsersService`
+
+- `getMe` returns `phone` for **every** role now. Blanking it for a `PROFESSIONAL` was right while
+  this was contact detail and wrong once it is the identity they sign in with.
+- `updateMe` no longer assigns `phone` directly. `applyPhoneChange` normalizes, checks uniqueness,
+  and **drops `phoneVerified` when the number changes** — without that last rule this endpoint would
+  be a complete bypass of phone verification. A no-op edit (the same canonical number resubmitted
+  with the rest of the profile) leaves the flag alone, so saving the profile form does not cost a
+  user their verification.
+- `deleteMe` now nulls the phone as well as rewriting the email. `ux_users_phone` is a total unique
+  index, so leaving the number on a tombstone would reserve it forever and stop its real owner from
+  ever registering — the identical problem the email rewrite already solved.
+
+### `ContactVerificationGuard` (new)
+
+The backend half of the legacy-account policy. Accounts created before MS1 authenticate normally
+(email + password + email OTP proves the one channel they did verify) but are refused
+`PHONE_VERIFICATION_REQUIRED` at issue creation, order creation and SOS activation — the operations
+that end with a professional at somebody's front door.
+
+Deliberately **not** used for the professional side: a professional's phone verification is folded
+into `ProfessionalEligibility.ELIGIBLE_JPQL` instead, so an unverified professional is simply not
+discoverable across all six gated paths rather than being checked in six places, one of which a
+seventh consumer would forget.
+
+The frontend routes a `PHONE_VERIFICATION_REQUIRED` response to the phone-capture screen. That is
+convenience; the rule holds against a direct API call with a perfectly valid JWT.
+
+### Related documentation
+
+`docs/production-roadmap/reports/prod-MS1-report.md` · `docs/architecture/data-model.md`
+"Production MS1" section · `V46`, `V48`.

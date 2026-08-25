@@ -8,7 +8,10 @@ import styles from './formStyles.module.css';
 
 export default function LoginPage() {
   const [searchParams] = useSearchParams();
-  const email = searchParams.get('email') ?? '';
+  // Production MS1: the login field takes an email address OR a phone number, so the
+  // prefill parameter is named for what it now is. `?email=` is still honoured, because links
+  // built before this milestone are still in people's inboxes.
+  const identifier = searchParams.get('identifier') ?? searchParams.get('email') ?? '';
   // See `HomePage.tsx`'s comment: `pageTransition.animate` carries its own embedded
   // `transition`, which wins over a `transition` prop — the `animate` target itself must be
   // overridden to actually neutralize the spring under reduced motion.
@@ -23,7 +26,7 @@ export default function LoginPage() {
         <Mascot state="idle" size="sm" />
       </div>
       <PageHeader title="התחברות ל-Pronto" description="שמחים לראות אתכם שוב" />
-      <LoginForm initialEmail={email} />
+      <LoginForm initialIdentifier={identifier} />
       <p className={styles.footerLink}>
         אין לכם חשבון? <Link to="/register">הרשמה</Link>
       </p>

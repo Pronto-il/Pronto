@@ -5,76 +5,81 @@ import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.time.Duration;
+import java.util.Iterator;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Simple per-client-IP, in-memory, fixed-window rate limiter for a single {@code
- * /api/auth/*} endpoint. See {@code docs/architecture/hardening-plan.md} §5.2.
+ * Per-client, in-memory, fixed-window rate limiter for a single {@code /api/auth/*} route.
  *
- * <p><b>What this closes.</b> Per-account login lockout ({@code AuthService.login}, 5 failed
- * attempts) doesn't catch an attacker distributing guesses across many different accounts,
- * and {@code POST /api/auth/verify}'s 6-digit code (1-in-1,000,000 per guess, 15-minute
- * validity) had no attempt cap at all. This interceptor bounds request *volume* per source
- * IP, independently of the per-account mechanisms above, which are unchanged.
+ * <p><b>What this closes.</b> Per-account lockout does not catch an attacker distributing guesses
+ * across many accounts, and the OTP endpoints' per-challenge attempt cap does not bound how many
+ * <em>challenges</em> a caller may start. This bounds request volume per source, independently of
+ * both.
  *
- * <p><b>Fixed window, not sliding/token-bucket.</b> Each client IP gets a counter that resets
- * {@code windowMillis} after its first request in the current window (not a rolling
- * average). Simpler to reason about and implement correctly than a sliding window or
- * token-bucket, and sufficient for the generous, non-adversarial-traffic-tuned thresholds
- * this is configured with (see {@code auth.config.AuthWebConfig}) — allows brief bursts at a
- * window boundary, which is an accepted trade-off, not a defect, at this scale.
+ * <p><b>Client identity comes from {@link ClientIpResolver}, not {@code getRemoteAddr()}.</b> That
+ * is the Production MS1 change and the reason this class is no longer safe to reason about as
+ * "keyed on the peer address": behind an AWS ALB the peer address is the load balancer, so keying
+ * on it would collapse every user onto one counter. See {@code ClientIpResolver} for why the
+ * forwarded header is trusted only from configured networks.
  *
- * <p><b>{@code ConcurrentHashMap}-backed, no new Maven dependency.</b> Sufficient at this
- * project's traffic scale and consistent with its documented single-instance-deployment
- * status ({@code docs/architecture/hardening-plan.md} §4.3's reasoning) — a distributed
- * limiter (Redis-backed, etc.) or a library like bucket4j/resilience4j would be
- * over-engineering for what's needed here.
+ * <p><b>Fixed window, not sliding/token-bucket.</b> Each client gets a counter that resets
+ * {@code windowMillis} after its first request in the current window. Simpler to reason about and
+ * sufficient for the deliberately generous thresholds in {@code auth.config.AuthWebConfig}; it
+ * allows a brief burst at a window boundary, which is an accepted trade-off rather than a defect.
  *
- * <p><b>One instance per route.</b> {@code auth.config.AuthWebConfig} registers a separate
- * instance of this class per {@code /api/auth/*} route, each with its own threshold/window
- * and its own counter map — so counters are naturally isolated per endpoint without this
- * class needing to key on path as well as IP.
- *
- * <p><b>IP resolution.</b> {@link HttpServletRequest#getRemoteAddr()} only. This application
- * has never run behind a reverse proxy/load balancer in any tested environment
- * ({@code docs/architecture/hardening-plan.md} §2.1) — trusting an {@code X-Forwarded-For}
- * header without a real proxy in front to set/sanitize it would itself be a spoofing vector
- * (any client could set that header to claim to be a different IP, defeating the limiter or
- * framing another client). Revisit if/when a real reverse proxy is introduced in front of
- * this application.
- *
- * <p><b>No eviction.</b> Window entries for IPs that stop sending requests are never purged
- * from {@link #windowsByIp}, so memory usage grows with the number of distinct IPs seen over
- * the process's lifetime. Acceptable at this project's current scale (no deployed
- * environment exists yet, per {@code docs/architecture/hardening-plan.md}'s stated ground
- * truth) — revisit with a scheduled sweep or a bounded/expiring cache if this is ever a real
- * concern under sustained real traffic.
+ * <p><b>Single-instance only, and bounded.</b> The counters live in this JVM's heap, so two
+ * application instances would enforce two independent limits and a restart resets everything. That
+ * is a real limitation, recorded rather than papered over — distributed rate limiting is an
+ * MS4/MS5 concern, and this class must not be described as multi-instance safe. What was fixed here
+ * is the unbounded growth: entries used to accumulate forever, one per distinct address ever seen,
+ * which is a slow memory leak that an attacker can drive deliberately by spoofing source addresses.
+ * {@link #sweepIfDue} now evicts expired windows, and {@link #MAX_TRACKED_CLIENTS} caps the map
+ * even under an active flood.
  */
 public class AuthRateLimitInterceptor implements HandlerInterceptor {
 
+    private static final Logger log = LoggerFactory.getLogger(AuthRateLimitInterceptor.class);
+
     private static final String RETRY_AFTER_HEADER = "Retry-After";
+
+    /**
+     * Hard ceiling on distinct clients tracked at once. Reaching it means an eviction sweep just
+     * failed to free anything, i.e. a flood of distinct sources inside a single window. The response
+     * is to clear the map rather than to keep growing: forgetting counters briefly under attack
+     * costs one window of limiting, while an unbounded map costs the whole process.
+     */
+    static final int MAX_TRACKED_CLIENTS = 100_000;
 
     private record Window(long windowStartMillis, int count) {
     }
 
     private final int maxRequests;
     private final long windowMillis;
-    private final ConcurrentHashMap<String, Window> windowsByIp = new ConcurrentHashMap<>();
+    private final ClientIpResolver clientIpResolver;
+    private final ConcurrentHashMap<String, Window> windowsByClient = new ConcurrentHashMap<>();
+    private final AtomicLong nextSweepMillis = new AtomicLong(0);
 
-    public AuthRateLimitInterceptor(int maxRequests, Duration window) {
+    public AuthRateLimitInterceptor(int maxRequests, Duration window, ClientIpResolver clientIpResolver) {
         this.maxRequests = maxRequests;
         this.windowMillis = window.toMillis();
+        this.clientIpResolver = clientIpResolver;
     }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        String clientIp = request.getRemoteAddr();
+        String client = clientIpResolver.resolve(request);
         long now = System.currentTimeMillis();
 
-        Window current = windowsByIp.compute(clientIp, (ip, existing) ->
+        sweepIfDue(now);
+
+        Window current = windowsByClient.compute(client, (key, existing) ->
                 (existing == null || now - existing.windowStartMillis() >= windowMillis)
                         ? new Window(now, 1)
                         : new Window(existing.windowStartMillis(), existing.count() + 1));
@@ -88,5 +93,33 @@ public class AuthRateLimitInterceptor implements HandlerInterceptor {
                     new RateLimitDetails(retryAfterSeconds));
         }
         return true;
+    }
+
+    /**
+     * Drops windows that have already elapsed, at most once per window duration.
+     *
+     * <p>The {@code compareAndSet} makes exactly one concurrent request perform the sweep; the rest
+     * proceed immediately rather than queueing behind it. An expired entry is dead weight by
+     * definition — the next request from that client starts a fresh window either way — so removing
+     * it changes no limiting decision.
+     */
+    private void sweepIfDue(long now) {
+        long due = nextSweepMillis.get();
+        if (now < due || !nextSweepMillis.compareAndSet(due, now + windowMillis)) {
+            return;
+        }
+
+        Iterator<Map.Entry<String, Window>> it = windowsByClient.entrySet().iterator();
+        while (it.hasNext()) {
+            if (now - it.next().getValue().windowStartMillis() >= windowMillis) {
+                it.remove();
+            }
+        }
+
+        if (windowsByClient.size() > MAX_TRACKED_CLIENTS) {
+            log.warn("Auth rate-limit table exceeded {} live clients in one window; clearing it. "
+                    + "This is what a distributed flood looks like.", MAX_TRACKED_CLIENTS);
+            windowsByClient.clear();
+        }
     }
 }

@@ -14,6 +14,7 @@ package com.pronto.professionals;
  *               AND EXISTS an enabled professional_working_hours row
  *               AND EXISTS a professional_sub_services row whose sub_service
  *                          belongs to one of p's own categories
+ *               AND the owning users row has phone_verified = true      (Production MS1)
  * </pre>
  *
  * <p><b>MS4:</b> the last clause used to read "p's own category", singular, against
@@ -105,8 +106,39 @@ public final class ProfessionalEligibility {
      * outer query with {@code Professional p} in scope. See this class's Javadoc for the alias
      * contract and the full rule.
      */
+    /**
+     * <b>Production MS1:</b> the professional's own phone number must be verified.
+     *
+     * <p>This is the "professional marketplace eligibility" half of MS1's contact-verification
+     * gate. It belongs in the eligibility predicate rather than in a service-layer check for the
+     * reason this whole class exists: there are six gated paths (listing, Standard matching,
+     * booking windows, order creation, SOS candidate selection, SOS dispatch), and a rule enforced
+     * in Java at each of them is a rule the seventh consumer will forget. Expressed here, an
+     * unverified professional is simply not discoverable anywhere.
+     *
+     * <p>Written as an {@code EXISTS} over {@code User} rather than as a join, so the
+     * {@link #ELIGIBLE_JPQL} alias contract is unchanged — a consumer that never joined
+     * {@code users} ({@code BookingsService#listAvailableWindows}) still does not have to.
+     *
+     * <p><b>Consequence, stated plainly:</b> immediately after {@code V46} every professional in the
+     * database is ineligible, because {@code phone_verified} defaults to {@code false} for existing
+     * rows and MS1 grandfathers nobody. That is the intended direction for a platform that has not
+     * launched — a professional who cannot be phoned should not be dispatched to a stranger's home
+     * — and the path back is the same phone-capture flow every other account uses. The TEST/DEMO
+     * dataset seeds its synthetic professionals as verified so demonstrations keep working.
+     */
+    public static final String PHONE_VERIFIED_JPQL =
+            "EXISTS (SELECT 1 FROM com.pronto.users.entity.User uPhone "
+            + "WHERE uPhone.id = p.userId AND uPhone.phoneVerified = true)";
+
+    /**
+     * The eligibility conjunction — approval <b>and</b> {@link #ONBOARDING_COMPLETE_JPQL} <b>and</b>
+     * {@link #PHONE_VERIFIED_JPQL} — for an outer query with {@code Professional p} in scope. See
+     * this class's Javadoc for the alias contract and the full rule.
+     */
     public static final String ELIGIBLE_JPQL =
-            "p.approvalStatus = '" + APPROVED + "' AND " + ONBOARDING_COMPLETE_JPQL;
+            "p.approvalStatus = '" + APPROVED + "' AND " + ONBOARDING_COMPLETE_JPQL
+            + " AND " + PHONE_VERIFIED_JPQL;
 
     private ProfessionalEligibility() {
     }

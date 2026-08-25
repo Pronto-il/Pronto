@@ -182,7 +182,59 @@ public enum ErrorCode {
      * realistic cause is a stale tab — a professional accepted while the customer was still looking
      * at the classification screen — and the UI needs to tell that apart from a bad request.
      */
-    ISSUE_NOT_EDITABLE(HttpStatus.CONFLICT);
+    ISSUE_NOT_EDITABLE(HttpStatus.CONFLICT),
+
+    // ---------------------------------------------------------------------------------
+    // Production MS1 (Authentication & Contact Verification).
+    // See docs/production-roadmap/reports/prod-MS1-report.md §7.
+    // ---------------------------------------------------------------------------------
+
+    /**
+     * The submitted phone number already belongs to another account.
+     *
+     * <p>Its own code rather than a reuse of {@link #DUPLICATE_EMAIL}: the two are different fields
+     * on the same form, and a client that cannot tell them apart cannot highlight the right one.
+     * Returned both by the pre-insert check and by the {@code ux_users_phone} race — see
+     * {@code GlobalExceptionHandler}'s constraint-violation handler, which exists so that losing
+     * that race is a 409 rather than a 500.
+     */
+    DUPLICATE_PHONE(HttpStatus.CONFLICT),
+
+    /**
+     * The account's phone number has not been verified, and the requested operation is one this
+     * platform will not perform for an unverified contact channel: creating an issue, creating an
+     * order, activating SOS, or being listed to customers.
+     *
+     * <p>Deliberately NOT {@link #FORBIDDEN}. A generic 403 tells a client "you may not do this",
+     * which is untrue and unactionable — the caller may do this, as soon as they finish a step that
+     * takes thirty seconds. This code is what lets the frontend route straight to phone capture
+     * instead of showing a dead end, and it is the mechanism by which pre-MS1 accounts keep working
+     * without being handed marketplace access they never verified a phone for.
+     */
+    PHONE_VERIFICATION_REQUIRED(HttpStatus.FORBIDDEN),
+
+    /** Phone verification was attempted on an account whose phone is already verified. */
+    PHONE_ALREADY_VERIFIED(HttpStatus.CONFLICT),
+
+    /**
+     * The challenge is out of guesses ({@code OtpService.MAX_ATTEMPTS}) and is now dead.
+     *
+     * <p>Separate from {@link #INVALID_CODE} because the required user action differs: "you typed
+     * it wrong, try again" versus "this code is finished, request a new one". Separate from
+     * {@link #RATE_LIMITED} because nothing here is time-based — waiting does not help, and a
+     * client that showed a countdown would be lying.
+     */
+    OTP_ATTEMPTS_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS),
+
+    /**
+     * The Email or SMS provider would not accept the message, so no code was delivered.
+     *
+     * <p>{@code 502} rather than {@code 500}: nothing went wrong in this application, an upstream
+     * dependency failed, and the distinction is what keeps a provider outage visible as a provider
+     * outage in monitoring instead of being buried in the generic error rate. The challenge itself
+     * may still exist — the client's recovery is a resend, not a restart.
+     */
+    OTP_DELIVERY_FAILED(HttpStatus.BAD_GATEWAY);
 
     private final HttpStatus httpStatus;
 

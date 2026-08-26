@@ -6,6 +6,7 @@ import com.pronto.ai.dto.ClassificationStatus;
 import com.pronto.ai.dto.ClassificationSuggestion;
 import com.pronto.ai.dto.ImageAttachment;
 import com.pronto.ai.dto.ProfessionalBriefResponse;
+import com.pronto.ai.prompt.ClassificationPromptBuilder;
 import com.pronto.ai.service.ClassificationService;
 import com.pronto.ai.service.IssueImageResolver;
 import com.pronto.ai.service.ProfessionalBriefService;
@@ -66,6 +67,11 @@ public class IssueBriefService {
     private final ClassificationService classificationService;
     private final IssueImageResolver imageResolver;
     private final boolean recordFinalClassification;
+    /**
+     * Blank under the mock provider, where there is no model — stored as {@code null} rather
+     * than an empty string so "no model" and "model not recorded" read the same in the data.
+     */
+    private final String aiModel;
 
     public IssueBriefService(IssueRepository issueRepository,
                               IssueImageRepository issueImageRepository,
@@ -75,7 +81,9 @@ public class IssueBriefService {
                               ProfessionalBriefService professionalBriefService,
                               ClassificationService classificationService,
                               IssueImageResolver imageResolver,
-                              @Value("${pronto.ai.record-final-classification:false}") boolean recordFinalClassification) {
+                              @Value("${pronto.ai.record-final-classification:false}") boolean recordFinalClassification,
+                              @Value("${pronto.openai.model:}") String aiModel) {
+        this.aiModel = aiModel == null || aiModel.isBlank() ? null : aiModel;
         this.issueRepository = issueRepository;
         this.issueImageRepository = issueImageRepository;
         this.issueClarificationRepository = issueClarificationRepository;
@@ -167,7 +175,8 @@ public class IssueBriefService {
             }
 
             record.recordAiOutcome(suggestion.categoryCode(), suggestion.confidence(), suggestion.candidates(),
-                    suggestion.ambiguityReason(), suggestion.lowConfidence(), suggestion.unresolved());
+                    suggestion.ambiguityReason(), suggestion.lowConfidence(), suggestion.unresolved(),
+                    ClassificationPromptBuilder.PROMPT_VERSION, aiModel);
             issueClassificationRepository.save(record);
 
             boolean agreesWithCustomer = issue.getCategoryId().equals(suggestion.categoryId());

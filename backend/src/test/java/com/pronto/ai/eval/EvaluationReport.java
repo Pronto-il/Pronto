@@ -105,6 +105,109 @@ public class EvaluationReport {
         return outcomes.stream().mapToInt(EvaluationOutcome::questionsAsked).sum() / (double) outcomes.size();
     }
 
+    /**
+     * How many cases needed 0, 1 or 2 questions — the distribution behind
+     * {@link #averageQuestions()}, which a single mean hides. "0.4 questions on average" is
+     * the same number whether 40% of customers answer one question or 20% answer two, and
+     * those are different products.
+     */
+    public Map<Integer, Long> questionDistribution() {
+        Map<Integer, Long> distribution = new TreeMap<>();
+        int max = outcomes.stream().mapToInt(EvaluationOutcome::questionsAsked).max().orElse(0);
+        for (int questions = 0; questions <= max; questions++) {
+            int count = questions;
+            distribution.put(questions,
+                    outcomes.stream().filter(outcome -> outcome.questionsAsked() == count).count());
+        }
+        return distribution;
+    }
+
+    /** Every clarification exchange across every case, flattened. */
+    public List<ClarificationRound> allRounds() {
+        return outcomes.stream().flatMap(outcome -> outcome.rounds().stream()).toList();
+    }
+
+    /**
+     * Share of clarification questions that moved something — ranking, margin or confidence.
+     * The counterpart to {@link #clarificationRate()}: asking less is only an improvement if
+     * what remains still does work.
+     */
+    public double usefulClarificationRate() {
+        List<ClarificationRound> rounds = allRounds();
+        if (rounds.isEmpty()) {
+            return 0;
+        }
+        return (double) rounds.stream().filter(ClarificationRound::wasUseful).count() / rounds.size();
+    }
+
+    /**
+     * Share of ALL cases that asked at least one question and got nothing out of any of them.
+     * Denominated over every case, not just the ones that asked, so it reads directly as
+     * "this fraction of customers was interrupted for no reason".
+     */
+    public double unnecessaryClarificationRate() {
+        return ratio(outcomes.stream().filter(EvaluationOutcome::askedUselessly).count());
+    }
+
+    /** Share of questions that offered a "not sure" escape rather than forcing a guess (§11). */
+    public double notSureOfferedRate() {
+        List<ClarificationRound> rounds = allRounds();
+        if (rounds.isEmpty()) {
+            return 0;
+        }
+        return (double) rounds.stream().filter(ClarificationRound::offeredNotSure).count() / rounds.size();
+    }
+
+    /** Total model calls the run consumed — the OpenAI bill, in its native unit. */
+    public int totalAiCalls() {
+        return outcomes.stream().mapToInt(EvaluationOutcome::aiCalls).sum();
+    }
+
+    public double averageLatencyMillis() {
+        if (outcomes.isEmpty()) {
+            return 0;
+        }
+        return outcomes.stream().mapToLong(EvaluationOutcome::latencyMillis).sum() / (double) outcomes.size();
+    }
+
+    /** Slowest case first — where a timeout would bite. */
+    public long maxLatencyMillis() {
+        return outcomes.stream().mapToLong(EvaluationOutcome::latencyMillis).max().orElse(0);
+    }
+
+    /**
+     * Cases that declared their description insufficient to separate two trades, and which
+     * Pronto committed on anyway without asking.
+     *
+     * <p>The sharpest signal in the report for a boundary that is being guessed rather than
+     * resolved — and one that {@link #finalAccuracy()} cannot show, because half of these
+     * guesses land correctly and are scored as successes.
+     */
+    public List<EvaluationOutcome> committedWithoutAsking() {
+        return outcomes.stream().filter(EvaluationOutcome::committedWithoutAsking).toList();
+    }
+
+    /** Of the cases that required a question, the share that actually got one. */
+    public double clarificationComplianceRate() {
+        List<EvaluationOutcome> required = outcomes.stream()
+                .filter(EvaluationOutcome::expectedClarification)
+                .toList();
+        if (required.isEmpty()) {
+            return 1;
+        }
+        return (double) required.stream().filter(outcome -> outcome.questionsAsked() > 0).count()
+                / required.size();
+    }
+
+    /** Cases whose final routing was wrong, worst-first by confidence. */
+    public List<EvaluationOutcome> incorrect() {
+        return outcomes.stream()
+                .filter(outcome -> !outcome.finallyCorrect())
+                .sorted(Comparator.comparingDouble((EvaluationOutcome outcome) ->
+                        outcome.finalConfidence() == null ? 0 : outcome.finalConfidence()).reversed())
+                .toList();
+    }
+
     /** Wrong final routing that the system was nonetheless confident about. */
     public List<EvaluationOutcome> highConfidenceWrong() {
         return outcomes.stream()
@@ -170,9 +273,24 @@ public class EvaluationReport {
                 + "but nothing was decided%n", luckyFallbacks().size()));
         report.append(String.format("clarification rate             %.1f%%%n", clarificationRate() * 100));
         report.append(String.format("avg questions per case         %.2f%n", averageQuestions()));
+        report.append(String.format("useful clarification rate      %.1f%%  [of %d question(s) asked]%n",
+                usefulClarificationRate() * 100, allRounds().size()));
+        report.append(String.format("unnecessary clarification rate %.1f%%  [cases interrupted for nothing]%n",
+                unnecessaryClarificationRate() * 100));
+        report.append(String.format("\"not sure\" offered             %.1f%% of questions%n",
+                notSureOfferedRate() * 100));
         report.append(String.format("high-confidence wrong (>=%.2f)  %d%n",
                 highConfidenceThreshold, highConfidenceWrong().size()));
         report.append(String.format("pipeline failures              %d%n", failures().size()));
+        report.append(String.format("total AI calls                 %d  (%.2f per case)%n",
+                totalAiCalls(), outcomes.isEmpty() ? 0 : totalAiCalls() / (double) outcomes.size()));
+        report.append(String.format("latency avg / max              %.0f ms / %d ms%n",
+                averageLatencyMillis(), maxLatencyMillis()));
+
+        report.append("\n-- questions asked per case --\n");
+        questionDistribution().forEach((questions, count) -> report.append(String.format(
+                "%d question(s)%-12s %3d case(s)  %5.1f%%%n", questions, "", count,
+                outcomes.isEmpty() ? 0 : count * 100.0 / outcomes.size())));
 
         report.append("""
 
@@ -218,6 +336,35 @@ public class EvaluationReport {
                     report.append(String.format("%-12s %s%n", outcome.caseId(), outcome.failureReason())));
         }
 
+        long requiringClarification = outcomes.stream()
+                .filter(EvaluationOutcome::expectedClarification).count();
+        if (requiringClarification > 0) {
+            report.append(String.format("%n-- cases whose description cannot separate the trades --%n"));
+            report.append(String.format("asked as required        %.1f%%  [%d of %d]%n",
+                    clarificationComplianceRate() * 100,
+                    requiringClarification - committedWithoutAsking().size(), requiringClarification));
+            if (!committedWithoutAsking().isEmpty()) {
+                report.append("COMMITTED WITHOUT ASKING (a guess, whether or not it landed):\n");
+                committedWithoutAsking().forEach(outcome -> report.append(String.format(
+                        "  %-12s expected=%-18s got=%-18s conf=%-6s %s%n",
+                        outcome.caseId(), outcome.expectedCategory(),
+                        outcome.finalCategory() == null ? "(none)" : outcome.finalCategory(),
+                        outcome.finalConfidence() == null ? "n/a"
+                                : String.format("%.2f", outcome.finalConfidence()),
+                        outcome.finallyCorrect() ? "[landed correctly - still a guess]" : "[WRONG]")));
+            }
+        }
+
+        if (!incorrect().isEmpty()) {
+            report.append("\n-- every incorrect case (confident ones first) --\n");
+            incorrect().forEach(outcome -> report.append(String.format(
+                    "%-12s [%s] expected=%-18s got=%-18s conf=%-6s questions=%d%s%n",
+                    outcome.caseId(), outcome.tier(), outcome.expectedCategory(),
+                    outcome.finalCategory() == null ? "(none)" : outcome.finalCategory(),
+                    outcome.finalConfidence() == null ? "n/a" : String.format("%.2f", outcome.finalConfidence()),
+                    outcome.questionsAsked(), outcome.unresolved() ? "  [unresolved fallback]" : "")));
+        }
+
         if (!unmatchedQuestions().isEmpty()) {
             report.append("\n-- questions with no scripted answer (dataset gaps, answered \"not sure\") --\n");
             unmatchedQuestions().forEach(outcome ->
@@ -225,6 +372,53 @@ public class EvaluationReport {
         }
 
         return report.toString();
+    }
+
+    /**
+     * The human-readable question-quality review (roadmap §33). Aggregate usefulness rates say
+     * how often questions helped; only reading the actual questions says whether they are the
+     * kind of question a customer can answer — discriminative, closed, and about an observable
+     * symptom rather than a diagnosis.
+     *
+     * <p>Separate from {@link #render()} because it is long and is read deliberately, not
+     * skimmed alongside the headline metrics.
+     */
+    public String renderQuestionQuality() {
+        StringBuilder review = new StringBuilder("=== clarification question review ===\n");
+        List<EvaluationOutcome> asked = outcomes.stream()
+                .filter(EvaluationOutcome::askedClarification)
+                .toList();
+
+        if (asked.isEmpty()) {
+            return review.append("(no clarification questions were asked in this run)\n").toString();
+        }
+
+        for (EvaluationOutcome outcome : asked) {
+            review.append(String.format("%n%s [%s]  expected=%s  final=%s%s%n",
+                    outcome.caseId(), outcome.tier(), outcome.expectedCategory(),
+                    outcome.finalCategory() == null ? "(none)" : outcome.finalCategory(),
+                    outcome.finallyCorrect() ? "  CORRECT" : "  WRONG"));
+
+            int index = 1;
+            for (ClarificationRound round : outcome.rounds()) {
+                review.append(String.format("  Q%d: %s%n", index++, round.question()));
+                review.append(String.format("      options: %s%s%n", String.join(" | ", round.options()),
+                        round.offeredNotSure() ? "" : "   <- no \"not sure\" option"));
+                review.append(String.format("      answer:  %s%s%n", round.answer(),
+                        round.answerWasScripted() ? "" : "   <- NOT SCRIPTED (dataset gap)"));
+                review.append(String.format("      top:     %s (%.2f)  ->  %s (%.2f)%n",
+                        round.topBefore(), round.confidenceBefore() == null ? 0 : round.confidenceBefore(),
+                        round.topAfter(), round.confidenceAfter() == null ? 0 : round.confidenceAfter()));
+                review.append(String.format("      margin:  %.2f -> %.2f%n",
+                        round.marginBefore(), round.marginAfter()));
+                review.append(String.format("      helped:  %s%s%s%s%n",
+                        round.wasUseful() ? "YES" : "NO",
+                        round.changedTopCandidate() ? "  (changed top candidate)" : "",
+                        round.increasedMargin() ? "  (widened margin)" : "",
+                        round.increasedConfidence() ? "  (raised confidence)" : ""));
+            }
+        }
+        return review.toString();
     }
 
     private double ratio(long count) {

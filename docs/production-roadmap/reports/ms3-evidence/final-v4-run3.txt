@@ -1,0 +1,1298 @@
+WARNING: A Java agent has been loaded dynamically (C:\Users\orcoh\.m2\repository\net\bytebuddy\byte-buddy-agent\1.14.19\byte-buddy-agent-1.14.19.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+Java HotSpot(TM) 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+Standard Commons Logging discovery in action with spring-jcl: please remove commons-logging.jar from classpath in order to avoid potential conflicts
+23:41:46.923 [main] WARN com.pronto.ai.decision.RoutingDecisionPolicy -- routing.unresolved reason=competing-categories candidates=[general_handyman=0.50,plumbing=0.50] budget=1
+23:42:06.639 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=1/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 200000, Requested 5223. Please try again in 1.566s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:08.361 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=1/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 200000, Requested 5224. Please try again in 1.567s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:08.548 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=2/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 200000, Requested 5224. Please try again in 1.567s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:08.548 [main] ERROR com.pronto.ai.client.OpenAiChatClient -- openai.request.exhausted schema=pronto_issue_routing attempts=2
+org.springframework.web.client.HttpClientErrorException$TooManyRequests: 429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 200000, Requested 5224. Please try again in 1.567s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+	at org.springframework.web.client.HttpClientErrorException.create(HttpClientErrorException.java:130)
+	at org.springframework.web.client.StatusHandler.lambda$defaultHandler$3(StatusHandler.java:86)
+	at org.springframework.web.client.StatusHandler.handle(StatusHandler.java:146)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.applyStatusHandlers(DefaultRestClient.java:707)
+	at org.springframework.web.client.DefaultRestClient.readWithMessageConverters(DefaultRestClient.java:200)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.readBody(DefaultRestClient.java:694)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.body(DefaultRestClient.java:640)
+	at com.pronto.ai.client.OpenAiChatClient.requestStructured(OpenAiChatClient.java:96)
+	at com.pronto.ai.client.OpenAiClassificationClient.classify(OpenAiClassificationClient.java:67)
+	at com.pronto.ai.service.ClassificationService.callClient(ClassificationService.java:151)
+	at com.pronto.ai.service.ClassificationService.classifyResolved(ClassificationService.java:106)
+	at com.pronto.ai.service.ClassificationService.classify(ClassificationService.java:73)
+	at com.pronto.ai.eval.ClassificationEvaluator.runOne(ClassificationEvaluator.java:77)
+	at com.pronto.ai.eval.ClassificationEvaluator.run(ClassificationEvaluator.java:50)
+	at com.pronto.ai.eval.OpenAiClassificationEvaluationRunnerTest.measureRoutingAccuracyAgainstTheLabelledDataset(OpenAiClassificationEvaluationRunnerTest.java:96)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.platform.commons.util.ReflectionUtils.invokeMethod(ReflectionUtils.java:728)
+	at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$ValidatingInvocation.proceed(InvocationInterceptorChain.java:131)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.intercept(TimeoutExtension.java:156)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestableMethod(TimeoutExtension.java:147)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestMethod(TimeoutExtension.java:86)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker$ReflectiveInterceptorCall.lambda$ofVoidMethod$0(InterceptingExecutableInvoker.java:103)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.lambda$invoke$0(InterceptingExecutableInvoker.java:93)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$InterceptedInvocation.proceed(InvocationInterceptorChain.java:106)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.proceed(InvocationInterceptorChain.java:64)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.chainAndInvoke(InvocationInterceptorChain.java:45)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.invoke(InvocationInterceptorChain.java:37)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:92)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:86)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.lambda$invokeTestMethod$7(TestMethodTestDescriptor.java:218)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.invokeTestMethod(TestMethodTestDescriptor.java:214)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:139)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:69)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:151)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.submit(SameThreadHierarchicalTestExecutorService.java:35)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestExecutor.execute(HierarchicalTestExecutor.java:57)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestEngine.execute(HierarchicalTestEngine.java:54)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:198)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:169)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:93)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.lambda$execute$0(EngineExecutionOrchestrator.java:58)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.withInterceptedStreams(EngineExecutionOrchestrator.java:141)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:57)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:103)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:85)
+	at org.junit.platform.launcher.core.DelegatingLauncher.execute(DelegatingLauncher.java:47)
+	at org.apache.maven.surefire.junitplatform.LazyLauncher.execute(LazyLauncher.java:56)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.execute(JUnitPlatformProvider.java:184)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invokeAllTests(JUnitPlatformProvider.java:148)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invoke(JUnitPlatformProvider.java:122)
+	at org.apache.maven.surefire.booter.ForkedBooter.runSuitesInProcess(ForkedBooter.java:385)
+	at org.apache.maven.surefire.booter.ForkedBooter.execute(ForkedBooter.java:162)
+	at org.apache.maven.surefire.booter.ForkedBooter.run(ForkedBooter.java:507)
+	at org.apache.maven.surefire.booter.ForkedBooter.main(ForkedBooter.java:495)
+23:42:08.551 [main] WARN com.pronto.ai.service.ClassificationService -- ai.classification.failed code=AI_SERVICE_ERROR 
+23:42:08.734 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=1/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 200000, Requested 5231. Please try again in 1.569s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:08.921 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=2/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 197695, Requested 5231. Please try again in 877ms. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:08.921 [main] ERROR com.pronto.ai.client.OpenAiChatClient -- openai.request.exhausted schema=pronto_issue_routing attempts=2
+org.springframework.web.client.HttpClientErrorException$TooManyRequests: 429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 197695, Requested 5231. Please try again in 877ms. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+	at org.springframework.web.client.HttpClientErrorException.create(HttpClientErrorException.java:130)
+	at org.springframework.web.client.StatusHandler.lambda$defaultHandler$3(StatusHandler.java:86)
+	at org.springframework.web.client.StatusHandler.handle(StatusHandler.java:146)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.applyStatusHandlers(DefaultRestClient.java:707)
+	at org.springframework.web.client.DefaultRestClient.readWithMessageConverters(DefaultRestClient.java:200)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.readBody(DefaultRestClient.java:694)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.body(DefaultRestClient.java:640)
+	at com.pronto.ai.client.OpenAiChatClient.requestStructured(OpenAiChatClient.java:96)
+	at com.pronto.ai.client.OpenAiClassificationClient.classify(OpenAiClassificationClient.java:67)
+	at com.pronto.ai.service.ClassificationService.callClient(ClassificationService.java:151)
+	at com.pronto.ai.service.ClassificationService.classifyResolved(ClassificationService.java:106)
+	at com.pronto.ai.service.ClassificationService.classify(ClassificationService.java:73)
+	at com.pronto.ai.eval.ClassificationEvaluator.runOne(ClassificationEvaluator.java:77)
+	at com.pronto.ai.eval.ClassificationEvaluator.run(ClassificationEvaluator.java:50)
+	at com.pronto.ai.eval.OpenAiClassificationEvaluationRunnerTest.measureRoutingAccuracyAgainstTheLabelledDataset(OpenAiClassificationEvaluationRunnerTest.java:96)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.platform.commons.util.ReflectionUtils.invokeMethod(ReflectionUtils.java:728)
+	at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$ValidatingInvocation.proceed(InvocationInterceptorChain.java:131)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.intercept(TimeoutExtension.java:156)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestableMethod(TimeoutExtension.java:147)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestMethod(TimeoutExtension.java:86)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker$ReflectiveInterceptorCall.lambda$ofVoidMethod$0(InterceptingExecutableInvoker.java:103)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.lambda$invoke$0(InterceptingExecutableInvoker.java:93)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$InterceptedInvocation.proceed(InvocationInterceptorChain.java:106)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.proceed(InvocationInterceptorChain.java:64)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.chainAndInvoke(InvocationInterceptorChain.java:45)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.invoke(InvocationInterceptorChain.java:37)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:92)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:86)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.lambda$invokeTestMethod$7(TestMethodTestDescriptor.java:218)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.invokeTestMethod(TestMethodTestDescriptor.java:214)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:139)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:69)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:151)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.submit(SameThreadHierarchicalTestExecutorService.java:35)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestExecutor.execute(HierarchicalTestExecutor.java:57)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestEngine.execute(HierarchicalTestEngine.java:54)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:198)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:169)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:93)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.lambda$execute$0(EngineExecutionOrchestrator.java:58)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.withInterceptedStreams(EngineExecutionOrchestrator.java:141)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:57)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:103)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:85)
+	at org.junit.platform.launcher.core.DelegatingLauncher.execute(DelegatingLauncher.java:47)
+	at org.apache.maven.surefire.junitplatform.LazyLauncher.execute(LazyLauncher.java:56)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.execute(JUnitPlatformProvider.java:184)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invokeAllTests(JUnitPlatformProvider.java:148)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invoke(JUnitPlatformProvider.java:122)
+	at org.apache.maven.surefire.booter.ForkedBooter.runSuitesInProcess(ForkedBooter.java:385)
+	at org.apache.maven.surefire.booter.ForkedBooter.execute(ForkedBooter.java:162)
+	at org.apache.maven.surefire.booter.ForkedBooter.run(ForkedBooter.java:507)
+	at org.apache.maven.surefire.booter.ForkedBooter.main(ForkedBooter.java:495)
+23:42:08.922 [main] WARN com.pronto.ai.service.ClassificationService -- ai.classification.failed code=AI_SERVICE_ERROR 
+23:42:09.111 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=1/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 197076, Requested 5230. Please try again in 691ms. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:09.296 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=2/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 199904, Requested 5230. Please try again in 1.54s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:09.296 [main] ERROR com.pronto.ai.client.OpenAiChatClient -- openai.request.exhausted schema=pronto_issue_routing attempts=2
+org.springframework.web.client.HttpClientErrorException$TooManyRequests: 429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 199904, Requested 5230. Please try again in 1.54s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+	at org.springframework.web.client.HttpClientErrorException.create(HttpClientErrorException.java:130)
+	at org.springframework.web.client.StatusHandler.lambda$defaultHandler$3(StatusHandler.java:86)
+	at org.springframework.web.client.StatusHandler.handle(StatusHandler.java:146)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.applyStatusHandlers(DefaultRestClient.java:707)
+	at org.springframework.web.client.DefaultRestClient.readWithMessageConverters(DefaultRestClient.java:200)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.readBody(DefaultRestClient.java:694)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.body(DefaultRestClient.java:640)
+	at com.pronto.ai.client.OpenAiChatClient.requestStructured(OpenAiChatClient.java:96)
+	at com.pronto.ai.client.OpenAiClassificationClient.classify(OpenAiClassificationClient.java:67)
+	at com.pronto.ai.service.ClassificationService.callClient(ClassificationService.java:151)
+	at com.pronto.ai.service.ClassificationService.classifyResolved(ClassificationService.java:106)
+	at com.pronto.ai.service.ClassificationService.classify(ClassificationService.java:73)
+	at com.pronto.ai.eval.ClassificationEvaluator.runOne(ClassificationEvaluator.java:77)
+	at com.pronto.ai.eval.ClassificationEvaluator.run(ClassificationEvaluator.java:50)
+	at com.pronto.ai.eval.OpenAiClassificationEvaluationRunnerTest.measureRoutingAccuracyAgainstTheLabelledDataset(OpenAiClassificationEvaluationRunnerTest.java:96)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.platform.commons.util.ReflectionUtils.invokeMethod(ReflectionUtils.java:728)
+	at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$ValidatingInvocation.proceed(InvocationInterceptorChain.java:131)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.intercept(TimeoutExtension.java:156)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestableMethod(TimeoutExtension.java:147)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestMethod(TimeoutExtension.java:86)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker$ReflectiveInterceptorCall.lambda$ofVoidMethod$0(InterceptingExecutableInvoker.java:103)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.lambda$invoke$0(InterceptingExecutableInvoker.java:93)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$InterceptedInvocation.proceed(InvocationInterceptorChain.java:106)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.proceed(InvocationInterceptorChain.java:64)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.chainAndInvoke(InvocationInterceptorChain.java:45)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.invoke(InvocationInterceptorChain.java:37)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:92)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:86)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.lambda$invokeTestMethod$7(TestMethodTestDescriptor.java:218)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.invokeTestMethod(TestMethodTestDescriptor.java:214)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:139)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:69)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:151)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.submit(SameThreadHierarchicalTestExecutorService.java:35)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestExecutor.execute(HierarchicalTestExecutor.java:57)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestEngine.execute(HierarchicalTestEngine.java:54)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:198)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:169)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:93)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.lambda$execute$0(EngineExecutionOrchestrator.java:58)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.withInterceptedStreams(EngineExecutionOrchestrator.java:141)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:57)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:103)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:85)
+	at org.junit.platform.launcher.core.DelegatingLauncher.execute(DelegatingLauncher.java:47)
+	at org.apache.maven.surefire.junitplatform.LazyLauncher.execute(LazyLauncher.java:56)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.execute(JUnitPlatformProvider.java:184)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invokeAllTests(JUnitPlatformProvider.java:148)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invoke(JUnitPlatformProvider.java:122)
+	at org.apache.maven.surefire.booter.ForkedBooter.runSuitesInProcess(ForkedBooter.java:385)
+	at org.apache.maven.surefire.booter.ForkedBooter.execute(ForkedBooter.java:162)
+	at org.apache.maven.surefire.booter.ForkedBooter.run(ForkedBooter.java:507)
+	at org.apache.maven.surefire.booter.ForkedBooter.main(ForkedBooter.java:495)
+23:42:09.297 [main] WARN com.pronto.ai.service.ClassificationService -- ai.classification.failed code=AI_SERVICE_ERROR 
+23:42:09.470 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=1/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 195851, Requested 5230. Please try again in 324ms. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:09.652 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=2/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 198712, Requested 5230. Please try again in 1.182s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:09.652 [main] ERROR com.pronto.ai.client.OpenAiChatClient -- openai.request.exhausted schema=pronto_issue_routing attempts=2
+org.springframework.web.client.HttpClientErrorException$TooManyRequests: 429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 198712, Requested 5230. Please try again in 1.182s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+	at org.springframework.web.client.HttpClientErrorException.create(HttpClientErrorException.java:130)
+	at org.springframework.web.client.StatusHandler.lambda$defaultHandler$3(StatusHandler.java:86)
+	at org.springframework.web.client.StatusHandler.handle(StatusHandler.java:146)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.applyStatusHandlers(DefaultRestClient.java:707)
+	at org.springframework.web.client.DefaultRestClient.readWithMessageConverters(DefaultRestClient.java:200)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.readBody(DefaultRestClient.java:694)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.body(DefaultRestClient.java:640)
+	at com.pronto.ai.client.OpenAiChatClient.requestStructured(OpenAiChatClient.java:96)
+	at com.pronto.ai.client.OpenAiClassificationClient.classify(OpenAiClassificationClient.java:67)
+	at com.pronto.ai.service.ClassificationService.callClient(ClassificationService.java:151)
+	at com.pronto.ai.service.ClassificationService.classifyResolved(ClassificationService.java:106)
+	at com.pronto.ai.service.ClassificationService.classify(ClassificationService.java:73)
+	at com.pronto.ai.eval.ClassificationEvaluator.runOne(ClassificationEvaluator.java:77)
+	at com.pronto.ai.eval.ClassificationEvaluator.run(ClassificationEvaluator.java:50)
+	at com.pronto.ai.eval.OpenAiClassificationEvaluationRunnerTest.measureRoutingAccuracyAgainstTheLabelledDataset(OpenAiClassificationEvaluationRunnerTest.java:96)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.platform.commons.util.ReflectionUtils.invokeMethod(ReflectionUtils.java:728)
+	at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$ValidatingInvocation.proceed(InvocationInterceptorChain.java:131)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.intercept(TimeoutExtension.java:156)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestableMethod(TimeoutExtension.java:147)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestMethod(TimeoutExtension.java:86)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker$ReflectiveInterceptorCall.lambda$ofVoidMethod$0(InterceptingExecutableInvoker.java:103)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.lambda$invoke$0(InterceptingExecutableInvoker.java:93)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$InterceptedInvocation.proceed(InvocationInterceptorChain.java:106)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.proceed(InvocationInterceptorChain.java:64)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.chainAndInvoke(InvocationInterceptorChain.java:45)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.invoke(InvocationInterceptorChain.java:37)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:92)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:86)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.lambda$invokeTestMethod$7(TestMethodTestDescriptor.java:218)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.invokeTestMethod(TestMethodTestDescriptor.java:214)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:139)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:69)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:151)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.submit(SameThreadHierarchicalTestExecutorService.java:35)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestExecutor.execute(HierarchicalTestExecutor.java:57)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestEngine.execute(HierarchicalTestEngine.java:54)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:198)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:169)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:93)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.lambda$execute$0(EngineExecutionOrchestrator.java:58)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.withInterceptedStreams(EngineExecutionOrchestrator.java:141)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:57)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:103)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:85)
+	at org.junit.platform.launcher.core.DelegatingLauncher.execute(DelegatingLauncher.java:47)
+	at org.apache.maven.surefire.junitplatform.LazyLauncher.execute(LazyLauncher.java:56)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.execute(JUnitPlatformProvider.java:184)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invokeAllTests(JUnitPlatformProvider.java:148)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invoke(JUnitPlatformProvider.java:122)
+	at org.apache.maven.surefire.booter.ForkedBooter.runSuitesInProcess(ForkedBooter.java:385)
+	at org.apache.maven.surefire.booter.ForkedBooter.execute(ForkedBooter.java:162)
+	at org.apache.maven.surefire.booter.ForkedBooter.run(ForkedBooter.java:507)
+	at org.apache.maven.surefire.booter.ForkedBooter.main(ForkedBooter.java:495)
+23:42:09.654 [main] WARN com.pronto.ai.service.ClassificationService -- ai.classification.failed code=AI_SERVICE_ERROR 
+23:42:09.835 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=1/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 198584, Requested 5230. Please try again in 1.144s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:11.575 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=1/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 200000, Requested 5319. Please try again in 1.595s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:11.755 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=2/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 197956, Requested 5319. Please try again in 982ms. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:11.756 [main] ERROR com.pronto.ai.client.OpenAiChatClient -- openai.request.exhausted schema=pronto_issue_routing attempts=2
+org.springframework.web.client.HttpClientErrorException$TooManyRequests: 429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 197956, Requested 5319. Please try again in 982ms. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+	at org.springframework.web.client.HttpClientErrorException.create(HttpClientErrorException.java:130)
+	at org.springframework.web.client.StatusHandler.lambda$defaultHandler$3(StatusHandler.java:86)
+	at org.springframework.web.client.StatusHandler.handle(StatusHandler.java:146)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.applyStatusHandlers(DefaultRestClient.java:707)
+	at org.springframework.web.client.DefaultRestClient.readWithMessageConverters(DefaultRestClient.java:200)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.readBody(DefaultRestClient.java:694)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.body(DefaultRestClient.java:640)
+	at com.pronto.ai.client.OpenAiChatClient.requestStructured(OpenAiChatClient.java:96)
+	at com.pronto.ai.client.OpenAiClassificationClient.classify(OpenAiClassificationClient.java:67)
+	at com.pronto.ai.service.ClassificationService.callClient(ClassificationService.java:151)
+	at com.pronto.ai.service.ClassificationService.classifyResolved(ClassificationService.java:106)
+	at com.pronto.ai.service.ClassificationService.classify(ClassificationService.java:73)
+	at com.pronto.ai.eval.ClassificationEvaluator.runOne(ClassificationEvaluator.java:77)
+	at com.pronto.ai.eval.ClassificationEvaluator.run(ClassificationEvaluator.java:50)
+	at com.pronto.ai.eval.OpenAiClassificationEvaluationRunnerTest.measureRoutingAccuracyAgainstTheLabelledDataset(OpenAiClassificationEvaluationRunnerTest.java:96)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.platform.commons.util.ReflectionUtils.invokeMethod(ReflectionUtils.java:728)
+	at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$ValidatingInvocation.proceed(InvocationInterceptorChain.java:131)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.intercept(TimeoutExtension.java:156)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestableMethod(TimeoutExtension.java:147)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestMethod(TimeoutExtension.java:86)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker$ReflectiveInterceptorCall.lambda$ofVoidMethod$0(InterceptingExecutableInvoker.java:103)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.lambda$invoke$0(InterceptingExecutableInvoker.java:93)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$InterceptedInvocation.proceed(InvocationInterceptorChain.java:106)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.proceed(InvocationInterceptorChain.java:64)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.chainAndInvoke(InvocationInterceptorChain.java:45)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.invoke(InvocationInterceptorChain.java:37)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:92)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:86)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.lambda$invokeTestMethod$7(TestMethodTestDescriptor.java:218)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.invokeTestMethod(TestMethodTestDescriptor.java:214)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:139)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:69)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:151)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.submit(SameThreadHierarchicalTestExecutorService.java:35)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestExecutor.execute(HierarchicalTestExecutor.java:57)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestEngine.execute(HierarchicalTestEngine.java:54)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:198)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:169)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:93)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.lambda$execute$0(EngineExecutionOrchestrator.java:58)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.withInterceptedStreams(EngineExecutionOrchestrator.java:141)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:57)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:103)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:85)
+	at org.junit.platform.launcher.core.DelegatingLauncher.execute(DelegatingLauncher.java:47)
+	at org.apache.maven.surefire.junitplatform.LazyLauncher.execute(LazyLauncher.java:56)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.execute(JUnitPlatformProvider.java:184)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invokeAllTests(JUnitPlatformProvider.java:148)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invoke(JUnitPlatformProvider.java:122)
+	at org.apache.maven.surefire.booter.ForkedBooter.runSuitesInProcess(ForkedBooter.java:385)
+	at org.apache.maven.surefire.booter.ForkedBooter.execute(ForkedBooter.java:162)
+	at org.apache.maven.surefire.booter.ForkedBooter.run(ForkedBooter.java:507)
+	at org.apache.maven.surefire.booter.ForkedBooter.main(ForkedBooter.java:495)
+23:42:11.756 [main] WARN com.pronto.ai.service.ClassificationService -- ai.classification.failed code=AI_SERVICE_ERROR 
+23:42:11.948 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=1/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 196916, Requested 5233. Please try again in 644ms. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:12.131 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=2/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 200000, Requested 5233. Please try again in 1.569s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:12.131 [main] ERROR com.pronto.ai.client.OpenAiChatClient -- openai.request.exhausted schema=pronto_issue_routing attempts=2
+org.springframework.web.client.HttpClientErrorException$TooManyRequests: 429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 200000, Requested 5233. Please try again in 1.569s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+	at org.springframework.web.client.HttpClientErrorException.create(HttpClientErrorException.java:130)
+	at org.springframework.web.client.StatusHandler.lambda$defaultHandler$3(StatusHandler.java:86)
+	at org.springframework.web.client.StatusHandler.handle(StatusHandler.java:146)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.applyStatusHandlers(DefaultRestClient.java:707)
+	at org.springframework.web.client.DefaultRestClient.readWithMessageConverters(DefaultRestClient.java:200)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.readBody(DefaultRestClient.java:694)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.body(DefaultRestClient.java:640)
+	at com.pronto.ai.client.OpenAiChatClient.requestStructured(OpenAiChatClient.java:96)
+	at com.pronto.ai.client.OpenAiClassificationClient.classify(OpenAiClassificationClient.java:67)
+	at com.pronto.ai.service.ClassificationService.callClient(ClassificationService.java:151)
+	at com.pronto.ai.service.ClassificationService.classifyResolved(ClassificationService.java:106)
+	at com.pronto.ai.service.ClassificationService.classify(ClassificationService.java:73)
+	at com.pronto.ai.eval.ClassificationEvaluator.runOne(ClassificationEvaluator.java:77)
+	at com.pronto.ai.eval.ClassificationEvaluator.run(ClassificationEvaluator.java:50)
+	at com.pronto.ai.eval.OpenAiClassificationEvaluationRunnerTest.measureRoutingAccuracyAgainstTheLabelledDataset(OpenAiClassificationEvaluationRunnerTest.java:96)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.platform.commons.util.ReflectionUtils.invokeMethod(ReflectionUtils.java:728)
+	at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$ValidatingInvocation.proceed(InvocationInterceptorChain.java:131)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.intercept(TimeoutExtension.java:156)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestableMethod(TimeoutExtension.java:147)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestMethod(TimeoutExtension.java:86)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker$ReflectiveInterceptorCall.lambda$ofVoidMethod$0(InterceptingExecutableInvoker.java:103)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.lambda$invoke$0(InterceptingExecutableInvoker.java:93)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$InterceptedInvocation.proceed(InvocationInterceptorChain.java:106)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.proceed(InvocationInterceptorChain.java:64)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.chainAndInvoke(InvocationInterceptorChain.java:45)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.invoke(InvocationInterceptorChain.java:37)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:92)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:86)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.lambda$invokeTestMethod$7(TestMethodTestDescriptor.java:218)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.invokeTestMethod(TestMethodTestDescriptor.java:214)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:139)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:69)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:151)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.submit(SameThreadHierarchicalTestExecutorService.java:35)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestExecutor.execute(HierarchicalTestExecutor.java:57)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestEngine.execute(HierarchicalTestEngine.java:54)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:198)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:169)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:93)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.lambda$execute$0(EngineExecutionOrchestrator.java:58)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.withInterceptedStreams(EngineExecutionOrchestrator.java:141)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:57)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:103)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:85)
+	at org.junit.platform.launcher.core.DelegatingLauncher.execute(DelegatingLauncher.java:47)
+	at org.apache.maven.surefire.junitplatform.LazyLauncher.execute(LazyLauncher.java:56)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.execute(JUnitPlatformProvider.java:184)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invokeAllTests(JUnitPlatformProvider.java:148)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invoke(JUnitPlatformProvider.java:122)
+	at org.apache.maven.surefire.booter.ForkedBooter.runSuitesInProcess(ForkedBooter.java:385)
+	at org.apache.maven.surefire.booter.ForkedBooter.execute(ForkedBooter.java:162)
+	at org.apache.maven.surefire.booter.ForkedBooter.run(ForkedBooter.java:507)
+	at org.apache.maven.surefire.booter.ForkedBooter.main(ForkedBooter.java:495)
+23:42:12.131 [main] WARN com.pronto.ai.service.ClassificationService -- ai.classification.failed code=AI_SERVICE_ERROR 
+23:42:12.307 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=1/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 195685, Requested 5228. Please try again in 273ms. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:12.493 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=2/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 198526, Requested 5228. Please try again in 1.126s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:12.493 [main] ERROR com.pronto.ai.client.OpenAiChatClient -- openai.request.exhausted schema=pronto_issue_routing attempts=2
+org.springframework.web.client.HttpClientErrorException$TooManyRequests: 429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 198526, Requested 5228. Please try again in 1.126s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+	at org.springframework.web.client.HttpClientErrorException.create(HttpClientErrorException.java:130)
+	at org.springframework.web.client.StatusHandler.lambda$defaultHandler$3(StatusHandler.java:86)
+	at org.springframework.web.client.StatusHandler.handle(StatusHandler.java:146)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.applyStatusHandlers(DefaultRestClient.java:707)
+	at org.springframework.web.client.DefaultRestClient.readWithMessageConverters(DefaultRestClient.java:200)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.readBody(DefaultRestClient.java:694)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.body(DefaultRestClient.java:640)
+	at com.pronto.ai.client.OpenAiChatClient.requestStructured(OpenAiChatClient.java:96)
+	at com.pronto.ai.client.OpenAiClassificationClient.classify(OpenAiClassificationClient.java:67)
+	at com.pronto.ai.service.ClassificationService.callClient(ClassificationService.java:151)
+	at com.pronto.ai.service.ClassificationService.classifyResolved(ClassificationService.java:106)
+	at com.pronto.ai.service.ClassificationService.classify(ClassificationService.java:73)
+	at com.pronto.ai.eval.ClassificationEvaluator.runOne(ClassificationEvaluator.java:77)
+	at com.pronto.ai.eval.ClassificationEvaluator.run(ClassificationEvaluator.java:50)
+	at com.pronto.ai.eval.OpenAiClassificationEvaluationRunnerTest.measureRoutingAccuracyAgainstTheLabelledDataset(OpenAiClassificationEvaluationRunnerTest.java:96)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.platform.commons.util.ReflectionUtils.invokeMethod(ReflectionUtils.java:728)
+	at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$ValidatingInvocation.proceed(InvocationInterceptorChain.java:131)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.intercept(TimeoutExtension.java:156)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestableMethod(TimeoutExtension.java:147)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestMethod(TimeoutExtension.java:86)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker$ReflectiveInterceptorCall.lambda$ofVoidMethod$0(InterceptingExecutableInvoker.java:103)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.lambda$invoke$0(InterceptingExecutableInvoker.java:93)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$InterceptedInvocation.proceed(InvocationInterceptorChain.java:106)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.proceed(InvocationInterceptorChain.java:64)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.chainAndInvoke(InvocationInterceptorChain.java:45)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.invoke(InvocationInterceptorChain.java:37)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:92)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:86)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.lambda$invokeTestMethod$7(TestMethodTestDescriptor.java:218)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.invokeTestMethod(TestMethodTestDescriptor.java:214)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:139)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:69)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:151)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.submit(SameThreadHierarchicalTestExecutorService.java:35)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestExecutor.execute(HierarchicalTestExecutor.java:57)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestEngine.execute(HierarchicalTestEngine.java:54)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:198)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:169)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:93)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.lambda$execute$0(EngineExecutionOrchestrator.java:58)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.withInterceptedStreams(EngineExecutionOrchestrator.java:141)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:57)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:103)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:85)
+	at org.junit.platform.launcher.core.DelegatingLauncher.execute(DelegatingLauncher.java:47)
+	at org.apache.maven.surefire.junitplatform.LazyLauncher.execute(LazyLauncher.java:56)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.execute(JUnitPlatformProvider.java:184)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invokeAllTests(JUnitPlatformProvider.java:148)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invoke(JUnitPlatformProvider.java:122)
+	at org.apache.maven.surefire.booter.ForkedBooter.runSuitesInProcess(ForkedBooter.java:385)
+	at org.apache.maven.surefire.booter.ForkedBooter.execute(ForkedBooter.java:162)
+	at org.apache.maven.surefire.booter.ForkedBooter.run(ForkedBooter.java:507)
+	at org.apache.maven.surefire.booter.ForkedBooter.main(ForkedBooter.java:495)
+23:42:12.493 [main] WARN com.pronto.ai.service.ClassificationService -- ai.classification.failed code=AI_SERVICE_ERROR 
+23:42:12.674 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=1/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 198347, Requested 5223. Please try again in 1.071s. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:15.885 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=1/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 197760, Requested 5223. Please try again in 894ms. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:16.057 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=2/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 196779, Requested 5223. Please try again in 600ms. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:16.058 [main] ERROR com.pronto.ai.client.OpenAiChatClient -- openai.request.exhausted schema=pronto_issue_routing attempts=2
+org.springframework.web.client.HttpClientErrorException$TooManyRequests: 429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 196779, Requested 5223. Please try again in 600ms. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+	at org.springframework.web.client.HttpClientErrorException.create(HttpClientErrorException.java:130)
+	at org.springframework.web.client.StatusHandler.lambda$defaultHandler$3(StatusHandler.java:86)
+	at org.springframework.web.client.StatusHandler.handle(StatusHandler.java:146)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.applyStatusHandlers(DefaultRestClient.java:707)
+	at org.springframework.web.client.DefaultRestClient.readWithMessageConverters(DefaultRestClient.java:200)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.readBody(DefaultRestClient.java:694)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.body(DefaultRestClient.java:640)
+	at com.pronto.ai.client.OpenAiChatClient.requestStructured(OpenAiChatClient.java:96)
+	at com.pronto.ai.client.OpenAiClassificationClient.classify(OpenAiClassificationClient.java:67)
+	at com.pronto.ai.service.ClassificationService.callClient(ClassificationService.java:151)
+	at com.pronto.ai.service.ClassificationService.classifyResolved(ClassificationService.java:106)
+	at com.pronto.ai.service.ClassificationService.classify(ClassificationService.java:73)
+	at com.pronto.ai.eval.ClassificationEvaluator.runOne(ClassificationEvaluator.java:77)
+	at com.pronto.ai.eval.ClassificationEvaluator.run(ClassificationEvaluator.java:50)
+	at com.pronto.ai.eval.OpenAiClassificationEvaluationRunnerTest.measureRoutingAccuracyAgainstTheLabelledDataset(OpenAiClassificationEvaluationRunnerTest.java:96)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.platform.commons.util.ReflectionUtils.invokeMethod(ReflectionUtils.java:728)
+	at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$ValidatingInvocation.proceed(InvocationInterceptorChain.java:131)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.intercept(TimeoutExtension.java:156)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestableMethod(TimeoutExtension.java:147)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestMethod(TimeoutExtension.java:86)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker$ReflectiveInterceptorCall.lambda$ofVoidMethod$0(InterceptingExecutableInvoker.java:103)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.lambda$invoke$0(InterceptingExecutableInvoker.java:93)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$InterceptedInvocation.proceed(InvocationInterceptorChain.java:106)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.proceed(InvocationInterceptorChain.java:64)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.chainAndInvoke(InvocationInterceptorChain.java:45)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.invoke(InvocationInterceptorChain.java:37)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:92)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:86)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.lambda$invokeTestMethod$7(TestMethodTestDescriptor.java:218)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.invokeTestMethod(TestMethodTestDescriptor.java:214)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:139)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:69)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:151)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.submit(SameThreadHierarchicalTestExecutorService.java:35)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestExecutor.execute(HierarchicalTestExecutor.java:57)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestEngine.execute(HierarchicalTestEngine.java:54)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:198)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:169)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:93)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.lambda$execute$0(EngineExecutionOrchestrator.java:58)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.withInterceptedStreams(EngineExecutionOrchestrator.java:141)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:57)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:103)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:85)
+	at org.junit.platform.launcher.core.DelegatingLauncher.execute(DelegatingLauncher.java:47)
+	at org.apache.maven.surefire.junitplatform.LazyLauncher.execute(LazyLauncher.java:56)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.execute(JUnitPlatformProvider.java:184)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invokeAllTests(JUnitPlatformProvider.java:148)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invoke(JUnitPlatformProvider.java:122)
+	at org.apache.maven.surefire.booter.ForkedBooter.runSuitesInProcess(ForkedBooter.java:385)
+	at org.apache.maven.surefire.booter.ForkedBooter.execute(ForkedBooter.java:162)
+	at org.apache.maven.surefire.booter.ForkedBooter.run(ForkedBooter.java:507)
+	at org.apache.maven.surefire.booter.ForkedBooter.main(ForkedBooter.java:495)
+23:42:16.058 [main] WARN com.pronto.ai.service.ClassificationService -- ai.classification.failed code=AI_SERVICE_ERROR 
+23:42:16.243 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=1/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 196149, Requested 5221. Please try again in 411ms. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:16.428 [main] WARN com.pronto.ai.client.OpenAiChatClient -- openai.request.failed schema=pronto_issue_routing attempt=2/2 reason=429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 195530, Requested 5221. Please try again in 225ms. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+23:42:16.428 [main] ERROR com.pronto.ai.client.OpenAiChatClient -- openai.request.exhausted schema=pronto_issue_routing attempts=2
+org.springframework.web.client.HttpClientErrorException$TooManyRequests: 429 Too Many Requests: "{<EOL>    "error": {<EOL>        "message": "Rate limit reached for gpt-4o-mini in organization org-umMjjPpHWXpublHZCBSOfZh1 on tokens per min (TPM): Limit 200000, Used 195530, Requested 5221. Please try again in 225ms. Visit https://platform.openai.com/account/rate-limits to learn more.",<EOL>        "type": "tokens",<EOL>        "param": null,<EOL>        "code": "rate_limit_exceeded"<EOL>    }<EOL>}<EOL>"
+	at org.springframework.web.client.HttpClientErrorException.create(HttpClientErrorException.java:130)
+	at org.springframework.web.client.StatusHandler.lambda$defaultHandler$3(StatusHandler.java:86)
+	at org.springframework.web.client.StatusHandler.handle(StatusHandler.java:146)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.applyStatusHandlers(DefaultRestClient.java:707)
+	at org.springframework.web.client.DefaultRestClient.readWithMessageConverters(DefaultRestClient.java:200)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.readBody(DefaultRestClient.java:694)
+	at org.springframework.web.client.DefaultRestClient$DefaultResponseSpec.body(DefaultRestClient.java:640)
+	at com.pronto.ai.client.OpenAiChatClient.requestStructured(OpenAiChatClient.java:96)
+	at com.pronto.ai.client.OpenAiClassificationClient.classify(OpenAiClassificationClient.java:67)
+	at com.pronto.ai.service.ClassificationService.callClient(ClassificationService.java:151)
+	at com.pronto.ai.service.ClassificationService.classifyResolved(ClassificationService.java:106)
+	at com.pronto.ai.service.ClassificationService.classify(ClassificationService.java:73)
+	at com.pronto.ai.eval.ClassificationEvaluator.runOne(ClassificationEvaluator.java:77)
+	at com.pronto.ai.eval.ClassificationEvaluator.run(ClassificationEvaluator.java:50)
+	at com.pronto.ai.eval.OpenAiClassificationEvaluationRunnerTest.measureRoutingAccuracyAgainstTheLabelledDataset(OpenAiClassificationEvaluationRunnerTest.java:96)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.platform.commons.util.ReflectionUtils.invokeMethod(ReflectionUtils.java:728)
+	at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$ValidatingInvocation.proceed(InvocationInterceptorChain.java:131)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.intercept(TimeoutExtension.java:156)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestableMethod(TimeoutExtension.java:147)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestMethod(TimeoutExtension.java:86)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker$ReflectiveInterceptorCall.lambda$ofVoidMethod$0(InterceptingExecutableInvoker.java:103)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.lambda$invoke$0(InterceptingExecutableInvoker.java:93)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$InterceptedInvocation.proceed(InvocationInterceptorChain.java:106)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.proceed(InvocationInterceptorChain.java:64)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.chainAndInvoke(InvocationInterceptorChain.java:45)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.invoke(InvocationInterceptorChain.java:37)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:92)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:86)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.lambda$invokeTestMethod$7(TestMethodTestDescriptor.java:218)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.invokeTestMethod(TestMethodTestDescriptor.java:214)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:139)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:69)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:151)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.submit(SameThreadHierarchicalTestExecutorService.java:35)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestExecutor.execute(HierarchicalTestExecutor.java:57)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestEngine.execute(HierarchicalTestEngine.java:54)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:198)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:169)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:93)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.lambda$execute$0(EngineExecutionOrchestrator.java:58)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.withInterceptedStreams(EngineExecutionOrchestrator.java:141)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:57)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:103)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:85)
+	at org.junit.platform.launcher.core.DelegatingLauncher.execute(DelegatingLauncher.java:47)
+	at org.apache.maven.surefire.junitplatform.LazyLauncher.execute(LazyLauncher.java:56)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.execute(JUnitPlatformProvider.java:184)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invokeAllTests(JUnitPlatformProvider.java:148)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invoke(JUnitPlatformProvider.java:122)
+	at org.apache.maven.surefire.booter.ForkedBooter.runSuitesInProcess(ForkedBooter.java:385)
+	at org.apache.maven.surefire.booter.ForkedBooter.execute(ForkedBooter.java:162)
+	at org.apache.maven.surefire.booter.ForkedBooter.run(ForkedBooter.java:507)
+	at org.apache.maven.surefire.booter.ForkedBooter.main(ForkedBooter.java:495)
+23:42:16.429 [main] WARN com.pronto.ai.service.ClassificationService -- ai.classification.failed code=AI_SERVICE_ERROR 
+23:42:41.690 [main] WARN com.pronto.ai.decision.RoutingDecisionPolicy -- routing.unresolved reason=competing-categories candidates=[electrical=0.50,plumbing=0.50] budget=1
+23:42:48.689 [main] WARN com.pronto.ai.decision.RoutingDecisionPolicy -- routing.unresolved reason=competing-categories candidates=[general_handyman=0.50,plumbing=0.30,electrical=0.20] budget=1
+23:43:23.664 [main] WARN com.pronto.ai.decision.RoutingDecisionPolicy -- routing.unresolved reason=competing-categories candidates=[locksmith=0.50,general_handyman=0.50] budget=1
+
+=== run metadata ===
+promptVersion   classification-v4
+model           gpt-4o-mini
+datasetVersion  ms3-2026-08-25h
+datasetSize     91 (core=64, challenge=27)
+thresholds      maxQuestions=2 minConfidence=0.7 minCandidateMargin=0.15 plausibleCandidate=0.2 highConfidence=0.85
+
+################ CORE (approved regression set — the MS3 target) ################
+=== Pronto routing evaluation ===
+cases                          64
+initial accuracy               78.1%
+FINAL accuracy                 84.4%
+final accuracy (committed only) 98.1%  [n=54]
+unresolved fallback rate       1.6%  [1 case(s)]
+  of which scored correct      1   <- counted as correct above, but nothing was decided
+clarification rate             14.1%
+avg questions per case         0.14
+useful clarification rate      88.9%  [of 9 question(s) asked]
+unnecessary clarification rate 1.6%  [cases interrupted for nothing]
+"not sure" offered             100.0% of questions
+high-confidence wrong (>=0.85)  1
+pipeline failures              9
+total AI calls                 73  (1.14 per case)
+latency avg / max              1503 ms / 4965 ms
+
+-- questions asked per case --
+0 question(s)              55 case(s)   85.9%
+1 question(s)               9 case(s)   14.1%
+
+-- how to read these --
+initial accuracy                before any clarification question; when the first pass
+                                asked instead of committing, its strongest candidate counts
+FINAL accuracy                  after the full clarification flow, INCLUDING unresolved
+                                fallbacks. The headline number.
+final accuracy (committed only) accuracy where Pronto actually picked a category. Fallbacks
+                                excluded from numerator and denominator — "when it commits,
+                                how often is it right?"
+unresolved fallback rate        cases routed to general_handyman because two materially
+                                different categories were still live. Rising here without a
+                                rising committed-only accuracy means more caution, not more
+                                correctness.
+high-confidence wrong           wrong AND confident: the worst failure mode, since nothing
+                                was asked before sending the wrong trade.
+
+-- per-category final accuracy --
+ac_hvac                 100.0%
+appliance_repair         80.0%
+electrical              100.0%
+general_handyman         71.4%
+locksmith               100.0%
+painting                 83.3%
+plumbing                 73.7%
+
+-- confusion (expected -> predicted) --
+plumbing -> (none)                            4
+appliance_repair -> (none)                    2
+general_handyman -> (none)                    2
+painting -> (none)                            1
+plumbing -> painting                          1
+
+-- high-confidence wrong (most dangerous) --
+case-085     expected=plumbing           got=painting           conf=0.90
+
+-- pipeline failures --
+case-041     ApiException: OpenAI request failed after 2 attempt(s).
+case-042     ApiException: OpenAI request failed after 2 attempt(s).
+case-043     ApiException: OpenAI request failed after 2 attempt(s).
+case-044     ApiException: OpenAI request failed after 2 attempt(s).
+case-046     ApiException: OpenAI request failed after 2 attempt(s).
+case-047     ApiException: OpenAI request failed after 2 attempt(s).
+case-048     ApiException: OpenAI request failed after 2 attempt(s).
+case-050     ApiException: OpenAI request failed after 2 attempt(s).
+case-051     ApiException: OpenAI request failed after 2 attempt(s).
+
+-- every incorrect case (confident ones first) --
+case-085     [core] expected=plumbing           got=painting           conf=0.90   questions=1
+case-041     [core] expected=appliance_repair   got=(none)             conf=n/a    questions=0
+case-042     [core] expected=plumbing           got=(none)             conf=n/a    questions=0
+case-043     [core] expected=plumbing           got=(none)             conf=n/a    questions=0
+case-044     [core] expected=appliance_repair   got=(none)             conf=n/a    questions=0
+case-046     [core] expected=plumbing           got=(none)             conf=n/a    questions=0
+case-047     [core] expected=painting           got=(none)             conf=n/a    questions=0
+case-048     [core] expected=general_handyman   got=(none)             conf=n/a    questions=0
+case-050     [core] expected=plumbing           got=(none)             conf=n/a    questions=0
+case-051     [core] expected=general_handyman   got=(none)             conf=n/a    questions=0
+
+
+################ CHALLENGE (adversarial / multi-trade — reported separately) ################
+=== Pronto routing evaluation ===
+cases                          27
+initial accuracy               66.7%
+FINAL accuracy                 92.6%
+final accuracy (committed only) 95.8%  [n=24]
+unresolved fallback rate       11.1%  [3 case(s)]
+  of which scored correct      2   <- counted as correct above, but nothing was decided
+clarification rate             55.6%
+avg questions per case         0.59
+useful clarification rate      87.5%  [of 16 question(s) asked]
+unnecessary clarification rate 3.7%  [cases interrupted for nothing]
+"not sure" offered             100.0% of questions
+high-confidence wrong (>=0.85)  0
+pipeline failures              0
+total AI calls                 43  (1.59 per case)
+latency avg / max              2581 ms / 4486 ms
+
+-- questions asked per case --
+0 question(s)              12 case(s)   44.4%
+1 question(s)              14 case(s)   51.9%
+2 question(s)               1 case(s)    3.7%
+
+-- how to read these --
+initial accuracy                before any clarification question; when the first pass
+                                asked instead of committing, its strongest candidate counts
+FINAL accuracy                  after the full clarification flow, INCLUDING unresolved
+                                fallbacks. The headline number.
+final accuracy (committed only) accuracy where Pronto actually picked a category. Fallbacks
+                                excluded from numerator and denominator — "when it commits,
+                                how often is it right?"
+unresolved fallback rate        cases routed to general_handyman because two materially
+                                different categories were still live. Rising here without a
+                                rising committed-only accuracy means more caution, not more
+                                correctness.
+high-confidence wrong           wrong AND confident: the worst failure mode, since nothing
+                                was asked before sending the wrong trade.
+
+-- per-category final accuracy --
+ac_hvac                 100.0%
+appliance_repair        100.0%
+electrical                0.0%
+general_handyman        100.0%
+locksmith               100.0%
+plumbing                 66.7%
+
+-- confusion (expected -> predicted) --
+electrical -> plumbing                        1
+plumbing -> general_handyman                  1
+
+-- cases whose description cannot separate the trades --
+asked as required        100.0%  [11 of 11]
+
+-- every incorrect case (confident ones first) --
+case-068     [challenge] expected=electrical         got=plumbing           conf=0.80   questions=0
+case-062     [challenge] expected=plumbing           got=general_handyman   conf=n/a    questions=1  [unresolved fallback]
+
+-- questions with no scripted answer (dataset gaps, answered "not sure") --
+case-062     מאיפה בדיוק מגיעים המים? מהחיבור של לוח החשמל או מצינור מים?
+case-069     איזה חלק לא עובד? (המנעול או הדלת?)
+case-079     מה לא עובד? האם הדלת עצמה לא נסגרת או שהמנעול לא נכנס?
+
+
+################ ALL CASES ################
+=== Pronto routing evaluation ===
+cases                          91
+initial accuracy               74.7%
+FINAL accuracy                 86.8%
+final accuracy (committed only) 97.4%  [n=78]
+unresolved fallback rate       4.4%  [4 case(s)]
+  of which scored correct      3   <- counted as correct above, but nothing was decided
+clarification rate             26.4%
+avg questions per case         0.27
+useful clarification rate      88.0%  [of 25 question(s) asked]
+unnecessary clarification rate 2.2%  [cases interrupted for nothing]
+"not sure" offered             100.0% of questions
+high-confidence wrong (>=0.85)  1
+pipeline failures              9
+total AI calls                 116  (1.27 per case)
+latency avg / max              1822 ms / 4965 ms
+
+-- questions asked per case --
+0 question(s)              67 case(s)   73.6%
+1 question(s)              23 case(s)   25.3%
+2 question(s)               1 case(s)    1.1%
+
+-- how to read these --
+initial accuracy                before any clarification question; when the first pass
+                                asked instead of committing, its strongest candidate counts
+FINAL accuracy                  after the full clarification flow, INCLUDING unresolved
+                                fallbacks. The headline number.
+final accuracy (committed only) accuracy where Pronto actually picked a category. Fallbacks
+                                excluded from numerator and denominator — "when it commits,
+                                how often is it right?"
+unresolved fallback rate        cases routed to general_handyman because two materially
+                                different categories were still live. Rising here without a
+                                rising committed-only accuracy means more caution, not more
+                                correctness.
+high-confidence wrong           wrong AND confident: the worst failure mode, since nothing
+                                was asked before sending the wrong trade.
+
+-- per-category final accuracy --
+ac_hvac                 100.0%
+appliance_repair         83.3%
+electrical               87.5%
+general_handyman         88.2%
+locksmith               100.0%
+painting                 83.3%
+plumbing                 72.7%
+
+-- confusion (expected -> predicted) --
+plumbing -> (none)                            4
+appliance_repair -> (none)                    2
+general_handyman -> (none)                    2
+electrical -> plumbing                        1
+painting -> (none)                            1
+plumbing -> general_handyman                  1
+plumbing -> painting                          1
+
+-- high-confidence wrong (most dangerous) --
+case-085     expected=plumbing           got=painting           conf=0.90
+
+-- pipeline failures --
+case-041     ApiException: OpenAI request failed after 2 attempt(s).
+case-042     ApiException: OpenAI request failed after 2 attempt(s).
+case-043     ApiException: OpenAI request failed after 2 attempt(s).
+case-044     ApiException: OpenAI request failed after 2 attempt(s).
+case-046     ApiException: OpenAI request failed after 2 attempt(s).
+case-047     ApiException: OpenAI request failed after 2 attempt(s).
+case-048     ApiException: OpenAI request failed after 2 attempt(s).
+case-050     ApiException: OpenAI request failed after 2 attempt(s).
+case-051     ApiException: OpenAI request failed after 2 attempt(s).
+
+-- cases whose description cannot separate the trades --
+asked as required        100.0%  [11 of 11]
+
+-- every incorrect case (confident ones first) --
+case-085     [core] expected=plumbing           got=painting           conf=0.90   questions=1
+case-068     [challenge] expected=electrical         got=plumbing           conf=0.80   questions=0
+case-041     [core] expected=appliance_repair   got=(none)             conf=n/a    questions=0
+case-042     [core] expected=plumbing           got=(none)             conf=n/a    questions=0
+case-043     [core] expected=plumbing           got=(none)             conf=n/a    questions=0
+case-044     [core] expected=appliance_repair   got=(none)             conf=n/a    questions=0
+case-046     [core] expected=plumbing           got=(none)             conf=n/a    questions=0
+case-047     [core] expected=painting           got=(none)             conf=n/a    questions=0
+case-048     [core] expected=general_handyman   got=(none)             conf=n/a    questions=0
+case-050     [core] expected=plumbing           got=(none)             conf=n/a    questions=0
+case-051     [core] expected=general_handyman   got=(none)             conf=n/a    questions=0
+case-062     [challenge] expected=plumbing           got=general_handyman   conf=n/a    questions=1  [unresolved fallback]
+
+-- questions with no scripted answer (dataset gaps, answered "not sure") --
+case-062     מאיפה בדיוק מגיעים המים? מהחיבור של לוח החשמל או מצינור מים?
+case-069     איזה חלק לא עובד? (המנעול או הדלת?)
+case-079     מה לא עובד? האם הדלת עצמה לא נסגרת או שהמנעול לא נכנס?
+
+=== clarification question review ===
+
+case-004 [core]  expected=plumbing  final=plumbing  CORRECT
+  Q1: מה בדיוק רטוב? הדוד עצמו או צינור/חיבור לידו?
+      options: הדוד עצמו | צינור/חיבור לידו | לא בטוח
+      answer:  מהדוד עצמו
+      top:     plumbing (0.70)  ->  plumbing (0.90)
+      margin:  0.40 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-009 [core]  expected=appliance_repair  final=appliance_repair  CORRECT
+  Q1: האם המים מגיעים מהחלקים הפנימיים של מכונת הכביסה או מהצנרת שסביבה?
+      options: מהחלקים הפנימיים של מכונת הכביסה | מהצנרת שסביבה | לא בטוח
+      answer:  מהמכשיר עצמו
+      top:     appliance_repair (0.80)  ->  appliance_repair (0.95)
+      margin:  0.60 -> 0.90
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-010 [core]  expected=plumbing  final=plumbing  CORRECT
+  Q1: האם המים מגיעים מהחלקים הפנימיים של מכונת הכביסה או מהצנרת/חיבורי מים?
+      options: מכונת הכביסה | צנרת/חיבורי מים | לא בטוח
+      answer:  מהברז או מחיבור הניקוז בקיר
+      top:     appliance_repair (0.80)  ->  plumbing (0.95)
+      margin:  0.60 -> 0.90
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-024 [core]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה הבעיה בדירה?
+      options: דליפה | חשמל לא עובד | דלת לא סוגרת | לא בטוח
+      answer:  אני לא בטוח/ה
+      top:     general_handyman (0.50)  ->  general_handyman (0.00)
+      margin:  0.00 -> 0.00
+      helped:  NO
+
+case-049 [core]  expected=appliance_repair  final=appliance_repair  CORRECT
+  Q1: מאיפה המים מגיעים? מה יש מתחת לכיור או ליד מכונת הכביסה?
+      options: מתחת לכיור | ליד מכונת הכביסה | לא בטוח
+      answer:  מהמדיח עצמו, נוזל מהדלת שלו
+      top:     plumbing (0.70)  ->  appliance_repair (0.90)
+      margin:  0.40 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-052 [core]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה בדיוק לא נסגר טוב? הדלת עצמה או המנעול?
+      options: הדלת עצמה | המנעול | לא בטוח
+      answer:  הבריח לא נכנס והמנעול תקוע
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-053 [core]  expected=appliance_repair  final=appliance_repair  CORRECT
+  Q1: האם הבעיה קורת עם מכשיר מסוים או בכל הבית?
+      options: מכשיר מסוים | בכל הבית | לא בטוח
+      answer:  רק כשאני מפעיל את מכונת הכביסה, שום דבר אחר לא מקפיץ
+      top:     electrical (0.50)  ->  appliance_repair (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-054 [core]  expected=electrical  final=electrical  CORRECT
+  Q1: האם הבעיה קורת עם מכשיר מסוים או בכל הבית?
+      options: מכשיר מסוים | בכל הבית | לא בטוח
+      answer:  גם כשהכל מכובה זה קופץ מעצמו, לא קשור למכשיר מסוים
+      top:     electrical (0.50)  ->  electrical (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-062 [challenge]  expected=plumbing  final=general_handyman  WRONG
+  Q1: מאיפה בדיוק מגיעים המים? מהחיבור של לוח החשמל או מצינור מים?
+      options: לוח החשמל | צינור מים | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     plumbing (0.60)  ->  general_handyman (0.00)
+      margin:  0.20 -> 0.00
+      helped:  YES  (changed top candidate)
+
+case-065 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה בדיוק מקולקל בבית?
+      options: חשמל | אינסטלציה | כללי | לא בטוח
+      answer:  אני לא בטוח/ה
+      top:     general_handyman (0.50)  ->  general_handyman (0.00)
+      margin:  0.20 -> 0.20
+      helped:  NO
+
+case-069 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: איזה חלק לא עובד?
+      options: המנעול | הדלת | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     locksmith (0.50)  ->  locksmith (0.50)
+      margin:  0.00 -> 0.00
+      helped:  NO
+  Q2: איזה חלק לא עובד? (המנעול או הדלת?)
+      options: המנעול | הדלת | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     locksmith (0.50)  ->  locksmith (0.80)
+      margin:  0.00 -> 0.60
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-071 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה בדיוק לא נסגר טוב? הדלת עצמה או המנעול?
+      options: הדלת עצמה | המנעול | לא בטוח
+      answer:  הבריח לא נכנס והמנעול תקוע
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-072 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה בדיוק לא נסגר טוב? הדלת עצמה או המנעול?
+      options: הדלת עצמה | המנעול | לא בטוח
+      answer:  הדלת עצמה נתקעת במשקוף, המנעול תקין
+      top:     general_handyman (0.50)  ->  general_handyman (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-073 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה בדיוק נתקע? הדלת עצמה או המנעול?
+      options: הדלת עצמה | המנעול | לא בטוח
+      answer:  היא מתחככת במשקוף למטה
+      top:     general_handyman (0.50)  ->  general_handyman (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-074 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה בדיוק קשה לסגור? הדלת עצמה או המנעול?
+      options: הדלת עצמה | המנעול | לא בטוח
+      answer:  צריך ללחוץ חזק כדי שהמפתח יסתובב, הדלת עצמה בסדר
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-075 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה בדיוק לא ננעל? המנעול או הדלת עצמה?
+      options: המנעול | הדלת | לא בטוח
+      answer:  המנעול עצמו עובד כשהדלת פתוחה, פשוט לא מתיישר עם החור במשקוף
+      top:     locksmith (0.50)  ->  general_handyman (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-076 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה בדיוק לא נסגר? הדלת עצמה או המנעול?
+      options: הדלת עצמה | המנעול | לא בטוח
+      answer:  הלשונית של המנעול לא נכנסת חזרה פנימה
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-079 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה לא עובד? האם הדלת עצמה לא נסגרת או שהמנעול לא נכנס?
+      options: הדלת לא נסגרת | המנעול לא נכנס | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     locksmith (0.50)  ->  general_handyman (0.00)
+      margin:  0.00 -> 0.00
+      helped:  YES  (changed top candidate)
+
+case-085 [core]  expected=plumbing  final=painting  WRONG
+  Q1: מה מקור הרטיבות?
+      options: דליפה מצינור | רטיבות מהקירות | לא בטוח
+      answer:  לא, לא תיקנו כלום, הרטיבות עדיין שם ומתפשטת
+      top:     painting (0.60)  ->  painting (0.90)
+      margin:  0.20 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-090 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה הבעיה עם דלת הכניסה? האם הבעיה היא במנעול או בדלת עצמה?
+      options: במנעול | בדלת עצמה | לא בטוח
+      answer:  הצילינדר לא מסתובב בכלל
+      top:     general_handyman (0.50)  ->  locksmith (0.95)
+      margin:  0.00 -> 0.90
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-091 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה הבעיה עם הדלת? היא לא נסגרת או שהמנעול לא עובד?
+      options: הדלת לא נסגרת | המנעול לא עובד | לא בטוח
+      answer:  היא ירדה ומתחככת ברצפה
+      top:     general_handyman (0.50)  ->  general_handyman (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-092 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה הבעיה בדלת?
+      options: הדלת לא נסגרת | הנעילה לא עובדת | הדלת רופפת | לא בטוח
+      answer:  המנעול נשבר ולא ננעל
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-093 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה בדיוק לא עובד בדלת? האם הבעיה היא עם המנעול או עם הדלת עצמה?
+      options: המנעול לא עובד | הדלת עצמה לא עובדת | לא בטוח
+      answer:  המשקוף התנפח והדלת לא נכנסת
+      top:     general_handyman (0.50)  ->  general_handyman (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-094 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה בדיוק לא תקין בדלת?
+      options: הדלת לא נסגרת | הנעילה לא פועלת | הדלת רטובה | לא בטוח
+      answer:  הידית מסתובבת אבל הבריח לא זז
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 167.8 s <<< FAILURE! -- in com.pronto.ai.eval.OpenAiClassificationEvaluationRunnerTest
+[ERROR] com.pronto.ai.eval.OpenAiClassificationEvaluationRunnerTest.measureRoutingAccuracyAgainstTheLabelledDataset -- Time elapsed: 167.7 s <<< FAILURE!
+java.lang.AssertionError: 
+[the pipeline itself must not error; accuracy is reported, not asserted] 
+Expecting empty but was: [EvaluationOutcome[caseId=case-041, expectedCategory=appliance_repair, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=388, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-042, expectedCategory=plumbing, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=370, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-043, expectedCategory=plumbing, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=375, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-044, expectedCategory=appliance_repair, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=357, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-046, expectedCategory=plumbing, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=356, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-047, expectedCategory=painting, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=374, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-048, expectedCategory=general_handyman, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=362, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-050, expectedCategory=plumbing, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=349, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-051, expectedCategory=general_handyman, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=371, failureReason=ApiException: OpenAI request failed after 2 attempt(s).]]
+	at com.pronto.ai.eval.OpenAiClassificationEvaluationRunnerTest.measureRoutingAccuracyAgainstTheLabelledDataset(OpenAiClassificationEvaluationRunnerTest.java:140)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+
+[ERROR] Failures: 
+[ERROR]   OpenAiClassificationEvaluationRunnerTest.measureRoutingAccuracyAgainstTheLabelledDataset:140 [the pipeline itself must not error; accuracy is reported, not asserted] 
+Expecting empty but was: [EvaluationOutcome[caseId=case-041, expectedCategory=appliance_repair, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=388, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-042, expectedCategory=plumbing, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=370, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-043, expectedCategory=plumbing, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=375, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-044, expectedCategory=appliance_repair, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=357, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-046, expectedCategory=plumbing, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=356, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-047, expectedCategory=painting, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=374, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-048, expectedCategory=general_handyman, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=362, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-050, expectedCategory=plumbing, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=349, failureReason=ApiException: OpenAI request failed after 2 attempt(s).],
+    EvaluationOutcome[caseId=case-051, expectedCategory=general_handyman, tier=core, initialCategory=null, finalCategory=null, finalConfidence=null, questionsAsked=0, lowConfidence=false, unresolved=false, unmatchedQuestion=null, expectedClarification=false, rounds=[], latencyMillis=371, failureReason=ApiException: OpenAI request failed after 2 attempt(s).]]
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test (default-test) on project pronto-backend: There are test failures.
+[ERROR] 
+[ERROR] Please refer to C:\Users\orcoh\Pronto\backend\target\surefire-reports for the individual test results.
+[ERROR] Please refer to dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

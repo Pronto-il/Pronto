@@ -263,9 +263,25 @@ public class RoutingDecisionPolicy {
     }
 
     /**
-     * A question is usable only if it has text, at least two options, and is not a repeat.
-     * {@code distinguishesBetween} is filtered to real categories so a debugging/validation
-     * consumer never sees an invented code.
+     * Answer options the customer sees, after normalisation.
+     *
+     * <p>Lower bound of two is definitional — a "choice" of one is not a question. The upper
+     * bound is five because the product asks for 2–4 real alternatives plus a "not sure"
+     * escape (roadmap §11); a longer list on a phone is a menu nobody reads, and is usually a
+     * sign the model bundled several distinctions into one question instead of asking the one
+     * that discriminates.
+     */
+    static final int MIN_OPTIONS = 2;
+    static final int MAX_OPTIONS = 5;
+
+    /**
+     * A question is usable only if it has text, a sane set of distinct options, and is not a
+     * repeat. {@code distinguishesBetween} is filtered to real categories so a
+     * debugging/validation consumer never sees an invented code.
+     *
+     * <p>Every rejection here ends the conversation and commits instead, which is the safe
+     * direction: the worst case is one question fewer, never one more, and never a question
+     * the customer cannot actually answer.
      */
     private ClarificationQuestion usableQuestion(ClassificationResponse response, List<ServiceCategory> categories,
                                                   List<ClarificationExchange> priorExchanges) {
@@ -273,8 +289,14 @@ public class RoutingDecisionPolicy {
         if (question == null || question.question() == null || question.question().isBlank()) {
             return null;
         }
-        if (question.options().size() < 2) {
-            log.warn("Discarding clarification question with fewer than two answer options.");
+
+        List<String> options = distinctOptions(question.options());
+        if (options.size() < MIN_OPTIONS) {
+            log.warn("Discarding clarification question with fewer than {} distinct answer options.", MIN_OPTIONS);
+            return null;
+        }
+        if (options.size() > MAX_OPTIONS) {
+            log.warn("Discarding clarification question with {} options (max {}).", options.size(), MAX_OPTIONS);
             return null;
         }
         if (ClarificationDeduplicator.isDuplicate(question.question(), priorExchanges)) {
@@ -293,7 +315,36 @@ public class RoutingDecisionPolicy {
                 ? "q" + (priorExchanges == null ? 0 : priorExchanges.size() + 1)
                 : question.id();
 
-        return new ClarificationQuestion(id, question.question().trim(), question.options(), distinguishes);
+        return new ClarificationQuestion(id, question.question().trim(), options, distinguishes);
+    }
+
+    /**
+     * Trims, drops blanks, and removes duplicates — comparing case- and punctuation-
+     * insensitively via the same normalisation the duplicate-question check uses, so
+     * "כן" and "כן." do not both reach the customer as separate buttons.
+     *
+     * <p>Two options meaning the same thing is not a cosmetic flaw: the customer picks one,
+     * the answer carries no information, and a clarification round is spent for nothing. The
+     * first spelling of each distinct option wins, preserving the model's ordering.
+     */
+    private List<String> distinctOptions(List<String> options) {
+        if (options == null) {
+            return List.of();
+        }
+        List<String> distinct = new ArrayList<>();
+        List<String> seen = new ArrayList<>();
+        for (String option : options) {
+            if (option == null || option.isBlank()) {
+                continue;
+            }
+            String normalized = ClarificationDeduplicator.normalize(option);
+            if (normalized.isEmpty() || seen.contains(normalized)) {
+                continue;
+            }
+            seen.add(normalized);
+            distinct.add(option.trim());
+        }
+        return List.copyOf(distinct);
     }
 
     private double clamp(double confidence) {

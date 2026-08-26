@@ -69,7 +69,24 @@ final class FewShotExamples {
             new Example(
                     "\"The bedroom door rubs against the frame and will not close.\" No lock mentioned.",
                     "general_handyman — the door leaf/hinge/alignment is what fails. It would be "
-                            + "locksmith only if the lock, cylinder or key were the failing part.")
+                            + "locksmith only if the lock, cylinder or key were the failing part."),
+            new Example(
+                    "\"The front door will not lock — the bolt does not go in and the key jams.\"",
+                    "locksmith. The failing part is the lock mechanism itself, not the door leaf."),
+            // Completes the pattern the AC/breaker trio above already uses: two examples that
+            // commit because the separating fact is present, then the same symptom with that
+            // fact removed. Without this third case the two committing examples generalise into
+            // "a door that will not close is general_handyman", which is how the identically
+            // worded lock and leaf cases both routed to Handyman at high confidence.
+            new Example(
+                    "\"The door does not close properly.\" Nothing else stated — no mention of rubbing, "
+                            + "hinges, the bolt or the key.",
+                    "ASK, distinguishing locksmith from general_handyman. This is the same symptom as "
+                            + "the two examples above with the deciding fact missing: a binding leaf and a "
+                            + "failed lock produce the identical sentence. One closed question — is it the "
+                            + "door itself that catches on the frame, or the lock/bolt that will not "
+                            + "engage? — separates them. Committing here is a coin flip wearing a "
+                            + "confidence score.")
     );
 
     private FewShotExamples() {

@@ -4,6 +4,9 @@ import com.pronto.ai.dto.ClarificationExchange;
 import com.pronto.ai.dto.ImageAttachment;
 import com.pronto.ai.dto.LikelyIssue;
 import com.pronto.ai.dto.ProfessionalBriefResponse;
+import com.pronto.ai.dto.ClassificationStatus;
+import com.pronto.ai.dto.ClassificationSuggestion;
+import com.pronto.ai.prompt.ClassificationPromptBuilder;
 import com.pronto.ai.service.ClassificationService;
 import com.pronto.ai.service.IssueImageResolver;
 import com.pronto.ai.service.ProfessionalBriefService;
@@ -12,6 +15,7 @@ import com.pronto.common.exception.ErrorCode;
 import com.pronto.issues.entity.Issue;
 import com.pronto.issues.entity.IssueBrief;
 import com.pronto.issues.entity.IssueBriefStatus;
+import com.pronto.issues.entity.IssueClassification;
 import com.pronto.issues.entity.IssueImage;
 import com.pronto.issues.entity.IssueUrgencyType;
 import com.pronto.issues.repository.IssueBriefRepository;
@@ -89,7 +93,7 @@ class IssueBriefServiceTest {
     private IssueBriefService service(boolean recordFinalClassification) {
         return new IssueBriefService(issueRepository, issueImageRepository, clarificationRepository,
                 classificationRepository, briefRepository, professionalBriefService, classificationService,
-                imageResolver, recordFinalClassification);
+                imageResolver, recordFinalClassification, "gpt-4o-mini");
     }
 
     private ProfessionalBriefResponse someBrief() {
@@ -175,6 +179,31 @@ class IssueBriefServiceTest {
         // A telemetry failure must not stop the brief.
         Mockito.verify(professionalBriefService)
                 .generateFromResolved(anyString(), anyList(), anyLong(), any(), anyList());
+    }
+
+    /**
+     * Without the prompt and model on the row, the stored drift signal is uninterpretable
+     * across a prompt bump or a model upgrade — the disagreement rate could move because
+     * routing changed or because the thing routing was replaced, and the row could not say
+     * which. See {@code V52__alter_issue_classifications_add_prompt_and_model.sql}.
+     */
+    @Test
+    void storedTelemetryRecordsWhichPromptAndModelProducedIt() {
+        when(professionalBriefService.generateFromResolved(anyString(), anyList(), anyLong(), any(), anyList()))
+                .thenReturn(someBrief());
+        when(classificationService.classifyResolved(anyString(), anyList(), any(), anyList()))
+                .thenReturn(new ClassificationSuggestion(ClassificationStatus.CLASSIFIED, CATEGORY_ID,
+                        "plumbing", 0.91, false, false, null, List.of(), List.of()));
+        when(classificationRepository.findById(ISSUE_ID)).thenReturn(Optional.empty());
+
+        service(true).generateFor(ISSUE_ID);
+
+        ArgumentCaptor<IssueClassification> saved = ArgumentCaptor.forClass(IssueClassification.class);
+        Mockito.verify(classificationRepository).save(saved.capture());
+        assertThat(saved.getValue().getPromptVersion())
+                .isEqualTo(ClassificationPromptBuilder.PROMPT_VERSION);
+        assertThat(saved.getValue().getModel()).isEqualTo("gpt-4o-mini");
+        assertThat(saved.getValue().getAiCategoryCode()).isEqualTo("plumbing");
     }
 
     @Test

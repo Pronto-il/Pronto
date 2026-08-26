@@ -1,0 +1,345 @@
+WARNING: A Java agent has been loaded dynamically (C:\Users\orcoh\.m2\repository\net\bytebuddy\byte-buddy-agent\1.14.19\byte-buddy-agent-1.14.19.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+Java HotSpot(TM) 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+Standard Commons Logging discovery in action with spring-jcl: please remove commons-logging.jar from classpath in order to avoid potential conflicts
+22:03:50.349 [main] WARN com.pronto.ai.client.ClassificationResponseParser -- ai.classification.parse candidates=0 primary=null — the routing policy will fall back.
+22:03:54.612 [main] WARN com.pronto.ai.client.ClassificationResponseParser -- ai.classification.parse candidates=0 primary=null — the routing policy will fall back.
+22:03:54.612 [main] WARN com.pronto.ai.decision.RoutingDecisionPolicy -- routing.unresolved reason=no-valid-candidate candidates=0
+
+=== run metadata ===
+promptVersion   classification-v3
+model           gpt-4o-mini
+datasetVersion  ms3-2026-08-25b
+datasetSize     70 (core=62, challenge=8)
+thresholds      maxQuestions=2 minConfidence=0.7 minCandidateMargin=0.15 plausibleCandidate=0.2 highConfidence=0.85
+
+################ CORE (approved regression set — the MS3 target) ################
+=== Pronto routing evaluation ===
+cases                          62
+initial accuracy               90.3%
+FINAL accuracy                 95.2%
+final accuracy (committed only) 95.1%  [n=61]
+unresolved fallback rate       1.6%  [1 case(s)]
+  of which scored correct      1   <- counted as correct above, but nothing was decided
+clarification rate             16.1%
+avg questions per case         0.23
+useful clarification rate      64.3%  [of 14 question(s) asked]
+unnecessary clarification rate 1.6%  [cases interrupted for nothing]
+"not sure" offered             85.7% of questions
+high-confidence wrong (>=0.85)  2
+pipeline failures              0
+total AI calls                 76  (1.23 per case)
+latency avg / max              2014 ms / 6310 ms
+
+-- questions asked per case --
+0 question(s)              52 case(s)   83.9%
+1 question(s)               6 case(s)    9.7%
+2 question(s)               4 case(s)    6.5%
+
+-- how to read these --
+initial accuracy                before any clarification question; when the first pass
+                                asked instead of committing, its strongest candidate counts
+FINAL accuracy                  after the full clarification flow, INCLUDING unresolved
+                                fallbacks. The headline number.
+final accuracy (committed only) accuracy where Pronto actually picked a category. Fallbacks
+                                excluded from numerator and denominator — "when it commits,
+                                how often is it right?"
+unresolved fallback rate        cases routed to general_handyman because two materially
+                                different categories were still live. Rising here without a
+                                rising committed-only accuracy means more caution, not more
+                                correctness.
+high-confidence wrong           wrong AND confident: the worst failure mode, since nothing
+                                was asked before sending the wrong trade.
+
+-- per-category final accuracy --
+ac_hvac                 100.0%
+appliance_repair         90.0%
+electrical              100.0%
+general_handyman        100.0%
+locksmith               100.0%
+painting                100.0%
+plumbing                 89.5%
+
+-- confusion (expected -> predicted) --
+appliance_repair -> electrical                1
+plumbing -> appliance_repair                  1
+plumbing -> electrical                        1
+
+-- high-confidence wrong (most dangerous) --
+case-053     expected=appliance_repair   got=electrical         conf=0.90
+case-058     expected=plumbing           got=appliance_repair   conf=0.90
+
+-- every incorrect case (confident ones first) --
+case-053     [core] expected=appliance_repair   got=electrical         conf=0.90   questions=0
+case-058     [core] expected=plumbing           got=appliance_repair   conf=0.90   questions=0
+case-062     [core] expected=plumbing           got=electrical         conf=0.80   questions=2
+
+-- questions with no scripted answer (dataset gaps, answered "not sure") --
+case-039     האם הל leaks מתרחשים מהברז עצמו או ממקום אחר?
+case-051     מה בדיוק מונע מהדלת להיסגר? האם זה קשור לנעילה או שהדלת עצמה נוגעת במסילה?
+case-062     האם המים נוזלים ממקום סמוך או מהלוח עצמו?
+
+
+################ CHALLENGE (adversarial / multi-trade — reported separately) ################
+=== Pronto routing evaluation ===
+cases                          8
+initial accuracy               100.0%
+FINAL accuracy                 87.5%
+final accuracy (committed only) 87.5%  [n=8]
+unresolved fallback rate       0.0%  [0 case(s)]
+  of which scored correct      0   <- counted as correct above, but nothing was decided
+clarification rate             25.0%
+avg questions per case         0.50
+useful clarification rate      75.0%  [of 4 question(s) asked]
+unnecessary clarification rate 0.0%  [cases interrupted for nothing]
+"not sure" offered             75.0% of questions
+high-confidence wrong (>=0.85)  1
+pipeline failures              0
+total AI calls                 12  (1.50 per case)
+latency avg / max              2632 ms / 6530 ms
+
+-- questions asked per case --
+0 question(s)               6 case(s)   75.0%
+1 question(s)               0 case(s)    0.0%
+2 question(s)               2 case(s)   25.0%
+
+-- how to read these --
+initial accuracy                before any clarification question; when the first pass
+                                asked instead of committing, its strongest candidate counts
+FINAL accuracy                  after the full clarification flow, INCLUDING unresolved
+                                fallbacks. The headline number.
+final accuracy (committed only) accuracy where Pronto actually picked a category. Fallbacks
+                                excluded from numerator and denominator — "when it commits,
+                                how often is it right?"
+unresolved fallback rate        cases routed to general_handyman because two materially
+                                different categories were still live. Rising here without a
+                                rising committed-only accuracy means more caution, not more
+                                correctness.
+high-confidence wrong           wrong AND confident: the worst failure mode, since nothing
+                                was asked before sending the wrong trade.
+
+-- per-category final accuracy --
+ac_hvac                 100.0%
+appliance_repair        100.0%
+general_handyman        100.0%
+locksmith               100.0%
+plumbing                 66.7%
+
+-- confusion (expected -> predicted) --
+plumbing -> electrical                        1
+
+-- high-confidence wrong (most dangerous) --
+case-068     expected=plumbing           got=electrical         conf=0.90
+
+-- every incorrect case (confident ones first) --
+case-068     [challenge] expected=plumbing           got=electrical         conf=0.90   questions=2
+
+-- questions with no scripted answer (dataset gaps, answered "not sure") --
+case-068     מה בדיוק לא מחמם את המים?
+
+
+################ ALL CASES ################
+=== Pronto routing evaluation ===
+cases                          70
+initial accuracy               91.4%
+FINAL accuracy                 94.3%
+final accuracy (committed only) 94.2%  [n=69]
+unresolved fallback rate       1.4%  [1 case(s)]
+  of which scored correct      1   <- counted as correct above, but nothing was decided
+clarification rate             17.1%
+avg questions per case         0.26
+useful clarification rate      66.7%  [of 18 question(s) asked]
+unnecessary clarification rate 1.4%  [cases interrupted for nothing]
+"not sure" offered             83.3% of questions
+high-confidence wrong (>=0.85)  3
+pipeline failures              0
+total AI calls                 88  (1.26 per case)
+latency avg / max              2085 ms / 6530 ms
+
+-- questions asked per case --
+0 question(s)              58 case(s)   82.9%
+1 question(s)               6 case(s)    8.6%
+2 question(s)               6 case(s)    8.6%
+
+-- how to read these --
+initial accuracy                before any clarification question; when the first pass
+                                asked instead of committing, its strongest candidate counts
+FINAL accuracy                  after the full clarification flow, INCLUDING unresolved
+                                fallbacks. The headline number.
+final accuracy (committed only) accuracy where Pronto actually picked a category. Fallbacks
+                                excluded from numerator and denominator — "when it commits,
+                                how often is it right?"
+unresolved fallback rate        cases routed to general_handyman because two materially
+                                different categories were still live. Rising here without a
+                                rising committed-only accuracy means more caution, not more
+                                correctness.
+high-confidence wrong           wrong AND confident: the worst failure mode, since nothing
+                                was asked before sending the wrong trade.
+
+-- per-category final accuracy --
+ac_hvac                 100.0%
+appliance_repair         91.7%
+electrical              100.0%
+general_handyman        100.0%
+locksmith               100.0%
+painting                100.0%
+plumbing                 86.4%
+
+-- confusion (expected -> predicted) --
+plumbing -> electrical                        2
+appliance_repair -> electrical                1
+plumbing -> appliance_repair                  1
+
+-- high-confidence wrong (most dangerous) --
+case-053     expected=appliance_repair   got=electrical         conf=0.90
+case-058     expected=plumbing           got=appliance_repair   conf=0.90
+case-068     expected=plumbing           got=electrical         conf=0.90
+
+-- every incorrect case (confident ones first) --
+case-053     [core] expected=appliance_repair   got=electrical         conf=0.90   questions=0
+case-058     [core] expected=plumbing           got=appliance_repair   conf=0.90   questions=0
+case-068     [challenge] expected=plumbing           got=electrical         conf=0.90   questions=2
+case-062     [core] expected=plumbing           got=electrical         conf=0.80   questions=2
+
+-- questions with no scripted answer (dataset gaps, answered "not sure") --
+case-039     האם הל leaks מתרחשים מהברז עצמו או ממקום אחר?
+case-051     מה בדיוק מונע מהדלת להיסגר? האם זה קשור לנעילה או שהדלת עצמה נוגעת במסילה?
+case-062     האם המים נוזלים ממקום סמוך או מהלוח עצמו?
+case-068     מה בדיוק לא מחמם את המים?
+
+=== clarification question review ===
+
+case-009 [core]  expected=appliance_repair  final=appliance_repair  CORRECT
+  Q1: איפה בדיוק יש מים: מתחת למכונת הכביסה או ממערכת הצנרת מסביבה?
+      options: מתחת למכונת הכביסה | ממערכת הצנרת מסביבה | לא בטוח
+      answer:  מהמכשיר עצמו
+      top:     appliance_repair (0.70)  ->  appliance_repair (0.90)
+      margin:  0.40 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-010 [core]  expected=plumbing  final=plumbing  CORRECT
+  Q1: איפה בדיוק המים שנמצאים מתחת למכונת הכביסה?
+      options: מכונת הכביסה דולפת | מים נובעים מצנרת או פיצוץ | לא בטוח | לא יודע
+      answer:  מהברז או מחיבור הניקוז בקיר
+      top:     appliance_repair (0.50)  ->  plumbing (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-024 [core]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: איזה סוג של בעיה יש בדירה?
+      options: דליפה | תקלה חשמלית | בעיה במנעול | תיקון מכשירים | אחר   <- no "not sure" option
+      answer:  אני לא בטוח/ה
+      top:     null (0.00)  ->  general_handyman (0.50)
+      margin:  0.00 -> 0.00
+      helped:  NO
+  Q2: מה הבעיה שצריך לבדוק בדירה?
+      options: תקלת חשמל | דליפת מים | בעיה במכשירים | דלת לא נטרקת   <- no "not sure" option
+      answer:  אני לא בטוח/ה
+      top:     general_handyman (0.50)  ->  general_handyman (0.00)
+      margin:  0.00 -> 0.00
+      helped:  NO
+
+case-039 [core]  expected=plumbing  final=plumbing  CORRECT
+  Q1: מאיפה נוזל המים?
+      options: מהברז עצמו | מעל הברז | משימוש אחר | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     plumbing (1.00)  ->  plumbing (0.80)
+      margin:  0.90 -> 0.60
+      helped:  NO
+  Q2: האם הל leaks מתרחשים מהברז עצמו או ממקום אחר?
+      options: מהברז | ממקום אחר | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     plumbing (0.80)  ->  plumbing (0.90)
+      margin:  0.60 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-049 [core]  expected=appliance_repair  final=appliance_repair  CORRECT
+  Q1: מאיפה מגיעים המים? ממכונת כביסה או כיריים, או שיש נזילה מהקירות?
+      options: מכונת כביסה | כיריים | נזילה מהקירות | לא בטוח
+      answer:  מהמדיח עצמו, נוזל מהדלת שלו
+      top:     plumbing (0.70)  ->  appliance_repair (0.90)
+      margin:  0.40 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-050 [core]  expected=plumbing  final=plumbing  CORRECT
+  Q1: מאיפה המים מגיעים? מה appliance או רכיב אחר אחר אשם?
+      options: מגוף חימום מים | ממכונת כביסה | מהברז | לא בטוח
+      answer:  מהצנרת מתחת לכיור, לא מהמדיח
+      top:     plumbing (0.50)  ->  plumbing (0.95)
+      margin:  0.00 -> 0.90
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-051 [core]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה בדיוק מונע מהדלת להיסגר? האם זה נעילה לא תקינה או שהדלת rubs על המסגרת?
+      options: נעילה לא תקינה | הדלת rubs על המסגרת | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     general_handyman (0.85)  ->  general_handyman (0.50)
+      margin:  0.70 -> 0.00
+      helped:  NO
+  Q2: מה בדיוק מונע מהדלת להיסגר? האם זה קשור לנעילה או שהדלת עצמה נוגעת במסילה?
+      options: קשור לנעילה | שהדלת נוגעת במסילה | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     general_handyman (0.50)  ->  general_handyman (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-052 [core]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה בדיוק לא נסגר טוב? הדלת עצמה או המנעול?
+      options: הדלת עצמה | המנעול | לא בטוח
+      answer:  הבריח לא נכנס והמנעול תקוע
+      top:     general_handyman (0.60)  ->  locksmith (0.95)
+      margin:  0.20 -> 0.90
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-054 [core]  expected=electrical  final=electrical  CORRECT
+  Q1: איזה מכשירים או אזורים בבית קופצים לחשמל?
+      options: כל הבית | רק מכשירים מסוימים | אחר | לא בטוח
+      answer:  גם כשהכל מכובה זה קופץ מעצמו, לא קשור למכשיר מסוים
+      top:     electrical (0.90)  ->  electrical (1.00)
+      margin:  0.80 -> 1.00
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-062 [core]  expected=plumbing  final=electrical  WRONG
+  Q1: איפה המים נוזלים בדיוק? האם הם נוזלים ממקור מים או יש לכם בעיה עם לוח השנאים?
+      options: ממקור מים | מלוח השנאים | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     plumbing (0.60)  ->  plumbing (0.60)
+      margin:  0.20 -> 0.20
+      helped:  NO
+  Q2: האם המים נוזלים ממקום סמוך או מהלוח עצמו?
+      options: ממקום סמוך | מהלוח עצמו | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     plumbing (0.60)  ->  electrical (0.80)
+      margin:  0.20 -> 0.60
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-065 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה הבעיה העיקרית בבית?
+      options: חוטים חשמליים | נזילת מים | דלת לא סגורה | לא בטוח
+      answer:  אני לא בטוח/ה
+      top:     general_handyman (0.50)  ->  general_handyman (0.50)
+      margin:  0.20 -> 0.25
+      helped:  YES  (widened margin)
+  Q2: איזו בעיה יש לך בבית?
+      options: תקלות חשמל | נזילות מים | תקלות במכשירי חשמל | אחר   <- no "not sure" option
+      answer:  אני לא בטוח/ה
+      top:     general_handyman (0.50)  ->  general_handyman (0.90)
+      margin:  0.25 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-068 [challenge]  expected=plumbing  final=electrical  WRONG
+  Q1: האם יש חשמל בשקע אחר בבית?
+      options: כן | לא | לא בטוח
+      answer:  רק השקע של הדוד, שאר הבית בסדר
+      top:     plumbing (0.85)  ->  plumbing (0.70)
+      margin:  0.70 -> 0.40
+      helped:  NO
+  Q2: מה בדיוק לא מחמם את המים?
+      options: הדוד | החיבור החשמלי | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     plumbing (0.70)  ->  electrical (0.90)
+      margin:  0.40 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+

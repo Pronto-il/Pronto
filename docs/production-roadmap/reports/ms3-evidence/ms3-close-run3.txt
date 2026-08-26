@@ -1,0 +1,450 @@
+WARNING: A Java agent has been loaded dynamically (C:\Users\orcoh\.m2\repository\net\bytebuddy\byte-buddy-agent\1.14.19\byte-buddy-agent-1.14.19.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+Java HotSpot(TM) 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+Standard Commons Logging discovery in action with spring-jcl: please remove commons-logging.jar from classpath in order to avoid potential conflicts
+23:59:18.698 [main] WARN com.pronto.ai.client.ClassificationResponseParser -- ai.classification.parse candidates=0 primary=null — the routing policy will fall back.
+23:59:20.401 [main] WARN com.pronto.ai.decision.RoutingDecisionPolicy -- routing.unresolved reason=competing-categories candidates=[general_handyman=0.50,plumbing=0.30,electrical=0.20] budget=1
+00:00:35.069 [main] WARN com.pronto.ai.decision.RoutingDecisionPolicy -- Discarding clarification question with 7 options (max 5).
+00:00:35.069 [main] WARN com.pronto.ai.decision.RoutingDecisionPolicy -- routing.unresolved reason=competing-categories candidates=[general_handyman=0.50,plumbing=0.30,electrical=0.20] budget=1
+00:00:40.676 [main] WARN com.pronto.ai.decision.RoutingDecisionPolicy -- routing.unresolved reason=competing-categories candidates=[plumbing=0.60,painting=0.40] budget=1
+00:01:17.397 [main] WARN com.pronto.ai.decision.RoutingDecisionPolicy -- routing.unresolved reason=competing-categories candidates=[locksmith=0.50,general_handyman=0.50] budget=1
+00:01:21.253 [main] WARN com.pronto.ai.decision.RoutingDecisionPolicy -- routing.unresolved reason=competing-categories candidates=[locksmith=0.50,general_handyman=0.50] budget=1
+
+=== run metadata ===
+promptVersion   classification-v4
+model           gpt-4o-mini
+datasetVersion  ms3-2026-08-25i
+datasetSize     91 (core=64, challenge=27)
+thresholds      maxQuestions=2 minConfidence=0.7 minCandidateMargin=0.15 plausibleCandidate=0.2 highConfidence=0.85
+
+################ CORE (approved regression set — the MS3 target) ################
+=== Pronto routing evaluation ===
+cases                          64
+initial accuracy               90.6%
+FINAL accuracy                 98.4%
+final accuracy (committed only) 98.4%  [n=63]
+unresolved fallback rate       1.6%  [1 case(s)]
+  of which scored correct      1   <- counted as correct above, but nothing was decided
+clarification rate             18.8%
+avg questions per case         0.19
+useful clarification rate      100.0%  [of 12 question(s) asked]
+unnecessary clarification rate 0.0%  [cases interrupted for nothing]
+"not sure" offered             91.7% of questions
+high-confidence wrong (>=0.85)  1
+pipeline failures              0
+total AI calls                 76  (1.19 per case)
+latency avg / max              1814 ms / 7428 ms
+
+-- questions asked per case --
+0 question(s)              52 case(s)   81.3%
+1 question(s)              12 case(s)   18.8%
+
+-- how to read these --
+initial accuracy                before any clarification question; when the first pass
+                                asked instead of committing, its strongest candidate counts
+FINAL accuracy                  after the full clarification flow, INCLUDING unresolved
+                                fallbacks. The headline number.
+final accuracy (committed only) accuracy where Pronto actually picked a category. Fallbacks
+                                excluded from numerator and denominator — "when it commits,
+                                how often is it right?"
+unresolved fallback rate        cases routed to general_handyman because two materially
+                                different categories were still live. Rising here without a
+                                rising committed-only accuracy means more caution, not more
+                                correctness.
+high-confidence wrong           wrong AND confident: the worst failure mode, since nothing
+                                was asked before sending the wrong trade.
+
+-- per-category final accuracy --
+ac_hvac                 100.0%
+appliance_repair        100.0%
+electrical              100.0%
+general_handyman        100.0%
+locksmith               100.0%
+painting                100.0%
+plumbing                 94.7%
+
+-- confusion (expected -> predicted) --
+plumbing -> painting                          1
+
+-- high-confidence wrong (most dangerous) --
+case-085     expected=plumbing           got=painting           conf=0.90
+
+-- every incorrect case (confident ones first) --
+case-085     [core] expected=plumbing           got=painting           conf=0.90   questions=1
+
+
+################ CHALLENGE (adversarial / multi-trade — reported separately) ################
+=== Pronto routing evaluation ===
+cases                          27
+initial accuracy               70.4%
+FINAL accuracy                 88.9%
+final accuracy (committed only) 95.7%  [n=23]
+unresolved fallback rate       14.8%  [4 case(s)]
+  of which scored correct      2   <- counted as correct above, but nothing was decided
+clarification rate             59.3%
+avg questions per case         0.63
+useful clarification rate      82.4%  [of 17 question(s) asked]
+unnecessary clarification rate 7.4%  [cases interrupted for nothing]
+"not sure" offered             94.1% of questions
+high-confidence wrong (>=0.85)  1
+pipeline failures              0
+total AI calls                 44  (1.63 per case)
+latency avg / max              3310 ms / 9929 ms
+
+-- questions asked per case --
+0 question(s)              11 case(s)   40.7%
+1 question(s)              15 case(s)   55.6%
+2 question(s)               1 case(s)    3.7%
+
+-- how to read these --
+initial accuracy                before any clarification question; when the first pass
+                                asked instead of committing, its strongest candidate counts
+FINAL accuracy                  after the full clarification flow, INCLUDING unresolved
+                                fallbacks. The headline number.
+final accuracy (committed only) accuracy where Pronto actually picked a category. Fallbacks
+                                excluded from numerator and denominator — "when it commits,
+                                how often is it right?"
+unresolved fallback rate        cases routed to general_handyman because two materially
+                                different categories were still live. Rising here without a
+                                rising committed-only accuracy means more caution, not more
+                                correctness.
+high-confidence wrong           wrong AND confident: the worst failure mode, since nothing
+                                was asked before sending the wrong trade.
+
+-- per-category final accuracy --
+ac_hvac                 100.0%
+appliance_repair        100.0%
+electrical              100.0%
+general_handyman        100.0%
+locksmith                90.0%
+plumbing                 33.3%
+
+-- confusion (expected -> predicted) --
+locksmith -> general_handyman                 1
+plumbing -> electrical                        1
+plumbing -> general_handyman                  1
+
+-- high-confidence wrong (most dangerous) --
+case-062     expected=plumbing           got=electrical         conf=0.90
+
+-- cases whose description cannot separate the trades --
+asked as required        100.0%  [11 of 11]
+
+-- every incorrect case (confident ones first) --
+case-062     [challenge] expected=plumbing           got=electrical         conf=0.90   questions=0
+case-067     [challenge] expected=plumbing           got=general_handyman   conf=n/a    questions=1  [unresolved fallback]
+case-080     [challenge] expected=locksmith          got=general_handyman   conf=n/a    questions=1  [unresolved fallback]
+
+-- questions with no scripted answer (dataset gaps, answered "not sure") --
+case-067     האם הנזילה היא מהצנרת או מהכיור עצמו?
+case-069     איזה חלק לא עובד? (מנעול, דלת, או משהו אחר)
+case-079     מה לא עובד? הדלת עצמה או המנעול?
+case-080     מה לא עובד? המנעול או הדלת?
+
+
+################ ALL CASES ################
+=== Pronto routing evaluation ===
+cases                          91
+initial accuracy               84.6%
+FINAL accuracy                 95.6%
+final accuracy (committed only) 97.7%  [n=86]
+unresolved fallback rate       5.5%  [5 case(s)]
+  of which scored correct      3   <- counted as correct above, but nothing was decided
+clarification rate             30.8%
+avg questions per case         0.32
+useful clarification rate      89.7%  [of 29 question(s) asked]
+unnecessary clarification rate 2.2%  [cases interrupted for nothing]
+"not sure" offered             93.1% of questions
+high-confidence wrong (>=0.85)  2
+pipeline failures              0
+total AI calls                 120  (1.32 per case)
+latency avg / max              2258 ms / 9929 ms
+
+-- questions asked per case --
+0 question(s)              63 case(s)   69.2%
+1 question(s)              27 case(s)   29.7%
+2 question(s)               1 case(s)    1.1%
+
+-- how to read these --
+initial accuracy                before any clarification question; when the first pass
+                                asked instead of committing, its strongest candidate counts
+FINAL accuracy                  after the full clarification flow, INCLUDING unresolved
+                                fallbacks. The headline number.
+final accuracy (committed only) accuracy where Pronto actually picked a category. Fallbacks
+                                excluded from numerator and denominator — "when it commits,
+                                how often is it right?"
+unresolved fallback rate        cases routed to general_handyman because two materially
+                                different categories were still live. Rising here without a
+                                rising committed-only accuracy means more caution, not more
+                                correctness.
+high-confidence wrong           wrong AND confident: the worst failure mode, since nothing
+                                was asked before sending the wrong trade.
+
+-- per-category final accuracy --
+ac_hvac                 100.0%
+appliance_repair        100.0%
+electrical              100.0%
+general_handyman        100.0%
+locksmith                93.8%
+painting                100.0%
+plumbing                 86.4%
+
+-- confusion (expected -> predicted) --
+locksmith -> general_handyman                 1
+plumbing -> electrical                        1
+plumbing -> general_handyman                  1
+plumbing -> painting                          1
+
+-- high-confidence wrong (most dangerous) --
+case-062     expected=plumbing           got=electrical         conf=0.90
+case-085     expected=plumbing           got=painting           conf=0.90
+
+-- cases whose description cannot separate the trades --
+asked as required        100.0%  [11 of 11]
+
+-- every incorrect case (confident ones first) --
+case-062     [challenge] expected=plumbing           got=electrical         conf=0.90   questions=0
+case-085     [core] expected=plumbing           got=painting           conf=0.90   questions=1
+case-067     [challenge] expected=plumbing           got=general_handyman   conf=n/a    questions=1  [unresolved fallback]
+case-080     [challenge] expected=locksmith          got=general_handyman   conf=n/a    questions=1  [unresolved fallback]
+
+-- questions with no scripted answer (dataset gaps, answered "not sure") --
+case-067     האם הנזילה היא מהצנרת או מהכיור עצמו?
+case-069     איזה חלק לא עובד? (מנעול, דלת, או משהו אחר)
+case-079     מה לא עובד? הדלת עצמה או המנעול?
+case-080     מה לא עובד? המנעול או הדלת?
+
+=== clarification question review ===
+
+case-004 [core]  expected=plumbing  final=plumbing  CORRECT
+  Q1: מה בדיוק רטוב? האם זה מהדוד או מצינור קרוב?
+      options: מהדוד | מצינור קרוב | לא בטוח
+      answer:  מהדוד עצמו
+      top:     plumbing (0.70)  ->  plumbing (0.95)
+      margin:  0.40 -> 0.90
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-007 [core]  expected=ac_hvac  final=ac_hvac  CORRECT
+  Q1: האם יש מכשירים אחרים שמפסיקים לעבוד כשאתה מפעיל את המזגן?
+      options: כן | לא | לא בטוח
+      answer:  רק כשהמזגן פועל
+      top:     ac_hvac (0.50)  ->  ac_hvac (0.95)
+      margin:  0.00 -> 0.90
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-009 [core]  expected=appliance_repair  final=appliance_repair  CORRECT
+  Q1: האם המים מגיעים מהמכונה עצמה או שיש נזילה מהצנרת?
+      options: המכונה עצמה | הצנרת | לא בטוח
+      answer:  מהמכשיר עצמו
+      top:     appliance_repair (0.50)  ->  appliance_repair (0.95)
+      margin:  0.00 -> 0.90
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-010 [core]  expected=plumbing  final=plumbing  CORRECT
+  Q1: מאיפה מגיעים המים? מהמכונה עצמה או מהצנרת?
+      options: מהמכונה | מהצנרת | לא בטוח
+      answer:  מהברז או מחיבור הניקוז בקיר
+      top:     appliance_repair (0.50)  ->  plumbing (0.95)
+      margin:  0.00 -> 0.90
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-024 [core]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה הבעיה הספציפית בדירה?
+      options: דליפת מים | בעיה בחשמל | בעיה במנעול | בעיה במכשירי חשמל | בעיה כללית   <- no "not sure" option
+      answer:  אני לא בטוח/ה
+      top:     null (0.00)  ->  general_handyman (0.00)
+      margin:  0.00 -> 0.20
+      helped:  YES  (widened margin)
+
+case-049 [core]  expected=appliance_repair  final=appliance_repair  CORRECT
+  Q1: מאיפה מגיעים המים? מהצנרת או מהמכונה?
+      options: מהצנרת | ממכונה | לא בטוח
+      answer:  מהמדיח עצמו, נוזל מהדלת שלו
+      top:     plumbing (0.50)  ->  appliance_repair (0.95)
+      margin:  0.00 -> 0.90
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-050 [core]  expected=plumbing  final=plumbing  CORRECT
+  Q1: מאיפה מגיעים המים? מהצנרת או מהמכונה?
+      options: מהצנרת | ממכונת כביסה/מדיח כלים | לא בטוח
+      answer:  מהצנרת מתחת לכיור, לא מהמדיח
+      top:     plumbing (0.50)  ->  plumbing (0.95)
+      margin:  0.00 -> 0.90
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-051 [core]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה בדיוק לא עובד? האם הבעיה בדלת עצמה או במנעול?
+      options: הבעיה בדלת | הבעיה במנעול | לא בטוח
+      answer:  הדלת עצמה נתקעת במשקוף, המנעול תקין
+      top:     general_handyman (0.50)  ->  general_handyman (0.95)
+      margin:  0.00 -> 0.90
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-052 [core]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה בדיוק לא עובד בדלת? האם הבעיה היא במנעול או בדלת עצמה?
+      options: המנעול לא עובד | הדלת עצמה לא נסגרת טוב | לא בטוח
+      answer:  הבריח לא נכנס והמנעול תקוע
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-053 [core]  expected=appliance_repair  final=appliance_repair  CORRECT
+  Q1: האם הבעיה קורת רק כשאתה מפעיל את המזגן?
+      options: כן | לא | לא בטוח
+      answer:  רק כשאני מפעיל את מכונת הכביסה, שום דבר אחר לא מקפיץ
+      top:     electrical (0.80)  ->  appliance_repair (0.90)
+      margin:  0.60 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-054 [core]  expected=electrical  final=electrical  CORRECT
+  Q1: האם הבעיה קורת רק כשאתה מפעיל את המזגן?
+      options: כן | לא | לא בטוח
+      answer:  גם כשהכל מכובה זה קופץ מעצמו, לא קשור למכשיר מסוים
+      top:     electrical (0.80)  ->  electrical (0.90)
+      margin:  0.60 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-065 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: איזה סוג בעיה יש בבית?
+      options: בעיות אינסטלציה | בעיות חשמל | בעיות כלליות | לא בטוח
+      answer:  אני לא בטוח/ה
+      top:     general_handyman (0.50)  ->  general_handyman (0.00)
+      margin:  0.20 -> 0.20
+      helped:  NO
+
+case-067 [challenge]  expected=plumbing  final=general_handyman  WRONG
+  Q1: האם הנזילה היא מהצנרת או מהכיור עצמו?
+      options: מהצנרת | מהכיור | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     plumbing (0.90)  ->  general_handyman (0.00)
+      margin:  0.80 -> 0.20
+      helped:  YES  (changed top candidate)
+
+case-069 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: איזה חלק לא עובד?
+      options: המנעול | הדלת | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     locksmith (0.50)  ->  locksmith (0.50)
+      margin:  0.00 -> 0.00
+      helped:  NO
+  Q2: איזה חלק לא עובד? (מנעול, דלת, או משהו אחר)
+      options: מנעול | דלת | משהו אחר | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     locksmith (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-071 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה בדיוק לא עובד? האם הבעיה בדלת עצמה או במנעול?
+      options: הבעיה בדלת | הבעיה במנעול | לא בטוח
+      answer:  הבריח לא נכנס והמנעול תקוע
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-072 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה בדיוק לא נסגר טוב? הדלת עצמה או המנעול?
+      options: הדלת עצמה | המנעול | לא בטוח
+      answer:  הדלת עצמה נתקעת במשקוף, המנעול תקין
+      top:     general_handyman (0.50)  ->  general_handyman (0.95)
+      margin:  0.00 -> 0.90
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-073 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה בדיוק נתקע? הדלת עצמה או המנעול?
+      options: הדלת עצמה | המנעול | לא בטוח
+      answer:  היא מתחככת במשקוף למטה
+      top:     general_handyman (0.50)  ->  general_handyman (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-074 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה בדיוק קשה לסגור? הדלת עצמה או המנעול?
+      options: הדלת עצמה | המנעול | לא בטוח
+      answer:  צריך ללחוץ חזק כדי שהמפתח יסתובב, הדלת עצמה בסדר
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-075 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה בדיוק לא עובד? האם הבעיה היא במנעול או בדלת עצמה?
+      options: מנעול | דלת | לא בטוח
+      answer:  המנעול עצמו עובד כשהדלת פתוחה, פשוט לא מתיישר עם החור במשקוף
+      top:     locksmith (0.50)  ->  general_handyman (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-076 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה בדיוק גורם לדלת לא להיסגר?
+      options: הדלת עצמה | המנעול או הבריח   <- no "not sure" option
+      answer:  הלשונית של המנעול לא נכנסת חזרה פנימה
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-079 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה לא עובד? הדלת עצמה או המנעול?
+      options: המנעול | הדלת | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     general_handyman (0.50)  ->  general_handyman (0.00)
+      margin:  0.00 -> 0.00
+      helped:  NO
+
+case-080 [challenge]  expected=locksmith  final=general_handyman  WRONG
+  Q1: מה לא עובד? המנעול או הדלת?
+      options: המנעול | הדלת | לא בטוח
+      answer:  לא בטוח   <- NOT SCRIPTED (dataset gap)
+      top:     locksmith (0.70)  ->  general_handyman (0.00)
+      margin:  0.40 -> 0.00
+      helped:  YES  (changed top candidate)
+
+case-085 [core]  expected=plumbing  final=painting  WRONG
+  Q1: מה גורם לרטיבות בקיר?
+      options: דליפה מצינור | רטיבות מהגשם | לא בטוח
+      answer:  לא, לא תיקנו כלום, הרטיבות עדיין שם ומתפשטת
+      top:     painting (0.60)  ->  painting (0.90)
+      margin:  0.20 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-090 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה הבעיה בדלת?
+      options: הדלת לא ננעלת | הדלת לא נסגרת | הדלת תקועה | לא בטוח
+      answer:  הצילינדר לא מסתובב בכלל
+      top:     general_handyman (0.50)  ->  locksmith (0.95)
+      margin:  0.00 -> 0.90
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-091 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה הבעיה עם הדלת?
+      options: הדלת לא נסגרת | המנעול לא עובד | הדלת חורגת מהמסילה | לא בטוח
+      answer:  היא ירדה ומתחככת ברצפה
+      top:     general_handyman (0.50)  ->  general_handyman (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-092 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה הבעיה בדלת?
+      options: הדלת לא נסגרת | הנעילה לא עובדת | הדלת רופפת | לא בטוח
+      answer:  המנעול נשבר ולא ננעל
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-093 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה הבעיה עם הדלת? האם הבעיה היא במנעול או בדלת עצמה?
+      options: במנעול | בדלת | לא בטוח
+      answer:  המשקוף התנפח והדלת לא נכנסת
+      top:     general_handyman (0.50)  ->  general_handyman (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-094 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה הבעיה בדלת? האם הבעיה היא במנעול או בדלת עצמה?
+      options: במנעול | בדלת | לא בטוח
+      answer:  הידית מסתובבת אבל הבריח לא זז
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+

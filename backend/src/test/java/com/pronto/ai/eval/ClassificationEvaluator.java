@@ -57,8 +57,20 @@ public class ClassificationEvaluator {
                 ? null : categoryIdsByCode.get(testCase.selectedCategory());
 
         List<ClarificationExchange> answers = new ArrayList<>();
+        List<ClarificationRound> rounds = new ArrayList<>();
         String initialCategory = null;
         String unmatchedQuestion = null;
+
+        // Carried across iterations so each pending question can be closed out with the state
+        // that followed its answer — that before/after pair is the whole usefulness signal.
+        ClarificationQuestion pendingQuestion = null;
+        String pendingAnswer = null;
+        boolean pendingAnswerWasScripted = false;
+        String pendingTopBefore = null;
+        Double pendingConfidenceBefore = null;
+        double pendingMarginBefore = 0;
+
+        long startedAtNanos = System.nanoTime();
 
         try {
             for (int round = 0; round <= maxRounds; round++) {
@@ -69,33 +81,71 @@ public class ClassificationEvaluator {
                     initialCategory = bestGuess(suggestion);
                 }
 
+                if (pendingQuestion != null) {
+                    rounds.add(new ClarificationRound(pendingQuestion.question(), pendingQuestion.options(),
+                            pendingAnswer, pendingAnswerWasScripted, pendingTopBefore, bestGuess(suggestion),
+                            pendingConfidenceBefore, suggestion.confidence(), pendingMarginBefore,
+                            margin(suggestion)));
+                    pendingQuestion = null;
+                }
+
                 if (suggestion.status() == ClassificationStatus.CLASSIFIED) {
-                    return new EvaluationOutcome(testCase.id(), testCase.expectedCategory(), initialCategory,
-                            suggestion.categoryCode(), suggestion.confidence(), answers.size(),
-                            suggestion.lowConfidence(), suggestion.unresolved(), unmatchedQuestion, null);
+                    return new EvaluationOutcome(testCase.id(), testCase.expectedCategory(), testCase.tier(),
+                            initialCategory, suggestion.categoryCode(), suggestion.confidence(), answers.size(),
+                            suggestion.lowConfidence(), suggestion.unresolved(), unmatchedQuestion,
+                            testCase.requiresClarification(), List.copyOf(rounds),
+                            elapsedMillis(startedAtNanos), null);
                 }
 
                 ClarificationQuestion question = suggestion.questions().get(0);
                 String answer = scriptedAnswer(testCase, question);
-                if (answer == null) {
+                boolean scripted = answer != null;
+                if (!scripted) {
                     unmatchedQuestion = question.question();
                     answer = fallbackAnswer(question);
                 }
+
+                pendingQuestion = question;
+                pendingAnswer = answer;
+                pendingAnswerWasScripted = scripted;
+                pendingTopBefore = bestGuess(suggestion);
+                pendingConfidenceBefore = suggestion.confidence();
+                pendingMarginBefore = margin(suggestion);
+
                 answers.add(new ClarificationExchange(question.question(), answer));
             }
 
             // Reaching here means the pipeline kept asking past its own configured budget.
             // Recorded as a failure rather than quietly ignored — an unbounded clarification
             // loop is exactly the bug this harness should surface.
-            return new EvaluationOutcome(testCase.id(), testCase.expectedCategory(), initialCategory, null, null,
-                    answers.size(), false, false, unmatchedQuestion,
+            return new EvaluationOutcome(testCase.id(), testCase.expectedCategory(), testCase.tier(),
+                    initialCategory, null, null, answers.size(), false, false, unmatchedQuestion,
+                    testCase.requiresClarification(), List.copyOf(rounds), elapsedMillis(startedAtNanos),
                     "pipeline kept asking questions past the configured maximum of " + maxRounds);
 
         } catch (Exception e) {
-            return new EvaluationOutcome(testCase.id(), testCase.expectedCategory(), initialCategory, null, null,
-                    answers.size(), false, false, unmatchedQuestion,
+            return new EvaluationOutcome(testCase.id(), testCase.expectedCategory(), testCase.tier(),
+                    initialCategory, null, null, answers.size(), false, false, unmatchedQuestion,
+                    testCase.requiresClarification(), List.copyOf(rounds), elapsedMillis(startedAtNanos),
                     e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+    }
+
+    private long elapsedMillis(long startedAtNanos) {
+        return (System.nanoTime() - startedAtNanos) / 1_000_000L;
+    }
+
+    /**
+     * Gap between the two strongest candidates — the quantity a good clarification question is
+     * supposed to widen. Zero when the pass produced fewer than two candidates, which is
+     * already an unambiguous state.
+     */
+    private double margin(ClassificationSuggestion suggestion) {
+        List<CategoryCandidate> candidates = suggestion.candidates();
+        if (candidates.size() < 2) {
+            return 0;
+        }
+        return candidates.get(0).confidence() - candidates.get(1).confidence();
     }
 
     /**

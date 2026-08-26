@@ -197,11 +197,26 @@ public final class CategoryRoutingProfiles {
                     ),
                     List.of("cylinder", "lock body", "latch", "strike plate", "keys", "door handle"),
                     List.of(
+                            // The test is COMPONENT NAMED vs SYMPTOM ONLY, stated as a test
+                            // rather than as a list of sentences. An earlier version named one
+                            // phrasing ("the door does not close") and the model learned that
+                            // phrasing instead of the idea: it asked about that exact sentence
+                            // and committed at 0.90 on "the door sticks" and "the door is hard
+                            // to close", which are the same missing fact in different words.
                             new OverlapRule(CODE_GENERAL_HANDYMAN,
-                                    "If the key/cylinder/lock mechanism is what fails -> locksmith. If the door "
-                                            + "leaf, hinges or alignment is what fails (rubs, sags, loose hinge) "
-                                            + "-> general_handyman. Ask when the customer only says 'the door does "
-                                            + "not close'.")
+                                    "Decide this overlap on WHICH PART the customer names, not on how the "
+                                            + "problem sounds. Lock side: key, cylinder, bolt/latch, the lock "
+                                            + "body, the handle mechanism -> locksmith. Door side: the leaf "
+                                            + "itself, hinges, alignment with the frame, rubbing, sagging, "
+                                            + "swelling -> general_handyman. "
+                                            + "CRITICAL: a description that names NO part and reports only an "
+                                            + "outcome is not routable, and every ordinary way of saying it is "
+                                            + "equally consistent with both trades — a seizing lock and a "
+                                            + "dropped leaf both make a door refuse to shut, stick, jam, need "
+                                            + "forcing, or fail to lock. Do not let one phrasing feel more "
+                                            + "mechanical than another; they carry identical information. "
+                                            + "Whenever the failing part is not named, ASK which side it is "
+                                            + "rather than committing.")
                     )
             ),
 
@@ -249,15 +264,31 @@ public final class CategoryRoutingProfiles {
                     List.of("wall fixings", "brackets", "flat-pack hardware", "hinges and handles",
                             "basic hand tools"),
                     List.of(
+                            // Deliberately states the "ask" case in the same words as the
+                            // locksmith profile's mirror rule. Stating it on only one side made
+                            // this overlap resolvable in one direction and silently committable
+                            // in the other, which is how "the door does not close" reached
+                            // general_handyman at high confidence without a question being asked.
                             new OverlapRule(CODE_LOCKSMITH,
-                                    "Door leaf, hinges or alignment -> general_handyman; lock, cylinder or key "
-                                            + "-> locksmith."),
+                                    "Door leaf, hinges or alignment -> general_handyman; lock, cylinder, key or "
+                                            + "bolt -> locksmith. When the description names no part and reports "
+                                            + "only an outcome — however it is worded — it does not say which of "
+                                            + "the two failed, so ASK rather than commit. See the locksmith "
+                                            + "profile for the full test."),
                             new OverlapRule(CODE_PLUMBING,
                                     "Mounting or fixing something near a sink -> general_handyman only when no "
                                             + "water is involved; any leak, drip or drainage fault -> plumbing."),
+                            // Installing or replacing a light fitting means connecting it to the
+                            // mains, which is licensed electrical work. The previous wording
+                            // ("hanging a light fitting's bracket -> general_handyman") drew the
+                            // line at a distinction customers do not make in their description,
+                            // and sent ordinary "install a new light" requests to Handyman.
                             new OverlapRule(CODE_ELECTRICAL,
-                                    "Hanging a light fitting's bracket or a TV -> general_handyman; anything "
-                                            + "connected to or faulting on the mains -> electrical.")
+                                    "Installing, replacing or removing a light fitting, outlet, switch or "
+                                            + "anything else wired to the mains -> electrical, even when the "
+                                            + "customer describes it as a small job. general_handyman covers "
+                                            + "mounting that involves no mains connection at all — a TV bracket, "
+                                            + "a shelf, a curtain rail.")
                     )
             )
     );

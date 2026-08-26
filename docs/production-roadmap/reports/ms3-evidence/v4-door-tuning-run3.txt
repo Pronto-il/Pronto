@@ -1,0 +1,202 @@
+WARNING: A Java agent has been loaded dynamically (C:\Users\orcoh\.m2\repository\net\bytebuddy\byte-buddy-agent\1.14.19\byte-buddy-agent-1.14.19.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+Java HotSpot(TM) 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+Standard Commons Logging discovery in action with spring-jcl: please remove commons-logging.jar from classpath in order to avoid potential conflicts
+case filter: case-0(7[1-9]|8[0-3]) -> 13 of 91 case(s)
+
+=== run metadata ===
+promptVersion   classification-v4
+model           gpt-4o-mini
+datasetVersion  ms3-2026-08-25g
+datasetSize     91 (core=64, challenge=27)
+thresholds      maxQuestions=2 minConfidence=0.7 minCandidateMargin=0.15 plausibleCandidate=0.2 highConfidence=0.85
+
+################ CORE (approved regression set — the MS3 target) ################
+=== Pronto routing evaluation ===
+cases                          0
+initial accuracy               0.0%
+FINAL accuracy                 0.0%
+final accuracy (committed only) 0.0%  [n=0]
+unresolved fallback rate       0.0%  [0 case(s)]
+  of which scored correct      0   <- counted as correct above, but nothing was decided
+clarification rate             0.0%
+avg questions per case         0.00
+useful clarification rate      0.0%  [of 0 question(s) asked]
+unnecessary clarification rate 0.0%  [cases interrupted for nothing]
+"not sure" offered             0.0% of questions
+high-confidence wrong (>=0.85)  0
+pipeline failures              0
+total AI calls                 0  (0.00 per case)
+latency avg / max              0 ms / 0 ms
+
+-- questions asked per case --
+0 question(s)               0 case(s)    0.0%
+
+-- how to read these --
+initial accuracy                before any clarification question; when the first pass
+                                asked instead of committing, its strongest candidate counts
+FINAL accuracy                  after the full clarification flow, INCLUDING unresolved
+                                fallbacks. The headline number.
+final accuracy (committed only) accuracy where Pronto actually picked a category. Fallbacks
+                                excluded from numerator and denominator — "when it commits,
+                                how often is it right?"
+unresolved fallback rate        cases routed to general_handyman because two materially
+                                different categories were still live. Rising here without a
+                                rising committed-only accuracy means more caution, not more
+                                correctness.
+high-confidence wrong           wrong AND confident: the worst failure mode, since nothing
+                                was asked before sending the wrong trade.
+
+-- per-category final accuracy --
+
+-- confusion (expected -> predicted) --
+(none)
+
+
+################ CHALLENGE (adversarial / multi-trade — reported separately) ################
+=== Pronto routing evaluation ===
+cases                          13
+initial accuracy               69.2%
+FINAL accuracy                 100.0%
+final accuracy (committed only) 100.0%  [n=13]
+unresolved fallback rate       0.0%  [0 case(s)]
+  of which scored correct      0   <- counted as correct above, but nothing was decided
+clarification rate             46.2%
+avg questions per case         0.46
+useful clarification rate      100.0%  [of 6 question(s) asked]
+unnecessary clarification rate 0.0%  [cases interrupted for nothing]
+"not sure" offered             100.0% of questions
+high-confidence wrong (>=0.85)  0
+pipeline failures              0
+total AI calls                 19  (1.46 per case)
+latency avg / max              2083 ms / 3142 ms
+
+-- questions asked per case --
+0 question(s)               7 case(s)   53.8%
+1 question(s)               6 case(s)   46.2%
+
+-- how to read these --
+initial accuracy                before any clarification question; when the first pass
+                                asked instead of committing, its strongest candidate counts
+FINAL accuracy                  after the full clarification flow, INCLUDING unresolved
+                                fallbacks. The headline number.
+final accuracy (committed only) accuracy where Pronto actually picked a category. Fallbacks
+                                excluded from numerator and denominator — "when it commits,
+                                how often is it right?"
+unresolved fallback rate        cases routed to general_handyman because two materially
+                                different categories were still live. Rising here without a
+                                rising committed-only accuracy means more caution, not more
+                                correctness.
+high-confidence wrong           wrong AND confident: the worst failure mode, since nothing
+                                was asked before sending the wrong trade.
+
+-- per-category final accuracy --
+general_handyman        100.0%
+locksmith               100.0%
+
+-- confusion (expected -> predicted) --
+(none)
+
+-- cases whose description cannot separate the trades --
+asked as required        100.0%  [6 of 6]
+
+
+################ ALL CASES ################
+=== Pronto routing evaluation ===
+cases                          13
+initial accuracy               69.2%
+FINAL accuracy                 100.0%
+final accuracy (committed only) 100.0%  [n=13]
+unresolved fallback rate       0.0%  [0 case(s)]
+  of which scored correct      0   <- counted as correct above, but nothing was decided
+clarification rate             46.2%
+avg questions per case         0.46
+useful clarification rate      100.0%  [of 6 question(s) asked]
+unnecessary clarification rate 0.0%  [cases interrupted for nothing]
+"not sure" offered             100.0% of questions
+high-confidence wrong (>=0.85)  0
+pipeline failures              0
+total AI calls                 19  (1.46 per case)
+latency avg / max              2083 ms / 3142 ms
+
+-- questions asked per case --
+0 question(s)               7 case(s)   53.8%
+1 question(s)               6 case(s)   46.2%
+
+-- how to read these --
+initial accuracy                before any clarification question; when the first pass
+                                asked instead of committing, its strongest candidate counts
+FINAL accuracy                  after the full clarification flow, INCLUDING unresolved
+                                fallbacks. The headline number.
+final accuracy (committed only) accuracy where Pronto actually picked a category. Fallbacks
+                                excluded from numerator and denominator — "when it commits,
+                                how often is it right?"
+unresolved fallback rate        cases routed to general_handyman because two materially
+                                different categories were still live. Rising here without a
+                                rising committed-only accuracy means more caution, not more
+                                correctness.
+high-confidence wrong           wrong AND confident: the worst failure mode, since nothing
+                                was asked before sending the wrong trade.
+
+-- per-category final accuracy --
+general_handyman        100.0%
+locksmith               100.0%
+
+-- confusion (expected -> predicted) --
+(none)
+
+-- cases whose description cannot separate the trades --
+asked as required        100.0%  [6 of 6]
+
+=== clarification question review ===
+
+case-071 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה בדיוק לא עובד? האם הבעיה בדלת עצמה או במנעול?
+      options: הבעיה בדלת | הבעיה במנעול | לא בטוח
+      answer:  הבריח לא נכנס והמנעול תקוע
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-072 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה בדיוק גורם לדלת לא להיסגר?
+      options: הדלת עצמה | המנעול | לא בטוח
+      answer:  הדלת עצמה נתקעת במשקוף, המנעול תקין
+      top:     general_handyman (0.50)  ->  general_handyman (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-073 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה בדיוק נתקע? הדלת עצמה או המנעול?
+      options: הדלת עצמה | המנעול | לא בטוח
+      answer:  היא מתחככת במשקוף למטה
+      top:     general_handyman (0.50)  ->  general_handyman (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-074 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה בדיוק קשה לסגור — הדלת עצמה או המנעול?
+      options: הדלת עצמה | המנעול | לא בטוח
+      answer:  צריך ללחוץ חזק כדי שהמפתח יסתובב, הדלת עצמה בסדר
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-075 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: מה בדיוק לא עובד? המנעול או הדלת עצמה?
+      options: המנעול | הדלת | לא בטוח
+      answer:  המנעול עצמו עובד כשהדלת פתוחה, פשוט לא מתיישר עם החור במשקוף
+      top:     locksmith (0.50)  ->  general_handyman (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-076 [challenge]  expected=locksmith  final=locksmith  CORRECT
+  Q1: מה בדיוק גורם לדלת לא להיסגר?
+      options: הדלת עצמה | המנעול | לא בטוח
+      answer:  הלשונית של המנעול לא נכנסת חזרה פנימה
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+

@@ -1,0 +1,50 @@
+WARNING: A Java agent has been loaded dynamically (C:\Users\orcoh\.m2\repository\net\bytebuddy\byte-buddy-agent\1.14.19\byte-buddy-agent-1.14.19.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+Java HotSpot(TM) 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+Standard Commons Logging discovery in action with spring-jcl: please remove commons-logging.jar from classpath in order to avoid potential conflicts
+
+model=gpt-4o-mini maxQuestions=2 minConfidence=0.7 minCandidateMargin=0.15
+=== Pronto routing evaluation ===
+cases                          24
+initial accuracy               95.8%
+FINAL accuracy                 100.0%
+final accuracy (committed only) 100.0%  [n=24]
+unresolved fallback rate       0.0%  [0 case(s)]
+  of which scored correct      0   <- counted as correct above, but nothing was decided
+clarification rate             20.8%
+avg questions per case         0.29
+high-confidence wrong (>=0.85)  0
+pipeline failures              0
+
+-- how to read these --
+initial accuracy                before any clarification question; when the first pass
+                                asked instead of committing, its strongest candidate counts
+FINAL accuracy                  after the full clarification flow, INCLUDING unresolved
+                                fallbacks. The headline number.
+final accuracy (committed only) accuracy where Pronto actually picked a category. Fallbacks
+                                excluded from numerator and denominator — "when it commits,
+                                how often is it right?"
+unresolved fallback rate        cases routed to general_handyman because two materially
+                                different categories were still live. Rising here without a
+                                rising committed-only accuracy means more caution, not more
+                                correctness.
+high-confidence wrong           wrong AND confident: the worst failure mode, since nothing
+                                was asked before sending the wrong trade.
+
+-- per-category final accuracy --
+ac_hvac                 100.0%
+appliance_repair        100.0%
+electrical              100.0%
+general_handyman        100.0%
+locksmith               100.0%
+painting                100.0%
+plumbing                100.0%
+
+-- confusion (expected -> predicted) --
+(none)
+
+-- questions with no scripted answer (dataset gaps, answered "not sure") --
+case-018     האם יש רטיבות או נזילה שגורמת לסדקים?
+

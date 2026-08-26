@@ -41,6 +41,16 @@ public class OpenAiChatClient {
     private static final String CHAT_COMPLETIONS_PATH = "/chat/completions";
     private static final int MAX_ATTEMPTS = 2;
 
+    /**
+     * Deterministic decoding. Both AI responsibilities here are classification/extraction
+     * against a strict schema, where the most probable token is always the wanted one — see
+     * {@link #buildRequestBody} for the measurement that motivated pinning this.
+     */
+    private static final double TEMPERATURE = 0.0;
+
+    /** Fixed so that two runs of the same evaluation set are comparable. Not a guarantee. */
+    private static final int SEED = 20260825;
+
     private final RestClient restClient;
     private final String model;
     private final ObjectMapper objectMapper;
@@ -114,6 +124,17 @@ public class OpenAiChatClient {
         body.put("model", model);
         body.put("messages", messages);
         body.put("response_format", Map.of("type", "json_schema", "json_schema", jsonSchema));
+        // Routing is a classification decision, not a creative one: for a given description
+        // there is one right trade, and sampling variety is pure downside. Left unset, the API
+        // default of 1.0 applies — which measurably showed up as the same evaluation set
+        // scoring 98.4% and 95.2% on consecutive runs of identical code, with a completely
+        // different set of cases failing each time. That is not a system anyone can tune,
+        // because no change can be told apart from the noise.
+        body.put("temperature", TEMPERATURE);
+        // Best-effort reproducibility on top of temperature 0. OpenAI documents `seed` as a
+        // hint rather than a guarantee (system_fingerprint can still change under them), so it
+        // is a way to make repeat runs comparable, never something correctness depends on.
+        body.put("seed", SEED);
         return body;
     }
 

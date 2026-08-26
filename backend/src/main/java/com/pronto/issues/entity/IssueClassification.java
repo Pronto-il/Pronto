@@ -71,6 +71,20 @@ public class IssueClassification {
     @Column(name = "unresolved", nullable = false)
     private boolean unresolved;
 
+    /**
+     * Which prompt and which model produced this row. Nullable — rows written before MS3
+     * genuinely do not know, and the mock provider has no model name.
+     *
+     * <p>These are what make the drift signal interpretable across a change: a shift in how
+     * often the AI disagrees with the customer means nothing unless it can be attributed to
+     * routing behaviour rather than to the prompt or model having been swapped underneath it.
+     */
+    @Column(name = "prompt_version", length = 40)
+    private String promptVersion;
+
+    @Column(name = "model", length = 80)
+    private String model;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -98,8 +112,15 @@ public class IssueClassification {
         this.updatedAt = Instant.now();
     }
 
+    /**
+     * @param promptVersion {@code ClassificationPromptBuilder.PROMPT_VERSION}
+     * @param model         the configured OpenAI model, or {@code null} under the mock provider
+     */
     public void recordAiOutcome(String categoryCode, Double confidence, List<CategoryCandidate> candidates,
-                                 String ambiguityReason, boolean lowConfidence, boolean unresolved) {
+                                 String ambiguityReason, boolean lowConfidence, boolean unresolved,
+                                 String promptVersion, String model) {
+        this.promptVersion = promptVersion;
+        this.model = model;
         this.aiCategoryCode = categoryCode;
         this.aiConfidence = confidence == null ? null : BigDecimal.valueOf(confidence)
                 .setScale(3, java.math.RoundingMode.HALF_UP);
@@ -139,6 +160,14 @@ public class IssueClassification {
 
     public boolean isUnresolved() {
         return unresolved;
+    }
+
+    public String getPromptVersion() {
+        return promptVersion;
+    }
+
+    public String getModel() {
+        return model;
     }
 
     public Instant getCreatedAt() {

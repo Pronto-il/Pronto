@@ -1,0 +1,112 @@
+Pronto MS3 — clarification question review
+promptVersion=classification-v3 model=gpt-4o-mini datasetVersion=ms3-2026-08-25d
+Source: ms3-final-run3.txt
+
+=== clarification question review ===
+
+case-009 [core]  expected=appliance_repair  final=appliance_repair  CORRECT
+  Q1: ��� ���� ������ ������� ���� �� ������� �� ����� ������ ����?
+      options: ������� ���� | ������� �� ����� ������ | �� ����
+      answer:  ������� ����
+      top:     appliance_repair (0.80)  ->  appliance_repair (0.90)
+      margin:  0.60 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-010 [core]  expected=plumbing  final=plumbing  CORRECT
+  Q1: ��� ���� ������ ������� ���� �� ��� ����� ������?
+      options: ������ ���� | ����� ������ | �� ����
+      answer:  ����� �� ������ ������ ����
+      top:     appliance_repair (0.80)  ->  plumbing (0.90)
+      margin:  0.60 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-024 [core]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: �� ����� �����?
+      options: ����� ��� | ���� ����� | ��� �� ����� | �� ����
+      answer:  ��� �� ����/�
+      top:     general_handyman (0.50)  ->  general_handyman (0.50)
+      margin:  0.20 -> 0.20
+      helped:  NO
+  Q2: �� ����� �������� �����?
+      options: ����� | ���� �� ���� | ��� �� ����� | �� ����
+      answer:  ��� �� ����/�
+      top:     general_handyman (0.50)  ->  general_handyman (1.00)
+      margin:  0.20 -> 0.00
+      helped:  YES  (raised confidence)
+
+case-049 [core]  expected=appliance_repair  final=appliance_repair  CORRECT
+  Q1: ����� ������ ����? ������ �� �������?
+      options: ������ | ������ | �� ����
+      answer:  ������ ����, ���� ����� ���
+      top:     plumbing (0.50)  ->  appliance_repair (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-050 [core]  expected=plumbing  final=plumbing  CORRECT
+  Q1: ����� ������ ����? ������ �� �������?
+      options: ������ | ������ | �� ����
+      answer:  ������ ���� �����, �� ������
+      top:     plumbing (0.50)  ->  plumbing (0.95)
+      margin:  0.00 -> 0.90
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-051 [core]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: �� ����� �� ����? ��� ���� ���� �� ����� �� ������� �� ����?
+      options: ���� �� ����� | ������ �� ���� | �� ����
+      answer:  ���� ���� ����� ������
+      top:     general_handyman (0.50)  ->  general_handyman (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-052 [core]  expected=locksmith  final=locksmith  CORRECT
+  Q1: �� ����� �� ����? ��� ���� ���� �� ����� �� ������� �� ����?
+      options: ���� �� ����� | ������ �� ���� | �� ����
+      answer:  ����� �� ���� ������� ����
+      top:     general_handyman (0.50)  ->  locksmith (0.90)
+      margin:  0.00 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-053 [core]  expected=appliance_repair  final=appliance_repair  CORRECT
+  Q1: ��� ����� ���� �� ����� ����� �� �����?
+      options: �� | �� | �� ����
+      answer:  �� ����� ����� �� ����� ������, ��� ��� ��� �� �����
+      top:     electrical (0.80)  ->  appliance_repair (0.90)
+      margin:  0.60 -> 0.80
+      helped:  YES  (changed top candidate)  (widened margin)  (raised confidence)
+
+case-054 [core]  expected=electrical  final=electrical  CORRECT
+  Q1: ��� ����� ���� �� ����� ����� �� �����?
+      options: �� | �� | �� ����
+      answer:  �� ����� ����� �� ���� �����, �� ���� ������ �����
+      top:     electrical (0.80)  ->  electrical (0.90)
+      margin:  0.60 -> 0.80
+      helped:  YES  (widened margin)  (raised confidence)
+
+case-062 [challenge]  expected=plumbing  final=plumbing  CORRECT
+  Q1: ��� ���� ������ ������ �� ���� ���?
+      options: ����� | ���� ��� | �� ����
+      answer:  �� ����   <- NOT SCRIPTED (dataset gap)
+      top:     electrical (0.80)  ->  electrical (0.80)
+      margin:  0.60 -> 0.60
+      helped:  NO
+  Q2: ��� ���� ������ ������ �� ������ �����?
+      options: ����� | ����� ����� | �� ����
+      answer:  �� ����   <- NOT SCRIPTED (dataset gap)
+      top:     electrical (0.80)  ->  plumbing (0.80)
+      margin:  0.60 -> 0.60
+      helped:  YES  (changed top candidate)
+
+case-065 [challenge]  expected=general_handyman  final=general_handyman  CORRECT
+  Q1: �� ����� ������ ����?
+      options: ����� ��������� | ����� ���� | ����� �������� ������� | �� ����
+      answer:  ��� �� ����/�
+      top:     general_handyman (0.50)  ->  general_handyman (0.50)
+      margin:  0.20 -> 0.20
+      helped:  NO
+  Q2: �� ����� �������� ����?
+      options: ����� ��������� | ����� ���� | ����� �������� | ����� �������� ������� | ����� �����   <- no "not sure" option
+      answer:  ��� �� ����/�
+      top:     general_handyman (0.50)  ->  general_handyman (0.80)
+      margin:  0.20 -> 0.70
+      helped:  YES  (widened margin)  (raised confidence)
+

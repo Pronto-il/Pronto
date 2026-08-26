@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The decision rules, in isolation from any model. This is where "commit or ask" actually
@@ -223,6 +224,122 @@ class RoutingDecisionPolicyTest {
                 categories, List.of(), 0);
 
         assertThat(decision.outcome()).isEqualTo(RoutingDecision.Outcome.FINAL_UNRESOLVED);
+    }
+
+    /** The ambiguous state every question-shape test below reuses. */
+    private ClassificationResponse ambiguousWith(ClarificationQuestion question) {
+        return response("plumbing", 0.45, true,
+                List.of(new CategoryCandidate("plumbing", 0.45), new CategoryCandidate("ac_hvac", 0.40)),
+                question);
+    }
+
+    @Test
+    void duplicateAnswerOptionsAreCollapsedBeforeTheCustomerEverSeesThem() {
+        // Two buttons meaning the same thing waste a whole clarification round: whichever the
+        // customer taps, the answer carries no information.
+        RoutingDecision decision = policy.decide(
+                ambiguousWith(new ClarificationQuestion("q1", "מאיפה מגיעים המים?",
+                        List.of("מהמזגן", "מהמזגן.", " מהמזגן ", "מהכיור", "לא בטוח"), List.of())),
+                categories, List.of(), 0);
+
+        assertThat(decision.outcome()).isEqualTo(RoutingDecision.Outcome.ASK_CLARIFICATION);
+        assertThat(decision.question().options()).containsExactly("מהמזגן", "מהכיור", "לא בטוח");
+    }
+
+    @Test
+    void aQuestionWhoseOptionsAreAllDuplicatesIsNotUsable() {
+        RoutingDecision decision = policy.decide(
+                ambiguousWith(new ClarificationQuestion("q1", "מאיפה מגיעים המים?",
+                        List.of("מהמזגן", "מהמזגן!", "מהמזגן?"), List.of())),
+                categories, List.of(), 0);
+
+        // Collapses to a single distinct option, which is not a choice at all.
+        assertThat(decision.outcome()).isEqualTo(RoutingDecision.Outcome.FINAL_UNRESOLVED);
+        assertThat(decision.question()).isNull();
+    }
+
+    /**
+     * Blank options are dropped rather than rendered as empty buttons. Null options need no
+     * handling here at all: {@code ClarificationQuestion}'s {@code List.copyOf} rejects them
+     * outright, so one can never reach the policy — asserted below so that guarantee is not
+     * silently weakened later.
+     */
+    @Test
+    void blankOptionsAreDroppedRatherThanRenderedAsEmptyButtons() {
+        RoutingDecision decision = policy.decide(
+                ambiguousWith(new ClarificationQuestion("q1", "מאיפה מגיעים המים?",
+                        List.of("מהמזגן", "   ", "\t", "מהכיור"), List.of())),
+                categories, List.of(), 0);
+
+        assertThat(decision.outcome()).isEqualTo(RoutingDecision.Outcome.ASK_CLARIFICATION);
+        assertThat(decision.question().options()).containsExactly("מהמזגן", "מהכיור");
+    }
+
+    @Test
+    void aNullOptionCannotEvenBeConstructedLetAloneRouted() {
+        assertThatThrownBy(() -> new ClarificationQuestion("q1", "מאיפה?",
+                java.util.Arrays.asList("מהמזגן", null), List.of()))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void anOverlongOptionListIsRefusedRatherThanShownAsAMenu() {
+        // Six distinct options on a phone is a menu nobody reads, and usually means several
+        // distinctions were bundled into one question instead of asking the discriminating one.
+        RoutingDecision decision = policy.decide(
+                ambiguousWith(new ClarificationQuestion("q1", "מה מהבאים?",
+                        List.of("אחת", "שתיים", "שלוש", "ארבע", "חמש", "שש"), List.of())),
+                categories, List.of(), 0);
+
+        assertThat(decision.outcome()).isEqualTo(RoutingDecision.Outcome.FINAL_UNRESOLVED);
+        assertThat(decision.question()).isNull();
+    }
+
+    @Test
+    void exactlyTheMaximumNumberOfOptionsIsStillAccepted() {
+        // The bound is 2..5 inclusive — 4 real alternatives plus a "not sure" escape.
+        RoutingDecision decision = policy.decide(
+                ambiguousWith(new ClarificationQuestion("q1", "מאיפה מגיעים המים?",
+                        List.of("מהמזגן", "מהכיור", "מהאסלה", "מהמדיח", "לא בטוח"), List.of())),
+                categories, List.of(), 0);
+
+        assertThat(decision.outcome()).isEqualTo(RoutingDecision.Outcome.ASK_CLARIFICATION);
+        assertThat(decision.question().options()).hasSize(RoutingDecisionPolicy.MAX_OPTIONS);
+    }
+
+    /**
+     * The structural half of the prompt-injection defence (roadmap §28). Whatever the customer
+     * wrote, and whatever the model was talked into returning, a category that is not a real
+     * Pronto row cannot come out of the policy.
+     */
+    @Test
+    void anInjectedCategoryCodeCannotSurviveValidationEvenAtFullConfidence() {
+        RoutingDecision decision = policy.decide(
+                response("electrician_because_the_customer_said_so", 1.0, false,
+                        List.of(new CategoryCandidate("electrician_because_the_customer_said_so", 1.0),
+                                new CategoryCandidate("plumbing", 0.55)), null),
+                categories, List.of(), 0);
+
+        assertThat(decision.category().code()).isEqualTo("plumbing");
+        assertThat(decision.candidates()).extracting(CategoryCandidate::categoryCode)
+                .containsExactly("plumbing");
+    }
+
+    /**
+     * The budget is derived from answers already supplied, so no response — however insistent —
+     * can produce a third question. This is the loop bound MS3 requires to be structural.
+     */
+    @Test
+    void noResponseCanProduceAThirdQuestionOnceTwoHaveBeenAnswered() {
+        ClassificationResponse insistent = response("plumbing", 0.30, true,
+                List.of(new CategoryCandidate("plumbing", 0.30), new CategoryCandidate("ac_hvac", 0.29)),
+                question("שאלה שלישית לגמרי חדשה ושונה"));
+
+        RoutingDecision decision = policy.decide(insistent, categories, twoAnswers(), twoAnswers().size());
+
+        assertThat(policy.remainingBudget(twoAnswers().size())).isZero();
+        assertThat(decision.outcome()).isNotEqualTo(RoutingDecision.Outcome.ASK_CLARIFICATION);
+        assertThat(decision.question()).isNull();
     }
 
     /** Case C: the leader is an invented code; a real candidate underneath it must still win. */

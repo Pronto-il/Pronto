@@ -76,19 +76,66 @@ class OpenAiClassificationEvaluationRunnerTest {
                 // cases are added, this is the one dependency that needs a real fixture.
                 new IssueImageResolver(Mockito.mock(StorageClient.class)));
 
-        List<EvaluationCase> cases = EvaluationCases.load();
+        EvaluationCases.Dataset dataset = EvaluationCases.dataset();
+
+        // Optional case filter, for running one slice of the set against the live model —
+        // an A/B against a different prompt version on exactly the frozen core-24
+        // (PRONTO_AI_EVAL_ID_PATTERN=case-0(0[1-9]|1[0-9]|2[0-4])), or one boundary's
+        // adversarial cases while iterating on it. Absent, the whole dataset runs.
+        String idPattern = System.getenv("PRONTO_AI_EVAL_ID_PATTERN");
+        List<EvaluationCase> selected = dataset.cases();
+        if (idPattern != null && !idPattern.isBlank()) {
+            selected = selected.stream().filter(testCase -> testCase.id().matches(idPattern)).toList();
+            System.out.println("case filter: " + idPattern + " -> " + selected.size() + " of "
+                    + dataset.cases().size() + " case(s)");
+            assertThat(selected).as("the case filter matched nothing").isNotEmpty();
+        }
+
         List<EvaluationOutcome> outcomes =
                 new ClassificationEvaluator(classificationService, properties.getMaxClarificationQuestions())
-                        .run(cases, TestCategories.IDS_BY_CODE);
+                        .run(selected, TestCategories.IDS_BY_CODE);
 
-        EvaluationReport report = new EvaluationReport(outcomes, properties.getHighConfidence());
+        // Every number below is meaningless without these three identifiers. Printed first,
+        // together, so a pasted result can always be traced back to what produced it.
         System.out.println();
-        System.out.println("model=" + model + " maxQuestions=" + properties.getMaxClarificationQuestions()
+        System.out.println("=== run metadata ===");
+        System.out.println("promptVersion   " + ClassificationPromptBuilder.PROMPT_VERSION);
+        System.out.println("model           " + model);
+        System.out.println("datasetVersion  " + dataset.version());
+        System.out.println("datasetSize     " + dataset.cases().size()
+                + " (core=" + dataset.core().size() + ", challenge=" + dataset.challenge().size() + ")");
+        System.out.println("thresholds      maxQuestions=" + properties.getMaxClarificationQuestions()
                 + " minConfidence=" + properties.getMinConfidence()
-                + " minCandidateMargin=" + properties.getMinCandidateMargin());
-        System.out.println(report.render());
+                + " minCandidateMargin=" + properties.getMinCandidateMargin()
+                + " plausibleCandidate=" + properties.getPlausibleCandidateConfidence()
+                + " highConfidence=" + properties.getHighConfidence());
 
-        assertThat(report.failures())
+        List<EvaluationOutcome> core = outcomes.stream().filter(EvaluationOutcome::isCore).toList();
+        List<EvaluationOutcome> challenge = outcomes.stream().filter(outcome -> !outcome.isCore()).toList();
+
+        // The approved regression set carries the >= 95% target on its own. Challenge cases are
+        // reported beside it and never folded into it — mixing them would let a hard case be
+        // quietly dropped to lift the headline, which is the exact failure §23 warns about.
+        EvaluationReport coreReport = new EvaluationReport(core, properties.getHighConfidence());
+        System.out.println();
+        System.out.println("################ CORE (approved regression set — the MS3 target) ################");
+        System.out.println(coreReport.render());
+
+        if (!challenge.isEmpty()) {
+            EvaluationReport challengeReport = new EvaluationReport(challenge, properties.getHighConfidence());
+            System.out.println();
+            System.out.println("################ CHALLENGE (adversarial / multi-trade — reported separately) "
+                    + "################");
+            System.out.println(challengeReport.render());
+        }
+
+        EvaluationReport wholeReport = new EvaluationReport(outcomes, properties.getHighConfidence());
+        System.out.println();
+        System.out.println("################ ALL CASES ################");
+        System.out.println(wholeReport.render());
+        System.out.println(wholeReport.renderQuestionQuality());
+
+        assertThat(wholeReport.failures())
                 .as("the pipeline itself must not error; accuracy is reported, not asserted")
                 .isEmpty();
     }

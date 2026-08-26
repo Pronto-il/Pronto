@@ -18,6 +18,12 @@ spring:
     # SCRAM authentication error until the developer guessed an undocumented env var. This is
     # not a production secret: a deployment supplies DB_PASSWORD, and if it forgets, this
     # value fails to authenticate against a real database rather than granting anything.
+    #
+    # Production MS4 stopped relying on that last sentence being true. "A real database will not
+    # accept it" is a property of the database, not of this application, and it stops holding the
+    # moment somebody provisions RDS with the same convenience credentials used locally.
+    # common.config.DatabaseConfigStartupGuard now refuses to start a production-like environment
+    # with this value, with an empty password, or against a localhost database host.
     password: ${DB_PASSWORD:pronto}
     driver-class-name: org.postgresql.Driver
 
@@ -25,6 +31,9 @@ spring:
     hibernate:
       # Flyway migrations are the single source of truth for schema — Hibernate only
       # validates that JPA entities match, it never auto-generates/alters the schema.
+      # This is a Spring property like any other, so an environment could override it to
+      # create/create-drop/update. DatabaseConfigStartupGuard refuses those in production-like
+      # environments, along with spring.flyway.enabled=false and spring.flyway.clean-disabled=false.
       ddl-auto: validate
     open-in-view: false
     properties:
@@ -57,9 +66,15 @@ pronto:
   # profile system. Default "local" covers every local/QA/dev startup path today (none of
   # them set PRONTO_ENVIRONMENT). A real deployment sets this to anything other than
   # "local" (e.g. "production") as part of its own config, alongside a real JWT_SECRET.
-  # Consumed by auth.security.JwtSecretStartupGuard and by demo.DemoDataStartupGuard, which
-  # treats "local", "demo" and "test" as non-production and EVERY other value -- including
-  # every value nobody has thought of yet -- as production.
+  # Consumed through common.config.ProntoEnvironment by every startup guard in the codebase, which
+  # treats "local", "demo" and "test" as non-production and EVERY other value -- including every
+  # value nobody has thought of yet -- as production. As of Production MS4 the full set is:
+  # auth.security.JwtSecretStartupGuard, auth.config.ProductionHardeningStartupGuard,
+  # auth.config.ProviderModeStartupGuard, auth.config.CorsOriginStartupGuard,
+  # ai.config.AiModeStartupGuard, storage.config.StorageModeStartupGuard,
+  # common.config.DatabaseConfigStartupGuard and demo.DemoDataStartupGuard. The complete list of
+  # variables a production deployment must set is in
+  # docs/production-roadmap/reports/prod-MS4-report.md.
   environment: ${PRONTO_ENVIRONMENT:local}
 
   demo-data:
@@ -97,7 +112,9 @@ pronto:
     # binding splits a single comma-separated env/default string into List<String>
     # automatically, so a single default origin needs no bracket/YAML-list syntax.
     # Default covers the Vite dev server. Override via CORS_ALLOWED_ORIGINS in any
-    # non-local deployment.
+    # non-local deployment -- auth.config.CorsOriginStartupGuard refuses to start a production-like
+    # environment whose allow-list is empty, contains a wildcard, names localhost/127.0.0.1, or uses
+    # a non-HTTPS scheme (every JWT this API issues travels from that origin).
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
 
   jwt:
@@ -106,13 +123,21 @@ pronto:
     # value (must be >= 32 bytes for HS256). See docs/architecture/api-contract.md §3.1.
     # Enforced at startup, not just documented here: auth.security.JwtSecretStartupGuard
     # refuses to start if pronto.environment != local and this is still the placeholder
-    # below.
+    # below -- and, as of Production MS4, if the override is empty or shorter than 32
+    # characters. Without that last check jjwt's own Keys.hmacShaKeyFor still refused the
+    # key, but from inside a WeakKeyException that named no environment variable.
     secret: ${JWT_SECRET:local-dev-only-insecure-jwt-secret-key-please-override-via-JWT_SECRET-env-var-before-any-real-deployment}
     expiration-seconds: ${JWT_EXPIRATION_SECONDS:86400}
 
   storage:
     # local | s3. Default local — zero AWS credentials needed, matches M1's
     # zero-external-dependency default. See docs/architecture/api-contract-issues.md §3.2.
+    #
+    # Production MS4: storage.config.StorageModeStartupGuard refuses mode=local in any
+    # production-like environment. Issue photos and professional verification documents would be
+    # written to the container's own filesystem and lost on the next deploy, while every upload
+    # reported success -- silent, permanent loss of the identity evidence marketplace eligibility is
+    # decided on. The same guard requires a bucket and region whenever mode=s3.
     mode: ${STORAGE_MODE:local}
     # How long a presigned/signed image URL stays valid from the moment it's minted (backend
     # MS9, docs/architecture/backend-ms9-presigned-image-urls-design.md §6). One value, one
@@ -129,6 +154,10 @@ pronto:
       # Local-dev-only default, NOT production-safe — same "obviously a placeholder, loudly
       # insecure" convention as pronto.jwt.secret above. Every real deployment running
       # STORAGE_MODE=local must override this via the STORAGE_LOCAL_HMAC_SECRET env var.
+      # Production MS4 enforces that: StorageModeStartupGuard refuses this placeholder (and an
+      # empty or under-32-character override) in EVERY environment except local, including demo
+      # and test -- the same non-local rule the JWT secret gets, for the same reason. A publicly
+      # known signing key is directly exploitable by anyone who can reach the instance.
       # Signs/verifies the expires/sig query parameters on GET /api/storage/images/** — a
       # dedicated secret, deliberately not shared with JWT_SECRET (different blast radius: this
       # one authorizes a single short-lived image-URL grant, not a whole session). See
@@ -141,6 +170,14 @@ pronto:
   ai:
     # mock | openai. Default mock — no real OpenAI key needed. See
     # docs/architecture/api-contract-issues.md §3.1.
+    #
+    # Production MS4: ai.config.AiModeStartupGuard refuses mode=mock in any production-like
+    # environment, and refuses mode=openai with no OPENAI_API_KEY/OPENAI_MODEL in ANY environment.
+    # The mock is a Hebrew keyword table that answers every request in the right shape, so the
+    # routing pipeline, the clarification flow and the telemetry all behave normally while every
+    # category on every order is fiction. It prefixes its customer-visible strings with [מוק],
+    # which helps manual QA; the routing DECISION carries no such marker -- it is a category id on
+    # an order.
     mode: ${AI_MODE:mock}
 
     # Whether the post-creation job also records what the AI independently routes a created
@@ -176,7 +213,7 @@ pronto:
 
   openai:
     # Never committed — env-var-sourced only, same treatment as JWT_SECRET. Required only
-    # when pronto.ai.mode=openai.
+    # when pronto.ai.mode=openai, and startup-checked there since Production MS4.
     api-key: ${OPENAI_API_KEY:}
     model: ${OPENAI_MODEL:gpt-4o-mini}
     timeout-ms: ${OPENAI_TIMEOUT_MS:10000}
@@ -354,7 +391,12 @@ pronto:
     # TRUSTED_PROXIES=10.0.0.0/16 -- never its DNS name and never AWS's published public ranges.
     #
     # auth.config.ProductionHardeningStartupGuard refuses to start a production-like environment
-    # that leaves this empty while behind-proxy is true.
+    # that leaves this empty while behind-proxy is true. Production MS4 added the other half of that
+    # check: every entry must be a CIDR block inside PRIVATE address space. The test that matters is
+    # not "is this block narrow" but "can a stranger's packet arrive with a source address inside
+    # it" -- 10.0.0.0/8 is wide and safe, while TRUSTED_PROXIES=0.0.0.0/0 (or a pasted public AWS
+    # range) makes every client a trusted proxy and hands any caller the ability to evade the auth
+    # rate limiter with one header, or to spend another user's bucket by naming their address.
     trusted-proxies: ${TRUSTED_PROXIES:}
     # Whether this deployment sits behind a reverse proxy / load balancer. Defaults to true because
     # the Pronto 1.0 target architecture is an AWS ALB; a deployment reached directly sets it to

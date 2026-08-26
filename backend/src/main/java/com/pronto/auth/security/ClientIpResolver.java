@@ -6,10 +6,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -121,52 +119,11 @@ public class ClientIpResolver {
     }
 
     private boolean isTrusted(String address) {
-        byte[] bytes = toBytes(address);
+        byte[] bytes = CidrBlock.toBytes(address);
         if (bytes == null) {
             return false;
         }
         return trustedProxies.stream().anyMatch(block -> block.contains(bytes));
-    }
-
-    /**
-     * IPv4/IPv6 literal → raw bytes, or {@code null}.
-     *
-     * <p>The {@link #isIpLiteral} pre-check is not cosmetic. {@code InetAddress.getByName} resolves
-     * anything that is not a literal through DNS, and this method is fed {@code X-Forwarded-For}
-     * values — so without the guard, a request header could make this server issue an arbitrary DNS
-     * lookup on the request thread, which is both an outbound-traffic primitive for an attacker and
-     * an easy way to stall the connection pool. ({@code InetAddress.ofLiteral} would say this
-     * directly, but it is Java 22+ and this project targets 21.)
-     */
-    private static byte[] toBytes(String address) {
-        if (!isIpLiteral(address)) {
-            return null;
-        }
-        try {
-            return InetAddress.getByName(address).getAddress();
-        } catch (UnknownHostException e) {
-            return null;
-        }
-    }
-
-    /** True if every character could belong to a numeric IPv4 or IPv6 literal. */
-    private static boolean isIpLiteral(String value) {
-        if (value == null || value.isEmpty()) {
-            return false;
-        }
-        boolean sawColon = false;
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            if (c == ':') {
-                sawColon = true;
-            } else if (c == '.') {
-                continue;
-            } else if (!(c >= '0' && c <= '9')
-                    && !(sawColon && ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private static List<CidrBlock> parse(String raw) {
@@ -188,59 +145,5 @@ public class ClientIpResolver {
             }
         }
         return List.copyOf(blocks);
-    }
-
-    /** A CIDR block, compared on raw address bytes so one implementation covers IPv4 and IPv6. */
-    private record CidrBlock(byte[] network, int prefixBits, String display) {
-
-        static CidrBlock parse(String cidr) throws UnknownHostException {
-            int slash = cidr.indexOf('/');
-            String host = slash < 0 ? cidr : cidr.substring(0, slash);
-            byte[] network = toBytes(host);
-            if (network == null) {
-                throw new IllegalArgumentException("not an IP literal: " + host);
-            }
-            int prefix = slash < 0 ? network.length * 8 : Integer.parseInt(cidr.substring(slash + 1));
-            if (prefix < 0 || prefix > network.length * 8) {
-                throw new IllegalArgumentException("prefix length out of range: " + prefix);
-            }
-            return new CidrBlock(network, prefix, cidr);
-        }
-
-        boolean contains(byte[] address) {
-            // An IPv4 address is never inside an IPv6 block, and vice versa: comparing them would
-            // need a mapping convention, and getting that wrong in a trust decision is expensive.
-            if (address.length != network.length) {
-                return false;
-            }
-            int fullBytes = prefixBits / 8;
-            for (int i = 0; i < fullBytes; i++) {
-                if (address[i] != network[i]) {
-                    return false;
-                }
-            }
-            int remainingBits = prefixBits % 8;
-            if (remainingBits == 0) {
-                return true;
-            }
-            int mask = 0xFF << (8 - remainingBits);
-            return (address[fullBytes] & mask) == (network[fullBytes] & mask);
-        }
-
-        @Override
-        public String toString() {
-            return display;
-        }
-
-        @Override
-        public boolean equals(Object other) {
-            return other instanceof CidrBlock block && prefixBits == block.prefixBits
-                    && Arrays.equals(network, block.network);
-        }
-
-        @Override
-        public int hashCode() {
-            return Arrays.hashCode(network) * 31 + prefixBits;
-        }
     }
 }

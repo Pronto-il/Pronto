@@ -13,9 +13,9 @@
 | Milestone | Title | Status | Report |
 | --- | --- | --- | --- |
 | MS1 | Authentication & Contact Verification | **DONE** | [prod-MS1-report.md](reports/prod-MS1-report.md) |
-| MS2 | Real Maps, Geocoding, Distance & ETA | NOT STARTED | — |
-| MS3 | AI Classification Evaluation & Production Hardening | NOT STARTED | — |
-| MS4 | Production Security & Configuration Hardening | NOT STARTED | — |
+| MS2 | Real Maps, Geocoding, Distance & ETA | **DONE** | [prod-MS2-report.md](reports/prod-MS2-report.md) |
+| MS3 | AI Classification Evaluation & Production Hardening | **DONE** | [prod-MS3-report.md](reports/prod-MS3-report.md) |
+| MS4 | Production Security & Configuration Hardening | **IN PROGRESS** | [prod-MS4-report.md](reports/prod-MS4-report.md) |
 | MS5 | AWS Staging & Deployment Infrastructure | NOT STARTED | — |
 | MS6 | Production QA, Concurrency, Security & Failure Testing | NOT STARTED | — |
 | MS7 | Production Launch & Closed Beta | NOT STARTED | — |

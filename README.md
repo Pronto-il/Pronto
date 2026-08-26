@@ -101,6 +101,19 @@ conflict.
 
 ---
 
+### Configuration and environment variables
+
+Local development needs **no environment variables at all** — every default in
+`backend/src/main/resources/application.yml` is the local one, and `docker compose up -d` plus
+`mvn spring-boot:run` works on a fresh clone. `.env.example` shows the shape of the variables if
+you want to override any of them.
+
+Production is the opposite: the application **refuses to start** when a required variable is
+missing or unsafe, rather than silently falling back to a development provider. The complete list,
+what each guard enforces and why, is in
+[`docs/production-roadmap/reports/prod-MS4-report.md`](docs/production-roadmap/reports/prod-MS4-report.md),
+with a placeholder-only template in `.env.production.example`. Never commit a real value to either.
+
 ## TEST/DEMO environment
 
 A separate, **non-production** database holding a synthetic marketplace (79 professionals across
@@ -152,7 +165,8 @@ cd backend
 PRONTO_ENVIRONMENT=demo \
 DB_NAME=pronto_demo \
 DEMO_DATA_MODE=seed \
-JWT_SECRET='<a securely generated value, at least 32 bytes>' \
+JWT_SECRET='<a securely generated value, at least 32 characters>' \
+STORAGE_LOCAL_HMAC_SECRET='<a DIFFERENT securely generated value, at least 32 characters>' \
 STORAGE_LOCAL_BASE_DIR=./data/uploads-demo \
 SERVER_PORT=8081 \
 mvn spring-boot:run
@@ -160,6 +174,13 @@ mvn spring-boot:run
 
 - `PRONTO_ENVIRONMENT=demo` is not `local`, so `JwtSecretStartupGuard` requires a real
   `JWT_SECRET` — deliberately, since a demo instance is at least semi-shared. Do not commit it.
+- **`STORAGE_LOCAL_HMAC_SECRET` is new in Production MS4** and is required here for the same
+  reason. With `STORAGE_MODE=local`, that key is the only authorization on the public
+  `GET /api/storage/images/**` route, and the checked-in default is public — so on a shared
+  demo instance anyone able to read this repository could mint a valid signed URL for any
+  stored image. `StorageModeStartupGuard` refuses the placeholder in every environment except
+  `local`. Generate a value distinct from `JWT_SECRET`: the two have different blast radii and
+  rotating one must not force rotating the other.
 - Flyway migrates the empty database from `V1` forward, exactly as any other environment does.
 - `STORAGE_LOCAL_BASE_DIR` keeps demo uploads out of LOCAL's `./data/uploads`.
 - `SERVER_PORT=8081` lets a LOCAL backend keep 8080. Point the frontend at it with

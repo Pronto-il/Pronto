@@ -15,7 +15,12 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class ProntoApplication {
 
     public static void main(String[] args) {
-        System.out.println("WORKING DIR = " + System.getProperty("user.dir"));
+        // Production MS4 removed a `System.out.println("WORKING DIR = " + user.dir)` here. It was
+        // debug residue from tracking down pronto.storage.local.base-dir's relative path, it wrote
+        // to stdout rather than through the logging framework (so no level, no appender, no way to
+        // switch it off), and it printed a filesystem path before anything had decided whether that
+        // was appropriate. What it was for is now covered properly and in every environment by
+        // common.config.StartupConfigurationSummary and demo.DemoDataStartupGuard's startup lines.
         SpringApplication.run(ProntoApplication.class, args);
     }
 

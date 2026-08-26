@@ -281,3 +281,78 @@ login/otp       -> code redeemed                              -> TOKEN
 
 `docs/production-roadmap/reports/prod-MS1-report.md` (full rationale, security review, known
 limitations) · `docs/architecture/api-contract.md` "Production MS1" section · `V46`, `V47`, `V48`.
+
+## Production MS4 (2026-08-26) — Production Security & Configuration
+
+Three changes in this package, all of them about configuration that could previously reach
+Production unnoticed.
+
+### `config.CorsOriginStartupGuard` (new)
+
+`pronto.cors.allowed-origins` defaults to `http://localhost:5173` — correct for the only
+environment that existed when it was written, a deployment defect anywhere else. A Production
+instance that forgot `CORS_ALLOWED_ORIGINS` had an API whose sole permitted browser origin was a
+developer's laptop, and neither symptom ("the frontend is broken", "the allow-list names a laptop")
+points at CORS from the outside.
+
+Four rules, production-like environments only:
+
+| Rule | Why |
+|---|---|
+| not empty | `CORS_ALLOWED_ORIGINS=""` rejects every cross-origin call with no diagnostic anywhere |
+| no wildcard | `CorsConfiguration` accepts `*` silently. Blast radius is bounded today — `SecurityConfig` leaves `allowCredentials` false and the JWT travels in `Authorization`, not a cookie — but it is a permission nobody decided to grant, and it becomes the whole vulnerability the moment a cookie appears |
+| no `localhost`/`127.0.0.1`/`::1`/`0.0.0.0` | this is what an unset variable looks like |
+| `https` only | every JWT this API issues travels from that origin |
+
+### `security.JwtSecretStartupGuard` — extended
+
+Previously detected only the exact checked-in placeholder, so `JWT_SECRET=hunter2` passed it and
+then died inside jjwt's `Keys.hmacShaKeyFor` with a `WeakKeyException` naming no environment
+variable. Now also refuses an empty secret (the shape of a half-populated secret injection, where
+the variable exists so the YAML default never applies) and anything under 32 characters. The value
+itself never appears in the message. Its rule stays the stricter `!= local`, **not**
+`ProntoEnvironment.isProductionLike()` — see `common.config.ProntoEnvironment`'s Javadoc for why
+loosening it would be a regression. First test coverage: `security/JwtSecretStartupGuardTest`.
+
+### `config.ProductionHardeningStartupGuard` — `TRUSTED_PROXIES` value validation
+
+The MS1 guard checked that `TRUSTED_PROXIES` was *non-empty*. It never checked what was in it, so
+`TRUSTED_PROXIES=0.0.0.0/0` passed — and that value makes **every client a trusted proxy**, so every
+client's `X-Forwarded-For` is believed: the auth rate limiter is bypassable with one header, and any
+victim's bucket can be spent by naming their address. A pasted set of AWS's published public ranges
+does the same thing, which `application.yml` warned about and nothing enforced.
+
+Every configured block must now lie inside **private address space** (RFC 1918, loopback,
+link-local, RFC 6598 CGNAT, IPv6 ULA/link-local/loopback). The test is deliberately containment and
+not a prefix-width floor: what matters is not whether a block is narrow but whether a stranger's
+packet can arrive with a source address inside it. `10.0.0.0/8` is wide and perfectly safe — no
+public source address is ever in it — while a single public `/24` is not. Validated whether or not
+`behind-proxy` is set, because `security.ClientIpResolver` acts on the list and never consults
+`behind-proxy`.
+
+### `security.CidrBlock` (extracted)
+
+Was a private record inside `ClientIpResolver`, the right size while exactly one class needed it.
+The guard above is a second consumer, and the two **must** agree byte for byte on what a CIDR string
+means — a guard with a subtly different parser would be worse than no guard, because it would
+approve a configuration whose real behaviour it had never examined. So there is one parser now, used
+by both. Extraction also fixed a real bug in `isIpLiteral`: it decided whether hex letters were legal
+by whether a colon had been seen *so far*, left to right, which rejected every IPv6 literal starting
+with a hex digit (`fc00::/7`, `fe80::1`). Fail-closed in `ClientIpResolver` — such an address was
+simply never trusted — but it is now correct.
+
+### `email.LoggingEmailSender` — order-status logging fenced
+
+`sendOrderStatusEmail` logged the recipient address and the entire message body in every
+environment; it was the one path in that class not behind the environment check. Unreachable in
+production (`ProviderModeStartupGuard` refuses this bean as the transport there), but it was
+personal data logged unconditionally, and the fence costs one boolean.
+
+### `config.ProviderModeStartupGuard` — unrecognized modes
+
+`EMAIL_MODE`/`SMS_MODE` outside their known sets are now refused with a message naming the variable,
+instead of failing later with a `NoSuchBeanDefinitionException` naming an interface.
+
+Tests: `config/CorsOriginStartupGuardTest`, `security/JwtSecretStartupGuardTest`, extended
+`config/ProductionHardeningStartupGuardTest` and `config/ProviderModeStartupGuardTest`, plus the
+cross-package `common/config/ProductionStartupValidationTest`.

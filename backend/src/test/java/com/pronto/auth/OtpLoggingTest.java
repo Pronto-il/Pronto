@@ -139,11 +139,35 @@ class OtpLoggingTest {
     }
 
     @Test
-    void orderStatusEmailsKeepFullDetail_becauseTheyCarryNoCredential() {
+    void orderStatusEmailsKeepFullDetail_whereALoggingTransportIsPermittedAtAll() {
+        // Full detail is the entire value of this transport during development: it is how a
+        // developer reads the message that would have been sent.
+        new LoggingEmailSender(new ProntoEnvironment("local"))
+                .sendOrderStatusEmail(EMAIL, "Pronto — Order #7", "status changed to CONFIRMED");
+
+        assertThat(captured()).contains("Order #7").contains("CONFIRMED").contains(EMAIL);
+    }
+
+    @Test
+    void orderStatusEmails_withholdRecipientAndBody_inAProductionLikeEnvironment() {
+        // Production MS4 reversed this case. It previously asserted full detail in EVERY
+        // environment, on the grounds that an order-status notification carries no credential —
+        // which is true, and beside the point: the line named a customer's email address and
+        // reproduced the whole message body, which is personal data, and it was the one path in
+        // this class that did so unconditionally.
+        //
+        // It is unreachable in practice — auth.config.ProviderModeStartupGuard refuses to let this
+        // bean be the email transport in a production-like environment at all — so this is the
+        // second lock on the same door, exactly as the OTP path above already was. The cost is one
+        // boolean; the thing it protects against is a guard being misconfigured someday.
         new LoggingEmailSender(new ProntoEnvironment("production"))
                 .sendOrderStatusEmail(EMAIL, "Pronto — Order #7", "status changed to CONFIRMED");
 
-        assertThat(captured()).contains("Order #7").contains("CONFIRMED");
+        assertThat(captured())
+                .doesNotContain("Order #7")
+                .doesNotContain("CONFIRMED")
+                .doesNotContain(EMAIL)
+                .contains("withheld in a production-like environment");
     }
 
     @Test

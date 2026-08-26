@@ -51,8 +51,18 @@ public class JwtSecretStartupGuard {
      * constant read by both) — this class must detect the value on its own from the
      * resolved property, the same way any other caller of that config value would.
      */
-    static final String INSECURE_DEFAULT_SECRET =
+    public static final String INSECURE_DEFAULT_SECRET =
             "local-dev-only-insecure-jwt-secret-key-please-override-via-JWT_SECRET-env-var-before-any-real-deployment";
+
+    /**
+     * HS256 signs with a 256-bit key, so anything shorter is not a weaker key — it is a key jjwt
+     * refuses outright. Production MS4 added this check because the failure without it is real but
+     * illegible: {@code JWT_SECRET=hunter2} passes the placeholder comparison above, then dies
+     * inside {@code Keys.hmacShaKeyFor} ({@link JwtService}) with a {@code WeakKeyException} that
+     * names a JJWT class and no environment variable. Same fail-closed outcome, an hour of
+     * diagnosis apart.
+     */
+    private static final int MIN_SECRET_LENGTH = 32;
 
     private static final String LOCAL_ENVIRONMENT = "local";
 
@@ -60,26 +70,48 @@ public class JwtSecretStartupGuard {
     private final String prontoEnvironment;
 
     public JwtSecretStartupGuard(
-            @Value("${pronto.jwt.secret}") String jwtSecret,
+            @Value("${pronto.jwt.secret:}") String jwtSecret,
             @Value("${pronto.environment:local}") String prontoEnvironment) {
-        this.jwtSecret = jwtSecret;
+        this.jwtSecret = jwtSecret == null ? "" : jwtSecret.trim();
         this.prontoEnvironment = prontoEnvironment;
     }
 
+    /**
+     * <b>Public, unlike the rest of this class's internals</b>, because Production MS4 added a
+     * cross-package test that runs every startup guard against one candidate Production
+     * configuration — see {@code common.config.ProductionStartupValidationTest}. That test is the
+     * only thing that can catch a set of individually correct guards being collectively
+     * unsatisfiable, and it cannot live in seven packages at once. Still called by exactly one
+     * production code path: the {@code @PostConstruct} below.
+     */
     @PostConstruct
-    void validate() {
-        boolean isLocalEnvironment = LOCAL_ENVIRONMENT.equalsIgnoreCase(prontoEnvironment);
-        boolean usingInsecureDefaultSecret = INSECURE_DEFAULT_SECRET.equals(jwtSecret);
-
-        if (!isLocalEnvironment && usingInsecureDefaultSecret) {
-            throw new IllegalStateException(
-                    "Refusing to start: pronto.environment='" + prontoEnvironment + "' (not 'local'), "
-                            + "but pronto.jwt.secret is still the insecure placeholder checked into "
-                            + "application.yml. Every JWT issued with this key would be trivially "
-                            + "forgeable by anyone with read access to this repository. Fix: set the "
-                            + "JWT_SECRET environment variable to a securely generated, kept-secret "
-                            + "value (>= 32 bytes, for HS256) before starting this application outside "
-                            + "local development.");
+    public void validate() {
+        if (LOCAL_ENVIRONMENT.equalsIgnoreCase(prontoEnvironment)) {
+            return;
         }
+
+        if (INSECURE_DEFAULT_SECRET.equals(jwtSecret)) {
+            throw failure("pronto.jwt.secret is still the insecure placeholder checked into "
+                    + "application.yml. Every JWT issued with this key would be trivially forgeable by "
+                    + "anyone with read access to this repository.");
+        }
+        if (jwtSecret.isEmpty()) {
+            throw failure("pronto.jwt.secret (JWT_SECRET) is empty. This is the shape a half-populated "
+                    + "secret injection takes — the environment variable exists, so the application.yml "
+                    + "default never applies, and nothing else would have noticed.");
+        }
+        if (jwtSecret.length() < MIN_SECRET_LENGTH) {
+            throw failure("pronto.jwt.secret (JWT_SECRET) is shorter than " + MIN_SECRET_LENGTH
+                    + " characters, which is below the key length HS256 requires.");
+        }
+    }
+
+    /** The value itself never appears in the message — only which property is wrong, and why. */
+    private IllegalStateException failure(String detail) {
+        return new IllegalStateException(
+                "Refusing to start: pronto.environment='" + prontoEnvironment + "' (not 'local'), but "
+                        + detail + " Fix: set the JWT_SECRET environment variable to a securely generated, "
+                        + "kept-secret value of at least " + MIN_SECRET_LENGTH + " characters (HS256) "
+                        + "before starting this application outside local development.");
     }
 }

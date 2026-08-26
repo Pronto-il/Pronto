@@ -431,3 +431,40 @@ after the flow found zero occurrences of the key, the prefix, or the signature/e
 parameters (MS1 report, Validations 16, 21 and 31). **Not verified**: the `403` prefix-lock
 branch has no unit test (Known Limitation 12). Branch
 `production/ms1-professional-verification`, uncommitted at the time this doc was written.
+
+## Production MS4 (2026-08-26) — `STORAGE_MODE=local` may not reach Production
+
+`config.StorageModeStartupGuard` (new). `pronto.storage.mode` defaulted to `local` and nothing
+checked it, so a deployment that forgot `STORAGE_MODE=s3` would write every issue photo **and every
+professional verification document** to `./data/uploads` inside the running container, hand back
+working signed URLs, report success on every screen — and lose all of it on the next deploy. Those
+documents are the identity evidence marketplace eligibility is decided on, so this was silent,
+permanent loss of the most sensitive data the platform holds.
+
+Two checks with deliberately different scopes:
+
+- **`mode=local` refused when production-like.** A durability/functionality decision, so `demo` and
+  `test` may legitimately keep local-disk storage.
+- **The placeholder `STORAGE_LOCAL_HMAC_SECRET` refused in every environment except `local`** —
+  including `demo` and `test`. This is the `!isLocal()` rule `auth.security.JwtSecretStartupGuard`
+  uses for the JWT secret, and for the same reason. In local mode that key is the *only*
+  authorization on `GET /api/storage/images/**`, which `auth.config.SecurityConfig` leaves
+  `permitAll` because a plain `<img src>` cannot carry a JWT (see the backend MS9 section above).
+  With the checked-in placeholder, anyone who can read this repository can mint a valid signature
+  for any image key — including verification documents. An empty or under-32-character override is
+  refused on the same grounds.
+
+Plus mode/credential consistency in **every** environment: `mode=s3` requires
+`STORAGE_S3_BUCKET` and `STORAGE_S3_REGION`, because `client.S3StorageClient` constructs happily
+with an empty bucket string and then fails every upload, download and presign at runtime.
+
+**Deployment consequence.** The TEST/DEMO recipe in the repository `README.md` now requires
+`STORAGE_LOCAL_HMAC_SECRET` alongside the `JWT_SECRET` it already required. That is a deliberate
+break of a previously-working documented flow — see the MS4 report's Known Limitations.
+
+**AWS credentials are unchanged and remain correct**: `S3StorageClient` uses
+`DefaultCredentialsProvider`, never a hardcoded key. The MS4 report recommends an IAM task role
+rather than long-lived static access keys in Production.
+
+Tests: `storage/config/StorageModeStartupGuardTest`, plus
+`common/config/ProductionStartupValidationTest`.

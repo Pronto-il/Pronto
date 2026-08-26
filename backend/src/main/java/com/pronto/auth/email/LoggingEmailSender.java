@@ -55,9 +55,21 @@ public class LoggingEmailSender implements EmailSender {
 
     @Override
     public void sendOrderStatusEmail(String toEmail, String subject, String bodyText) {
-        // Not an OTP: an order-status notification carries no credential, so it keeps its original
-        // full-detail logging in every environment.
-        log.info("[MOCK EMAIL] To: {} | Subject: {} | Body: {} (no real email sent — LoggingEmailSender)",
-                toEmail, subject, bodyText);
+        // Not an OTP: an order-status notification carries no credential, so full-detail logging is
+        // what makes this transport useful during development.
+        //
+        // Production MS4 fenced it behind the same environment check the OTP path uses. It is
+        // unreachable in a production-like environment today — ProviderModeStartupGuard refuses to
+        // let this bean be the email transport there at all — but the log line still named a
+        // customer's address and reproduced the whole message body, which is personal data, and it
+        // was the one place in this class that did so unconditionally. Defence in depth costs one
+        // boolean, and this is the same "second lock on the same door" the class Javadoc describes.
+        if (!environment.isProductionLike()) {
+            log.info("[MOCK EMAIL] To: {} | Subject: {} | Body: {} (no real email sent — LoggingEmailSender)",
+                    toEmail, subject, bodyText);
+            return;
+        }
+        log.info("[MOCK EMAIL] Dispatched an order-status message. Recipient and body withheld in a "
+                + "production-like environment.");
     }
 }

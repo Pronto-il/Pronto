@@ -35,5 +35,17 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Added by Production MS4. The 6 vitest suites existed and had never run in CI — lint and
+      # build alone cannot fail on a broken component, so a regression reached `main` unchallenged.
+      - name: Test
+        run: npm test
+
       - name: Build
+        env:
+          # Production MS4: `vite.config.ts` refuses to build a production bundle with no API
+          # origin, because Vite inlines the value and an unset variable ships a bundle calling
+          # localhost from every user's browser. CI is not a deployment, so this is a structurally
+          # valid placeholder on a reserved example domain — never a real Pronto origin, and never
+          # a value anything is deployed with.
+          VITE_API_BASE_URL: https://api.pronto.example
         run: npm run build

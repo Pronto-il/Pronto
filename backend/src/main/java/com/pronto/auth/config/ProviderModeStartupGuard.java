@@ -7,6 +7,8 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * Fail-fast startup guard: a Production-like environment may not run fake Email, SMS or Maps.
@@ -51,6 +53,9 @@ public class ProviderModeStartupGuard {
     /** The maps equivalent of {@link #LOG_MODE} — see {@code maps.config.MapsProperties}. */
     private static final String FAKE_MODE = "fake";
 
+    private static final Set<String> EMAIL_MODES = Set.of(LOG_MODE, "ses");
+    private static final Set<String> SMS_MODES = Set.of(LOG_MODE, "aws");
+
     private final ProntoEnvironment environment;
     private final String emailMode;
     private final String emailFrom;
@@ -79,7 +84,15 @@ public class ProviderModeStartupGuard {
     }
 
     @PostConstruct
-    void validate() {
+    public void validate() {
+        // Production MS4. An unrecognized mode already fails closed — no @ConditionalOnProperty
+        // matches, so no EmailSender/SmsSender bean exists and the context refuses to start — but it
+        // does so with a NoSuchBeanDefinitionException naming an interface and not the environment
+        // variable that caused it. Same outcome, illegible message; reported here first because
+        // every check below reasons about which mode is in force.
+        requireKnownMode("pronto.email.mode", "EMAIL_MODE", emailMode, EMAIL_MODES);
+        requireKnownMode("pronto.sms.mode", "SMS_MODE", smsMode, SMS_MODES);
+
         List<String> failures = new ArrayList<>();
 
         if (environment.isProductionLike()) {
@@ -140,6 +153,14 @@ public class ProviderModeStartupGuard {
             throw new IllegalStateException(
                     "Refusing to start: pronto.environment='" + environment.name() + "' with an unsafe "
                             + "messaging configuration.\n  - " + String.join("\n  - ", failures));
+        }
+    }
+
+    private static void requireKnownMode(String property, String envVar, String value, Set<String> known) {
+        if (!known.contains(value.toLowerCase(Locale.ROOT))) {
+            throw new IllegalStateException(
+                    "Refusing to start: " + property + " (" + envVar + ") is '" + value + "', which is not "
+                            + "a recognized mode. Expected one of " + known + ".");
         }
     }
 }

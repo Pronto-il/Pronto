@@ -8,9 +8,27 @@
  * Backend `server.port` default is 8080 (see `backend/src/main/resources/application.yml`).
  * Overridable via `VITE_API_BASE_URL` so later environments (staging/prod) don't require
  * touching this file.
+ *
+ * Production MS4 narrowed the fallback to development builds only. It used to apply
+ * unconditionally, which meant a production build with no `VITE_API_BASE_URL` shipped a bundle
+ * that called `http://localhost:8080` from every user's browser — a defect that is invisible in
+ * source, invisible in CI, and only observable as "the app does nothing" once deployed. Vite
+ * inlines `import.meta.env.DEV` as a literal, so in a production bundle this collapses to the
+ * configured value with no branch left behind.
+ *
+ * The empty-string case below is unreachable in practice: `vite.config.ts` fails the production
+ * build outright when the variable is missing or points at a development host. It is written as a
+ * same-origin fallback rather than a thrown error so that a bundle which somehow got past that
+ * check degrades to relative URLs instead of a blank screen.
  */
+const configuredApiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
+
 export const API_BASE_URL: string =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8080'
+  configuredApiBaseUrl && configuredApiBaseUrl.length > 0
+    ? configuredApiBaseUrl
+    : import.meta.env.DEV
+      ? 'http://localhost:8080'
+      : ''
 
 /**
  * Standard error envelope shape, per `docs/architecture/api-contract.md` §1 (verified

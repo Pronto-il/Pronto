@@ -86,6 +86,72 @@ class ProductionHardeningStartupGuardTest {
                 .hasMessageContaining("TRUSTED_PROXIES");
     }
 
+    // ---- Production MS4: TRUSTED_PROXIES must name a private network ----
+
+    @ParameterizedTest(name = "TRUSTED_PROXIES={0} is publicly reachable")
+    @ValueSource(strings = {
+            "0.0.0.0/0",          // the one that silently disables rate limiting entirely
+            "0.0.0.0/1",
+            "8.8.8.0/24",
+            "52.0.0.0/8",         // the shape of "I pasted AWS's published public ranges"
+            "203.0.113.7",
+            "::/0",
+            "2001:db8::/32"})
+    void production_withAPubliclyReachableTrustedRange_refusesToStart(String range) {
+        // The check that matters is not "is this block narrow" but "can a stranger's packet arrive
+        // with a source address inside it". If it can, that stranger is a trusted proxy: their
+        // X-Forwarded-For is believed, so they evade the auth limiter with one header and can spend
+        // any victim's bucket by naming their address. The previous guard accepted every value here,
+        // because it only checked that the string was non-empty.
+        assertThatThrownBy(() -> guard("production", REAL_PEPPER, range, true).validate())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("TRUSTED_PROXIES")
+                .hasMessageContaining("private address space");
+    }
+
+    @ParameterizedTest(name = "TRUSTED_PROXIES={0} is private")
+    @ValueSource(strings = {
+            "10.0.0.0/16",
+            "10.0.0.0/8",         // wide, and safe: no public source address is ever inside it
+            "172.31.0.0/16",
+            "192.168.1.0/24",
+            "127.0.0.1/32",       // a sidecar proxy on the same host
+            "100.64.0.0/10",      // RFC 6598, used by some AWS managed networking paths
+            "fc00::/7",
+            "10.0.0.0/16,172.31.0.0/16"})
+    void production_withPrivateTrustedRanges_starts(String ranges) {
+        assertThatCode(() -> guard("production", REAL_PEPPER, ranges, true).validate())
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void production_withOnePrivateAndOnePublicRange_stillRefuses() {
+        // Every entry is a grant, so every entry is checked — one public range is enough.
+        assertThatThrownBy(() -> guard("production", REAL_PEPPER, "10.0.0.0/16,52.0.0.0/8", true).validate())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("52.0.0.0/8");
+    }
+
+    @Test
+    void production_withADnsNameInsteadOfACidr_refusesToStart() {
+        // application.yml warns "never its DNS name". Until MS4 nothing enforced that, and the
+        // resolver would have thrown a less helpful IllegalStateException from its own parser later.
+        assertThatThrownBy(() ->
+                guard("production", REAL_PEPPER, "internal-pronto-alb.eu-central-1.elb.amazonaws.com", true)
+                        .validate())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("not a CIDR block");
+    }
+
+    @Test
+    void trustedProxyRangesAreValidated_evenWhenNotBehindAProxy() {
+        // ClientIpResolver acts on this list and never consults behind-proxy, so a public range is
+        // dangerous regardless of what behind-proxy claims.
+        assertThatThrownBy(() -> guard("production", REAL_PEPPER, "0.0.0.0/0", false).validate())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("private address space");
+    }
+
     // ---- environment scoping ----
 
     @ParameterizedTest

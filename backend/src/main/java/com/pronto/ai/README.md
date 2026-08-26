@@ -203,3 +203,31 @@ to plumbing. Every customer-visible string is prefixed `[מוק]`.
 - `common.exception` — `ApiException` / `ErrorCode`.
 
 Depended on by `issues` only.
+
+## Production MS4 (2026-08-26) — `AI_MODE=mock` may not reach Production
+
+`config.AiModeStartupGuard` (new). Until MS4, `pronto.ai.mode` defaulted to `mock` and **nothing
+checked it** — this was the one provider `auth.config.ProviderModeStartupGuard` did not cover, so a
+deployment that simply forgot `AI_MODE=openai` started cleanly and served traffic indefinitely.
+
+Why that is worse than an outage: `client.MockAiClassificationClient` is a Hebrew keyword table that
+answers every request *in the right shape*. Candidates, confidences and clarification questions all
+look real, so `decision.RoutingDecisionPolicy`, the clarification budget and the telemetry pass all
+behave normally — while every category on every order is fiction. The mock prefixes its
+customer-visible strings with `[מוק]`, which is a genuine mitigation for manual QA; the routing
+**decision** carries no such marker, because it is a category id on an order.
+
+Three rules, and the scope of each:
+
+| Rule | Scope | Why |
+|---|---|---|
+| `pronto.ai.mode=mock` refused | production-like only | `local`/`test`/`demo` must keep running with zero configuration and no OpenAI key |
+| `mode=openai` with empty `OPENAI_API_KEY`/`OPENAI_MODEL` refused | **every** environment | Not a degraded mode — every request is rejected by the provider, so AI fails on every issue everywhere. Same reasoning as `ProviderModeStartupGuard`'s unconditional `MAPS_API_KEY` check |
+| Unrecognized `AI_MODE` refused | every environment | Already failed closed (no `@ConditionalOnProperty` matches → no `AiClassificationClient` bean), but with a `NoSuchBeanDefinitionException` naming an interface rather than the environment variable |
+
+**No runtime fallback to mock exists, and none was added.** `service.ClassificationService` maps a
+provider failure to `AI_SERVICE_ERROR`; it never substitutes the mock. Audited and confirmed in the
+MS4 Phase 1 report.
+
+Tests: `ai/config/AiModeStartupGuardTest`, plus the cross-package
+`common/config/ProductionStartupValidationTest`.

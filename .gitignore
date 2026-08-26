@@ -1,0 +1,23 @@
+# Repository-root ignores.
+#
+# Added by Production MS4. `backend/.gitignore` and `frontend/.gitignore` already covered their own
+# trees, but nothing covered the root — so a `.env` written next to `docker-compose.yml` (which is
+# exactly where its header tells you to put one) was tracked by default. Nothing of the sort has
+# ever been committed; this makes that a property of the repository rather than of everyone's care.
+
+### Env — real values, never committed. `.env.example` / `.env.production.example` are the ###
+### placeholder-only templates and are deliberately NOT ignored.                           ###
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+### Local-disk fake storage (pronto.storage.mode=local) at the repository root ###
+/data/
+
+### QA scratch files (manual smoke-test payloads/output, not fixtures) ###
+qa-tmp/
+qa-tmp-*/
+
+### OS / editor ###
+.DS_Store

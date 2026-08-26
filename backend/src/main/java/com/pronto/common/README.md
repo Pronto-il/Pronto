@@ -104,3 +104,51 @@ malformed, the world moved). No other change to this package: MS1's `ADMIN` rout
 the existing `security.RoleRequiredInterceptor` unmodified, registered by
 `professionals.config.ProfessionalsWebConfig` — the route-to-role knowledge stays out of
 `common`, as designed.
+
+## Production MS4 (2026-08-26) — environment/configuration guards
+
+Two new classes, both in `config`, both cross-cutting in exactly the way this package exists for.
+
+### `config.DatabaseConfigStartupGuard`
+
+Refuses to start a production-like environment with the committed local-development database
+password (`pronto`, published in this repository and in `docker-compose.yml`), an empty password, a
+`localhost`/`127.0.0.1` database host, a schema-mutating `spring.jpa.hibernate.ddl-auto`
+(`create`/`create-drop`/`update` — Flyway owns the schema), `spring.flyway.enabled=false`, or
+`spring.flyway.clean-disabled=false`.
+
+`application.yml` deliberately mirrors `docker-compose.yml` variable for variable so a fresh clone
+runs with no environment set. The cost of that convenience was that the only thing standing between
+a public password and a production database was "no real database would accept it" — a property of
+the database, not of this application, and one that stops holding the moment somebody provisions RDS
+with the same convenience credentials. **Never logs the password or the assembled JDBC URL** (a
+place credentials end up); the failure message names the property, the environment variable and the
+host only, the same rule `demo.DemoDataStartupGuard` follows.
+
+### `config.StartupConfigurationSummary`
+
+One `INFO` line at every startup naming the environment and the mode actually in force for each
+external dependency. The guards answer "may this configuration run"; this answers what an operator
+asks next — "what is this instance really wired to?" — without a shell on the box.
+
+```text
+pronto.startup.configuration environment=local productionLike=false ai=mock email=log sms=log
+  storage=local maps=fake demoData=off behindProxy=true trustedProxyRanges=0 corsOrigins=1
+```
+
+**Modes, never values.** No secret, no key, no bucket name, no origin, no connection string — a
+startup banner is exactly the kind of thing that gets pasted into a ticket. Uses
+`ApplicationReadyEvent` rather than `@PostConstruct`, breaking with every guard in the codebase on
+purpose: a guard runs before the port binds because refusing to serve traffic is the point, whereas
+a report is only true once everything it describes has successfully initialized.
+
+### `config.ProntoEnvironment` — unchanged, now with seven consumers
+
+MS4 added four more guards on top of MS1/MS2's three. The allow-list rule is untouched:
+`local`/`demo`/`test` are non-production, **everything else including every typo is production**.
+
+Tests: `common/config/DatabaseConfigStartupGuardTest`, and `common/config/ProductionStartupValidationTest`
+— which runs *every* startup guard in the codebase against one candidate configuration. That test
+exists because a set of individually correct guards can still be collectively unsatisfiable, which
+no per-guard unit test can detect, and because it doubles as the executable specification of the
+Production variable set documented in `docs/production-roadmap/reports/prod-MS4-report.md`.

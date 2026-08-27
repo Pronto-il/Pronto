@@ -8,7 +8,11 @@
          square canvas — see its derivation note in `src/assets/README.md`. Referenced through
          Vite's index.html asset pipeline, so it is hashed/emitted like every other asset. -->
     <link rel="icon" type="image/png" href="/src/assets/pronto-mark.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `viewport-fit=cover` is what makes `env(safe-area-inset-*)` resolve to anything other
+         than 0 on a notched/home-indicator iPhone. The fixed bottom navigation and the floating
+         toolbox both reserve space from those insets, so without this the nav sits under the home
+         indicator and the toolbox can be dragged beneath it. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

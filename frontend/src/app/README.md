@@ -422,3 +422,92 @@ The equivalent title removals on `features/booking/MyOrdersPage` and
 deliberately keep their titles — they have a back button and no persistent nav, so the title *is*
 the context — and `features/favorites`' `מועדפים` keeps its title because it has no desktop nav
 entry at all.
+
+## Mobile shell redesign (2026-08-27)
+
+Scoped to `<640px`. The desktop bar renders exactly what it rendered before — verified in
+Chromium at 1280px: brand, the inline 44px CTA, `NotificationBell`, `ההזמנות שלי`,
+`הפרופיל שלי`, logout, and no bottom nav.
+
+**`ActiveOrderIndicator.tsx`/`.module.css` are deleted**, replaced by
+`ActiveIssueToolbox.tsx`/`.module.css`. Nothing else in the app referenced them.
+
+- **`AppLayout.tsx`** — the mobile top row is now brand + `NotificationBell` + logout, three
+  controls down from six. `BookingDraftIndicator` moved inside `.desktopOnlyNav` (so the mobile
+  bar loses it, while the draft's dismiss `X` — which exists at no other call site in the app —
+  stays reachable on desktop). The mobile-only `.mobileProfileLink` is deleted; `פרופיל` is a
+  `BottomNav` tab again. The new-issue CTA is the same `<Link to="/issues/new">` element with
+  the same navigation; only its mobile styling changed.
+- **`AppLayout.module.css`** — mobile logo 34px → 40px; the CTA becomes a ~96px full-width block
+  on its own row; `.mobileProfileLink` removed. `.main`'s bottom padding is now
+  `var(--bottom-nav-height) + var(--safe-area-bottom)` instead of a literal `68px`. The
+  `:global(body.has-active-order-indicator)` clearance rule is **gone**: it reserved ~80px of
+  page padding whenever the old indicator was mounted, and a draggable overlay must not affect
+  content layout.
+- **`BottomNav.tsx`/`.module.css`** — four items (`בית`/`הזמנות`/`מועדפים`/`פרופיל`). The bar
+  reserves `env(safe-area-inset-bottom)` as padding beneath its own 68px, so the tab targets
+  clear the iPhone home indicator. `index.html` gained `viewport-fit=cover`, without which those
+  insets always resolve to 0.
+- **`ActiveIssueToolbox.tsx`** — a floating, draggable navy toolbox. Visible when
+  `useActiveOrder()` has a selection **or** `useBookingDraft()` has a draft (an order wins), so
+  it covers both jobs the two removed controls used to do. Keeps the old indicator's
+  `ReviewPromptModal` behaviour and its `resolveActiveOrderRoute` navigation verbatim.
+- **`shared/hooks/useToolboxPosition.ts`** — pointer drag, an 8px tap/drag threshold, viewport
+  clamping that subtracts the nav and the safe-area inset, and `localStorage` persistence that
+  re-clamps a stored position which no longer fits. 16 unit tests.
+- **`shared/components/ToolboxGraphic.tsx`** — the artwork, as inline SVG tinted from the new
+  `--color-navy*`/`--color-metal*` tokens in `index.css`. It renders its own label, because an
+  earlier revision published the face geometry as custom properties for the consumer to apply to
+  a *sibling* of the `<svg>` — where they do not inherit, so the label fell out of the box and
+  rendered underneath it.
+
+## Toolbox becomes a live-order companion (2026-08-27, follow-up)
+
+The floating toolbox is now stateful across the whole order lifecycle instead of showing one
+fixed label:
+
+```text
+REQUEST ──booked──▶ ETA ──ARRIVED──▶ ✨ ──COMPLETED──▶ REVIEW ──acknowledged──▶ hidden
+"ההזמנה שלי"      "12 דק׳"                          "השאר ביקורת"
+                  "עד ההגעה"
+```
+
+**`toolboxState.ts` (new)** is the single resolver. It maps existing state only — `selection.state`
+from `selectActiveOrder`, `useBookingDraft`'s draft, and `useEtaCountdown`'s figure — onto what to
+render, so no lifecycle branching survives in the JSX and no second source of truth is introduced.
+
+**A real gap was closed in `activeOrderContext.ts`.** `ARRIVED` is a genuine `OrderStatus`, but
+`selectActiveOrder` matched none of its three tiers, so an `ARRIVED` order selected `null` — the
+floating indicator **vanished at the exact moment the professional turned up** and only came back
+once the job was `COMPLETED`. Every consumer inherited the hole, including `useNotifications`,
+which stopped polling mid-visit. `ARRIVED` is now its own tier, ranked above `ON_THE_WAY`, and
+`ActiveOrderProvider` polls it at the fast `ON_THE_WAY` rate because the next transition is
+imminent.
+
+**The countdown is not new logic.** `useEtaCountdown(order.expectedArrivalAt)` already recomputed
+from the absolute timestamp every tick rather than decrementing a local counter, which is what
+makes it survive a refresh; the toolbox simply subscribes to it. `expectedArrivalAt` is written
+once, at the `ON_THE_WAY` transition, and is the sole ETA source of truth.
+
+**Arrival is never inferred from the clock.** A countdown at zero only changes the *wording*
+("מגיע/ה עכשיו"); promotion to `ARRIVED`/`REVIEW` comes from the polled order status alone.
+
+**The review CTA is bound to `COMPLETED`, not to `ARRIVED`** — see the "product ambiguity" note in
+`toolboxState.ts`. `reviews.service.ReviewsService` rejects any review whose order is not
+`COMPLETED` (`REVIEW_ORDER_NOT_COMPLETED`), so offering it at `ARRIVED` would be a button that
+cannot succeed. `ARRIVED` shows `הגיע אליך` instead, reusing `OrderProgressStepper`'s own copy.
+
+**The celebration is latched per order id** in `ActiveIssueToolbox`, not per render, and fires on
+whichever of `ARRIVED`/`REVIEW` is observed first — the `REVIEW` case matters because a short visit
+can cross `ON_THE_WAY → COMPLETED` between two polls, and those customers would otherwise never
+see it.
+
+**Three animation bugs were found and fixed by rendering it, not by reading it:**
+1. the lid was grouped with the handle and hinged via `transform-box: fill-box`, so the pivot
+   depended on the group's contents and the lid swung clear off the box — now the handle is drawn
+   separately and the hinge is stated in viewBox units (`transform-box: view-box`);
+2. each sparkle carried its position in an SVG `transform` **attribute** while the animation
+   animated CSS `transform`, which *replaces* rather than composes — every star teleported to the
+   top-left corner. Position now lives on a wrapper `<g>`;
+3. the sparkles were painted before the lid, so the burst was occluded by the very lid it escapes
+   from. They are now painted last.

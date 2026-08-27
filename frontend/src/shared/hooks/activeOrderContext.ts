@@ -7,7 +7,20 @@ import type { OrderSummary } from '../api/bookings';
  * both by the app shell (`AppLayout`'s `ActiveOrderIndicator`) and by
  * `features/booking/CompletionReviewPage`.
  */
-export type ActiveOrderIndicatorState = 'PENDING_CONFIRMED' | 'ON_THE_WAY' | 'COMPLETED_UNACKNOWLEDGED';
+/**
+ * `ARRIVED` was added 2026-08-27, and it closes a real gap rather than adding a nicety:
+ * `ARRIVED` is a genuine `OrderStatus` (the professional is at the customer's door — see
+ * `features/booking/OrderProgressStepper`'s "הגיע אליך" step) but {@link selectActiveOrder} used
+ * to match none of its three tiers, so an order in that status selected `null`. The floating
+ * indicator therefore **vanished at the exact moment the professional turned up**, and reappeared
+ * only once the job was marked `COMPLETED`. Every consumer of this context inherited that hole,
+ * including `useNotifications`, which stopped polling mid-visit.
+ */
+export type ActiveOrderIndicatorState =
+  | 'PENDING_CONFIRMED'
+  | 'ON_THE_WAY'
+  | 'ARRIVED'
+  | 'COMPLETED_UNACKNOWLEDGED';
 
 export interface ActiveOrderSelection {
   order: OrderSummary;
@@ -70,6 +83,14 @@ export function selectActiveOrder(
   orders: OrderSummary[],
   acknowledgedOrderIds: number[],
 ): ActiveOrderSelection | null {
+  // Ranked above ON_THE_WAY: a professional already standing at the door is more immediate than
+  // one still travelling. Tie-broken by most-recently-updated, i.e. whoever arrived last.
+  const arrived = orders.filter((o) => o.orderStatus === 'ARRIVED');
+  if (arrived.length > 0) {
+    const latest = [...arrived].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    return { order: latest, state: 'ARRIVED' };
+  }
+
   const onTheWay = orders.filter((o) => o.orderStatus === 'ON_THE_WAY');
   if (onTheWay.length > 0) {
     const soonest = [...onTheWay].sort((a, b) =>

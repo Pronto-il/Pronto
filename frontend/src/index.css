@@ -57,6 +57,30 @@
   --color-sos-hover: #d93d42;
   --color-sos-bg: #fff1f2;
 
+  /* --- Deep Navy (§3's brand direction, given real values here) ---
+     §3 names "Deep Navy" as one of the four brand colors but §4 never issued tokens for it, so
+     until now it existed only as prose. The floating active-issue toolbox is the first surface
+     that actually needs it. Declared here rather than as one-off hexes inside
+     `app/ActiveIssueToolbox.module.css`, per this file's own header rule.
+     `--color-navy` is the toolbox body, `-dark` its shadowed lower face and `-light` its lid;
+     the two `-metal` values are the handle, latch and tool shafts. */
+  --color-navy: #1d3a5c;
+  --color-navy-dark: #15293f;
+  --color-navy-light: #27507c;
+  --color-metal: #b9c6d4;
+  --color-metal-dark: #8497a9;
+  --pronto-navy: var(--color-navy);
+
+  /* --- Mobile shell metrics ---
+     One source of truth for the fixed bottom navigation's height and the iOS home-indicator
+     inset. Both are read from CSS by `AppLayout`/`BottomNav` for scroll clearance AND from
+     JavaScript by `useToolboxPosition` (via `getComputedStyle`) to work out how far up the
+     screen the draggable toolbox is allowed to travel. Duplicating either as a literal in the
+     drag maths is how the toolbox ends up droppable behind the nav bar on exactly one device. */
+  --bottom-nav-height: 68px;
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-top: env(safe-area-inset-top, 0px);
+
   /* --- Radius (§84) --- */
   --radius-sm: 8px;
   --radius-md: 12px;

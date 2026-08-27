@@ -4,7 +4,7 @@ import { LogOut, User, ClipboardList, LayoutDashboard, ShieldCheck, Wrench } fro
 import { useAuth } from '../shared/hooks';
 import { setPhoneVerificationRequiredHandler } from '../shared/api';
 import { BookingDraftIndicator } from './BookingDraftIndicator';
-import { ActiveOrderIndicator } from './ActiveOrderIndicator';
+import { ActiveIssueToolbox } from './ActiveIssueToolbox';
 import { BottomNav } from './BottomNav';
 import { NotificationBell } from '../features/notifications';
 import logoUrl from '../assets/pronto-logo.jpg';
@@ -59,8 +59,28 @@ import styles from './AppLayout.module.css';
  * role-aware treatment `PROFESSIONAL` already has. It renders for that role only, so no customer
  * or professional ever sees a link to an operator screen. That is discoverability, not access
  * control: `RequireAuth role="ADMIN"` bounces the other roles off the route and the backend
- * answers `403` regardless of what the UI shows. `ActiveOrderIndicator`/`BottomNav` stay
+ * answers `403` regardless of what the UI shows. `ActiveIssueToolbox`/`BottomNav` stay
  * `CUSTOMER`-only and are therefore already correct for the new role.
+ *
+ * **Mobile shell redesign (2026-08-27).** The changes below are scoped to `<640px`; the desktop
+ * bar renders exactly what it did before, per §14.
+ *
+ * - **§1 — the mobile top row is now only brand + `NotificationBell` + logout.** Three controls,
+ *   down from six. `BookingDraftIndicator` moved inside `.desktopOnlyNav` (it keeps the draft's
+ *   dismiss action, which exists nowhere else in the app, reachable on desktop); the mobile-only
+ *   profile icon is deleted outright. Both jobs are covered on mobile by the two elements below.
+ * - **§2 — the new-issue CTA is the one dominant action under the header.** Same `<Link to=
+ *   "/issues/new">` element and the same navigation as before, restyled by the stylesheet into a
+ *   ~96px full-width block on its own row. It is emphatically *not* the active-order control
+ *   (§17): this link always starts a new issue.
+ * - **§3-§8 — `<ActiveOrderIndicator>` is replaced by `<ActiveIssueToolbox>`**, a draggable
+ *   toolbox rendered as a sibling of `<main>`. It keeps the review-prompt behaviour and the
+ *   route resolution the old indicator had, and additionally covers the booking draft that
+ *   `BookingDraftIndicator` used to surface on mobile. See that component for the visibility
+ *   rule.
+ * - **§9 — "פרופיל" returns to `<BottomNav>`**, making it the four-item bar `DESIGN_SYSTEM.md`
+ *   §50 specifies. The desktop profile link is untouched, since `BottomNav` is hidden above
+ *   640px and removing it there would strand `/profile`.
  */
 export default function AppLayout() {
   const { user, logout } = useAuth();
@@ -104,7 +124,15 @@ export default function AppLayout() {
           <nav className={styles.nav}>
             {user ? (
               <>
-                <BookingDraftIndicator />
+                {/* Desktop only (§1 empties the *mobile* bar; §14 leaves the desktop shell
+                    alone). `.desktopOnlyNav` is `display: contents` above 640px, so this stays
+                    a direct flex child of `.nav` there and simply disappears below it — where
+                    `<ActiveIssueToolbox>` takes over the same "resume my draft" job. Keeping it
+                    on desktop also preserves the draft's dismiss (X) action, which has no other
+                    entry point anywhere in the app. */}
+                <div className={styles.desktopOnlyNav}>
+                  <BookingDraftIndicator />
+                </div>
                 <NotificationBell />
                 <div className={styles.desktopOnlyNav}>
                   {user.role === 'CUSTOMER' && (
@@ -130,16 +158,9 @@ export default function AppLayout() {
                     <span>הפרופיל שלי</span>
                   </Link>
                 </div>
-                {user.role === 'CUSTOMER' && (
-                  <Link
-                    to="/profile"
-                    className={styles.mobileProfileLink}
-                    aria-label="הפרופיל שלי"
-                    title="הפרופיל שלי"
-                  >
-                    <User size={20} aria-hidden="true" />
-                  </Link>
-                )}
+                {/* The mobile profile icon that used to sit here is gone (§1/§9) — "פרופיל" is
+                    now BottomNav's fourth tab. The desktop profile link inside `.desktopOnlyNav`
+                    above is untouched, since BottomNav is `display: none` at that width. */}
                 <button
                   type="button"
                   className={styles.logoutButton}
@@ -166,7 +187,7 @@ export default function AppLayout() {
       <main className={styles.main}>
         <Outlet />
       </main>
-      {user?.role === 'CUSTOMER' && <ActiveOrderIndicator />}
+      {user?.role === 'CUSTOMER' && <ActiveIssueToolbox />}
       {user?.role === 'CUSTOMER' && <BottomNav />}
     </div>
   );

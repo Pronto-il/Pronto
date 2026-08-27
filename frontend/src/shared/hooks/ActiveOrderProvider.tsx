@@ -108,7 +108,11 @@ export function ActiveOrderProvider({ children }: { children: ReactNode }) {
       return;
     }
     setIntervalMs(
-      selection.state === 'ON_THE_WAY'
+      // `ARRIVED` polls at the `ON_THE_WAY` rate: it is the window in which the next transition
+      // (to `COMPLETED`) is imminent, and that transition is what flips the floating toolbox to
+      // its review state. Polling it lazily would leave the customer looking at "הגיע אליך" for
+      // minutes after the job was finished.
+      selection.state === 'ON_THE_WAY' || selection.state === 'ARRIVED'
         ? ON_THE_WAY_INTERVAL_MS
         : selection.state === 'PENDING_CONFIRMED'
           ? PENDING_CONFIRMED_INTERVAL_MS

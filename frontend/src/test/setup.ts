@@ -12,6 +12,29 @@ import * as matchers from '@testing-library/jest-dom/matchers';
  */
 expect.extend(matchers);
 
+/**
+ * jsdom implements no `matchMedia` at all, and accessing it throws rather than returning a
+ * benign default. `shared/components/Modal` reads it during its very first render to decide
+ * between its bottom-sheet and centred-dialog treatments, so *any* test that mounts a component
+ * containing a `Modal` — even a closed one — dies before it can assert anything.
+ *
+ * Stubbed as "no query matches", which yields the desktop/centred branch. Tests that care about
+ * the mobile branch should override this per-test rather than rely on the default.
+ */
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  window.matchMedia = (query: string): MediaQueryList =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }) as unknown as MediaQueryList;
+}
+
 afterEach(() => {
   cleanup();
 });

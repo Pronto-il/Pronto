@@ -1,0 +1,79 @@
+/*
+ * The toolbox IS the button (§3): no circle, no pill, no card, no surface behind it. Hence the
+ * transparent background, zero padding and no border — the only thing painted is the SVG object
+ * itself, and the only shadow is the soft one cast on the page beneath it.
+ *
+ * Positioned from `left`/`top` (set inline by `ActiveIssueToolbox` from the drag hook) rather
+ * than the logical `inset-inline-*`: a dragged coordinate is a physical screen position, and
+ * flipping it under RTL would send the toolbox to the opposite side of where the finger let go.
+ */
+.toolbox {
+  position: fixed;
+  z-index: var(--z-floating);
+
+  width: 108px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: grab;
+
+  /* The gesture is ours: without this the browser scrolls the page instead of dragging, and on
+     iOS a long press selects/callouts. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+
+  /* §22: the shadow is the only resting decoration, and the transition covers the press
+     feedback below — never a loop, never an entrance animation. */
+  filter: drop-shadow(0 6px 10px rgba(21, 41, 63, 0.28));
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+/* Subtle press feedback (§22's "optional subtle scale on tap"). */
+.toolbox:active {
+  transform: scale(0.96);
+}
+
+.toolbox:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 4px;
+  border-radius: var(--radius-sm);
+}
+
+/* While dragging: grabbing cursor, a slightly lifted shadow, and no transform transition —
+   the element is already following the pointer every frame, and easing that would make it lag. */
+.dragging {
+  cursor: grabbing;
+  filter: drop-shadow(0 12px 18px rgba(21, 41, 63, 0.34));
+  transition: none;
+}
+
+.dragging:active {
+  transform: none;
+}
+
+/* The artwork and its label are one object as far as the pointer is concerned — every event has
+   to reach the button, or a press that lands on the wrench would not start a drag. */
+.graphic {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toolbox {
+    transition: none;
+  }
+
+  .toolbox:active {
+    transform: none;
+  }
+}
+
+/* Slightly smaller on the narrowest phones so the toolbox never dominates a 320px viewport.
+   The label steps down with it, in `ToolboxGraphic.module.css`'s matching query. */
+@media (max-width: 360px) {
+  .toolbox {
+    width: 94px;
+  }
+}

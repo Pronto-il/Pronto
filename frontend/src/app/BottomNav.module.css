@@ -1,3 +1,10 @@
+/*
+ * Fixed mobile tab bar. `height` is the bar's own chrome; the home-indicator inset is added as
+ * padding *below* it so the touch targets stay clear of the indicator instead of being
+ * overlapped by it. Both values come from the `--bottom-nav-height`/`--safe-area-bottom` tokens
+ * in `index.css`, which `AppLayout` reuses for scroll clearance and `useToolboxPosition` reads
+ * from JavaScript to bound the draggable toolbox — one source of truth for all three.
+ */
 .bar {
   display: none;
   position: fixed;
@@ -5,7 +12,8 @@
   bottom: 0;
   z-index: var(--z-sticky);
 
-  height: 68px;
+  height: calc(var(--bottom-nav-height) + var(--safe-area-bottom));
+  padding-block-end: var(--safe-area-bottom);
 
   background: var(--color-surface);
   border-top: 1px solid var(--color-border);
@@ -19,6 +27,9 @@
 
 .item {
   flex: 1;
+  /* Four items now instead of three. `min-width: 0` lets them share a 320px viewport without
+     the widest label forcing the bar to overflow. */
+  min-width: 0;
 
   display: flex;
   flex-direction: column;
@@ -30,6 +41,15 @@
   text-decoration: none;
   font-size: var(--font-size-caption);
   font-weight: var(--font-weight-semibold);
+}
+
+/* At four items a long Hebrew label on a 320px screen would otherwise wrap to two lines and
+   push the icon out of vertical centre. */
+.label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .active {

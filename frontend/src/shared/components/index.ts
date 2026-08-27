@@ -93,3 +93,6 @@ export type { ProfessionIllustrationProps } from './ProfessionIllustration';
 export type { MascotProps, MascotState, MascotSize } from './Mascot';
 
 export { ToastViewport } from './ToastViewport';
+
+export { ToolboxGraphic } from './ToolboxGraphic';
+export type { ToolboxGraphicProps } from './ToolboxGraphic';

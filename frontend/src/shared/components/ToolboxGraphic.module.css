@@ -1,0 +1,197 @@
+/*
+ * The artwork, the label that sits on it, and the one-shot arrival animation.
+ *
+ * The front face is the `<rect x="4" y="52" width="112" height="48">` inside a 120x104 viewBox.
+ * `.face` below is that same rectangle expressed as percentages of the rendered object, which is
+ * why both live in this file: the label has to be positioned by an element that also knows the
+ * artwork's geometry. (Publishing the numbers as custom properties for a consumer to apply to a
+ * *sibling* of the `<svg>` does not work — custom properties inherit down, not sideways, so the
+ * label silently fell out of the box and rendered underneath it.)
+ *
+ *   left   = 4/120   =  3.334%
+ *   top    = 52/104  = 50%
+ *   width  = 112/120 = 93.334%
+ *   height = 48/104  = 46.154%
+ */
+.root {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+/* The tools carry their own soft drop shadow so they separate from the box body when the
+   toolbox is dragged over a busy part of the page. */
+.tool {
+  filter: drop-shadow(0 1px 1px rgba(21, 41, 63, 0.35));
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Label
+ * ------------------------------------------------------------------------------------------ */
+
+.face {
+  position: absolute;
+  inset-inline-start: 3.334%;
+  top: 50%;
+  width: 93.334%;
+  height: 46.154%;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* Nudges the text clear of the lid seam and optically centres it in the visible face. */
+  padding-block-start: 6px;
+  padding-inline: 4px;
+
+  line-height: 1.1;
+  text-align: center;
+  color: #ffffff;
+  /* The face is a mid-navy; a faint dark halo keeps the white legible over the latches and the
+     shadowed lower strip. */
+  text-shadow: 0 1px 2px rgba(21, 41, 63, 0.55);
+  pointer-events: none;
+}
+
+/* Two lines (the ETA state) sit a touch higher and tighter than a single centred line. */
+.faceStacked {
+  gap: 1px;
+  padding-block-start: 4px;
+}
+
+/* Single-line states: "ההזמנה שלי", "הגיע אליך", "השאר ביקורת". */
+.primary {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* The countdown figure — the one number the customer is actually watching, so it gets the
+   largest type on the object. Tabular figures stop the box twitching as minutes tick down. */
+.primaryLarge {
+  font-size: 19px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.secondary {
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.86;
+}
+
+@media (max-width: 360px) {
+  .primary {
+    font-size: 12px;
+  }
+
+  .primaryLarge {
+    font-size: 17px;
+  }
+
+  .secondary {
+    font-size: 9px;
+  }
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Arrival celebration (~800ms, plays once — the consumer owns "once")
+ * ------------------------------------------------------------------------------------------ */
+
+/*
+ * The lid hinges on its own back-left corner — `x=4, y=56` in the SVG's 120x104 viewBox, i.e.
+ * where the lid meets the front face.
+ *
+ * `view-box` rather than `fill-box` on purpose: `fill-box` resolves percentages against the
+ * element's own bounding box, which made the origin depend on exactly which shapes were inside
+ * the group. While the handle was still grouped with the lid that box started ~19 units higher,
+ * so the pivot landed mid-air and the lid swung off the toolbox entirely. Stating the hinge in
+ * viewBox units instead makes it independent of the group's contents.
+ */
+.lid {
+  transform-box: view-box;
+  transform-origin: 8px 56px;
+}
+
+.sparkles {
+  /* Never interactive, and invisible until the burst. */
+  pointer-events: none;
+  opacity: 0;
+}
+
+.sparkle {
+  opacity: 0;
+}
+
+.celebrating .lid {
+  animation: toolbox-lid-open 800ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) 1 both;
+}
+
+.celebrating .sparkles {
+  opacity: 1;
+}
+
+.celebrating .sparkle {
+  animation: toolbox-sparkle 700ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) var(--sparkle-delay, 0ms) 1 both;
+}
+
+/* Open, hold briefly, close. Ending where it started is what lets the toolbox settle back into
+   its normal resting look rather than staying permanently ajar. */
+@keyframes toolbox-lid-open {
+  0% {
+    transform: rotate(0deg);
+  }
+  /* Only -6deg, plus a small lift.
+     The lid is a 112-unit bar, so its far end rises by 112*sin(angle): at -13deg that is ~25
+     units — more than the lid's own 18-unit height, which reads as the lid being flung off the
+     box rather than opened. -6deg lifts the far end ~12 units, which is "ajar" and lets the
+     sparkles out without the object coming apart. */
+  30% {
+    transform: rotate(-6deg) translateY(-2px);
+  }
+  62% {
+    transform: rotate(-6deg) translateY(-2px);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+/* Rise out of the box, drifting along a per-sparkle vector, fading as they go. */
+@keyframes toolbox-sparkle {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.3);
+  }
+  25% {
+    opacity: 1;
+    transform: translate(calc(var(--sparkle-dx) * 0.35), calc(var(--sparkle-dy) * 0.35)) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--sparkle-dx), var(--sparkle-dy)) scale(0.55);
+  }
+}
+
+/*
+ * §"Animation": reduced-motion users skip the opening/sparkle animation entirely and go straight
+ * to the settled state. Not merely slowed — a lid that hinges open and five points of light
+ * flying outward is exactly the vestibular trigger this query exists for.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .celebrating .lid,
+  .celebrating .sparkle {
+    animation: none;
+  }
+
+  .celebrating .sparkles {
+    opacity: 0;
+  }
+}

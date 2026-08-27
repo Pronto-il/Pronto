@@ -153,30 +153,6 @@
   background: var(--color-primary-hover);
 }
 
-/* Mobile-only account action. On desktop the profile link already lives inside
-   `.desktopOnlyNav` above, so this stays hidden there — never two profile entry points at the
-   same width. Below 640px it replaces `<BottomNav>`'s former "פרופיל" tab (removed from
-   `BottomNav.tsx` in the same change, so there is exactly one profile action on mobile too).
-   Styled as a filled primary-tinted circle rather than borrowing `.logoutButton`'s transparent
-   treatment: this is a primary account action, not a demoted utility one, and the contrast also
-   keeps the two adjacent icon buttons distinguishable at a glance. */
-.mobileProfileLink {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--color-primary-light);
-  color: var(--color-primary);
-  text-decoration: none;
-}
-
-.mobileProfileLink:hover {
-  background: var(--color-primary);
-  color: #ffffff;
-}
-
 /* Icon-only, demoted logout (design doc §3.1) — a secondary utility action, not a nav
    destination, so it drops the visible "יציאה" label; `aria-label`/`title` carry the meaning.
    `margin-inline-start` gives it its own extra gap after the profile link on desktop, on top
@@ -206,19 +182,25 @@
 }
 
 @media (max-width: 640px) {
-  /* The bar wraps instead of shrinking: brand + nav actions keep the 56px row they already had,
-     and the CTA takes a full-width row of its own underneath (`order`/`flex-basis` below). The
-     alternative — squeezing a full Hebrew sentence into the same row as four icon buttons — would
-     have meant truncating the one string this action is supposed to say. `height` becomes `auto`
-     because the element is now two rows tall; the 56px is preserved as a `min-height` on the
-     first row's own children, which already sit at that size. */
+  /*
+   * Mobile shell redesign §1/§2. The bar wraps into two rows: a top row holding ONLY the brand
+   * and the nav actions, and the new-issue CTA on a full-width row of its own beneath it. That
+   * second row is what §11's hierarchy calls "NEW ISSUE CTA, immediately below the header", and
+   * it matches §23's sketch, where the CTA sits inside the same top block as the logo before the
+   * first divider. Keeping it a child of `.headerInner` rather than moving it into the document
+   * flow is deliberate: the element is shared with desktop, where it sits inline in the bar, and
+   * §14 asks for the desktop shell to be left alone.
+   *
+   * The top row is now down to three controls (logo, bell, logout) from six, which is what buys
+   * the bigger logo and the taller CTA without the bar growing.
+   */
   .headerInner {
     height: auto;
     min-height: 56px;
     flex-wrap: wrap;
-    row-gap: var(--space-2);
+    row-gap: var(--space-3);
     padding-inline: var(--space-4);
-    padding-block-end: var(--space-3);
+    padding-block-end: var(--space-4);
   }
 
   .brand {
@@ -227,56 +209,68 @@
     padding-inline-end: var(--space-2);
   }
 
+  /*
+   * §2: the single dominant call to action. ~96px tall sits in the middle of the requested
+   * 90-110px; `min-height` rather than `height` so a wrapped Hebrew string on a 320px screen
+   * grows the box instead of spilling out of it.
+   *
+   * `margin-inline: 0` + `flex-basis: 100%` give it "nearly full width at normal mobile
+   * margins" — the margins are `.headerInner`'s own `--space-4` padding, so the CTA lines up
+   * with the page content below rather than inventing a second gutter.
+   */
   .issueCta {
     order: 3;
     flex-basis: 100%;
+    height: auto;
+    min-height: 96px;
     justify-content: center;
+    gap: var(--space-3);
+    padding-inline: var(--space-5);
     margin-inline-end: 0;
+    border-radius: var(--radius-lg);
+    font-size: 18px;
+    /* The full sentence is the point of this control, so it is allowed to wrap here — the
+       desktop rule's `nowrap` would truncate it on a narrow phone. */
+    white-space: normal;
+    text-align: center;
+    line-height: 1.3;
+    box-shadow: var(--shadow-elevated);
   }
 
-  /* One value, not a re-derived crop: the 56px mobile bar carries up to four actions next to
-     the brand, so the lockup steps down proportionally and stays centred there too. */
+  /* §1 wants the logo "clearly visible and reasonably large". With three controls in the row
+     instead of six there is room to step it up from the old 34px. */
   .logo {
-    --logo-height: 34px;
+    --logo-height: 40px;
   }
 
   .desktopOnlyNav {
     display: none;
   }
 
-  .mobileProfileLink {
-    display: inline-flex;
-  }
-
-  /* The compact 56px bar now carries up to four actions (draft indicator, bell, profile,
-     logout), so it tightens its own gap rather than letting them crowd each other. */
+  /* Three controls, not six — the bar can afford its regular gap again. */
   .nav {
     order: 2;
     min-height: 56px;
-    gap: var(--space-2);
+    gap: var(--space-3);
   }
 
-  /* Post-MS2 mobile logout fix: drop the desktop-only extra "own gap" — on mobile
-     `.logoutButton` sits directly after `NotificationBell` (not the profile link), and relies
-     on `.nav`'s regular `gap` alone so it doesn't crowd the compact top bar. */
+  /* On mobile `.logoutButton` sits directly after `NotificationBell`, so it relies on `.nav`'s
+     own gap rather than the desktop-only extra "own gap". */
   .logoutButton {
     margin-inline-start: 0;
   }
 
-  /* Clears the fixed `<BottomNav>` (68px) so the last real content isn't hidden behind it.
-     Unconditional on mobile per design doc §3.2 — simpler than conditioning page padding on
-     auth state for a purely cosmetic few extra px on the rare unauthenticated/professional
-     mobile view. */
+  /*
+   * Clears the fixed `<BottomNav>` — its chrome plus the iOS home-indicator inset, from the same
+   * tokens the bar itself is laid out with (§10: "content does not disappear behind it").
+   *
+   * There is deliberately no extra clearance for the floating toolbox any more. The old
+   * `body.has-active-order-indicator` rule reserved ~80px whenever the indicator was mounted;
+   * §13 requires the opposite — the toolbox is an overlay and must not affect content layout —
+   * and reserving a fixed strip for an element the customer can now drag anywhere would be
+   * wrong wherever they moved it to.
+   */
   .main {
-    padding-block-end: 68px;
-  }
-
-  /* The floating `<ActiveOrderIndicator>` sits above the BottomNav on the inline-end side and
-     would otherwise overlap the last element on screen — most visibly a full-width step CTA in
-     the booking flow, or the profile page's favourite button (MS5 design doc §3.G). Extra
-     clearance only while the indicator is actually mounted: unlike the BottomNav above, this
-     is ~80px of dead space, too much to reserve unconditionally on every mobile page. */
-  :global(body.has-active-order-indicator) .main {
-    padding-block-end: calc(68px + 64px + var(--space-4));
+    padding-block-end: calc(var(--bottom-nav-height) + var(--safe-area-bottom));
   }
 }

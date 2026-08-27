@@ -39,32 +39,39 @@ public class NotificationServiceImpl implements NotificationService {
     }
 
     /**
-     * §4.3 — two rows per event, same transaction as the order transition that triggered
-     * them (this method carries no {@code @Transactional} of its own; it runs inside the
-     * caller's — {@code BookingsService}'s — existing transactional boundary, deliberately,
-     * per §4.3's "no outbox pattern, no event bus" simplicity call).
+     * §4.3 — same transaction as the order transition that triggered it (this method carries no
+     * {@code @Transactional} of its own; it runs inside the caller's — {@code BookingsService}'s
+     * — existing transactional boundary, deliberately, per §4.3's "no outbox pattern, no event
+     * bus" simplicity call).
+     *
+     * <p><b>The {@code IN_APP} row is unconditional; the {@code EMAIL} row is not.</b> §4.3's
+     * original "two rows per event" made every status Pronto has an email nobody chose to send,
+     * which is how a customer whose SOS search found nobody was mailed
+     * {@code SOS_NO_PROFESSIONALS}. {@link NotificationEmailCopy} is the allowlist, and it is
+     * consulted here rather than at dispatch time so a suppressed event leaves no row loitering
+     * in the {@code PENDING} queue at all.
      */
     @Override
     public void recordOrderNotification(Long orderId, Long recipientUserId, NotificationMessageType messageType) {
         Instant now = Instant.now();
-        Notification inApp = new Notification(recipientUserId, orderId, messageType,
-                NotificationChannel.IN_APP, NotificationDeliveryStatus.SENT, now);
-        Notification email = new Notification(recipientUserId, orderId, messageType,
-                NotificationChannel.EMAIL, NotificationDeliveryStatus.PENDING, null);
-        notificationRepository.save(inApp);
-        notificationRepository.save(email);
+        notificationRepository.save(new Notification(recipientUserId, orderId, messageType,
+                NotificationChannel.IN_APP, NotificationDeliveryStatus.SENT, now));
+        if (NotificationEmailCopy.isEmailable(messageType)) {
+            notificationRepository.save(new Notification(recipientUserId, orderId, messageType,
+                    NotificationChannel.EMAIL, NotificationDeliveryStatus.PENDING, null));
+        }
     }
 
     /** Pronto SOS. Structurally identical to {@link #recordOrderNotification} above. */
     @Override
     public void recordSosNotification(Long sosRequestId, Long recipientUserId, NotificationMessageType messageType) {
         Instant now = Instant.now();
-        Notification inApp = Notification.forSosRequest(recipientUserId, sosRequestId, messageType,
-                NotificationChannel.IN_APP, NotificationDeliveryStatus.SENT, now);
-        Notification email = Notification.forSosRequest(recipientUserId, sosRequestId, messageType,
-                NotificationChannel.EMAIL, NotificationDeliveryStatus.PENDING, null);
-        notificationRepository.save(inApp);
-        notificationRepository.save(email);
+        notificationRepository.save(Notification.forSosRequest(recipientUserId, sosRequestId, messageType,
+                NotificationChannel.IN_APP, NotificationDeliveryStatus.SENT, now));
+        if (NotificationEmailCopy.isEmailable(messageType)) {
+            notificationRepository.save(Notification.forSosRequest(recipientUserId, sosRequestId, messageType,
+                    NotificationChannel.EMAIL, NotificationDeliveryStatus.PENDING, null));
+        }
     }
 
     /** §3.1. */

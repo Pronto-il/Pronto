@@ -8,6 +8,7 @@ import com.pronto.notifications.entity.NotificationMessageType;
 import com.pronto.notifications.repository.NotificationRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import java.time.Instant;
@@ -153,6 +154,65 @@ class NotificationServiceImplTest {
 
         assertThat(service.markRead(CALLER_ID, 1L).relatedIssueId()).isNull();
         verify(sosRequestIssueResolver, never()).issueIdsBySosRequestId(any());
+    }
+
+    // ---- Which events become email at all ----
+
+    private List<Notification> recordedRows() {
+        ArgumentCaptor<Notification> saved = ArgumentCaptor.forClass(Notification.class);
+        verify(notificationRepository, Mockito.atLeastOnce()).save(saved.capture());
+        return saved.getAllValues();
+    }
+
+    /**
+     * The reported incident, at its source. An SOS search that finds nobody is a statement about
+     * Pronto's matching machinery, not about anything a person did — the customer gets the in-app
+     * row (it is their record of the attempt) and nothing in their inbox.
+     */
+    @Test
+    void anSosSearchThatFoundNobodyLeavesNoEmailRowBehind() {
+        service.recordSosNotification(77L, CALLER_ID, NotificationMessageType.SOS_NO_PROFESSIONALS);
+
+        assertThat(recordedRows()).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.getChannel()).isEqualTo(NotificationChannel.IN_APP);
+                    assertThat(row.getDeliveryStatus()).isEqualTo(NotificationDeliveryStatus.SENT);
+                    assertThat(row.getRelatedSosRequestId()).isEqualTo(77L);
+                });
+    }
+
+    /** Same shape, same reason: a routing outage is Pronto's problem, not the customer's mail. */
+    @Test
+    void anSosSearchThatCouldNotBeEvaluatedLeavesNoEmailRowEither() {
+        service.recordSosNotification(77L, CALLER_ID, NotificationMessageType.SOS_TEMPORARILY_UNAVAILABLE);
+
+        assertThat(recordedRows()).singleElement()
+                .extracting(Notification::getChannel).isEqualTo(NotificationChannel.IN_APP);
+    }
+
+    @Test
+    void aCustomerFacingSosTransitionStillWritesBothRows() {
+        service.recordSosNotification(77L, CALLER_ID, NotificationMessageType.SOS_PROFESSIONAL_CONFIRMED);
+
+        assertThat(recordedRows()).extracting(Notification::getChannel)
+                .containsExactly(NotificationChannel.IN_APP, NotificationChannel.EMAIL);
+    }
+
+    @Test
+    void anOrderTransitionStillWritesBothRows() {
+        service.recordOrderNotification(500L, CALLER_ID, NotificationMessageType.ORDER_CONFIRMED);
+
+        assertThat(recordedRows()).extracting(Notification::getChannel)
+                .containsExactly(NotificationChannel.IN_APP, NotificationChannel.EMAIL);
+        assertThat(recordedRows()).allSatisfy(row -> assertThat(row.getRelatedOrderId()).isEqualTo(500L));
+    }
+
+    @Test
+    void theEmailRowStartsPendingSoTheDispatchJobPicksItUp() {
+        service.recordOrderNotification(500L, CALLER_ID, NotificationMessageType.ORDER_ON_THE_WAY);
+
+        assertThat(recordedRows().get(1).getDeliveryStatus()).isEqualTo(NotificationDeliveryStatus.PENDING);
+        assertThat(recordedRows().get(1).getSentAt()).isNull();
     }
 
     @Test

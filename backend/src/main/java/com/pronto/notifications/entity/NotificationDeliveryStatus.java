@@ -8,5 +8,17 @@ package com.pronto.notifications.entity;
 public enum NotificationDeliveryStatus {
     PENDING,
     SENT,
-    FAILED
+    FAILED,
+
+    /**
+     * {@code V53}. The row was never eligible for delivery on its channel — as opposed to
+     * {@link #FAILED}, which means a send was attempted and something went wrong.
+     *
+     * <p>Only {@code EmailDispatchJob} writes it, and only for rows whose {@code messageType} is
+     * absent from {@link com.pronto.notifications.service.NotificationEmailCopy}'s allowlist.
+     * Since {@code V53} those rows are not created on the {@code EMAIL} channel in the first
+     * place, so in practice this value belongs to rows written before it — see the migration for
+     * why they could neither be left {@code PENDING} nor honestly called {@code FAILED}.
+     */
+    SUPPRESSED
 }

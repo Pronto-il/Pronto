@@ -29,9 +29,11 @@ endpoints, §4 cross-cutting mechanisms).
   `bookings → notifications` call boundary (§4.1). Called by `bookings.service.BookingsService`
   as the last step of every successful order-lifecycle transition, inside that same
   `@Transactional` method (no outbox pattern, no event bus — a deliberate simplicity call,
-  §4.3). Inserts **two** rows per call: an `IN_APP` row (`delivery_status = SENT` immediately
-  — the row itself being queryable *is* delivery) and an `EMAIL` row (`delivery_status =
-  PENDING`, dispatched later by `EmailDispatchJob`). The full trigger→recipient mapping
+  §4.3). Inserts an `IN_APP` row (`delivery_status = SENT` immediately — the row itself being
+  queryable *is* delivery) and, **only if `service.NotificationEmailCopy.isEmailable(type)`**,
+  an `EMAIL` row (`delivery_status = PENDING`, dispatched later by `EmailDispatchJob`). §4.3's
+  original unconditional "two rows per call" is what mailed a customer whose SOS search found
+  nobody — see the `NotificationEmailCopy` bullet below. The full trigger→recipient mapping
   (§4.2 of the contract doc):
 
   | Trigger (in `bookings.service.BookingsService`) | `messageType` | Recipient |
@@ -48,14 +50,34 @@ endpoints, §4 cross-cutting mechanisms).
   **not** retrofitted into this table this milestone — an in-app notification for an event
   that happens before the user has a usable session has no real use case (§6 item 6 of the
   contract doc).
+- `NotificationEmailCopy` (`service.NotificationEmailCopy`) — **the allowlist of message types
+  that may become email, and the Hebrew copy for each, in one exhaustive `switch`.** A type
+  with no copy is a type that is not sent; adding a `NotificationMessageType` is a compile
+  error here rather than a silent new customer email. Three types are deliberately off it:
+  `SOS_NO_PROFESSIONALS` and `SOS_TEMPORARILY_UNAVAILABLE` (both written by
+  `sos.service.SosDispatchService`'s failure branches, seconds after the customer pressed the
+  button, while they are watching the live SOS screen that already shows the same outcome —
+  neither describes anything a person did) and `EMAIL_VERIFICATION` (`auth.email.OtpMessageCopy`
+  owns every word Pronto says about a verification code, and a second blander message alongside
+  it would dilute a security signal). The in-app row is written in all three cases; only the
+  email goes. **Fixes the incident** where a customer received `"Pronto — Order #null: status
+  changed to SOS_NO_PROFESSIONALS"` — three defects in one line (an email for an internal state,
+  an internal enum name as customer copy, and an order id for a flow that has no order yet:
+  SOS rows carry `related_sos_request_id` and a `NULL` `related_order_id` by design).
 - `EmailDispatchJob` (`scheduler.EmailDispatchJob`, `@Scheduled(fixedDelay = 20_000)`) —
   polls the `EMAIL`-channel `PENDING` queue (batch of 50, `idx_notifications_channel_status`,
-  oldest first), resolves the recipient's email via `users.repository.UserRepository`, builds
-  a minimal generic English subject/body from `(messageType, relatedOrderId)` (exact
-  copy/Hebrew localization is a genuinely open item, §7 of the contract doc — not decided
-  here), calls `auth.email.EmailSender.sendOrderStatusEmail(...)`, then marks the row `SENT`
-  (with `sent_at`) on success or `FAILED` on any exception (logged at `WARN`, not rethrown —
-  one bad row must not block the rest of the batch).
+  oldest first), resolves the recipient's email via `users.repository.UserRepository`, renders
+  subject/body via `NotificationEmailCopy` (it composes no copy of its own — string-concatenating
+  `messageType`/`relatedOrderId` is exactly what leaked enum names and `Order #null`), calls
+  `auth.email.EmailSender.sendOrderStatusEmail(...)`, then marks the row `SENT` (with `sent_at`)
+  on success or `FAILED` on any exception (logged at `WARN`, not rethrown — one bad row must not
+  block the rest of the batch). A row whose type is not on the allowlist is marked `SUPPRESSED`
+  (`V53`) and never sent — a second lock on the same door, and the only thing that stops the
+  pre-`V53` rows already in the queue from being delivered on the first poll after deploy.
+  `SUPPRESSED` rather than `FAILED` because `FAILED` means a send was attempted and is the
+  signal an operator uses to find genuine bugs; `SUPPRESSED` rather than left `PENDING` because
+  those are the oldest rows in a `created_at`-ordered batch and would park at the head of the
+  queue forever.
 - `OrderExpirySweepJob` (`scheduler.OrderExpirySweepJob`, `@Scheduled(fixedDelay = 60_000)`)
   — every 60s, calls `bookingsService.findExpiredOrderCandidateIds()` then
   `bookingsService.expireIfPending(orderId)` for each candidate. The 60s interval does
@@ -144,6 +166,11 @@ full gap-and-fix writeup). No other schema change was required this milestone �
 `related_order_id`, `channel`, `delivery_status`, `read_at`, `sent_at` already existed and
 already supported every design decision in the contract doc.
 
+`V53__alter_notifications_delivery_status_add_suppressed.sql` later added `'SUPPRESSED'` to the
+`delivery_status` `CHECK`, for rows that were never eligible for delivery on their channel as
+opposed to rows whose delivery was attempted and failed. See the `EmailDispatchJob` bullet
+above. `delivery_status` is not exposed by `NotificationResponse`, so this is not an API change.
+
 ## Assumptions / judgment calls made during implementation
 
 All judgment calls below follow the contract doc's explicitly stated default — no deviation
@@ -152,10 +179,16 @@ except the one bug-fix noted in Responsibilities/Status:
 - **`POST /api/notifications/read-all` was built as a judgment call**, not explicitly
   requested by any source document — cheap, common UI pattern, per §3.3/§6 item 8 of the
   contract doc.
-- **Notification copy (subject/body text, English-only, no Hebrew localization) is a minimal
-  generic placeholder** (e.g. `"Pronto — Order #<id>: status changed to <STATUS>"`) —
-  genuinely open, needs product/UX input, not decided by this package (§7 of the contract
-  doc). Not production-ready copy.
+- **Notification copy — no longer a placeholder.** §7 of the contract doc left it open and
+  `EmailDispatchJob` filled the gap with `"Pronto — Order #<id>: status changed to <STATUS>"`,
+  built by concatenating the enum constant. That reached real customers in Production: English
+  copy in a Hebrew-only product, quoting internal enum names, with a literal `#null` on every
+  SOS row. Replaced by `service.NotificationEmailCopy` — Hebrew, per type, written from the
+  recipient's point of view, mirroring
+  `frontend/src/features/notifications/notificationLabels.ts` (including its two load-bearing
+  rules: availability is never described as selection, and the sentence is the recipient's, not
+  an observer's). Still not a UX-signed-off copy deck, but no longer a placeholder that leaks
+  implementation detail.
 - **No real SMTP/SES `EmailSender` implementation was built this milestone.**
   `auth.email.LoggingEmailSender` remains the sole implementation; `pronto.email.mode`
   (`application.yml`) is introduced now for forward compatibility with only `log` as an

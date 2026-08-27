@@ -1,0 +1,101 @@
+# Copy to terraform.tfvars and edit. terraform.tfvars is git-ignored.
+#
+# NO SECRET VALUE BELONGS IN THIS FILE OR IN terraform.tfvars. There is no variable for a password,
+# an API key or a token anywhere in this configuration, by design — Terraform writes every variable
+# it uses into state in plaintext. Secret values are written directly to Secrets Manager, once, by
+# hand. See secrets.tf and the deployment runbook.
+#
+# Every value below is either a real default worth confirming, or a placeholder that is obviously a
+# placeholder. Nothing here is a real domain, account or credential.
+
+# ==================================================================================================
+# Usually correct as-is
+# ==================================================================================================
+
+# aws_region       = "us-east-1"
+# project          = "pronto"
+# environment_name = "production"
+
+github_repository = "yuvalharel/Pronto"
+
+# Set false if this AWS account already has a GitHub OIDC provider from another project — an
+# account may hold only one per issuer, and creating a second fails mid-apply.
+# create_github_oidc_provider = true
+
+# ==================================================================================================
+# Set these before the first apply
+# ==================================================================================================
+
+# Subscribed to every alarm and to the budget notifications. Leaving it empty creates the alarms
+# with nowhere to deliver, which is the same as having no alarms. AWS sends a confirmation email
+# that must be clicked before anything is delivered.
+alarm_email = "ops@example.com"
+
+# Alerts at 50/80/100 percent. Does not cap spend — AWS provides no such control.
+monthly_budget_usd = 200
+
+# ==================================================================================================
+# BLOCKED until a domain is chosen — leave every one of these empty
+# ==================================================================================================
+#
+# No domain has been selected for Pronto and this milestone does not invent one. Empty is the
+# expected state and the stack is deployable in it:
+#
+#   * The FRONTEND works fully. CloudFront serves on its own *.cloudfront.net name with a valid
+#     Amazon certificate, so it is real HTTPS and real deep-link routing.
+#   * The BACKEND is the genuinely blocked half. An ALB certificate must name a hostname somebody
+#     owns, so with no certificate there is no HTTPS listener — see enable_plaintext_http_listener
+#     below for the only (deliberately awkward) way to reach it meanwhile.
+#
+# Once a domain exists:
+#   1. Register it and create a Route 53 hosted zone.
+#   2. Request ONE certificate in us-east-1 covering every hostname:
+#
+#        aws acm request-certificate --region us-east-1 \
+#          --domain-name pronto.example \
+#          --subject-alternative-names www.pronto.example api.pronto.example \
+#          --validation-method DNS --profile pronto-admin
+#
+#      One certificate, not two. CloudFront requires its certificate in us-east-1 wherever the rest
+#      of the stack lives; now that the primary region IS us-east-1, the same certificate also
+#      satisfies the ALB. While the primary region was eu-central-1 this needed one per region.
+#   3. Fill in the two values below and re-apply.
+#   4. Create the DNS records: api.<domain> -> ALB alias, <domain> -> CloudFront alias.
+
+# domain_name         = "pronto.example"
+# acm_certificate_arn = ""   # us-east-1, serves BOTH the ALB and CloudFront
+
+# Derived from domain_name / the CloudFront domain when left empty. Override only if the frontend
+# is served from somewhere neither of those describes. Note this also gates the SOS WebSocket
+# handshake, not just REST CORS.
+# cors_allowed_origins = ""
+# api_base_url         = ""
+
+# ==================================================================================================
+# DANGEROUS — read the variable description before setting this true
+# ==================================================================================================
+#
+# With no ACM certificate, port 80 returns a fixed 503 and the API is unreachable. Setting this true
+# instead forwards port 80 to the backend IN PLAINTEXT, so that the infrastructure can be validated
+# before a domain exists. Every JWT sent to it travels unencrypted. Only for an environment with no
+# real user data, and set back to false the moment a certificate exists.
+#
+# enable_plaintext_http_listener = false
+
+# ==================================================================================================
+# Sizing — start here, adjust from measured CloudWatch metrics rather than from guesses
+# ==================================================================================================
+
+# backend_cpu    = 512    # 0.5 vCPU
+# backend_memory = 1024   # MiB. backend/Dockerfile's MaxRAMPercentage=65 is sized against this
+#                         # exact number; change one and you must change the other.
+
+# MUST be 1. A validation rule enforces it. See the variable's description for the four pieces of
+# per-JVM state that break with two tasks — the sharpest being duplicated order emails.
+# backend_desired_count = 1
+
+# db_instance_class        = "db.t4g.micro"
+# db_allocated_storage     = 20
+# db_max_allocated_storage = 100
+# db_backup_retention_days = 7
+# db_multi_az              = false   # deliberate beta deferral; revisit at public launch

@@ -24,9 +24,11 @@ import java.util.List;
  * Stateless JWT-based security configuration, per
  * {@code docs/architecture/api-contract.md} §3.1-3.2.
  *
- * <p>Public (no token required): {@code /actuator/health} (Milestone 0's health-check
+ * <p>Public (no token required): {@code /actuator/health/**} (Milestone 0's health-check
  * acceptance criterion — must not regress now that spring-boot-starter-security is on the
- * classpath), {@code /api/auth/**} (register/verify/login, which by definition happen
+ * classpath; widened from the exact path to the sub-tree by Production MS5 so that the ALB and
+ * the ECS agent can reach {@code /actuator/health/readiness} and {@code /actuator/health/liveness}),
+ * {@code /api/auth/**} (register/verify/login, which by definition happen
  * before the caller has a token), {@code GET /api/storage/images/**} (image retrieval,
  * backend MS9 — a plain {@code <img src>} cannot attach an {@code Authorization} header, so
  * this route authorizes via a presigned/HMAC-signed URL instead of a JWT; see
@@ -92,7 +94,22 @@ public class SecurityConfig {
                         // calling account, and an unauthenticated caller naming an account id would
                         // be the entire vulnerability.
                         .requestMatchers(HttpMethod.POST, "/api/auth/phone/capture").authenticated()
-                        .requestMatchers("/actuator/health", "/api/auth/**").permitAll()
+                        // Production MS5 widened this from the exact path "/actuator/health" to
+                        // include its sub-paths. Spring Security's path matcher treats
+                        // "/actuator/health" as EXACTLY that string, so the liveness and readiness
+                        // groups added in application.yml -- /actuator/health/liveness and
+                        // /actuator/health/readiness -- fell through to the authenticated catch-all
+                        // and answered 401. An ALB target health check receiving 401 marks every
+                        // task unhealthy and drains the service to zero, so this omission would have
+                        // presented as a total outage on the first deploy.
+                        //
+                        // Widening leaks nothing further: `include: health` is the only exposed
+                        // endpoint, so /actuator/** resolves to nothing but health and its groups,
+                        // and `show-details: when-authorized` still withholds the per-indicator
+                        // detail from an unauthenticated caller. What a stranger can learn is what a
+                        // stranger could already learn by sending a request: whether the service is
+                        // up.
+                        .requestMatchers("/actuator/health/**", "/api/auth/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/storage/images/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/categories").permitAll()
                         // MS4 Part A: the closed region/city catalogue. Public for the same

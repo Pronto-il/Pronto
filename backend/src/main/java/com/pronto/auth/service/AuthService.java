@@ -1,5 +1,6 @@
 package com.pronto.auth.service;
 
+import com.pronto.auth.config.VerificationPolicy;
 import com.pronto.auth.dto.AuthNextStep;
 import com.pronto.auth.dto.AuthSession;
 import com.pronto.auth.dto.AuthStepResponse;
@@ -82,6 +83,7 @@ public class AuthService {
     private final ProfessionalCoverageService professionalCoverageService;
     private final ServiceCoverageValidator serviceCoverageValidator;
     private final SubServiceSelectionValidator subServiceSelectionValidator;
+    private final VerificationPolicy verificationPolicy;
 
     public AuthService(UserRepository userRepository,
                         AuthAccountWriter accountWriter,
@@ -90,7 +92,8 @@ public class AuthService {
                         PasswordEncoder passwordEncoder,
                         ProfessionalCoverageService professionalCoverageService,
                         ServiceCoverageValidator serviceCoverageValidator,
-                        SubServiceSelectionValidator subServiceSelectionValidator) {
+                        SubServiceSelectionValidator subServiceSelectionValidator,
+                        VerificationPolicy verificationPolicy) {
         this.userRepository = userRepository;
         this.accountWriter = accountWriter;
         this.otpService = otpService;
@@ -99,6 +102,7 @@ public class AuthService {
         this.professionalCoverageService = professionalCoverageService;
         this.serviceCoverageValidator = serviceCoverageValidator;
         this.subServiceSelectionValidator = subServiceSelectionValidator;
+        this.verificationPolicy = verificationPolicy;
     }
 
     // ------------------------------------------------------------------ registration
@@ -143,9 +147,22 @@ public class AuthService {
     public AuthStepResponse verifyEmail(OtpSubmissionRequest request) {
         User user = accountWriter.redeemEmailVerification(request);
 
-        if (user.getPhone() == null || user.isPhoneVerified()) {
-            // A pre-MS1 account with no phone on file. Nothing to send a code to, so it stops here
-            // and picks a phone up later through the PHONE_VERIFICATION_REQUIRED gate.
+        if (user.getPhone() == null || user.isPhoneVerified()
+                || !verificationPolicy.isSmsVerificationRequired()) {
+            // Three ways to be finished at the email step:
+            //
+            //   * a pre-MS1 account with no phone on file -- nothing to send a code to, so it picks
+            //     a phone up later through the PHONE_VERIFICATION_REQUIRED gate;
+            //   * the phone is already proved;
+            //   * pronto.verification.sms-required is false, because production SMS access does not
+            //     exist yet. Issuing a challenge nobody can receive would strand the user on the
+            //     phone screen waiting for a code that cannot arrive -- the exact trap the policy
+            //     exists to avoid. The number is still stored and still normalised, and becomes
+            //     verifiable again the moment the policy is turned back on.
+            //
+            // phoneVerified is reported honestly in every case. The client uses it to decide what
+            // to show, and claiming a phone was proved when it was not would corrupt the very state
+            // that reversing this policy depends on.
             return AuthStepResponse.goToLogin(true, user.isPhoneVerified());
         }
 

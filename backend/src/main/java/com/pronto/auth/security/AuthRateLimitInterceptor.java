@@ -88,11 +88,46 @@ public class AuthRateLimitInterceptor implements HandlerInterceptor {
             long windowRemainingMillis = windowMillis - (now - current.windowStartMillis());
             long retryAfterSeconds = Math.max(1, Math.ceilDiv(windowRemainingMillis, 1000));
             response.setHeader(RETRY_AFTER_HEADER, String.valueOf(retryAfterSeconds));
+            logRefusal(client, request, current.count(), retryAfterSeconds);
             throw new ApiException(ErrorCode.RATE_LIMITED,
                     "Too many requests from this client. Please try again later.",
                     new RateLimitDetails(retryAfterSeconds));
         }
         return true;
+    }
+
+    /**
+     * The one line that makes {@code TRUSTED_PROXIES} verifiable in Production.
+     *
+     * <p><b>Why this exists.</b> {@code TRUSTED_PROXIES} is the highest-consequence value in the
+     * deployment: set too narrow, every user in the world shares one counter and registration caps
+     * platform-wide; set to something publicly reachable, any caller evades limiting with one
+     * header. Before this line the only observable symptom of either failure was the 429 itself,
+     * which is identical in both the healthy and the broken case — so the deployment could only be
+     * validated by inference. This states the answer directly: the key the limiter actually used.
+     *
+     * <p>It is what turns the runbook's proxy-validation steps into evidence rather than argument.
+     * Driving two different public addresses to a refusal must produce two different {@code client}
+     * values, and sending a forged {@code X-Forwarded-For} must produce the sender's real address
+     * here rather than the forged one — that second case is a direct read of
+     * {@link ClientIpResolver}'s decision, which nothing else exposes.
+     *
+     * <p><b>What is deliberately not logged.</b> The resolved key, the request URI, the count and
+     * the retry-after — and nothing else from the request. No {@code Authorization} header, no
+     * query string, no body, no email, no phone number, no OTP. The URI is safe because every
+     * limited route is a fixed path ({@code /api/auth/*}, {@code /api/users/*}) with no identifier
+     * embedded in it; if a limited route ever gains a path variable carrying user data, this must
+     * log the matched pattern rather than the URI.
+     *
+     * <p>The event key is {@code pronto.ratelimit.refused}, deliberately in the same stable,
+     * greppable form as {@code openai.request.failed} and {@code maps.geocode.rejected}, because a
+     * CloudWatch metric filter keys on it (infra/terraform/observability.tf) and a renamed event
+     * silently zeroes an alarm. IP addresses are personal data in some readings, which is one of the
+     * reasons the log group has a bounded 30-day retention rather than an unbounded one.
+     */
+    private void logRefusal(String client, HttpServletRequest request, int count, long retryAfterSeconds) {
+        log.warn("pronto.ratelimit.refused client={} route={} count={} limit={} retryAfterSeconds={}",
+                client, request.getRequestURI(), count, maxRequests, retryAfterSeconds);
     }
 
     /**

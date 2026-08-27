@@ -1,5 +1,6 @@
 package com.pronto.users.service;
 
+import com.pronto.auth.config.VerificationPolicy;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.users.entity.User;
@@ -33,7 +34,14 @@ class ContactVerificationGuardTest {
     @BeforeEach
     void setUp() {
         userRepository = Mockito.mock(UserRepository.class);
-        guard = new ContactVerificationGuard(userRepository);
+        // Default to the STRICT policy, so every pre-existing expectation below still describes the
+        // intended long-term rule rather than the temporary MS5 relaxation.
+        guard = guardWithSmsRequired(true);
+    }
+
+    /** The guard wired to a given value of {@code pronto.verification.sms-required}. */
+    private ContactVerificationGuard guardWithSmsRequired(boolean smsRequired) {
+        return new ContactVerificationGuard(userRepository, new VerificationPolicy(smsRequired));
     }
 
     private User account(boolean emailVerified, boolean phoneVerified) {
@@ -112,5 +120,63 @@ class ContactVerificationGuardTest {
         assertThat(account(true, false).isFullyVerified()).isFalse();
         assertThat(account(false, true).isFullyVerified()).isFalse();
         assertThat(account(false, false).isFullyVerified()).isFalse();
+    }
+
+    // ---- Production MS5: temporary email-only verification -------------------------------------
+    //
+    // AWS production SMS access is not approved, so pronto.verification.sms-required is false in
+    // production. These tests pin BOTH halves of that decision: the phone requirement stops
+    // blocking, and email verification does not quietly relax with it.
+
+    @Test
+    void smsNotRequired_verifiedEmailAlone_passes() {
+        account(true, false);
+
+        assertThatCode(() -> guardWithSmsRequired(false).requireVerifiedContactChannels(USER_ID))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void smsNotRequired_accountWithNoPhoneAtAll_passes() {
+        // The case that would otherwise strand every account created while SMS is undeliverable.
+        User user = account(true, false);
+        user.setPhone(null);
+
+        assertThatCode(() -> guardWithSmsRequired(false).requireVerifiedContactChannels(USER_ID))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void smsNotRequired_unverifiedEmail_isSTILLrefused() {
+        // The security line. Relaxing the phone requirement must not relax the email one: this is
+        // what stops "SMS is temporarily optional" from becoming "nothing is verified".
+        account(false, false);
+
+        assertThatThrownBy(() -> guardWithSmsRequired(false).requireVerifiedContactChannels(USER_ID))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode())
+                        .isEqualTo(ErrorCode.EMAIL_NOT_VERIFIED));
+    }
+
+    @Test
+    void smsNotRequired_softDeletedAccount_isStillUnauthorized() {
+        User user = account(true, true);
+        user.setDeletedAt(Instant.now());
+
+        assertThatThrownBy(() -> guardWithSmsRequired(false).requireVerifiedContactChannels(USER_ID))
+                .satisfies(e -> assertThat(((ApiException) e).getCode())
+                        .isEqualTo(ErrorCode.UNAUTHORIZED));
+    }
+
+    @Test
+    void smsRequired_isTheDefaultWhenThePropertyIsAbsent() {
+        // Guards against the relaxation silently becoming permanent: if the property is ever
+        // dropped from configuration, the strict rule must be what comes back.
+        assertThat(new VerificationPolicy(true).isSmsVerificationRequired()).isTrue();
+
+        account(true, false);
+        assertThatThrownBy(() -> guardWithSmsRequired(true).requireVerifiedContactChannels(USER_ID))
+                .satisfies(e -> assertThat(((ApiException) e).getCode())
+                        .isEqualTo(ErrorCode.PHONE_VERIFICATION_REQUIRED));
     }
 }

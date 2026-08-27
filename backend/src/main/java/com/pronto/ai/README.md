@@ -231,3 +231,44 @@ MS4 Phase 1 report.
 
 Tests: `ai/config/AiModeStartupGuardTest`, plus the cross-package
 `common/config/ProductionStartupValidationTest`.
+
+---
+
+## Production MS5 — retry reliability
+
+### `client.OpenAiChatClient` — backoff, jitter, and knowing when not to retry
+
+MS3 recorded this as an open risk it did not fix ("thin retry policy"): **two attempts, fired back to
+back, with no pause at all.** One evaluation run hit **nine consecutive `AI_SERVICE_ERROR`s** from
+transient provider failures. Firing the second attempt immediately means it lands inside the same
+failure window as the first — it is not really a retry, it is a second way to fail at the same
+moment.
+
+| | Before | After |
+|---|---|---|
+| Attempts | 2 | 3 |
+| Wait between them | none | exponential (250 ms base, x2), capped at 4 s, half-fixed/half-random jitter |
+| `Retry-After` on 429 | ignored | honoured, and clamped — a request for longer than 4 s stops the retry instead of holding the thread |
+| 4xx other than 429/408 | retried | **not retried** — a request OpenAI has already judged invalid does not become valid by asking again |
+
+Two bounds matter as much as the backoff itself, because this runs on a **customer-facing request
+thread** (`POST /api/issues/classify`): the per-wait cap, and refusing to honour an arbitrarily long
+provider-supplied delay. Waiting 60 seconds because a provider suggested it is worse for the customer
+than a prompt error they can retry.
+
+Jitter is not decoration. Without it every caller that failed at the same instant retries at the same
+instant, which turns a brief provider hiccup into a synchronised stampede that keeps it unhealthy.
+
+**No fallback to mock was added, and none exists.** MS4's rule stands: a provider failure is an
+error, never a silent substitution of fiction.
+
+Tests: `ai/client/OpenAiRetryPolicyTest` — 12 cases driving the real loop over a
+`MockRestServiceServer`, with a `Sleeper` seam so exercising a backoff policy costs no wall-clock
+time.
+
+**One defect this work introduced, and the deployment smoke test caught.** Adding the test-seam
+constructor left `OpenAiChatClient` with two constructors, and Spring will not choose between them —
+it looked for a no-arg constructor and failed the context with "No default constructor found". The
+bean only exists when `AI_MODE=openai`, which no unit test and no local run ever sets, so the whole
+suite stayed green while production startup was broken. `backend/tools/production-config-smoke.sh`
+found it on its first run; the fix is the explicit `@Autowired` on the injected constructor.

@@ -1609,7 +1609,7 @@ above).
 | `STORAGE_LOCAL_BASE_DIR` | Filesystem root for local-mode uploads | no (defaults `./data/uploads`) |
 | `STORAGE_LOCAL_HMAC_SECRET` | **New, backend MS9.** Signs/verifies the `expires`/`sig` query parameters on local-mode's `GET /api/storage/images/**` — a dedicated secret, deliberately not shared with `JWT_SECRET` (different blast radius: authorizes one short-lived image-URL grant, not a whole session). | **yes, in any real deployment running `STORAGE_MODE=local`** — same "obviously a placeholder, loudly insecure" local-dev default convention as `JWT_SECRET` (no startup-guard enforcement yet, unlike `JWT_SECRET`'s `JwtSecretStartupGuard` — flagged as a recommended follow-up in the MS9 design doc §3, not yet built) |
 | `STORAGE_S3_BUCKET` | Target S3 bucket | **yes, when `STORAGE_MODE=s3`** |
-| `STORAGE_S3_REGION` | AWS region | no (defaults `eu-central-1`), meaningless unless `STORAGE_MODE=s3` |
+| `STORAGE_S3_REGION` | AWS region | no (defaults `us-east-1`), meaningless unless `STORAGE_MODE=s3` |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (or instance role) | AWS credentials, resolved by the AWS SDK's `DefaultCredentialsProvider` chain — not read directly by this app's own config classes | **yes, when `STORAGE_MODE=s3`**. See `hardening-plan.md` §2.5: the local dev values currently in use are root-account keys, which **must** be rotated to scoped IAM credentials before any real deployment. |
 | `AI_MODE` | `mock` \| `openai` | no (defaults `mock`) |
 | `OPENAI_API_KEY` | OpenAI authentication | **yes, when `AI_MODE=openai`** |

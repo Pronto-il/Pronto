@@ -1,0 +1,76 @@
+{
+  "family": "pronto-db-verify",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "networkMode": "awsvpc",
+  "cpu": "256",
+  "memory": "512",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::038832651513:role/pronto-production-task-execution",
+  "containerDefinitions": [
+    {
+      "name": "db-verify",
+      "image": "public.ecr.aws/docker/library/postgres@sha256:075f7ba66bc9b3ce7d6b8b635208ff61cd7cf1a67d71ec530eec5d7ae0cbe571",
+      "essential": true,
+      "environment": [
+        {
+          "name": "PGHOST",
+          "value": "pronto-postgres.cgbouwisoxeo.us-east-1.rds.amazonaws.com"
+        },
+        {
+          "name": "PGPORT",
+          "value": "5432"
+        },
+        {
+          "name": "PGDATABASE",
+          "value": "pronto"
+        },
+        {
+          "name": "PGUSER",
+          "value": "pronto_app"
+        },
+        {
+          "name": "PGSSLMODE",
+          "value": "require"
+        },
+        {
+          "name": "PGCONNECT_TIMEOUT",
+          "value": "15"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "PGPASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:038832651513:secret:pronto/production/db-app-password-7WfE48"
+        }
+      ],
+      "command": [
+        "sh",
+        "-c",
+        "set -eu\n: \"${PGPASSWORD:?}\"\npsql --no-psqlrc --set=ON_ERROR_STOP=1 -f - <<'V_SQL'\n\\echo '--- role attributes ---'\nSELECT rolname, rolcanlogin AS login, rolsuper AS superuser, rolcreatedb AS createdb,\n       rolcreaterole AS createrole, rolreplication AS replication, rolbypassrls AS bypassrls\nFROM pg_roles WHERE rolname = 'pronto_app';\n\n\\echo '--- privileges (verified as pronto_app itself) ---'\nSELECT has_database_privilege('pronto','CONNECT')      AS connect_pronto,\n       has_schema_privilege('public','USAGE')          AS usage_public,\n       has_schema_privilege('public','CREATE')         AS create_public,\n       has_database_privilege('pronto','CREATE')       AS db_create_must_be_false;\n\n\\echo '--- role memberships of pronto_app (expect zero rows) ---'\nSELECT g.rolname AS pronto_app_is_member_of\nFROM pg_auth_members m\nJOIN pg_roles g ON g.oid = m.roleid\nJOIN pg_roles r ON r.oid = m.member\nWHERE r.rolname = 'pronto_app';\n\n\\echo '--- who holds admin over pronto_app (expect only the master) ---'\nSELECT m2.rolname AS admin_holder, am.admin_option\nFROM pg_auth_members am\nJOIN pg_roles r2 ON r2.oid = am.roleid\nJOIN pg_roles m2 ON m2.oid = am.member\nWHERE r2.rolname = 'pronto_app';\n\n\\echo '--- btree_gist ---'\nSELECT extname, extversion FROM pg_extension WHERE extname = 'btree_gist';\n\n\\echo '--- object ownership sanity: who owns the migrated tables ---'\nSELECT tableowner, count(*) AS tables\nFROM pg_tables WHERE schemaname = 'public' GROUP BY tableowner;\n\n\\echo '--- non-default roles present in the cluster ---'\nSELECT rolname FROM pg_roles WHERE rolname NOT LIKE 'pg\\_%' ORDER BY rolname;\nV_SQL\necho 'db-verify: completed'\n"
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/pronto-backend",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "db-verify"
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "key": "Project",
+      "value": "pronto"
+    },
+    {
+      "key": "Purpose",
+      "value": "read-only-verification"
+    }
+  ]
+}

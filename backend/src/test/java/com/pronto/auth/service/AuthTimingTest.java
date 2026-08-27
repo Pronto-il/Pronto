@@ -1,5 +1,6 @@
 package com.pronto.auth.service;
 
+import com.pronto.auth.config.VerificationPolicy;
 import com.pronto.auth.dto.LoginRequest;
 import com.pronto.auth.dto.PasswordResetRequest;
 import com.pronto.auth.email.EmailSender;
@@ -80,7 +81,8 @@ class AuthTimingTest {
                 Mockito.mock(JwtService.class), passwordEncoder,
                 Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
-                Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class));
+                Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
+                new VerificationPolicy(true));
 
         User account = new User("Israel Israeli", KNOWN_EMAIL, "$2a$10$storedhash", UserRole.CUSTOMER);
         InMemoryVerificationCodes.setField(account, "id", 42L);

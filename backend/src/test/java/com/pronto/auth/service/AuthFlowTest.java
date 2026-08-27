@@ -1,5 +1,6 @@
 package com.pronto.auth.service;
 
+import com.pronto.auth.config.VerificationPolicy;
 import com.pronto.auth.dto.AuthNextStep;
 import com.pronto.auth.dto.AuthStepResponse;
 import com.pronto.auth.dto.CapturePhoneRequest;
@@ -95,7 +96,8 @@ class AuthFlowTest {
                 passwordEncoder,
                 Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
-                Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class));
+                Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
+                new VerificationPolicy(true));
 
         account = new User("Israel Israeli", EMAIL, passwordEncoder.encode(PASSWORD), UserRole.CUSTOMER);
         InMemoryVerificationCodes.setField(account, "id", 42L);

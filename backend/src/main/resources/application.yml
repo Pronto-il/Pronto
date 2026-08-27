@@ -2,6 +2,14 @@ spring:
   application:
     name: pronto-backend
 
+  lifecycle:
+    # Ceiling on `server.shutdown: graceful` below. 20s, not the 30s default, so that it stays
+    # strictly INSIDE the ECS task definition's stopTimeout of 30s (infra/terraform/compute.tf).
+    # Left at the default the two deadlines would coincide, and ECS would SIGKILL the container at
+    # the same instant Spring was deciding to give up -- which is a race whose loser is an
+    # in-flight request. Ten seconds of margin makes the ordering deterministic.
+    timeout-per-shutdown-phase: 20s
+
   datasource:
     # Defaults deliberately mirror docker-compose.yml's published service, variable for
     # variable, so `docker compose up -d` followed by running this application connects with
@@ -10,7 +18,22 @@ spring:
     # development machine). Every value stays env-overridable — .github/workflows/
     # backend-ci.yml sets all five explicitly and is unaffected by these defaults, and any
     # real deployment must do the same.
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/${DB_NAME:pronto}
+    #
+    # DB_URL_PARAMS is the TLS seam, added by Production MS5. It is EMPTY by default, and that is
+    # load-bearing rather than lazy: the local docker-compose PostgreSQL has no server certificate,
+    # and pgjdbc's own default (sslmode=prefer) already negotiates TLS opportunistically wherever it
+    # is offered. Baking a literal `?sslmode=disable` in for local development would be a real
+    # downgrade of every environment that inherits this line, and baking `?sslmode=require` in would
+    # break `docker compose up -d` on a fresh clone. An empty suffix changes nothing anywhere.
+    #
+    # Production sets DB_URL_PARAMS=?sslmode=require against an RDS instance whose parameter group
+    # has rds.force_ssl=1 (infra/terraform/database.tf). Both halves are needed: force_ssl makes the
+    # server refuse plaintext, sslmode=require makes the client refuse to silently fall back to it.
+    # Note this is `require`, not `verify-full` — RDS presents an Amazon-issued certificate that the
+    # JVM's default trust store does not contain, so verify-full needs the RDS CA bundle mounted and
+    # a `sslrootcert=` pointing at it. That is a worthwhile hardening step and it is recorded in the
+    # deployment runbook as post-1.0 work, not silently skipped.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/${DB_NAME:pronto}${DB_URL_PARAMS:}
     username: ${DB_USER:pronto}
     # Local-dev-only default, matching docker-compose.yml's POSTGRES_PASSWORD — same
     # "obviously a local placeholder" convention as pronto.jwt.secret below. It was
@@ -165,7 +188,7 @@ pronto:
       hmac-secret: ${STORAGE_LOCAL_HMAC_SECRET:local-dev-only-insecure-hmac-secret-please-override-via-STORAGE_LOCAL_HMAC_SECRET-env-var-before-any-real-deployment}
     # Only used when mode=s3, see storage.client.S3StorageClient's Javadoc.
     bucket: ${STORAGE_S3_BUCKET:}
-    region: ${STORAGE_S3_REGION:eu-central-1}
+    region: ${STORAGE_S3_REGION:us-east-1}
 
   ai:
     # mock | openai. Default mock — no real OpenAI key needed. See
@@ -236,7 +259,7 @@ pronto:
     # Secrets Manager; the CREDENTIALS come from the AWS default provider chain / IAM role and
     # appear nowhere in this repository.
     from: ${EMAIL_FROM:}
-    ses-region: ${EMAIL_SES_REGION:eu-central-1}
+    ses-region: ${EMAIL_SES_REGION:us-east-1}
     # Bounds the inline send on the registration/login request path. Without it an unresponsive
     # provider holds a request thread indefinitely.
     timeout-ms: ${EMAIL_TIMEOUT_MS:10000}
@@ -254,12 +277,39 @@ pronto:
     # demo dataset is enabled: the demo accounts' phone numbers are synthetic and may belong to real
     # people who did not ask to receive Pronto verification codes.
     mode: ${SMS_MODE:log}
-    region: ${AWS_SMS_REGION:eu-central-1}
+    region: ${AWS_SMS_REGION:us-east-1}
     # Optional alphanumeric sender ID. Left empty AWS selects an origination identity from the
     # account's pool, which is the right default: several countries ignore or forbid alphanumeric
     # sender IDs, and a hardcoded one would silently degrade delivery there.
     sender-id: ${AWS_SMS_SENDER_ID:}
     timeout-ms: ${SMS_TIMEOUT_MS:10000}
+
+  verification:
+    # Must an account prove its PHONE NUMBER as well as its email address?
+    #
+    # true (the default, and the intended long-term rule)
+    #     Both channels. Registration issues a phone code after the email one; a customer cannot
+    #     create an issue, booking or SOS request until the phone is proved
+    #     (users.service.ContactVerificationGuard); a professional is not discoverable at all
+    #     (professionals.ProfessionalEligibility.PHONE_VERIFIED_JPQL). This platform sends a
+    #     professional to a stranger's home and both sides must be reachable.
+    #
+    # false (TEMPORARY, production only, MS5)
+    #     A verified email is sufficient. AWS End User Messaging production SMS access has not been
+    #     approved for this account, so no code can reach an Israeli handset -- enforcing the rule
+    #     would mean every new account registers, logs in, and is then permanently refused at the
+    #     first real action. An unreachable requirement fails silently and reads as a bug.
+    #
+    # WHAT false DOES NOT DO. It does not weaken email verification, which stays mandatory under
+    # both settings; it does not remove the SMS implementation, the phone column, the capture screen
+    # or any test; and it does not write phone_verified = true for anybody. Accounts created while
+    # it is false keep phone_verified = false, so setting this back to true asks exactly the right
+    # people to prove exactly the right thing, with no migration and no code change.
+    #
+    # RE-ENABLING: set SMS_VERIFICATION_REQUIRED=true once AWS approves production SMS. Verify
+    # pronto.sms.mode=aws and that an origination identity exists first -- turning the requirement
+    # back on while delivery is still broken recreates the trap this setting was added to escape.
+    sms-required: ${SMS_VERIFICATION_REQUIRED:true}
 
   otp:
     # Server-side key for the HMAC that protects stored one-time passwords
@@ -486,6 +536,26 @@ pronto:
 
 server:
   port: ${SERVER_PORT:8080}
+  # Production MS5. The ECS service runs ONE task and deploys by stopping it before starting the
+  # replacement (minimumHealthyPercent=0), so every deploy interrupts whatever is in flight. Without
+  # this, SIGTERM kills the JVM immediately and an in-progress registration -- which may already have
+  # written a verification_codes row and be waiting on SES -- dies between the two. Graceful shutdown
+  # stops the connector accepting new connections, lets the active requests finish, then exits.
+  #
+  # Requires the JVM to actually RECEIVE the signal: backend/Dockerfile's ENTRYPOINT uses `exec` so
+  # java is PID 1. A shell holding PID 1 would swallow SIGTERM and this setting would do nothing.
+  shutdown: graceful
+
+  # NOT set: server.forward-headers-strategy. Left at Spring Boot's default of NONE, deliberately
+  # and permanently. auth.security.ClientIpResolver parses X-Forwarded-For itself, and its entire
+  # safety property is that request.getRemoteAddr() is the raw TCP peer -- it consults the header
+  # only when that peer is inside pronto.security.trusted-proxies. Setting this to `native` or
+  # `framework` installs Tomcat's RemoteIpValve, which REWRITES getRemoteAddr() from the very header
+  # the resolver is trying to decide whether to trust. The peer would then be the client's public
+  # address, which is not inside any private trusted block, so the resolver would take its
+  # untrusted-peer branch and return that unverified attacker-supplied value for every request --
+  # while every startup guard still passed. Rate limiting would be spoofable and nothing would say
+  # so. See docs/production-roadmap/deployment-runbook.md.
 
 logging:
   level:
@@ -499,7 +569,54 @@ management:
   endpoints:
     web:
       exposure:
+        # Still only `health`. MS5 adds the liveness/readiness GROUPS below, which are sub-paths of
+        # this same endpoint (/actuator/health/liveness, /actuator/health/readiness) and need no
+        # further exposure. Nothing else -- /actuator/env, /actuator/configprops and /actuator/beans
+        # would each hand a reader the resolved configuration this application spent MS4 refusing to
+        # print.
         include: health
   endpoint:
     health:
+      # Unauthenticated callers (the ALB, the ECS agent) get a bare {"status":"UP"} and the HTTP
+      # status code, which is all a health check needs. Details -- including which indicator is
+      # down and any database error text -- require authentication.
       show-details: when-authorized
+
+      # Production MS5. On Spring Boot 3.3 the liveness/readiness groups are auto-configured ONLY
+      # when a Kubernetes environment is detected. ECS is not Kubernetes, so without this flag
+      # /actuator/health/liveness and /actuator/health/readiness return 404 and any health check
+      # pointed at them fails permanently.
+      probes:
+        enabled: true
+
+      group:
+        # ---- readiness: "should the ALB send this task traffic?" ----------------------------
+        # Includes `db`. Every meaningful request path in this application reads or writes
+        # PostgreSQL, so a task that cannot reach RDS has nothing useful to serve and should be
+        # taken out of the target group rather than returning 500s to customers.
+        #
+        # `readinessState` is Spring's own ACCEPTING_TRAFFIC/REFUSING_TRAFFIC signal, which flips to
+        # REFUSING as soon as graceful shutdown begins -- so the ALB stops sending new requests at
+        # the start of a deploy rather than at the end of it.
+        readiness:
+          include: readinessState,db
+
+        # ---- liveness: "is this process broken beyond recovery?" -----------------------------
+        # Deliberately NOT including `db`, and this is the whole reason the split exists. The ECS
+        # container health check restarts the container when liveness fails. If liveness asked the
+        # database, a sixty-second RDS failover or a brief network blip would kill a JVM that is
+        # perfectly healthy and would have reconnected on its own -- and because Flyway runs at
+        # startup and also needs the database, the replacement task would fail to boot too. A
+        # transient dependency outage would become a crash loop.
+        #
+        # The same reasoning excludes OpenAI, Google Maps, SES and SNS. There are no health
+        # indicators for them (verified: no HealthIndicator implementation exists in this codebase)
+        # and none should be added -- an OpenAI outage must degrade issue classification, not
+        # terminate the platform.
+        liveness:
+          include: livenessState
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true

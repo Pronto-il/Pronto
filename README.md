@@ -42,12 +42,26 @@ The platform focuses on:
 
 ### Cloud Services
 
-* AWS Amplify
-* AWS EC2
-* AWS Lambda
-* Amazon DynamoDB
-* Amazon S3
-* Amazon SQS
+What the application actually calls, verified against the code:
+
+| Service | Used by | When |
+| --- | --- | --- |
+| Amazon S3 | `storage.client.S3StorageClient` | `STORAGE_MODE=s3` — issue photos, verification documents, presigned reads |
+| Amazon SES v2 | `auth.email.SesEmailSender` | `EMAIL_MODE=ses` — verification codes |
+| Amazon SNS | `auth.sms.AwsSmsSender` | `SMS_MODE=aws` — SMS one-time passwords |
+| Amazon RDS (PostgreSQL 16) | the only datastore | always, in a deployed environment |
+
+Non-AWS: **OpenAI** (issue classification and professional briefs) and **Google Maps Platform**
+(Geocoding API + Routes API).
+
+Deployment target, defined in `infra/terraform/` and described in
+[the deployment runbook](docs/production-roadmap/deployment-runbook.md): **ECS Fargate** behind an
+**Application Load Balancer**, with the frontend on **S3 + CloudFront**.
+
+> This list previously named AWS Amplify, EC2, Lambda, DynamoDB and SQS. **None of those is used by
+> this codebase** — there is no Lambda handler, no DynamoDB client, no SQS queue and no Amplify
+> configuration anywhere in it. Corrected in Production MS5, because a reader planning the
+> deployment from this section would have provisioned four services the application cannot use.
 
 ---
 

@@ -1,0 +1,35 @@
+# Build context hygiene for backend/Dockerfile.
+#
+# Two jobs. The obvious one is speed: `target/` alone is hundreds of megabytes and would be
+# uploaded to the daemon on every build. The one that matters more is that nothing outside
+# `pom.xml` and `src/` can reach the image — `qa-tmp/` in particular holds live QA JWTs
+# (see backend/.gitignore), and a build context is not a place to discover that late.
+
+target/
+
+### QA scratch — payloads, tokens, captured output. Never in an image. ###
+qa-tmp/
+qa-tmp-*/
+
+### Local-disk storage from pronto.storage.mode=local. Production runs mode=s3. ###
+data/
+
+### Environment files. Production configuration is injected by the ECS task definition. ###
+.env
+.env.*
+
+### Editor / OS / VCS ###
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.DS_Store
+.git/
+.gitignore
+
+### Docs and build metadata that do not belong in a build context ###
+**/README.md
+HELP.md
+Dockerfile
+.dockerignore

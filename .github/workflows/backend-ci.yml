@@ -35,6 +35,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The migration check below compares against the base branch, which a depth-1 checkout
+          # does not contain.
+          fetch-depth: 0
+
+      # Production MS5. Catches an edited already-applied migration here, where the cost is a red
+      # check, rather than at startup in a deployed environment, where Flyway's own checksum refusal
+      # arrives as an application that will not boot.
+      - name: Flyway migrations are append-only
+        run: bash backend/tools/check-migrations-append-only.sh
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4

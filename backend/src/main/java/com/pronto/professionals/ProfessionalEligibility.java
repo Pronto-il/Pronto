@@ -126,10 +126,24 @@ public final class ProfessionalEligibility {
      * launched — a professional who cannot be phoned should not be dispatched to a stranger's home
      * — and the path back is the same phone-capture flow every other account uses. The TEST/DEMO
      * dataset seeds its synthetic professionals as verified so demonstrations keep working.
+     *
+     * <p><b>Conditional on {@code pronto.verification.sms-required}.</b> While production SMS
+     * access is unavailable the phone half of the rule cannot be satisfied by anyone, so gating it
+     * would make the marketplace permanently empty rather than merely strict. The SpEL reference
+     * {@code :#{@verificationPolicy.smsVerificationRequired}} reads the policy bean at query time,
+     * which keeps every repository method signature unchanged -- the alternative, threading a
+     * boolean parameter through each {@code @Query} that concatenates this fragment, would have
+     * touched five repositories to express one decision. When the policy is {@code false} the
+     * left-hand disjunct short-circuits and the {@code EXISTS} is not evaluated.
+     *
+     * <p>Restoring the strict rule is a configuration change: set the property back to
+     * {@code true} and unverified professionals stop being discoverable again immediately, with no
+     * redeploy of a different query.
      */
     public static final String PHONE_VERIFIED_JPQL =
-            "EXISTS (SELECT 1 FROM com.pronto.users.entity.User uPhone "
-            + "WHERE uPhone.id = p.userId AND uPhone.phoneVerified = true)";
+            "(:#{@verificationPolicy.smsVerificationRequired} = false OR "
+            + "EXISTS (SELECT 1 FROM com.pronto.users.entity.User uPhone "
+            + "WHERE uPhone.id = p.userId AND uPhone.phoneVerified = true))";
 
     /**
      * The eligibility conjunction — approval <b>and</b> {@link #ONBOARDING_COMPLETE_JPQL} <b>and</b>

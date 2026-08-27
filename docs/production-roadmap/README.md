@@ -15,10 +15,30 @@
 | MS1 | Authentication & Contact Verification | **DONE** | [prod-MS1-report.md](reports/prod-MS1-report.md) |
 | MS2 | Real Maps, Geocoding, Distance & ETA | **DONE** | [prod-MS2-report.md](reports/prod-MS2-report.md) |
 | MS3 | AI Classification Evaluation & Production Hardening | **DONE** | [prod-MS3-report.md](reports/prod-MS3-report.md) |
-| MS4 | Production Security & Configuration Hardening | **IN PROGRESS** | [prod-MS4-report.md](reports/prod-MS4-report.md) |
-| MS5 | AWS Staging & Deployment Infrastructure | NOT STARTED | — |
+| MS4 | Production Security & Configuration Hardening | **DONE** | [prod-MS4-report.md](reports/prod-MS4-report.md) |
+| MS5 | AWS Staging & Deployment Infrastructure | **IN PROGRESS — Stage A (repository) complete, Stage B (live AWS) not started** | [deployment-runbook.md](deployment-runbook.md) |
 | MS6 | Production QA, Concurrency, Security & Failure Testing | NOT STARTED | — |
 | MS7 | Production Launch & Closed Beta | NOT STARTED | — |
+
+### MS5 — where it actually stands
+
+**Stage A (repository implementation) is complete and validated locally.** The backend is
+containerised; liveness/readiness probes exist and are reachable; the JDBC URL supports
+`sslmode=require`; the rate limiter logs its resolved client key; the OpenAI retry has exponential
+backoff with jitter; `infra/terraform/` defines the whole stack and passes `fmt`/`validate`; a
+manually-gated deploy workflow exists; and `backend/tools/production-config-smoke.sh` boots the
+packaged jar with a production-shaped configuration and proves the guards still refuse unsafe input.
+Backend **1424 tests, 0 failures**.
+
+**Stage B (live AWS) has not started.** `terraform apply` has never been run, no AWS resource has
+been created, no domain bought, no DNS touched, no deployment performed. Everything in
+[the runbook](deployment-runbook.md) §16 marked BLOCKED is still blocked — including the SMS
+sandbox, SES production access, the production Google Maps key and the domain itself.
+
+**Nothing about MS5 may be recorded as validated against live infrastructure**, because there is
+none yet. The `TRUSTED_PROXIES` value is now *generated* from the VPC definition rather than guessed,
+which closes the design half of that prerequisite; the acceptance criteria in the runbook §12.3 are
+behavioural and remain unmet.
 
 **MS1 is `DONE`.** Implementation, **990** automated tests, full local end-to-end validation and —
 the two items that held the milestone at `PARTIAL` — **live provider validation** are all complete:

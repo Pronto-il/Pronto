@@ -356,3 +356,53 @@ instead of failing later with a `NoSuchBeanDefinitionException` naming an interf
 Tests: `config/CorsOriginStartupGuardTest`, `security/JwtSecretStartupGuardTest`, extended
 `config/ProductionHardeningStartupGuardTest` and `config/ProviderModeStartupGuardTest`, plus the
 cross-package `common/config/ProductionStartupValidationTest`.
+
+---
+
+## Production MS5 — deployment
+
+### `config.SecurityConfig` — `/actuator/health` widened to `/actuator/health/**`
+
+Spring Security's path matcher treats `"/actuator/health"` as **exactly** that string. MS5 adds the
+liveness and readiness groups, which live at `/actuator/health/liveness` and
+`/actuator/health/readiness` — sub-paths that fell through to the authenticated catch-all and
+answered **401**. An ALB target health check receiving 401 marks every task unhealthy and drains the
+service to zero, so this would have presented as a total outage on the first deploy, with an
+application log that said nothing at all.
+
+Widening leaks nothing further: `management.endpoints.web.exposure.include` is still `health` alone,
+so `/actuator/**` resolves to nothing but health and its groups, and `show-details: when-authorized`
+still withholds per-indicator detail from an unauthenticated caller.
+
+### `security.AuthRateLimitInterceptor` — the refusal log
+
+One `WARN` on refusal: `pronto.ratelimit.refused client=… route=… count=… limit=… retryAfterSeconds=…`
+
+This is what makes `TRUSTED_PROXIES` **verifiable in production**. Before it, the only observable
+symptom of a wrong value was the 429 itself — identical in the healthy case and the broken one, so
+the deployment could only be validated by inference. Two public addresses driven to a refusal must
+now produce two different `client` values, and a forged `X-Forwarded-For` must produce the sender's
+real address: a direct read of `ClientIpResolver`'s decision, which nothing else exposes.
+
+Deliberately logged: the resolved key, the fixed route, the count, the retry-after. Deliberately not:
+the `Authorization` header, the query string, the body — this interceptor sits on login and
+registration, so the request it refuses is routinely carrying a password. Asserted by test.
+
+The event key is in the same stable, greppable form as `openai.request.failed`, because a CloudWatch
+metric filter keys on it; renaming it would silently zero an alarm.
+
+### `security.ClientIpResolver` — unchanged, and `forward-headers-strategy` must stay unset
+
+No change was needed here. What MS5 adds is the deployment-side half: `TRUSTED_PROXIES` is now
+**generated from the VPC** (`infra/terraform/outputs.tf`) rather than hand-written, and the ECS task's
+security group admits port 8080 from the ALB's security group alone — which closes the HIGH-severity
+risk MS4 recorded as not enforceable in application code.
+
+`server.forward-headers-strategy` is left at Spring Boot's default of `NONE`, permanently. Setting it
+installs Tomcat's `RemoteIpValve`, which rewrites `getRemoteAddr()` from the very header this
+resolver is deciding whether to trust — the peer becomes the client's public address, matches no
+private block, and the resolver returns the unverified attacker-supplied value for every request,
+while every startup guard still passes.
+
+Tests: extended `security/AuthRateLimitInterceptorTest` (3 MS5 cases), and
+`common/config/HealthProbeIntegrationTest` for the matcher.

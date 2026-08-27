@@ -152,3 +152,50 @@ Tests: `common/config/DatabaseConfigStartupGuardTest`, and `common/config/Produc
 exists because a set of individually correct guards can still be collectively unsatisfiable, which
 no per-guard unit test can detect, and because it doubles as the executable specification of the
 Production variable set documented in `docs/production-roadmap/reports/prod-MS4-report.md`.
+
+---
+
+## Production MS5 — the first Spring-context test
+
+### `config.HealthProbeIntegrationTest`
+
+**The first `@SpringBootTest` in this repository.** MS0 recorded the absence of any Spring-context or
+database test as a gap and Playbook **D3** assigns building the permanent integration harness to MS5;
+`ProfessionalEligibilityTest`'s Javadoc names the same gap and the same owner. This is the first
+piece of it.
+
+The probe endpoints are the right place to start, because they are the contract between this
+application and the infrastructure MS5 provisions, and because both of their failure modes live in
+the gap between `application.yml` and `SecurityConfig` where no unit test can see them:
+
+- without `management.endpoint.health.probes.enabled`, Spring Boot 3.3 registers the liveness and
+  readiness groups only when it detects Kubernetes — on ECS both paths answer **404**;
+- without widening `SecurityConfig`'s matcher to `/actuator/health/**`, both answer **401**.
+
+Either way the ALB drains the service to zero. Verified non-vacuous: narrowing the matcher back
+fails 4 of the 7 cases.
+
+It also asserts the composition that justifies having two probes at all — readiness includes `db`
+(a task that cannot reach RDS should not receive traffic), liveness excludes it (ECS **restarts** on
+liveness failure, so including the database would turn a transient RDS blip into a crash loop, since
+Flyway also needs the database at startup) — and that the widening did not over-open anything.
+
+Gated on PostgreSQL being reachable with the same `@EnabledIf` pattern `MigrationIntegrationTest`
+uses, so a machine without a database still builds green. CI supplies one.
+
+### Production-shaped startup smoke — outside the test suite, deliberately
+
+`backend/tools/production-config-smoke.sh` closes MS4's Known Limitation 7. It boots the **packaged
+jar** with a production-shaped environment and asserts that a valid configuration starts and that
+breaking any one required variable refuses *before the port binds*.
+
+`ProductionStartupValidationTest` proves the guards are individually correct and jointly satisfiable.
+It cannot prove the assembled context reaches them, that a bean graph with `AI_MODE=openai` and
+`STORAGE_MODE=s3` can be constructed at all, or that the artifact CI ships behaves like the classes
+CI tested — and the first run found a real defect of exactly that shape (see `ai/README.md`).
+
+It also turns MS4's **Known Limitation 2** from prose into a measured property: with
+`DB_PASSWORD=pronto` Flyway's connection attempt fails first, and with an under-32-character
+`JWT_SECRET` jjwt's own key check fails first, so in those two cases the message names the component
+rather than the variable. Both still refuse, and neither ever binds a port. Asserted rather than
+skipped, so if the guards ever move to an `EnvironmentPostProcessor` these cases will fail and say so.

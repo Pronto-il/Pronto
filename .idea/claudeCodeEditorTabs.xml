@@ -1,20 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ClaudeCodeEditorTabs">
-    <option name="activeSessionId" value="1f377110-8d8d-466b-8d7e-50ac09fad2dd" />
+    <option name="activeSessionId" value="dcccf894-478a-45be-b60e-ab48816738ef" />
     <option name="openSessionIds">
       <list>
         <option value="1f377110-8d8d-466b-8d7e-50ac09fad2dd" />
+        <option value="49bdb525-96c2-4f11-bd21-d96db4fc088d" />
+        <option value="28244818-5fed-4666-ada8-59c16b0d78fb" />
+        <option value="dcccf894-478a-45be-b60e-ab48816738ef" />
       </list>
     </option>
     <option name="sessionPaths">
       <map>
         <entry key="1f377110-8d8d-466b-8d7e-50ac09fad2dd" value="/sessions/fb206bf3-f33f-405e-b5bc-8ae3fb2040ff" />
+        <entry key="28244818-5fed-4666-ada8-59c16b0d78fb" value="/sessions/c34c0555-b649-49cb-90cb-7ca6920d2eea" />
+        <entry key="49bdb525-96c2-4f11-bd21-d96db4fc088d" value="/sessions/c716e427-9dae-4457-85d5-7b582d9bd497" />
+        <entry key="dcccf894-478a-45be-b60e-ab48816738ef" value="/sessions/a5372940-8820-432e-ad01-00296e2b7699" />
       </map>
     </option>
     <option name="sessionTitles">
       <map>
         <entry key="1f377110-8d8d-466b-8d7e-50ac09fad2dd" value="Use the connected Paper MCP and inspect the curren" />
+        <entry key="28244818-5fed-4666-ada8-59c16b0d78fb" value="We are continuing **Pronto 1.0 Production Readines" />
+        <entry key="49bdb525-96c2-4f11-bd21-d96db4fc088d" value="You are implementing MS3 — AI Classification Evalu" />
+        <entry key="dcccf894-478a-45be-b60e-ab48816738ef" value="You are continuing **Pronto MS5 — AWS Production D" />
       </map>
     </option>
   </component>

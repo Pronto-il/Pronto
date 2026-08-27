@@ -1,0 +1,88 @@
+{
+  "family": "pronto-db-bootstrap",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "networkMode": "awsvpc",
+  "cpu": "256",
+  "memory": "512",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::038832651513:role/pronto-production-task-execution",
+  "containerDefinitions": [
+    {
+      "name": "db-bootstrap",
+      "image": "public.ecr.aws/docker/library/postgres@sha256:075f7ba66bc9b3ce7d6b8b635208ff61cd7cf1a67d71ec530eec5d7ae0cbe571",
+      "essential": true,
+      "environment": [
+        {
+          "name": "PGHOST",
+          "value": "pronto-postgres.cgbouwisoxeo.us-east-1.rds.amazonaws.com"
+        },
+        {
+          "name": "PGPORT",
+          "value": "5432"
+        },
+        {
+          "name": "PGDATABASE",
+          "value": "pronto"
+        },
+        {
+          "name": "PGSSLMODE",
+          "value": "require"
+        },
+        {
+          "name": "PGCONNECT_TIMEOUT",
+          "value": "15"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "PGUSER",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:038832651513:secret:rds!db-0a52b96e-0a30-4202-ad9f-d9754f8c26f9-J9CQ9s:username::"
+        },
+        {
+          "name": "PGPASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:038832651513:secret:rds!db-0a52b96e-0a30-4202-ad9f-d9754f8c26f9-J9CQ9s:password::"
+        },
+        {
+          "name": "APP_DB_PASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:038832651513:secret:pronto/production/db-app-password-7WfE48"
+        }
+      ],
+      "command": [
+        "sh",
+        "-c",
+        "set -eu\nfor v in PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD APP_DB_PASSWORD; do\n  eval \"test -n \\\"\\${$v:-}\\\"\" || { echo \"FATAL: $v was not injected\" >&2; exit 1; }\ndone\nif [ \"${#APP_DB_PASSWORD}\" -lt 16 ]; then\n  echo 'FATAL: APP_DB_PASSWORD shorter than 16 chars - refusing to set it' >&2; exit 1\nfi\necho \"connecting to ${PGHOST}:${PGPORT}/${PGDATABASE} as ${PGUSER} (sslmode=${PGSSLMODE})\"\npsql --no-psqlrc --set=ON_ERROR_STOP=1 -f - <<'PRONTO_SQL'\n-- Pronto production database bootstrap - creates the pronto_app login role.\n--\n-- Run ONCE (though it is idempotent and safe to re-run) as the RDS master user\n-- pronto_master, from the one-shot Fargate task defined in\n-- pronto-db-bootstrap.taskdef.json. See README.md in this directory.\n--\n-- This file contains NO secret material. The application password arrives through the\n-- APP_DB_PASSWORD environment variable, injected by ECS from Secrets Manager, and is read\n-- by \\getenv below. It is never a command-line argument and never appears in this file.\n--\n-- Root cause being addressed:\n--   FATAL: password authentication failed for user \"pronto_app\"\n-- PostgreSQL returns that identical message whether the role is absent or the password is\n-- wrong - it does not distinguish, to prevent role enumeration. The role has never been\n-- created, so Flyway cannot open a connection and the ECS task dies during startup.\n\n\\getenv app_pw APP_DB_PASSWORD\n\n-- --------------------------------------------------------------------------------------\n-- 0. Session hygiene\n-- --------------------------------------------------------------------------------------\n-- The parameter group sets log_min_duration_statement = 1000, which logs the full text of\n-- any statement slower than a second. The ALTER ROLE below carries the password as a\n-- literal, so a slow one would write that password into the RDS log stream. Statement\n-- logging is therefore disabled for this session. log_statement is already 'none'\n-- engine-wide, so that half is defence in depth rather than a fix for a known-bad setting.\n--\n-- BEST-EFFORT, NOT FATAL, and that distinction matters. Both parameters are\n-- superuser-context (SUSET), and RDS's rds_superuser is not a true PostgreSQL superuser --\n-- whether it may SET these depends on the parameter ACLs AWS ships for the engine version.\n-- Under ON_ERROR_STOP=1 a bare `SET` that RDS refuses would abort the entire bootstrap over\n-- a log-hygiene measure. Catching insufficient_privilege keeps the hardening when it is\n-- permitted and degrades to a NOTICE when it is not.\nDO $$\nBEGIN\n    PERFORM set_config('log_min_duration_statement', '-1', false);\n    PERFORM set_config('log_statement', 'none', false);\n    RAISE NOTICE 'statement logging suppressed for this session';\nEXCEPTION\n    WHEN insufficient_privilege OR undefined_object THEN\n        RAISE NOTICE 'could not suppress statement logging (%); continuing. Verify that '\n                     'log_min_duration_statement did not capture the ALTER ROLE.', SQLERRM;\nEND\n$$;\n\n-- --------------------------------------------------------------------------------------\n-- 1. Extension - installed HERE, by the master, on purpose\n-- --------------------------------------------------------------------------------------\n-- V26__create_professional_availability_blocks.sql and\n-- V27__add_orders_no_overlap_constraint.sql both run `CREATE EXTENSION IF NOT EXISTS\n-- btree_gist`, because both declare EXCLUDE USING gist constraints that mix an equality\n-- column with a range overlap test.\n--\n-- btree_gist is a TRUSTED extension in PostgreSQL 13+, so pronto_app could install it\n-- itself - but only with CREATE on the database, which also confers CREATE SCHEMA. That is\n-- more authority than the application needs for its whole lifetime, in exchange for two\n-- statements that run once.\n--\n-- Installing it here as the master avoids that trade entirely: when Flyway later reaches\n-- V26/V27 as pronto_app, `IF NOT EXISTS` finds the extension present and returns without\n-- performing a privilege check at all. pronto_app therefore never needs database-level\n-- CREATE.\nCREATE EXTENSION IF NOT EXISTS btree_gist;\n\n-- --------------------------------------------------------------------------------------\n-- 2. The role\n-- --------------------------------------------------------------------------------------\n-- Split into \"create if absent\" then an unconditional ALTER so that both entry states -\n-- role missing, role already present - converge on exactly the same attributes. Re-running\n-- this file against an existing role rotates its password and re-asserts every attribute\n-- rather than failing or silently leaving a drifted setting in place.\nDO $$\nBEGIN\n    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pronto_app') THEN\n        CREATE ROLE pronto_app LOGIN;\n        RAISE NOTICE 'created role pronto_app';\n    ELSE\n        RAISE NOTICE 'role pronto_app already exists - re-asserting attributes and password';\n    END IF;\nEND\n$$;\n\n-- Only the attributes that RDS actually permits us to set are set here.\n--\n-- The first production run of this script failed at exactly this statement:\n--\n--   ERROR:  permission denied to alter role\n--   DETAIL: Only roles with the SUPERUSER attribute may change the SUPERUSER attribute.\n--\n-- pronto_master holds rds_superuser, which is NOT the PostgreSQL SUPERUSER attribute.\n-- Three attributes are gated on genuine superuser and cannot be set on RDS at all, even to\n-- their default value, even as a no-op: SUPERUSER, REPLICATION and BYPASSRLS. Naming them\n-- here aborted the whole script under ON_ERROR_STOP=1, before the password or the grants\n-- were applied.\n--\n-- This is not a weakening. CREATE ROLE already produces NOSUPERUSER, NOREPLICATION and\n-- NOBYPASSRLS by default, so the desired end state is unchanged; what changes is that we\n-- VERIFY those three below instead of asserting them, because verification is the strongest\n-- thing RDS permits. The two negatives that rds_superuser CAN set - NOCREATEDB and\n-- NOCREATEROLE, both reachable via its CREATEROLE attribute - are still set explicitly, so\n-- a re-run still strips them if they were ever granted out of band.\n--\n-- LOGIN         - the application authenticates as this role.\n-- NOCREATEDB    - it connects to one pre-existing database (created by RDS from db_name).\n-- NOCREATEROLE  - it never provisions roles; that is this file's job, run as the master.\nALTER ROLE pronto_app WITH\n    LOGIN\n    NOCREATEDB\n    NOCREATEROLE\n    PASSWORD :'app_pw';\n\n-- The three superuser-gated attributes, verified rather than assumed. If any of them is\n-- somehow true, this raises and ON_ERROR_STOP=1 aborts before the grants below, so the\n-- script can never hand database access to an over-privileged role.\nDO $$\nDECLARE\n    r record;\nBEGIN\n    SELECT rolsuper, rolreplication, rolbypassrls\n      INTO r\n      FROM pg_roles\n     WHERE rolname = 'pronto_app';\n\n    IF r.rolsuper OR r.rolreplication OR r.rolbypassrls THEN\n        RAISE EXCEPTION\n            'pronto_app holds a superuser-gated attribute (superuser=%, replication=%, '\n            'bypassrls=%). RDS cannot clear these; they must be removed by AWS support or '\n            'the role recreated. Refusing to grant database access.',\n            r.rolsuper, r.rolreplication, r.rolbypassrls;\n    END IF;\n\n    RAISE NOTICE 'verified: pronto_app is not superuser/replication/bypassrls';\nEND\n$$;\n\n-- --------------------------------------------------------------------------------------\n-- 3. Database-level privilege\n-- --------------------------------------------------------------------------------------\n-- CONNECT only. Deliberately NOT `GRANT CREATE ON DATABASE pronto`, which would allow\n-- pronto_app to create schemas. PUBLIC already holds CONNECT by default; this is stated\n-- explicitly so the grant survives anyone later revoking it from PUBLIC as a hardening\n-- step.\nGRANT CONNECT ON DATABASE pronto TO pronto_app;\n\n-- --------------------------------------------------------------------------------------\n-- 4. Schema-level privilege\n-- --------------------------------------------------------------------------------------\n-- USAGE + CREATE on `public`, and nothing beyond it.\n--\n-- CREATE is genuinely required, not precautionary: Flyway creates its own\n-- flyway_schema_history table, and the 52 migrations create tables, indexes, constraints\n-- and identity sequences. All of it lands in `public` - no migration issues CREATE SCHEMA\n-- and application.yml sets no search_path, so `public` is the entire surface.\n--\n-- This grant must be explicit on PostgreSQL 15 and later. PG15 removed the historical\n-- implicit CREATE grant to PUBLIC on schema public; RDS here runs 16.13, so without this\n-- line Flyway would fail on its very first CREATE TABLE.\n--\n-- No table-level grants are needed anywhere: pronto_app creates every object, so it owns\n-- every object, and ownership already carries full DML and DDL over them. Hibernate is\n-- configured ddl-auto: validate, so at runtime it only reads the catalog and issues DML -\n-- it never alters the schema.\nGRANT USAGE, CREATE ON SCHEMA public TO pronto_app;\n\n-- --------------------------------------------------------------------------------------\n-- 5. Verification - no secret values printed\n-- --------------------------------------------------------------------------------------\n\\echo ''\n\\echo 'Resulting role attributes:'\nSELECT rolname,\n       rolcanlogin  AS login,\n       rolsuper     AS superuser,\n       rolcreatedb  AS createdb,\n       rolcreaterole AS createrole,\n       rolreplication AS replication,\n       rolbypassrls AS bypassrls\nFROM pg_roles\nWHERE rolname = 'pronto_app';\n\n\\echo ''\n\\echo 'Schema privileges on public:'\nSELECT has_schema_privilege('pronto_app', 'public', 'USAGE')  AS usage_ok,\n       has_schema_privilege('pronto_app', 'public', 'CREATE') AS create_ok,\n       has_database_privilege('pronto_app', 'pronto', 'CONNECT') AS connect_ok,\n       has_database_privilege('pronto_app', 'pronto', 'CREATE')  AS db_create_denied_expected_false;\n\n\\echo ''\n\\echo 'btree_gist present:'\nSELECT extname, extversion FROM pg_extension WHERE extname = 'btree_gist';\nPRONTO_SQL\necho 'db-bootstrap: completed successfully'\n"
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/pronto-backend",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "db-bootstrap"
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "key": "Project",
+      "value": "pronto"
+    },
+    {
+      "key": "Environment",
+      "value": "production"
+    },
+    {
+      "key": "ManagedBy",
+      "value": "manual-bootstrap"
+    },
+    {
+      "key": "Purpose",
+      "value": "one-shot-db-role-creation"
+    }
+  ]
+}

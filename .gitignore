@@ -19,5 +19,34 @@
 qa-tmp/
 qa-tmp-*/
 
+### Terraform (Production MS5, infra/terraform/) ###
+# Downloaded provider plugins -- ~700 MB per module, restored by `terraform init`.
+**/.terraform/*
+# State. The real state lives in the S3 backend (infra/terraform/backend.tf); anything matching
+# these locally is either the bootstrap module's state or a stray local run, and both describe real
+# infrastructure. `.tfstate.backup` too, which is the same content one apply behind.
+*.tfstate
+*.tfstate.*
+# Saved plan files are binary and contain every resolved value in the plan.
+*.tfplan
+# Human-readable plan output (`terraform plan > somefile.out`). Same content, in text, so it is the
+# easier of the two to leak: it carries every resolved endpoint, ARN and account id in the plan.
+# Added after `bootstrap-plan.out` turned out to be matched by no existing rule.
+*plan.out
+# Real variable values, and the backend config that names an AWS account id. The committed
+# templates are terraform.tfvars.example (deliberately un-ignored below) and the backend.hcl shape
+# documented in backend.tf.
+terraform.tfvars
+*.auto.tfvars
+backend.hcl
+!terraform.tfvars.example
+# .terraform.lock.hcl is deliberately NOT ignored -- it pins provider versions and checksums, and
+# committing it is what makes an apply reproducible.
+
 ### OS / editor ###
 .DS_Store
+
+# Generated one-shot QA task definitions. They embed a BCrypt password verifier for the QA account,
+# which must never be published -- a hash is offline-crackable in a way an ARN is not. The SQL and
+# the README beside them are the reviewable artefacts; these JSONs are rebuilt on demand.
+infra/bootstrap/pronto-qa-*.taskdef.json

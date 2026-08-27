@@ -84,8 +84,17 @@ export default function AuthChallengePage() {
         return;
       }
       if (response.nextStep === 'LOGIN' || !response.challenge) {
-        // An account that finished what it could but has no phone on file — a pre-MS1 row. It signs
-        // in normally and is asked for a phone by the marketplace gate.
+        // An account that finished every step currently asked of it. Two ways to get here:
+        //
+        //   * a pre-MS1 row with no phone on file, which signs in normally and is asked for a
+        //     phone by the marketplace gate;
+        //   * the backend is running with `pronto.verification.sms-required=false` (Production MS5,
+        //     while AWS production SMS access is unapproved), so a verified email completes
+        //     registration and no phone challenge is issued at all.
+        //
+        // Both are handled identically and deliberately: the client does not need to know which,
+        // because in neither case is there a code on its way. Routing to the phone screen would
+        // strand the user watching for an SMS that is never sent.
         navigate('/login', { replace: true });
         return;
       }

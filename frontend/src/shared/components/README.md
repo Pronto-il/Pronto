@@ -324,3 +324,34 @@ Registration and `/pro/availability` render literally the same component and the
 `TimeField`, which is how §13's "the two screens must agree" is satisfied structurally rather
 than by convention.
 
+
+## Mobile upload performance (2026-08-27) — `PhotoUploader`
+
+Three changes, all driven by measurements taken against the real objects in the production
+uploads bucket (1.53 MB / 2.05 MB / 4.35 MB, at 12.2 MP / 8.3 MP / 22.5 MP) and by a real
+`ClientAbortException: EOFException` recorded on `/api/storage/images` — a handset that gave up
+partway through sending.
+
+**Photos are downscaled before upload.** Each file now goes through `shared/lib/
+imageCompression.ts`'s `prepareImageForUpload` first (1600px long edge, JPEG q0.82 — see that
+package's README for where both numbers come from). Measured in Chromium on those same three
+photos: 8.13 MB total became 0.55 MB, a 93% reduction, with orientation preserved. Nothing about
+the request, the endpoint or the backend's validation changed; only the bytes got smaller.
+
+**Progress is real, not indeterminate.** The spinner is still shown while compressing — a canvas
+encode reports nothing until it finishes — but once bytes are moving the overlay becomes a
+determinate percentage plus bar, fed by `httpClient.upload`'s `onProgress`. This is why
+`shared/api/storage.ts`'s `uploadImage` moved off `fetch`, which exposes no upload-progress
+signal at all. A multi-second upload previously looked identical to a hung one.
+
+**Compression is serialised; uploads are not.** Decoding a 22 MP photo materialises its full
+uncompressed frame, and six of those at once is an out-of-memory tab reload on a mid-range
+handset. Each file is awaited through compression in turn, then its upload is started and left to
+overlap with the next file's encode.
+
+**A multi-select data-loss race is fixed on the way past.** Every upload started by one
+`handleSelect` closed over the same render's `photos` array, so selecting three photos at once
+had each completion compute `[...thatOneOldArray, itsOwnPhoto]` — last writer won and two photos
+silently vanished. `onChange` takes a value rather than an updater, so the component now keeps a
+`photosRef` as the authoritative list for code running inside an `await`. Faster uploads would
+have made this fire *more* often, not less.

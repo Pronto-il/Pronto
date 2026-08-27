@@ -464,3 +464,28 @@ DTO shapes that changed with MS4:
 `categories.ts` also gained `getCategoryNamesHe()` and `formatCategorySummary()` — the latter is
 MS4 §7's compact form ("אינסטלציה +2") for cards with room for one line.
 
+
+## Mobile upload performance (2026-08-27) — `httpClient.upload`, `uploadImage`
+
+`httpClient` gained one method, `upload(path, formData, { onProgress, signal })`, and it is the
+only thing in this package that does not use `fetch`. The reason is narrow and not a matter of
+taste: **`fetch` exposes no upload-progress signal.** (`ReadableStream` request bodies would, and
+are not supported on Safari, which is most of this app's traffic.) `XMLHttpRequest` has
+`upload.onprogress`, so a multi-second photo upload on a phone's uplink can show a real
+percentage instead of a spinner indistinguishable from a hung request.
+
+Everything else is deliberately identical to `request`: same base URL, same bearer token, same
+error envelope, and — via the extracted `toApiError` — the same `401` dead-session and
+`PHONE_VERIFICATION_REQUIRED` handlers. Extracting that helper is the point: two transports with
+two copies of those global side effects is how one of them ends up missing a redirect.
+
+`onProgress` reports bytes handed to the OS, so it reaches 1 when the last byte is *sent*, before
+the backend has forwarded them to S3 and answered. Callers should read 1 as "uploaded, now
+waiting on the server".
+
+`uploadImage(file, options?)` now routes through it. `options` is optional and omitting it
+behaves exactly as the previous `post`-based call did. It deliberately does **not** compress on
+its own — `ImageUploadField`'s registration and profile-photo flows also reach this api layer,
+and silently re-encoding every image every caller ever passes would be a far wider behavioural
+change than the one being made. Compression is the caller's decision;
+`shared/components/PhotoUploader` makes it via `shared/lib/imageCompression.ts`.

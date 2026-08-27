@@ -184,25 +184,126 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   if (!response.ok) {
-    if (response.status === 401 && sentWithToken) {
-      // The token we hold is no longer accepted — see `setUnauthorizedHandler`. The error is
-      // still thrown below so the calling screen keeps its own error handling; the handler
-      // only ends the dead session so the app can send the user back to login.
-      unauthorizedHandler();
-    }
-    const envelope = payload as ErrorEnvelope | null;
-    if (envelope?.error?.code === 'PHONE_VERIFICATION_REQUIRED') {
-      phoneVerificationRequiredHandler();
-    }
-    throw new ApiError(
-      envelope?.error?.code ?? 'UNKNOWN_ERROR',
-      envelope?.error?.message ?? 'Request failed.',
-      envelope?.error?.details ?? null,
-      response.status,
-    );
+    throw toApiError(payload, response.status, sentWithToken);
   }
 
   return payload as T;
+}
+
+/**
+ * Turns a parsed error body into an {@link ApiError}, firing the two global side-effect
+ * handlers on the way. Shared by `request` above and `upload` below so the dead-session and
+ * phone-verification redirects cannot end up applying to only one of the two transports.
+ */
+function toApiError(payload: unknown, status: number, sentWithToken: boolean): ApiError {
+  if (status === 401 && sentWithToken) {
+    // The token we hold is no longer accepted — see `setUnauthorizedHandler`. The error is
+    // still thrown by the caller so the calling screen keeps its own error handling; the
+    // handler only ends the dead session so the app can send the user back to login.
+    unauthorizedHandler();
+  }
+  const envelope = payload as ErrorEnvelope | null;
+  if (envelope?.error?.code === 'PHONE_VERIFICATION_REQUIRED') {
+    phoneVerificationRequiredHandler();
+  }
+  return new ApiError(
+    envelope?.error?.code ?? 'UNKNOWN_ERROR',
+    envelope?.error?.message ?? 'Request failed.',
+    envelope?.error?.details ?? null,
+    status,
+  );
+}
+
+export interface UploadOptions {
+  /**
+   * Called with the fraction of the request body written to the socket, from 0 to 1.
+   *
+   * Note what this does and does not mean: it is bytes handed to the OS, so it reaches 1
+   * when the last byte is sent, *before* the backend has finished forwarding them to S3 and
+   * answered. Callers should treat 1 as "uploaded, now waiting on the server", not "done".
+   */
+  onProgress?: (fraction: number) => void;
+  /** Aborts the in-flight upload — e.g. the user removed the photo while it was still going. */
+  signal?: AbortSignal;
+}
+
+/**
+ * `POST` a `FormData` body with upload-progress reporting.
+ *
+ * This is the one place in the api layer that does not use `fetch`, and the reason is narrow:
+ * `fetch` exposes no upload-progress signal at all (`ReadableStream` request bodies would, but
+ * are not supported on Safari, which is most of this app's traffic). `XMLHttpRequest` has
+ * `upload.onprogress`, so a multi-second photo upload on a mobile uplink can show a real
+ * percentage instead of an indeterminate spinner that looks identical to a hung request.
+ *
+ * Everything else — base URL, bearer token, error envelope, the 401 and
+ * `PHONE_VERIFICATION_REQUIRED` handlers — is deliberately identical to `request`, via the
+ * shared {@link toApiError}.
+ */
+function upload<T>(path: string, formData: FormData, options: UploadOptions = {}): Promise<T> {
+  const { onProgress, signal } = options;
+
+  return new Promise<T>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new ApiError('ABORTED', 'Upload cancelled.', null, 0));
+      return;
+    }
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_BASE_URL}${path}`);
+
+    const token = tokenGetter();
+    const sentWithToken = Boolean(token);
+    if (token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    }
+    // No manual Content-Type: the browser has to set the multipart boundary itself, exactly
+    // as in `request`.
+
+    if (onProgress) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          onProgress(event.loaded / event.total);
+        }
+      };
+    }
+
+    const onAbort = () => xhr.abort();
+    signal?.addEventListener('abort', onAbort);
+    const cleanup = () => signal?.removeEventListener('abort', onAbort);
+
+    xhr.onload = () => {
+      cleanup();
+      let payload: unknown = null;
+      try {
+        payload = JSON.parse(xhr.responseText);
+      } catch {
+        // Empty/non-JSON body — same tolerance as `request`.
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload as T);
+      } else {
+        reject(toApiError(payload, xhr.status, sentWithToken));
+      }
+    };
+
+    // Network failure and abort are separated on purpose: a cancelled upload is a thing the
+    // user did, and must not surface as "the network failed".
+    xhr.onerror = () => {
+      cleanup();
+      reject(new ApiError('NETWORK_ERROR', 'Network request failed.', null, 0));
+    };
+    xhr.ontimeout = () => {
+      cleanup();
+      reject(new ApiError('NETWORK_ERROR', 'Network request timed out.', null, 0));
+    };
+    xhr.onabort = () => {
+      cleanup();
+      reject(new ApiError('ABORTED', 'Upload cancelled.', null, 0));
+    };
+
+    xhr.send(formData);
+  });
 }
 
 export const httpClient = {
@@ -216,4 +317,6 @@ export const httpClient = {
     request<T>(path, { ...options, method: 'PATCH', body }),
   delete: <T>(path: string, options?: Omit<RequestOptions, 'method' | 'body'>) =>
     request<T>(path, { ...options, method: 'DELETE' }),
+  /** Multipart `POST` with upload-progress reporting — see {@link upload}. */
+  upload,
 };

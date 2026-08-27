@@ -1,4 +1,5 @@
 import { httpClient } from './httpClient';
+import type { UploadOptions } from './httpClient';
 
 export interface UploadImageResponse {
   imageKey: string;
@@ -11,11 +12,22 @@ export interface UploadImageResponse {
  * `POST /api/storage/images` — uploads a single image and returns its storage key, later
  * passed to `classifyIssue`/`createIssue`. Multipart, single part named `file`, per
  * `docs/architecture/api-contract-issues.md` §2.3.
+ *
+ * Routed through `httpClient.upload` rather than `httpClient.post` so the caller can render a
+ * real percentage: this is the only request in the app whose body is large enough, on the
+ * connection that matters (a phone's uplink), for the difference to be visible. `options` is
+ * optional and omitting it behaves exactly as the previous `post`-based implementation did.
+ *
+ * Callers should hand this an already-downscaled file — see
+ * `shared/lib/imageCompression.ts`'s `prepareImageForUpload`. This function deliberately does
+ * not compress on its own: `ImageUploadField`'s registration/profile-photo flows also live in
+ * this api layer, and silently re-encoding every image every caller ever passes would be a
+ * much wider behavioural change than the one being made here.
  */
-export function uploadImage(file: File): Promise<UploadImageResponse> {
+export function uploadImage(file: File, options?: UploadOptions): Promise<UploadImageResponse> {
   const formData = new FormData();
   formData.append('file', file);
-  return httpClient.post<UploadImageResponse>('/api/storage/images', formData);
+  return httpClient.upload<UploadImageResponse>('/api/storage/images', formData, options);
 }
 
 export interface PresignedImageUrlEntry {

@@ -1,0 +1,437 @@
+name: Deploy Production
+
+# ==================================================================================================
+# MANUAL TRIGGER ONLY. There is deliberately no `on: push` here.
+# ==================================================================================================
+#
+# Auto-deploying `main` was considered and rejected for now, for a reason specific to this
+# repository rather than general caution: `main` is currently UNPROTECTED. The MS1 report measured
+# it through the GitHub API and recorded `"protected": false` with required status checks off, which
+# means anyone with push access can land a commit that no check has passed. Wiring an automatic
+# deployment to that branch would make a red or unreviewed commit reach customers.
+#
+# The order to fix this in is: enable branch protection on `main` requiring the "Backend CI" and
+# "Frontend CI" checks -> run manual deploys through a beta -> then revisit automation. Turning on
+# `on: push` before the first step is done would be strictly worse than deploying by hand.
+#
+# The `production` GitHub Environment adds a required-reviewer gate, and that gate is not merely a
+# UI prompt: the AWS role's trust policy (infra/terraform/iam.tf) is scoped to the
+# `environment:production` OIDC subject claim, so a job that has not passed the approval cannot
+# obtain AWS credentials at all.
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_backend:
+        description: "Deploy the backend (ECS)"
+        type: boolean
+        default: true
+      deploy_frontend:
+        description: "Deploy the frontend (S3 + CloudFront)"
+        type: boolean
+        default: true
+
+concurrency:
+  # One production deploy at a time. cancel-in-progress is deliberately FALSE: cancelling a running
+  # deploy could interrupt `ecs update-service` between registering a task definition and the
+  # service stabilising, leaving the service mid-transition with nobody watching.
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: pronto-backend
+  ECS_CLUSTER: pronto-cluster
+  ECS_SERVICE: pronto-backend
+  ECS_CONTAINER: backend
+  # The task definition FAMILY, which happens to share the service's name but is a different thing
+  # and is used deliberately: naming the family resolves to its latest revision (Terraform's, when
+  # Terraform applied most recently), whereas naming the service resolves to the revision currently
+  # deployed. See the "Render task definition" step for why that distinction froze configuration.
+  ECS_TASK_FAMILY: pronto-backend
+
+jobs:
+  # ================================================================================================
+  # 1. VERIFY -- everything that can fail without touching AWS fails here.
+  # ================================================================================================
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: pronto
+          POSTGRES_USER: pronto
+          # NOT "pronto". The production-config smoke step below runs the application with
+          # PRONTO_ENVIRONMENT=production, and DatabaseConfigStartupGuard refuses the committed
+          # local-development password in a production-like environment -- correctly, since it is
+          # published in this repository. So the throwaway CI database gets a password of its own.
+          POSTGRES_PASSWORD: ci-only-placeholder-db-password-not-real
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pronto -d pronto"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      # ---- backend ---------------------------------------------------------------------------
+      - name: Backend build and test
+        working-directory: backend
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: pronto
+          DB_USER: pronto
+          DB_PASSWORD: ci-only-placeholder-db-password-not-real
+        # `verify`, not `test`: this is the same command backend-ci.yml runs, against a real
+        # PostgreSQL, so Flyway applies all migrations and Hibernate's ddl-auto=validate checks
+        # every entity against the migrated schema. That is the migration validation gate -- it is
+        # not a separate job because it is already what this one does.
+        run: mvn -B clean verify
+
+      # ---- frontend --------------------------------------------------------------------------
+      - name: Frontend install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Frontend test
+        working-directory: frontend
+        run: npm test
+
+      - name: Frontend typecheck and build
+        working-directory: frontend
+        env:
+          # A structurally valid placeholder on a reserved example domain. The real build happens in
+          # the deploy-frontend job with the real origin; this one only proves the bundle compiles,
+          # and vite.config.ts refuses to build a production bundle without a valid HTTPS value.
+          VITE_API_BASE_URL: https://api.pronto.example
+        run: npm run build
+
+      # ---- migration immutability ------------------------------------------------------------
+      # Also run by backend-ci.yml on every push and PR, which is where it catches the mistake
+      # earliest. Repeated here because this is the one workflow that reaches Production and `main`
+      # is not yet a protected branch, so a commit arriving here has not necessarily passed CI.
+      - name: Flyway migrations are append-only
+        run: bash backend/tools/check-migrations-append-only.sh
+
+      # ---- production-shaped startup smoke ---------------------------------------------------
+      #
+      # Closes MS4's Known Limitation 7 ("Backend CI still has no production-configuration smoke
+      # run"). It boots the PACKAGED JAR with a production-shaped environment and asserts both that a
+      # valid configuration starts and that breaking any one required variable refuses before the
+      # port is bound. Every unit test in the suite constructs guards directly; only this exercises
+      # the assembled context with AI_MODE=openai, STORAGE_MODE=s3 and the rest.
+      #
+      # It has already earned its place: on its first run it caught a real defect that no unit test
+      # could -- a second constructor added to OpenAiChatClient left Spring unable to choose one, so
+      # AI_MODE=openai failed to start. That bean only exists when AI_MODE=openai, which no unit test
+      # and no local run ever sets.
+      - name: Production-shaped startup smoke
+        env:
+          # The runner's own address. DatabaseConfigStartupGuard refuses a loopback DB_HOST in a
+          # production-like environment, so `localhost` -- which is where the service container is
+          # published -- cannot be used. The same server, named by an address that is not loopback.
+          SMOKE_DB_PORT: 5432
+          SMOKE_DB_PASSWORD: ci-only-placeholder-db-password-not-real
+        run: |
+          export SMOKE_DB_HOST="$(hostname -I | awk '{print $1}')"
+          echo "Smoke database host: ${SMOKE_DB_HOST}"
+          bash backend/tools/production-config-smoke.sh
+
+  # ================================================================================================
+  # 2. BUILD AND PUSH -- still no deployment; the image is just made available.
+  # ================================================================================================
+  build-image:
+    name: Build and push image
+    needs: verify
+    if: inputs.deploy_backend
+    runs-on: ubuntu-latest
+
+    # No `environment:` here on purpose. This job needs to push to ECR but must not be able to touch
+    # the running service, and it deliberately runs BEFORE the approval gate so a reviewer can
+    # approve a deployment of an image that already exists and has already been scanned.
+    permissions:
+      contents: read
+      id-token: write
+
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # An ARN, not a key. No AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY exists for this
+          # deployment -- the credentials here are minted by STS for this job, expire in an hour,
+          # and cannot be exfiltrated for later use. Stored as a repository VARIABLE rather than a
+          # secret because an ARN is not sensitive and is useless without the trust relationship.
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push
+        id: build
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          # Tagged with the git SHA, never `latest`. The tag IS the deployment identity: it is what
+          # the task definition records, what rollback names, and what an operator compares against
+          # `git log`. `latest` cannot answer "which commit is in production right now".
+          IMAGE="${REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}"
+
+          # The ECR repository is created with IMMUTABLE tags so a tag always means the same bits.
+          # That makes re-running this workflow for an already-built commit a push failure rather
+          # than a silent overwrite, so check first and reuse.
+          if aws ecr describe-images --repository-name "${ECR_REPOSITORY}" \
+               --image-ids imageTag="${GITHUB_SHA}" >/dev/null 2>&1; then
+            echo "Image for ${GITHUB_SHA} already exists; reusing it."
+          else
+            docker build -t "${IMAGE}" backend/
+            docker push "${IMAGE}"
+          fi
+
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+
+  # ================================================================================================
+  # 3. DEPLOY BACKEND -- gated on the `production` environment's manual approval.
+  # ================================================================================================
+  deploy-backend:
+    name: Deploy backend
+    needs: build-image
+    if: inputs.deploy_backend
+    runs-on: ubuntu-latest
+
+    # THE APPROVAL GATE. Everything above this line runs unattended; nothing below it starts until a
+    # required reviewer approves. Enforced twice over -- by GitHub, and by the AWS trust policy that
+    # only issues credentials to the `environment:production` subject claim.
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_API_URL }}
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Record the currently deployed revision
+        id: current
+        run: |
+          # Captured BEFORE anything changes. This is what the runbook's rollback procedure needs,
+          # and the moment it is wanted is the moment it is no longer obtainable.
+          PREVIOUS="$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
+                       --query 'services[0].taskDefinition' --output text)"
+          echo "previous=${PREVIOUS}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Rollback target if this deploy fails: ${PREVIOUS}"
+
+      - name: Register a task definition with the new image
+        id: taskdef
+        env:
+          IMAGE: ${{ needs.build-image.outputs.image }}
+        run: |
+          # Take the FAMILY's latest task definition and change ONLY the image. Terraform owns every
+          # other field -- environment, secrets, health check, sizing -- and re-deriving them here
+          # would create a second source of truth that drifts.
+          #
+          # THE FAMILY, NOT THE SERVICE. This used to read "${ECS_SERVICE}", which resolves to the
+          # revision the service is CURRENTLY running -- that is, the one this workflow itself
+          # registered last time. Every deploy therefore copied its own previous output, so a change
+          # Terraform made to an environment variable could never enter the chain: Terraform ignored
+          # container_definitions to protect this workflow's image, and this workflow copied the live
+          # env to avoid overriding Terraform. Each deferred to the other and the env froze.
+          # CORS_ALLOWED_ORIGINS sat at a stale CloudFront origin through an entire domain migration.
+          #
+          # Naming the family resolves to its LATEST revision, which is Terraform's whenever
+          # Terraform has applied more recently than the last deploy. Image stays owned here,
+          # configuration stays owned there, and configuration changes reach production on the next
+          # deploy instead of never.
+          aws ecs describe-task-definition --task-definition "${ECS_TASK_FAMILY}" \
+            --query 'taskDefinition' > taskdef.json
+
+          jq --arg IMAGE "$IMAGE" --arg NAME "$ECS_CONTAINER" '
+            .containerDefinitions |= map(if .name == $NAME then .image = $IMAGE else . end)
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy)
+          ' taskdef.json > taskdef-new.json
+
+          ARN="$(aws ecs register-task-definition --cli-input-json file://taskdef-new.json \
+                  --query 'taskDefinition.taskDefinitionArn' --output text)"
+          echo "arn=${ARN}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy
+        run: |
+          # EXPECT A SHORT OUTAGE HERE, BY DESIGN. The service runs deployment_minimum_healthy_percent
+          # = 0, so ECS stops the single running task before starting its replacement. That
+          # guarantees exactly one Flyway migrator and exactly one scheduler set -- see
+          # infra/terraform/variables.tf's backend_desired_count for why running two tasks is a
+          # correctness problem and not just a cost one.
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" --service "${ECS_SERVICE}" \
+            --task-definition "${{ steps.taskdef.outputs.arn }}" \
+            --query 'service.serviceName' --output text
+
+      - name: Wait for the service to stabilise
+        run: |
+          # Fails the job if the new task never becomes healthy -- which includes the case where
+          # Flyway refuses a migration or a startup guard rejects the configuration, because both
+          # prevent the port binding and therefore the ALB health check.
+          aws ecs wait services-stable --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}"
+
+      - name: Verify health through the load balancer
+        env:
+          API_URL: ${{ vars.PRODUCTION_API_URL }}
+        run: |
+          # Deliberately through the PUBLIC URL rather than against the task: this exercises DNS,
+          # TLS, the listener, the security group and the target group as one path. `services-stable`
+          # only proves ECS is content.
+          if [ -z "${API_URL}" ]; then
+            echo "::warning::PRODUCTION_API_URL is not set, so end-to-end health was not verified."
+            echo "This is expected while the domain is BLOCKED. Set it once a domain exists."
+            exit 0
+          fi
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            CODE="$(curl -fsS -o /dev/null -w '%{http_code}' "${API_URL}/actuator/health/readiness" || echo 000)"
+            [ "${CODE}" = "200" ] && { echo "readiness 200 after ${attempt} attempt(s)"; exit 0; }
+            echo "attempt ${attempt}: ${CODE}"
+            sleep 10
+          done
+          echo "::error::Backend readiness never returned 200 through the load balancer."
+          echo "::error::Rollback: aws ecs update-service --cluster ${ECS_CLUSTER} --service ${ECS_SERVICE} --task-definition ${{ steps.current.outputs.previous }}"
+          exit 1
+
+  # ================================================================================================
+  # 4. DEPLOY FRONTEND
+  # ================================================================================================
+  deploy-frontend:
+    name: Deploy frontend
+    needs: verify
+    if: inputs.deploy_frontend
+    runs-on: ubuntu-latest
+
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_APP_URL }}
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Build with the real API origin
+        working-directory: frontend
+        env:
+          # Vite INLINES this at build time, so it is a property of the artifact rather than of the
+          # environment it runs in -- there is no runtime correction. vite.config.ts refuses to build
+          # without a valid HTTPS, non-localhost value, which is why an unset variable fails here
+          # rather than shipping a bundle that calls localhost from every user's browser.
+          VITE_API_BASE_URL: ${{ vars.PRODUCTION_API_URL }}
+        run: |
+          if [ -z "${VITE_API_BASE_URL}" ]; then
+            echo "::error::PRODUCTION_API_URL is not set. The frontend cannot be built without it."
+            echo "::error::This is BLOCKED until a domain and an ALB certificate exist."
+            exit 1
+          fi
+          npm ci
+          npm run build
+
+      - name: Upload
+        env:
+          BUCKET: ${{ vars.FRONTEND_BUCKET }}
+        run: |
+          # ORDER MATTERS. Hashed assets first, index.html last.
+          #
+          # index.html is the file that names which bundle is current. Uploading it before its assets
+          # exist leaves a window -- short, but real, and precisely during a deploy when people are
+          # looking -- in which a browser fetches the new index.html and 404s on every script it
+          # references. Assets are content-hashed, so uploading them early collides with nothing.
+          aws s3 sync frontend/dist/ "s3://${BUCKET}/" \
+            --exclude index.html \
+            --cache-control 'public, max-age=31536000, immutable'
+
+          aws s3 cp frontend/dist/index.html "s3://${BUCKET}/index.html" \
+            --cache-control 'no-cache, must-revalidate'
+
+          # --delete in a separate pass, AFTER the new index.html is live, so the previous bundle
+          # stays reachable for any browser that loaded the old page moments ago.
+          aws s3 sync frontend/dist/ "s3://${BUCKET}/" --delete \
+            --cache-control 'public, max-age=31536000, immutable' \
+            --exclude index.html
+
+      - name: Invalidate the CDN
+        env:
+          DISTRIBUTION: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          # Only the entry point. Everything under /assets/ is content-hashed and served from an
+          # immutable cache, so invalidating it would be both pointless and the expensive part.
+          aws cloudfront create-invalidation --distribution-id "${DISTRIBUTION}" \
+            --paths '/index.html' '/' --query 'Invalidation.Id' --output text
+
+      - name: Smoke test the delivered site
+        env:
+          APP_URL: ${{ vars.PRODUCTION_APP_URL }}
+        run: |
+          if [ -z "${APP_URL}" ]; then
+            echo "::warning::PRODUCTION_APP_URL is not set; the delivered site was not verified."
+            exit 0
+          fi
+          CODE="$(curl -fsS -o /dev/null -w '%{http_code}' "${APP_URL}/" || echo 000)"
+          [ "${CODE}" = "200" ] || { echo "::error::Site root returned ${CODE}"; exit 1; }
+
+          # The SPA fallback, which is the failure everybody forgets until a user shares a link. A
+          # deep link has no S3 object behind it, so this passes only if CloudFront's 403/404 ->
+          # /index.html rules are in place.
+          DEEP="$(curl -fsS -o /dev/null -w '%{http_code}' "${APP_URL}/orders" || echo 000)"
+          [ "${DEEP}" = "200" ] || { echo "::error::Deep link /orders returned ${DEEP}; the SPA fallback is not working"; exit 1; }
+          echo "Site root and SPA deep link both 200."

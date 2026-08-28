@@ -135,12 +135,25 @@ public class AuthService {
      * recovery path is simply to log in, which returns a fresh {@code VERIFY_EMAIL} challenge for an
      * account that never finished verifying. That is a better outcome for a professional who just
      * uploaded a licence, and it is the same path an abandoned registration already used.
+     *
+     * <p><b>Dispatches nothing when {@link VerificationPolicy} reports
+     * {@code pronto.verification.email-required=false}</b> — the closed-beta setting, while SES is
+     * sandboxed and would reject every recipient that is not individually console-verified. The
+     * account is created identically and the caller is sent to log in. See the policy's Javadoc for
+     * why the account still records {@code email_verified = false}.
      */
     public AuthStepResponse register(RegisterRequest request, MultipartFile verificationDocument,
                                       MultipartFile profilePhoto) {
         validateRoleSpecificFields(request, verificationDocument);
 
         User user = accountWriter.createAccount(request, verificationDocument, profilePhoto);
+
+        if (!verificationPolicy.isEmailVerificationRequired()) {
+            // OtpService#issue is never reached, so no challenge row is written, no code is
+            // generated and SES is not called at all -- the same shape of bypass as the login one,
+            // and for the same reason: a code that cannot be delivered is not a verification step.
+            return AuthStepResponse.goToLogin(user.isEmailVerified(), user.isPhoneVerified());
+        }
 
         IssuedChallenge challenge = otpService.issue(user, OtpPurpose.EMAIL_VERIFICATION, false);
         requireDelivered(challenge);
@@ -227,12 +240,20 @@ public class AuthService {
      * settings.</b> {@code AUTH_OTP_REQUIRED=false} removes the second factor from login; it does
      * not make an unproved email address into a proved one, and an account that has never confirmed
      * the address it registered with is not one this method is willing to mint a session for.
+     *
+     * <p><b>That branch is itself conditional on {@link VerificationPolicy} while
+     * {@code pronto.verification.email-required=false}.</b> The two settings are independent and
+     * answer different questions: {@code AUTH_OTP_REQUIRED} decides whether a proved account needs a
+     * second factor, {@code EMAIL_VERIFICATION_REQUIRED} decides whether the account had to prove
+     * its address in the first place. With email verification off, challenging here would issue a
+     * code SES cannot deliver, on the one path a beta user has left — which is the whole failure
+     * being fixed, relocated from registration to login.
      */
     public AuthStepResponse login(LoginRequest request) {
         AuthAccountWriter.VerifiedLogin verified = accountWriter.verifyPassword(request);
         User user = verified.user();
 
-        if (!user.isEmailVerified()) {
+        if (verificationPolicy.isEmailVerificationRequired() && !user.isEmailVerified()) {
             IssuedChallenge challenge = otpService.issue(user, OtpPurpose.EMAIL_VERIFICATION, false);
             requireDelivered(challenge);
             return AuthStepResponse.challenge(AuthNextStep.VERIFY_EMAIL, toDto(challenge),
@@ -348,9 +369,14 @@ public class AuthService {
      * unauthenticated endpoint.
      */
     public OtpChallengeResponse requestPasswordReset(PasswordResetRequest request) {
+        // The email-verified filter is conditional for the same reason the login branch above is:
+        // with EMAIL_VERIFICATION_REQUIRED=false, no beta account has a proved address, so an
+        // unconditional filter would silently route every real reset request into the decoy branch
+        // -- an endpoint that is enumeration-neutral by design and therefore reports success either
+        // way. Password recovery would be comprehensively broken and would look like it worked.
         Optional<User> account = accountWriter.resolveIdentifier(request.identifier()).user()
                 .filter(u -> u.getDeletedAt() == null)
-                .filter(User::isEmailVerified);
+                .filter(u -> u.isEmailVerified() || !verificationPolicy.isEmailVerificationRequired());
 
         if (account.isPresent()) {
             try {

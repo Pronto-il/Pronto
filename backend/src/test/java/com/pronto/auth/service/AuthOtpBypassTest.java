@@ -115,7 +115,7 @@ class AuthOtpBypassTest {
                 Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
                 Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
-                new VerificationPolicy(true), new AuthOtpPolicy(String.valueOf(otpRequired)));
+                new VerificationPolicy(true, true), new AuthOtpPolicy(String.valueOf(otpRequired)));
     }
 
     // ---- OTP DISABLED ---------------------------------------------------------

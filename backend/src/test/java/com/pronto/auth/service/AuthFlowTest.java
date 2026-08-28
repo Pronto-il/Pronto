@@ -99,7 +99,7 @@ class AuthFlowTest {
                 Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
                 Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
-                new VerificationPolicy(true), new AuthOtpPolicy("true"));
+                new VerificationPolicy(true, true), new AuthOtpPolicy("true"));
 
         account = new User("Israel Israeli", EMAIL, passwordEncoder.encode(PASSWORD), UserRole.CUSTOMER);
         InMemoryVerificationCodes.setField(account, "id", 42L);

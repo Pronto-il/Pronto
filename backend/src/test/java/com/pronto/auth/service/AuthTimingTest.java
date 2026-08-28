@@ -83,7 +83,7 @@ class AuthTimingTest {
                 Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
                 Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
-                new VerificationPolicy(true), new AuthOtpPolicy("true"));
+                new VerificationPolicy(true, true), new AuthOtpPolicy("true"));
 
         User account = new User("Israel Israeli", KNOWN_EMAIL, "$2a$10$storedhash", UserRole.CUSTOMER);
         InMemoryVerificationCodes.setField(account, "id", 42L);

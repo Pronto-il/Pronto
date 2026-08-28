@@ -45,20 +45,26 @@ public class ContactVerificationGuard {
     }
 
     /**
-     * Requires a verified email address always, and a verified phone number only while
-     * {@code pronto.verification.sms-required} is {@code true}.
+     * Requires each contact channel only while its own policy flag says so —
+     * {@code pronto.verification.email-required} and {@code pronto.verification.sms-required}.
      *
-     * <p><b>Email is checked separately rather than through {@code User#isFullyVerified()}.</b>
-     * That method answers "both channels proved", which is the right question for a report and the
-     * wrong one for this gate now that the phone half is conditional -- using it would have made a
-     * relaxed phone rule silently relax the email rule too. Email is unconditional here, so no
-     * setting of the policy can let an account with an unproved email address reach the
-     * marketplace.
+     * <p><b>The two channels are checked separately rather than through
+     * {@code User#isFullyVerified()}.</b> That method answers "both channels proved", which is the
+     * right question for a report and the wrong one for this gate now that each half is
+     * independently conditional -- using it would make relaxing one rule silently relax the other.
      *
-     * @throws ApiException {@code EMAIL_NOT_VERIFIED} if the address was never proved;
-     *                      {@code PHONE_VERIFICATION_REQUIRED} if a phone number is required by
-     *                      policy and is missing or unverified; {@code UNAUTHORIZED} if the account
-     *                      is gone
+     * <p><b>Email became conditional in the closed beta, and that is a real relaxation.</b> This
+     * class previously guaranteed that no setting could let an unproved address reach the
+     * marketplace, and with {@code EMAIL_VERIFICATION_REQUIRED=false} that guarantee no longer
+     * holds — stated plainly here rather than left for a reader to discover, because it is the
+     * cost being knowingly accepted while SES is sandboxed. It buys a beta in which a registered
+     * user can actually book; it costs the assurance that the address on an account is reachable.
+     * The default is unchanged, and one variable restores the original rule.
+     *
+     * @throws ApiException {@code EMAIL_NOT_VERIFIED} if the address is required by policy and was
+     *                      never proved; {@code PHONE_VERIFICATION_REQUIRED} if a phone number is
+     *                      required by policy and is missing or unverified; {@code UNAUTHORIZED} if
+     *                      the account is gone
      */
     @Transactional(readOnly = true)
     public void requireVerifiedContactChannels(Long userId) {
@@ -67,7 +73,7 @@ public class ContactVerificationGuard {
                 .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHORIZED,
                         "User no longer exists or has been deleted."));
 
-        if (!user.isEmailVerified()) {
+        if (verificationPolicy.isEmailVerificationRequired() && !user.isEmailVerified()) {
             throw new ApiException(ErrorCode.EMAIL_NOT_VERIFIED,
                     "Verify your email address before continuing.");
         }

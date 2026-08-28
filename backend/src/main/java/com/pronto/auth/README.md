@@ -20,6 +20,13 @@ Implements `docs/architecture/api-contract.md` §2.1–2.3 and §3.1–3.3.
   — see the MS1 paragraph under Status.
 - `POST /api/auth/verify` — consumes a 6-digit `verification_codes` row, sets
   `users.email_verified = true`.
+
+  > **Temporary, closed beta:** `EMAIL_VERIFICATION_REQUIRED=false`
+  > (`config/VerificationPolicy`) currently stops registration from dispatching the code at
+  > all, because AWS SES is still sandboxed and rejects any recipient not individually
+  > verified in the console. The endpoint, the purpose, the table and every test are
+  > unchanged; nothing writes `email_verified = true` on the bypass path, so reversal is one
+  > env var with no migration. See "Contact verification policy" below.
 - `POST /api/auth/login` — bcrypt password check, the exact ordered lockout logic from
   `api-contract.md` §2.3 (check-lock → time-expiry reset → password check → increment/lock
   → email-verified check → success), JWT issuance on success. Every branch that throws
@@ -104,6 +111,47 @@ Implements `docs/architecture/api-contract.md` §2.1–2.3 and §3.1–3.3.
 - `users` (`UsersController`/`UsersService`) relies on this package's `SecurityConfig` +
   `JwtAuthenticationFilter` to gate `/api/users/me`, but does not otherwise depend on
   `auth`'s internals.
+
+## Contact verification policy
+
+Three independent switches, each defaulting to the strict rule and each reachable only by an
+operator who names it. **None is derived from `pronto.environment`** — inferring an
+authentication requirement from an environment name would let "which environment am I?"
+decide "is authentication complete?".
+
+| Property (env var) | Default | Owner | What `false` removes |
+|---|---|---|---|
+| `pronto.auth.otp-required` (`AUTH_OTP_REQUIRED`) | `true` | `AuthOtpPolicy` | The second factor on `POST /api/auth/login`. A verified account signs in on its password alone. |
+| `pronto.verification.sms-required` (`SMS_VERIFICATION_REQUIRED`) | `true` | `VerificationPolicy` | The phone half. An unproved number stops blocking issues/bookings/SOS and stops hiding a professional from the marketplace. |
+| `pronto.verification.email-required` (`EMAIL_VERIFICATION_REQUIRED`) | `true` | `VerificationPolicy` | The email half. Registration dispatches no `EMAIL_VERIFICATION` code, and an unproved address stops blocking login, booking and password reset. |
+
+All three are temporary provider-sandbox workarounds — AWS End User Messaging for the first
+two, **AWS SES for the third** — and all three are set to `false` in Production today
+(`infra/terraform/compute.tf`).
+
+**The invariant that makes every one of them reversible: none writes a verification flag.**
+Accounts created while a switch is off keep `email_verified = false` / `phone_verified =
+false`, so the column keeps meaning "this channel was proved" and never lies. Flipping a
+switch back therefore asks exactly the right accounts to prove exactly the right thing, at
+their next login, through the resume-an-abandoned-registration branch that already exists.
+No migration, no backfill, no code change.
+
+**What none of them relax:** password verification, the lockout counter, the login rate
+limiter, JWT issuance/validation, role authorization, every route guard, and the
+soft-deleted-account check.
+
+**`EMAIL_VERIFICATION_REQUIRED=false` is a real relaxation and is worth naming plainly:**
+while it is off, an account's email address is unproved, so a typo'd address — or someone
+else's — reaches the marketplace. That cost is accepted deliberately, because the
+alternative under a sandboxed SES is that no real user can enter the product at all.
+Note also that password reset still *delivers* over SES, so it remains unusable in the
+sandbox regardless of this flag; the flag only stops `email_verified` from being the thing
+that blocks it.
+
+Tests: `config/AuthOtpPolicyTest`, `service/AuthOtpBypassTest`,
+`service/EmailVerificationBypassTest`, `users/service/ContactVerificationGuardTest`. Each
+asserts both settings side by side, because the risk is not "the bypass fails to work" but
+"the bypass quietly became the only behaviour".
 
 ## Transaction boundaries
 

@@ -213,7 +213,7 @@ class AuthServiceTest {
         authService = new AuthService(userRepository, accountWriter, otpService, jwtService,
                 passwordEncoder, professionalCoverageService, serviceCoverageValidator,
                 subServiceSelectionValidator,
-                new VerificationPolicy(true), new AuthOtpPolicy("true"));
+                new VerificationPolicy(true, true), new AuthOtpPolicy("true"));
 
         when(userRepository.existsByEmail(anyString())).thenReturn(false);
         Mockito.lenient().when(userRepository.existsByPhone(anyString())).thenReturn(false);
@@ -581,7 +581,7 @@ class AuthServiceTest {
                         new ServiceCoverageValidator(serviceRegionRepository, serviceCityRepository)),
                 new ServiceCoverageValidator(serviceRegionRepository, serviceCityRepository),
                 new SubServiceSelectionValidator(subServiceRepository),
-                new VerificationPolicy(true), new AuthOtpPolicy("true"));
+                new VerificationPolicy(true, true), new AuthOtpPolicy("true"));
 
         assertThatThrownBy(() -> serviceWithFailingStorage.register(
                 professionalRequest(validProfessionalData()), pdfDocument(), null))

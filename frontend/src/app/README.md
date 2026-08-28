@@ -511,3 +511,40 @@ see it.
    top-left corner. Position now lives on a wrapper `<g>`;
 3. the sparkles were painted before the lid, so the burst was occluded by the very lid it escapes
    from. They are now painted last.
+
+## Mobile nav redesign — centre CTA + side-pinned toolbox (2026-08-28)
+
+Scoped to `<640px` except one deliberate desktop adjustment (noted below).
+
+**The oversized header CTA is gone (§3).** The full-width teal "יש לך תקלה? בוא נטפל בזה" banner
+that `AppLayout` rendered under the header is removed, along with its `.issueCta` stylesheet
+rules. `HomePage`'s own "יש לי תקלה" service-entry card — page content, not chrome — is untouched;
+the banner was the *second*, duplicated primary CTA, and removing it resolves §5.
+
+**New-issue action moved into `BottomNav` (§4/§6).** `BottomNav` now renders an elevated circular
+"תקלה חדשה" centre action between הזמנות and מועדפים — `בית | הזמנות | [תקלה חדשה] | מועדפים |
+פרופיל`. It is a `Link` to the exact same `/issues/new` route the banner used (one flow, not two),
+teal (`--color-primary`), 56px, lifted `--bottom-nav-cta-lift` above the bar. That token is also
+added to `.main`'s mobile bottom padding so the raised circle never overlaps scrolled content
+(§7). It is a `Link`, not a `NavLink`: "start new" is not a place you can be *at*, so it carries no
+`aria-current`.
+
+**Desktop keeps a new-issue entry** as a compact "תקלה חדשה" `.navLink` inside `.desktopOnlyNav`
+(there is no bottom nav above 640px). This is the one intentional desktop change: a prominent teal
+button became a normal nav link, consistent with its siblings.
+
+**The toolbox is now side-pinned (§1).** It no longer floats anywhere the customer drags it. CSS
+pins it to `inset-inline-start` (the right edge under `dir="rtl"`) — "always attached to one
+side", "never the horizontal centre", "consistent logical side". `useToolboxPosition` was reduced
+to a **vertical-only** drag: it owns just `top` (clamped above the nav, persisted under the new
+`pronto.toolbox.top` key as a bare number); horizontal drag, the `x` coordinate, and the old
+`{x, y}` persistence are gone. Vertical drag stays because it is the affordance that lets a
+customer lift the toolbox off content it covers. The tap-vs-drag threshold still measures *total*
+pointer movement, so a horizontal swipe still suppresses an accidental tap even though it no longer
+moves the toolbox.
+
+**The toolbox hides on the active-order screen (§2).** `ActiveIssueToolbox` reads `useLocation()`
+and returns null when `location.pathname === state.route` — the exact route a tap would navigate
+to. No shortcut back to a screen you are already on, and no new state: if the tap would be a no-op,
+the toolbox is not shown. `REVIEW` has no `route` (its tap opens a modal in place), so it is never
+suppressed by this rule.

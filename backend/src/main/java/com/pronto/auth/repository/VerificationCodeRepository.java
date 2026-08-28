@@ -23,21 +23,48 @@ public interface VerificationCodeRepository extends JpaRepository<VerificationCo
     Optional<VerificationCode> findByChallengeId(UUID challengeId);
 
     /**
-     * The newest challenge of this purpose for this user, whatever its state. Backs the resend
-     * cooldown (how long ago was the last one issued).
+     * The newest <b>delivered</b> challenge of this purpose for this user. Backs the resend cooldown
+     * (how long ago did a message actually go out).
+     *
+     * <p><b>Delivered, not merely issued</b> ({@code V54}). This used to be
+     * {@code findFirstByUserIdAndPurposeOrderByCreatedAtDesc} — newest row whatever its state —
+     * which counted a challenge whose dispatch had failed. One provider refusal then blocked the
+     * user's next resend for 60 seconds, immediately after the UI had told them to try again. A send
+     * that reached nobody is not a message to space the next one out from.
      */
-    Optional<VerificationCode> findFirstByUserIdAndPurposeOrderByCreatedAtDesc(Long userId, OtpPurpose purpose);
+    Optional<VerificationCode> findFirstByUserIdAndPurposeAndDeliveredAtIsNotNullOrderByDeliveredAtDesc(
+            Long userId, OtpPurpose purpose);
 
     /**
-     * How many challenges of this purpose this user has been issued since {@code since}. Backs the
-     * bounded resend volume ceiling — the cooldown alone only spaces requests out, it does not cap
-     * them, so without this a caller could sit on the resend button all day at one per minute.
+     * How many codes of this purpose this user has actually been <b>sent</b> since {@code since}.
+     * Backs the bounded resend volume ceiling — the cooldown alone only spaces requests out, it does
+     * not cap them, so without this a caller could sit on the resend button all day at one per
+     * minute.
+     *
+     * <p>Also delivered-only as of {@code V54}, and for a sharper reason than the cooldown: this
+     * ceiling exists to bound SMS cost and to protect whoever owns the handset from being messaged
+     * repeatedly. A failed dispatch sends nothing and costs nothing, so counting it bought no
+     * protection and instead locked a customer out of verification for an hour without their ever
+     * receiving a code. Request volume from one source stays bounded by
+     * {@code auth.security.AuthRateLimitInterceptor}, which is untouched.
      */
     @Query("""
             SELECT count(c) FROM VerificationCode c
-            WHERE c.userId = :userId AND c.purpose = :purpose AND c.createdAt >= :since""")
-    long countIssuedSince(@Param("userId") Long userId, @Param("purpose") OtpPurpose purpose,
-                           @Param("since") Instant since);
+            WHERE c.userId = :userId AND c.purpose = :purpose AND c.deliveredAt >= :since""")
+    long countDeliveredSince(@Param("userId") Long userId, @Param("purpose") OtpPurpose purpose,
+                              @Param("since") Instant since);
+
+    /**
+     * Stamps the challenge the provider just accepted.
+     *
+     * <p>Guarded by {@code deliveredAt IS NULL} so a retry cannot move an already-recorded delivery
+     * time forward and thereby extend the user's own cooldown.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE VerificationCode c SET c.deliveredAt = :now
+            WHERE c.id = :id AND c.deliveredAt IS NULL""")
+    int markDelivered(@Param("id") Long id, @Param("now") Instant now);
 
     /**
      * Burns one failed guess against this challenge, atomically.

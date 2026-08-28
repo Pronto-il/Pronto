@@ -1,5 +1,6 @@
 package com.pronto.auth.service;
 
+import com.pronto.auth.config.AuthOtpPolicy;
 import com.pronto.auth.config.VerificationPolicy;
 import com.pronto.auth.dto.AuthNextStep;
 import com.pronto.auth.dto.AuthSession;
@@ -57,9 +58,19 @@ import java.util.UUID;
  * login/otp -> code redeemed                               -> TOKEN
  * </pre>
  *
- * <p>Only {@link #verifyPhone} and {@link #loginOtp} construct an {@link AuthSession}, and both do
- * so strictly after {@code OtpService#redeem} has succeeded. That is the entire structural
- * guarantee, and it is deliberately visible in two short methods rather than spread across a flag.
+ * <p>{@link #verifyPhone} and {@link #loginOtp} construct an {@link AuthSession} strictly after
+ * {@code OtpService#redeem} has succeeded. That is the entire structural guarantee, and it is
+ * deliberately visible in two short methods rather than spread across a flag.
+ *
+ * <p><b>The one, explicit exception.</b> {@link #login} also mints a session when
+ * {@link AuthOtpPolicy} reports {@code pronto.auth.otp-required=false} — a temporary,
+ * operator-named setting for the current pre-user stage, while AWS SMS is sandboxed and a second
+ * factor cannot reliably be delivered. It is stated here rather than buried in {@link #login}
+ * because the rule above is the package's headline claim and a reader is entitled to find its
+ * exception in the same paragraph. The default is {@code true}, the bypass cannot be reached
+ * without setting {@code AUTH_OTP_REQUIRED=false}, and it is announced at boot. Everything else on
+ * the login path — password verification, lockout, rate limiting, the email-verified requirement —
+ * is untouched under both settings.
  *
  * <p><b>The methods that dispatch an OTP are deliberately NOT {@code @Transactional}.</b> They are
  * orchestrators: {@link AuthAccountWriter} performs the database work in its own committed
@@ -84,6 +95,7 @@ public class AuthService {
     private final ServiceCoverageValidator serviceCoverageValidator;
     private final SubServiceSelectionValidator subServiceSelectionValidator;
     private final VerificationPolicy verificationPolicy;
+    private final AuthOtpPolicy authOtpPolicy;
 
     public AuthService(UserRepository userRepository,
                         AuthAccountWriter accountWriter,
@@ -93,7 +105,8 @@ public class AuthService {
                         ProfessionalCoverageService professionalCoverageService,
                         ServiceCoverageValidator serviceCoverageValidator,
                         SubServiceSelectionValidator subServiceSelectionValidator,
-                        VerificationPolicy verificationPolicy) {
+                        VerificationPolicy verificationPolicy,
+                        AuthOtpPolicy authOtpPolicy) {
         this.userRepository = userRepository;
         this.accountWriter = accountWriter;
         this.otpService = otpService;
@@ -103,6 +116,7 @@ public class AuthService {
         this.serviceCoverageValidator = serviceCoverageValidator;
         this.subServiceSelectionValidator = subServiceSelectionValidator;
         this.verificationPolicy = verificationPolicy;
+        this.authOtpPolicy = authOtpPolicy;
     }
 
     // ------------------------------------------------------------------ registration
@@ -203,12 +217,16 @@ public class AuthService {
     // ------------------------------------------------------------------ login
 
     /**
-     * Verifies the password and issues a second-factor challenge. <b>Never returns a token.</b>
+     * Verifies the password and issues a second-factor challenge. <b>Returns a token only when
+     * {@link AuthOtpPolicy} says the second factor is not required.</b>
      *
      * <p>An account that never finished verifying its email gets an {@code EMAIL_VERIFICATION}
      * challenge instead of a login challenge — a correct password is sufficient evidence to resume
      * an abandoned registration, and it means there is no separate "I never got my code" flow to
-     * build or to abuse.
+     * build or to abuse. <b>That branch is above the OTP-policy check and stays there under both
+     * settings.</b> {@code AUTH_OTP_REQUIRED=false} removes the second factor from login; it does
+     * not make an unproved email address into a proved one, and an account that has never confirmed
+     * the address it registered with is not one this method is willing to mint a session for.
      */
     public AuthStepResponse login(LoginRequest request) {
         AuthAccountWriter.VerifiedLogin verified = accountWriter.verifyPassword(request);
@@ -219,6 +237,15 @@ public class AuthService {
             requireDelivered(challenge);
             return AuthStepResponse.challenge(AuthNextStep.VERIFY_EMAIL, toDto(challenge),
                     false, user.isPhoneVerified());
+        }
+
+        if (!authOtpPolicy.isOtpRequired()) {
+            // The password has been verified, the lockout counter consulted and reset, and the rate
+            // limiter already passed upstream in the interceptor. The only thing skipped is the
+            // second factor: no challenge row is written, no code is generated, and neither SES nor
+            // SNS is called, because OtpService#issue is simply never reached. Returning through the
+            // same helper loginOtp uses is deliberate -- see authenticatedSession.
+            return authenticatedSession(user);
         }
 
         OtpPurpose purpose = verified.byPhone() ? OtpPurpose.PHONE_LOGIN_OTP : OtpPurpose.EMAIL_LOGIN_OTP;
@@ -241,7 +268,7 @@ public class AuthService {
         Long userId = otpService.redeem(request.challengeId(), request.code(), purpose);
         User user = accountWriter.loadActive(userId);
 
-        return AuthStepResponse.authenticated(session(user), user.isEmailVerified(), user.isPhoneVerified());
+        return authenticatedSession(user);
     }
 
     // ------------------------------------------------------------------ resend
@@ -477,6 +504,21 @@ public class AuthService {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /**
+     * The one place a completed login turns into a response.
+     *
+     * <p>Shared by {@link #loginOtp} (a redeemed second factor) and by {@link #login} when
+     * {@code pronto.auth.otp-required=false}. It exists so that turning the OTP requirement off
+     * cannot drift the session it issues away from the one a redeemed code issues — same token, same
+     * claims, same expiry, same {@code UserSummary}, same honestly-reported verification flags. A
+     * second hand-rolled {@code AuthStepResponse.authenticated(...)} in {@link #login} is precisely
+     * how "the bypass grants a slightly different session" would get introduced without anyone
+     * deciding to.
+     */
+    private AuthStepResponse authenticatedSession(User user) {
+        return AuthStepResponse.authenticated(session(user), user.isEmailVerified(), user.isPhoneVerified());
+    }
 
     private AuthSession session(User user) {
         String token = jwtService.generateToken(user);

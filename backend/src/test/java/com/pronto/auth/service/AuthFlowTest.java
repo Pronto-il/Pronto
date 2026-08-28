@@ -1,5 +1,6 @@
 package com.pronto.auth.service;
 
+import com.pronto.auth.config.AuthOtpPolicy;
 import com.pronto.auth.config.VerificationPolicy;
 import com.pronto.auth.dto.AuthNextStep;
 import com.pronto.auth.dto.AuthStepResponse;
@@ -35,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -97,7 +99,7 @@ class AuthFlowTest {
                 Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
                 Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
-                new VerificationPolicy(true));
+                new VerificationPolicy(true), new AuthOtpPolicy("true"));
 
         account = new User("Israel Israeli", EMAIL, passwordEncoder.encode(PASSWORD), UserRole.CUSTOMER);
         InMemoryVerificationCodes.setField(account, "id", 42L);
@@ -367,6 +369,123 @@ class AuthFlowTest {
         assertThat(thrownBy(() -> authService.resend(
                 new ResendOtpRequest(login.challenge().challengeId()))).getCode())
                 .isEqualTo(ErrorCode.RATE_LIMITED);
+    }
+
+    // ---- resend on the SMS half of the flow ------------------------------------
+    //
+    // Every resend test above this line rides an EMAIL challenge. The SMS half had none, which is
+    // how a phone-verification resend defect could ship: nothing exercised a PHONE_VERIFICATION
+    // challenge through authService.resend at all.
+
+    /** Puts the account on the phone step of registration, the way a real registrant gets there. */
+    private OtpChallengeResponse atThePhoneStep() {
+        account.setEmailVerified(false);
+        account.setPhoneVerified(false);
+        AuthStepResponse login = authService.login(new LoginRequest(EMAIL, PASSWORD));
+        AuthStepResponse afterEmail = authService.verifyEmail(
+                new OtpSubmissionRequest(login.challenge().challengeId(), lastEmailCode()));
+        assertThat(afterEmail.nextStep()).isEqualTo(AuthNextStep.VERIFY_PHONE);
+        return afterEmail.challenge();
+    }
+
+    @Test
+    void resendOnThePhoneStep_sendsAnotherSmsAndTheNewCodeCompletesRegistration() {
+        OtpChallengeResponse first = atThePhoneStep();
+        verify(smsSender, Mockito.times(1)).sendOtp(anyString(), any(), anyString());
+        InMemoryVerificationCodes.backdate(codes.newest(), OtpService.RESEND_COOLDOWN_SECONDS + 1);
+
+        OtpChallengeResponse resent = authService.resend(new ResendOtpRequest(first.challengeId()));
+
+        assertThat(resent.challengeId()).isNotEqualTo(first.challengeId());
+        assertThat(resent.channel()).isEqualTo(OtpChannel.SMS);
+        assertThat(resent.delivered()).isTrue();
+        // A second real message, not merely a second 200.
+        verify(smsSender, Mockito.times(2)).sendOtp(anyString(), any(), anyString());
+
+        AuthStepResponse done = authService.verifyPhone(
+                new OtpSubmissionRequest(resent.challengeId(), lastSmsCode()));
+        assertThat(done.session()).isNotNull();
+        assertThat(account.isPhoneVerified()).isTrue();
+    }
+
+    /** Both sends address the same canonical number — one normalizer, one stored spelling. */
+    @Test
+    void everySmsInTheFlowGoesToTheSameCanonicalE164Number() {
+        OtpChallengeResponse first = atThePhoneStep();
+        InMemoryVerificationCodes.backdate(codes.newest(), OtpService.RESEND_COOLDOWN_SECONDS + 1);
+        authService.resend(new ResendOtpRequest(first.challengeId()));
+
+        ArgumentCaptor<String> destinations = ArgumentCaptor.forClass(String.class);
+        verify(smsSender, Mockito.times(2))
+                .sendOtp(destinations.capture(), any(OtpPurpose.class), anyString());
+        assertThat(destinations.getAllValues()).containsExactly(CANONICAL_PHONE, CANONICAL_PHONE);
+    }
+
+    @Test
+    void resendOnThePhoneStep_withinTheCooldown_isRateLimitedAndSendsNothing() {
+        OtpChallengeResponse first = atThePhoneStep();
+
+        assertThat(thrownBy(() -> authService.resend(
+                new ResendOtpRequest(first.challengeId()))).getCode())
+                .isEqualTo(ErrorCode.RATE_LIMITED);
+        verify(smsSender, Mockito.times(1)).sendOtp(anyString(), any(), anyString());
+    }
+
+    @Test
+    void resend_forAnAlreadyVerifiedPhone_isRefused_soAStaleTabCannotKeepSendingSms() {
+        OtpChallengeResponse first = atThePhoneStep();
+        authService.verifyPhone(new OtpSubmissionRequest(first.challengeId(), lastSmsCode()));
+        Mockito.reset(smsSender);
+
+        assertThat(thrownBy(() -> authService.resend(
+                new ResendOtpRequest(first.challengeId()))).getCode())
+                .isEqualTo(ErrorCode.PHONE_ALREADY_VERIFIED);
+        verify(smsSender, never()).sendOtp(anyString(), any(), anyString());
+    }
+
+    /** A refused provider is reported as a failure, never as a successful resend. */
+    @Test
+    void resend_whenTheProviderRefuses_reportsDeliveryFailureAndLeavesTheOldCodeUsable() {
+        OtpChallengeResponse first = atThePhoneStep();
+        String firstCode = lastSmsCode();
+        InMemoryVerificationCodes.backdate(codes.newest(), OtpService.RESEND_COOLDOWN_SECONDS + 1);
+
+        Mockito.doThrow(new ApiException(ErrorCode.OTP_DELIVERY_FAILED, "provider refused"))
+                .when(smsSender).sendOtp(anyString(), any(), anyString());
+        assertThat(thrownBy(() -> authService.resend(
+                new ResendOtpRequest(first.challengeId()))).getCode())
+                .isEqualTo(ErrorCode.OTP_DELIVERY_FAILED);
+
+        Mockito.reset(smsSender);
+        assertThat(authService.verifyPhone(new OtpSubmissionRequest(first.challengeId(), firstCode))
+                .session())
+                .as("the code they still hold was not destroyed by the failed replacement")
+                .isNotNull();
+    }
+
+    /**
+     * The reported bug, end to end. The provider refuses one resend; the client shows "we could not
+     * send it, try again"; the user taps again. That second tap must send an SMS, not be refused
+     * for a message that never left the building.
+     */
+    @Test
+    void resendAfterAFailedSmsDispatch_isNotBlockedByTheAttemptThatFailed() {
+        OtpChallengeResponse first = atThePhoneStep();
+        InMemoryVerificationCodes.backdate(codes.newest(), OtpService.RESEND_COOLDOWN_SECONDS + 1);
+
+        Mockito.doThrow(new ApiException(ErrorCode.OTP_DELIVERY_FAILED, "provider refused"))
+                .when(smsSender).sendOtp(anyString(), any(), anyString());
+        assertThat(thrownBy(() -> authService.resend(
+                new ResendOtpRequest(first.challengeId()))).getCode())
+                .isEqualTo(ErrorCode.OTP_DELIVERY_FAILED);
+
+        Mockito.reset(smsSender);
+        OtpChallengeResponse retry = authService.resend(new ResendOtpRequest(first.challengeId()));
+
+        assertThat(retry.delivered()).isTrue();
+        verify(smsSender).sendOtp(eq(CANONICAL_PHONE), eq(OtpPurpose.PHONE_VERIFICATION), anyString());
+        assertThat(authService.verifyPhone(new OtpSubmissionRequest(retry.challengeId(), lastSmsCode()))
+                .session()).isNotNull();
     }
 
     // ---- legacy accounts / phone capture --------------------------------------

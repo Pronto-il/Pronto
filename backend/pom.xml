@@ -126,12 +126,49 @@
 
         <!-- Production MS1: real transactional email (auth.email.SesEmailSender, pronto.email.mode=ses).
              SES v2 rather than the v1 "ses" coordinate: v1 is on AWS's own maintenance track and its
-             SendEmail shape is the legacy one. Version managed by the AWS SDK BOM above; no separate
-             credentials dependency is needed because the SDK's DefaultCredentialsProvider chain
-             (env -> profile -> container -> IMDS/IAM role) ships inside the core client. -->
+             SendEmail shape is the legacy one. Version managed by the AWS SDK BOM above. The
+             DefaultCredentialsProvider chain (env -> profile -> container -> IMDS/IAM role) does ship
+             inside the core client, which is what Production needs, but see the sso/ssooidc pair
+             below for the one leg of that chain it does NOT ship. -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>sesv2</artifactId>
+        </dependency>
+
+        <!-- Local development against a real AWS account, nothing else.
+             ~/.aws/config here is an IAM Identity Center (SSO) profile: `sso_session` plus a role
+             name, no access keys anywhere on disk, and the AWS SDK for Java v2 does NOT bundle SSO
+             credential resolution in the core client the way it bundles the env/container/IMDS legs.
+             Without these two artifacts ProfileCredentialsProvider refuses the profile outright with
+             "To use Sso related properties in the 'pronto-admin' profile, the 'sso' service module
+             must be on the class path.", the whole chain then reports itself exhausted, and every
+             SES/SNS call dies as a bare SdkClientException. That is exactly the failure this pair
+             fixes; it is not speculative hardening.
+
+             Two consequences worth stating, because both are easy to get wrong later:
+
+             1. This changes NOTHING in Production. ECS resolves credentials at the container leg of
+                the same chain, from the task IAM role, and never reaches ProfileCredentialsProvider
+                at all; there is no ~/.aws/config in the image. These jars are inert there.
+             2. `runtime` scope on purpose. The SDK loads both reflectively from
+                ProfileCredentialsProvider; no Pronto code imports SsoClient or SsoOidcClient, and
+                keeping them off the compile classpath means none accidentally starts to. ssooidc is
+                required alongside sso, not optional: sso exchanges the cached token for role
+                credentials, ssooidc is what refreshes that token.
+
+             The SSO token itself still comes from `aws sso login` (profile pronto-admin) writing
+             ~/.aws/sso/cache; the SDK reads that cache but cannot create it. An expired session
+             surfaces as a credentials failure again, and the fix is another `aws sso login`, never
+             a static key pair. Version managed by the AWS SDK BOM above. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sso</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>ssooidc</artifactId>
+            <scope>runtime</scope>
         </dependency>
 
         <!-- Production MS1: real SMS OTP delivery (auth.sms.AwsSmsSender, pronto.sms.mode=aws).

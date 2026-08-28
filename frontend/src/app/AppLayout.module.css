@@ -65,45 +65,12 @@
 }
 
 /*
- * Customer primary action in the header (`AppLayout.tsx`'s `.issueCta` link). Uses `Button`'s
- * primary treatment — §15-21's height/radius/weight and the same primary/hover/active tokens —
- * rather than the `Button` component itself, because this is a navigation destination: a real
- * `<a>` keeps middle-click and open-in-new-tab, which a button that navigates does not.
- *
- * `margin-inline-end: auto` is what positions it: `.headerInner` is `space-between` over three
- * children, so without it the CTA would float to the middle of the bar. With it, the CTA sits
- * next to the brand and the nav actions stay pinned to the far edge.
+ * The customer's new-issue action no longer lives in the header (mobile nav redesign §3): the
+ * oversized `.issueCta` banner was removed. On mobile it is `BottomNav`'s elevated centre button;
+ * on desktop it is a compact "תקלה חדשה" `.navLink` inside `.desktopOnlyNav`, next to its
+ * siblings. `.headerInner` is back to `space-between` over exactly two children — brand and
+ * `.nav` — so nothing needs the old `margin-inline-end: auto` spacer.
  */
-.issueCta {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 44px;
-  padding-inline: var(--space-5);
-  margin-inline-end: auto;
-  border-radius: var(--radius-md);
-  background: var(--color-primary);
-  color: #ffffff;
-  font-size: 15px;
-  font-weight: 700;
-  white-space: nowrap;
-  text-decoration: none;
-  transition: background var(--duration-fast) var(--ease-out);
-}
-
-.issueCta:hover {
-  background: var(--color-primary-hover);
-}
-
-.issueCta:active {
-  background: var(--color-primary-active);
-}
-
-.issueCta:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
-  outline-offset: 2px;
-}
-
 .nav {
   display: flex;
   align-items: center;
@@ -194,51 +161,20 @@
    * The top row is now down to three controls (logo, bell, logout) from six, which is what buys
    * the bigger logo and the taller CTA without the bar growing.
    */
+  /*
+   * Mobile nav redesign §3: with the new-issue banner gone, the header is a single tidy row —
+   * brand on one side, the compact actions (bell, logout) on the other. No wrap, no second row.
+   */
   .headerInner {
-    height: auto;
-    min-height: 56px;
-    flex-wrap: wrap;
-    row-gap: var(--space-3);
+    height: 56px;
     padding-inline: var(--space-4);
-    padding-block-end: var(--space-4);
   }
 
   .brand {
-    order: 1;
-    min-height: 56px;
     padding-inline-end: var(--space-2);
   }
 
-  /*
-   * §2: the single dominant call to action. ~96px tall sits in the middle of the requested
-   * 90-110px; `min-height` rather than `height` so a wrapped Hebrew string on a 320px screen
-   * grows the box instead of spilling out of it.
-   *
-   * `margin-inline: 0` + `flex-basis: 100%` give it "nearly full width at normal mobile
-   * margins" — the margins are `.headerInner`'s own `--space-4` padding, so the CTA lines up
-   * with the page content below rather than inventing a second gutter.
-   */
-  .issueCta {
-    order: 3;
-    flex-basis: 100%;
-    height: auto;
-    min-height: 96px;
-    justify-content: center;
-    gap: var(--space-3);
-    padding-inline: var(--space-5);
-    margin-inline-end: 0;
-    border-radius: var(--radius-lg);
-    font-size: 18px;
-    /* The full sentence is the point of this control, so it is allowed to wrap here — the
-       desktop rule's `nowrap` would truncate it on a narrow phone. */
-    white-space: normal;
-    text-align: center;
-    line-height: 1.3;
-    box-shadow: var(--shadow-elevated);
-  }
-
-  /* §1 wants the logo "clearly visible and reasonably large". With three controls in the row
-     instead of six there is room to step it up from the old 34px. */
+  /* "Clearly visible and reasonably large" — the single-row header has room for a 40px lockup. */
   .logo {
     --logo-height: 40px;
   }
@@ -247,10 +183,7 @@
     display: none;
   }
 
-  /* Three controls, not six — the bar can afford its regular gap again. */
   .nav {
-    order: 2;
-    min-height: 56px;
     gap: var(--space-3);
   }
 
@@ -261,16 +194,18 @@
   }
 
   /*
-   * Clears the fixed `<BottomNav>` — its chrome plus the iOS home-indicator inset, from the same
-   * tokens the bar itself is laid out with (§10: "content does not disappear behind it").
+   * Clears the fixed `<BottomNav>` — its chrome, the iOS home-indicator inset, AND the height by
+   * which the centre "תקלה חדשה" circle lifts above the bar, all from the same tokens the bar
+   * itself is laid out with. Without the `--bottom-nav-cta-lift` term the raised circle would
+   * overlap the last line of a scrolled page (§7: "central circular CTA does not overlap
+   * important content"; "scrolling pages still have enough bottom padding").
    *
-   * There is deliberately no extra clearance for the floating toolbox any more. The old
-   * `body.has-active-order-indicator` rule reserved ~80px whenever the indicator was mounted;
-   * §13 requires the opposite — the toolbox is an overlay and must not affect content layout —
-   * and reserving a fixed strip for an element the customer can now drag anywhere would be
-   * wrong wherever they moved it to.
+   * The floating toolbox deliberately gets no clearance of its own — it is an overlay and must
+   * not affect content layout.
    */
   .main {
-    padding-block-end: calc(var(--bottom-nav-height) + var(--safe-area-bottom));
+    padding-block-end: calc(
+      var(--bottom-nav-height) + var(--safe-area-bottom) + var(--bottom-nav-cta-lift)
+    );
   }
 }

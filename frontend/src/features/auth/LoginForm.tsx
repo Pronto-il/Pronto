@@ -6,6 +6,7 @@ import { ApiError, login as loginRequest } from '../../shared/api';
 import { AccountLockoutBanner } from './AccountLockoutBanner';
 import { LoginRateLimitBanner } from './LoginRateLimitBanner';
 import type { AuthChallengeState } from './AuthChallengePage';
+import { useSessionLanding } from './useSessionLanding';
 import styles from './formStyles.module.css';
 
 export interface LoginFormProps {
@@ -16,9 +17,15 @@ export interface LoginFormProps {
  * Step one of login: identifier + password.
  *
  * <p><b>Production MS1 changed what this screen does.</b> It used to sign the user in. It now
- * checks the password and nothing else — the session is issued one step later, at
+ * checks the password and, normally, nothing else — the session is issued one step later, at
  * `/verify`, once the one-time password is redeemed. That is the milestone's central rule made
- * visible in the UI: there is no path from this form directly to an authenticated screen.
+ * visible in the UI.
+ *
+ * <p><b>Which server decides, not this component.</b> A backend running with
+ * `AUTH_OTP_REQUIRED=false` answers `login` with `AUTHENTICATED` and a session instead of a
+ * challenge, and this form lands it directly. There is deliberately no client-side flag mirroring
+ * the server's: the form branches on the `nextStep` it is given, so the two can never disagree
+ * about whether a second factor is coming, and no build of the frontend is specific to either mode.
  *
  * <p><b>One identifier field, not a toggle.</b> The field accepts an email address or a phone
  * number and the server works out which; asking the user to classify their own identifier first is
@@ -26,6 +33,7 @@ export interface LoginFormProps {
  */
 export function LoginForm({ initialIdentifier = '' }: LoginFormProps) {
   const navigate = useNavigate();
+  const land = useSessionLanding();
 
   const [identifier, setIdentifier] = useState(initialIdentifier);
   const [password, setPassword] = useState('');
@@ -58,6 +66,14 @@ export function LoginForm({ initialIdentifier = '' }: LoginFormProps) {
     setIsSubmitting(true);
     try {
       const response = await loginRequest({ identifier: trimmed, password });
+      // The backend runs with `AUTH_OTP_REQUIRED=false` (see auth.config.AuthOtpPolicy): a correct
+      // password completes the login and the session arrives here rather than one step later. Landed
+      // through the same hook the OTP screen uses, so the token is persisted and the destination
+      // chosen identically in both modes — there is no second copy of that logic to drift.
+      if (response.nextStep === 'AUTHENTICATED' && response.session) {
+        await land(response.session);
+        return;
+      }
       if (!response.challenge) {
         setBannerError('משהו השתבש, נסו שוב.');
         return;

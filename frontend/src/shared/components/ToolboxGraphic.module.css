@@ -1,17 +1,18 @@
 /*
- * The artwork, the label that sits on it, and the one-shot arrival animation.
+ * The artwork, the label that sits on it, and the one-shot arrival celebration.
  *
- * The front face is the `<rect x="4" y="52" width="112" height="48">` inside a 120x104 viewBox.
- * `.face` below is that same rectangle expressed as percentages of the rendered object, which is
- * why both live in this file: the label has to be positioned by an element that also knows the
- * artwork's geometry. (Publishing the numbers as custom properties for a consumer to apply to a
- * *sibling* of the `<svg>` does not work — custom properties inherit down, not sideways, so the
- * label silently fell out of the box and rendered underneath it.)
+ * The white body is the `<rect x="4" y="18" width="88" height="74">` inside a 96x96 viewBox.
+ * `.face` below sits in the lower part of that rectangle, under the wrench glyph — expressed as
+ * percentages of the rendered object, which is why both live in this file: the label has to be
+ * positioned by an element that also knows the artwork's geometry. (Publishing the numbers as
+ * custom properties for a consumer to apply to a *sibling* of the `<svg>` does not work — custom
+ * properties inherit down, not sideways, so the label would fall out of the card and render
+ * underneath it.)
  *
- *   left   = 4/120   =  3.334%
- *   top    = 52/104  = 50%
- *   width  = 112/120 = 93.334%
- *   height = 48/104  = 46.154%
+ *   left   = 4/96  =  4.167%
+ *   top    = 64/96 = 66.667%
+ *   width  = 88/96 = 91.667%
+ *   height = 28/96 = 29.167%
  */
 .root {
   position: relative;
@@ -26,172 +27,238 @@
   overflow: visible;
 }
 
-/* The tools carry their own soft drop shadow so they separate from the box body when the
-   toolbox is dragged over a busy part of the page. */
-.tool {
-  filter: drop-shadow(0 1px 1px rgba(21, 41, 63, 0.35));
-}
-
 /* ---------------------------------------------------------------------------------------------
  * Label
  * ------------------------------------------------------------------------------------------ */
 
 .face {
   position: absolute;
-  inset-inline-start: 3.334%;
-  top: 50%;
-  width: 93.334%;
-  height: 46.154%;
+  inset-inline-start: 4.167%;
+  top: 66.667%;
+  width: 91.667%;
+  height: 29.167%;
 
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  /* Nudges the text clear of the lid seam and optically centres it in the visible face. */
-  padding-block-start: 6px;
-  padding-inline: 4px;
+  justify-content: flex-start;
+  padding-inline: 2px;
 
-  line-height: 1.1;
+  line-height: 1.15;
   text-align: center;
-  color: #ffffff;
-  /* The face is a mid-navy; a faint dark halo keeps the white legible over the latches and the
-     shadowed lower strip. */
-  text-shadow: 0 1px 2px rgba(21, 41, 63, 0.55);
+  color: var(--color-primary);
   pointer-events: none;
 }
 
-/* Two lines (the ETA state) sit a touch higher and tighter than a single centred line. */
+/* Two lines (the ETA state) sit a touch tighter than a single centred line. */
 .faceStacked {
-  gap: 1px;
-  padding-block-start: 4px;
+  gap: 0;
 }
 
-/* Single-line states: "ההזמנה שלי", "הגיע אליך", "השאר ביקורת". */
+/* Single-line states: "ההזמנה שלי", "הגיע אליך", "השאר ביקורת". Weight matches the app's
+   general label weight (~600) rather than the heavier 700/800 the previous navy-illustration
+   version used to fight for legibility on a dark face — the new white face needs no such fight. */
 .primary {
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 
-/* The countdown figure — the one number the customer is actually watching, so it gets the
-   largest type on the object. Tabular figures stop the box twitching as minutes tick down. */
+/* The countdown figure — the one number the customer is actually watching, so it keeps the
+   largest, heaviest type on the object. Tabular figures stop the card twitching as minutes tick
+   down. */
 .primaryLarge {
-  font-size: 19px;
-  font-weight: 800;
+  font-size: 15px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
 }
 
 .secondary {
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 600;
-  opacity: 0.86;
+  color: var(--color-text-secondary);
 }
 
 @media (max-width: 360px) {
   .primary {
-    font-size: 12px;
+    font-size: 10px;
   }
 
   .primaryLarge {
-    font-size: 17px;
+    font-size: 14px;
   }
 
   .secondary {
-    font-size: 9px;
+    font-size: 7.5px;
   }
 }
 
 /* ---------------------------------------------------------------------------------------------
- * Arrival celebration (~800ms, plays once — the consumer owns "once")
+ * Arrival celebration (~700ms) and completion celebration (~1.2s) — two independent one-shot
+ * moments, each triggered by its own `.celebratingArrival`/`.celebratingCompletion` wrapper class
+ * (`ActiveIssueToolbox.tsx` ensures only one is ever present at a time, and never both). Both
+ * reuse the same underlying mechanics — a wrapper class, a ring pulse off the latch, and small
+ * shapes rising off it along a per-shape CSS-custom-property vector — the completion celebration
+ * additionally lifts `.lidGroup` (the handle + teal cap) in a small "pop", and its shapes are
+ * stars rather than plain dots, with two of them a small gold. See `ActiveIssueToolbox.tsx` for
+ * how each is triggered exactly once per order.
  * ------------------------------------------------------------------------------------------ */
 
-/*
- * The lid hinges on its own back-left corner — `x=4, y=56` in the SVG's 120x104 viewBox, i.e.
- * where the lid meets the front face.
- *
- * `view-box` rather than `fill-box` on purpose: `fill-box` resolves percentages against the
- * element's own bounding box, which made the origin depend on exactly which shapes were inside
- * the group. While the handle was still grouped with the lid that box started ~19 units higher,
- * so the pivot landed mid-air and the lid swung off the toolbox entirely. Stating the hinge in
- * viewBox units instead makes it independent of the group's contents.
- */
-.lid {
+.lidGroup {
   transform-box: view-box;
-  transform-origin: 8px 56px;
+  transform-origin: 48px 38px; /* the teal/white seam — reads as the "hinge" the lid pops from */
 }
 
-.sparkles {
-  /* Never interactive, and invisible until the burst. */
+.pulseRing {
+  fill: none;
+  stroke: var(--color-primary);
+  stroke-width: 1.5;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.dots,
+.completionSparkles {
+  /* Never interactive, and invisible until their own burst. */
   pointer-events: none;
+}
+
+.dot,
+.completionSparkle {
   opacity: 0;
 }
 
-.sparkle {
-  opacity: 0;
+/* ---- Arrival: unchanged bounce + ring + plain teal dots. ---- */
+
+.celebratingArrival .handle,
+.celebratingArrival .wrench {
+  animation: toolbox-bounce 700ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) 1 both;
 }
 
-.celebrating .lid {
-  animation: toolbox-lid-open 800ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) 1 both;
+.celebratingArrival .pulseRing {
+  animation: toolbox-pulse-ring 700ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) 1 both;
 }
 
-.celebrating .sparkles {
-  opacity: 1;
+.celebratingArrival .dot {
+  animation: toolbox-dot 600ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) var(--dot-delay, 0ms) 1 both;
 }
 
-.celebrating .sparkle {
-  animation: toolbox-sparkle 700ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) var(--sparkle-delay, 0ms) 1 both;
+/* ---- Completion: a small lid "pop" + a longer ring + 6 star sparkles. Total window ~1.2s
+   (the longest piece is a sparkle at 850ms + a 110ms delay = 960ms; the JS-side timer that
+   controls how long the `celebration` prop stays set outlasts this, see ActiveIssueToolbox.tsx),
+   within the "roughly 1-1.5s" target. ---- */
+
+.celebratingCompletion .lidGroup {
+  animation: toolbox-lid-pop 650ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) 1 both;
 }
 
-/* Open, hold briefly, close. Ending where it started is what lets the toolbox settle back into
-   its normal resting look rather than staying permanently ajar. */
-@keyframes toolbox-lid-open {
+.celebratingCompletion .pulseRing {
+  animation: toolbox-pulse-ring 850ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) 1 both;
+}
+
+.celebratingCompletion .completionSparkle {
+  animation: toolbox-dot 850ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) var(--dot-delay, 0ms) 1 both;
+}
+
+/* A small lift on the handle/wrench for arrival — there is no separate lid panel to swing in the
+   flat two-tone card, so that celebration reads as the whole object giving a single confident
+   little bounce. */
+@keyframes toolbox-bounce {
   0% {
-    transform: rotate(0deg);
+    transform: translateY(0);
   }
-  /* Only -6deg, plus a small lift.
-     The lid is a 112-unit bar, so its far end rises by 112*sin(angle): at -13deg that is ~25
-     units — more than the lid's own 18-unit height, which reads as the lid being flung off the
-     box rather than opened. -6deg lifts the far end ~12 units, which is "ajar" and lets the
-     sparkles out without the object coming apart. */
+  35% {
+    transform: translateY(-2px);
+  }
+  65% {
+    transform: translateY(-2px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+/* For completion: the handle + teal cap (`.lidGroup`) lift and tilt slightly together, as close
+   to an "opening" gesture as a flat, minimal card gets without becoming a hinged illustration —
+   "polished and minimal, not cartoonish". Settles back to flat, matching the resting artwork. */
+@keyframes toolbox-lid-pop {
+  0% {
+    transform: translateY(0) rotate(0deg);
+  }
+  35% {
+    transform: translateY(-3px) rotate(-3deg);
+  }
+  65% {
+    transform: translateY(-3px) rotate(-3deg);
+  }
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+}
+
+/* A ring that expands from the latch and fades — the "something just happened here" cue, shared
+   by both celebrations at their own duration. */
+@keyframes toolbox-pulse-ring {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.4);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(3.2);
+  }
+}
+
+/* Rise off the latch, drifting along a per-shape vector, fading as they go. Shared by arrival's
+   plain teal dots and completion's star sparkles — only the shape/color/duration painted onto it
+   differ, per each celebration's own rule above. */
+@keyframes toolbox-dot {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.5);
+  }
   30% {
-    transform: rotate(-6deg) translateY(-2px);
-  }
-  62% {
-    transform: rotate(-6deg) translateY(-2px);
-  }
-  100% {
-    transform: rotate(0deg);
-  }
-}
-
-/* Rise out of the box, drifting along a per-sparkle vector, fading as they go. */
-@keyframes toolbox-sparkle {
-  0% {
-    opacity: 0;
-    transform: translate(0, 0) scale(0.3);
-  }
-  25% {
     opacity: 1;
-    transform: translate(calc(var(--sparkle-dx) * 0.35), calc(var(--sparkle-dy) * 0.35)) scale(1);
+    transform: translate(calc(var(--dot-dx) * 0.4), calc(var(--dot-dy) * 0.4)) scale(1);
   }
   100% {
     opacity: 0;
-    transform: translate(var(--sparkle-dx), var(--sparkle-dy)) scale(0.55);
+    transform: translate(var(--dot-dx), var(--dot-dy)) scale(0.6);
   }
 }
 
 /*
- * §"Animation": reduced-motion users skip the opening/sparkle animation entirely and go straight
- * to the settled state. Not merely slowed — a lid that hinges open and five points of light
- * flying outward is exactly the vestibular trigger this query exists for.
+ * Reduced-motion users skip both celebrations' motion entirely — a lid popping, a ring
+ * expanding, and stars/dots flying outward are exactly the vestibular triggers this query exists
+ * for. Completion still gets a settling cue, per this feature's own "simply fade" requirement:
+ * a brief, simple opacity fade on the label (`.face`) as it changes to the review-prompt text,
+ * standing in for the elaborate motion rather than removing the toolbox — this component plays
+ * the celebration but does not decide the toolbox's visibility, and it still settles into the
+ * review prompt exactly as it does with motion enabled (`ActiveIssueToolbox.tsx`).
  */
 @media (prefers-reduced-motion: reduce) {
-  .celebrating .lid,
-  .celebrating .sparkle {
+  .celebratingArrival .handle,
+  .celebratingArrival .wrench,
+  .celebratingArrival .pulseRing,
+  .celebratingArrival .dot,
+  .celebratingCompletion .lidGroup,
+  .celebratingCompletion .pulseRing,
+  .celebratingCompletion .completionSparkle {
     animation: none;
   }
 
-  .celebrating .sparkles {
-    opacity: 0;
+  .celebratingCompletion .face {
+    animation: toolbox-face-fade 200ms ease-out 1 both;
+  }
+}
+
+@keyframes toolbox-face-fade {
+  from {
+    opacity: 0.3;
+  }
+  to {
+    opacity: 1;
   }
 }

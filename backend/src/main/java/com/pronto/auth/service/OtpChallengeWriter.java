@@ -33,9 +33,16 @@ import java.util.UUID;
  * <pre>
  *   create()            -> commit   (previous code still valid)
  *   dispatch()                      (no connection held)
- *   supersedePrevious() -> commit   on success: the new code is now the only one
+ *   recordDelivered()   -> commit   on success: stamped delivered, and now the only live code
  *   abandon()           -> commit   on failure: the new code is killed, previous survives
  * </pre>
+ *
+ * <p><b>"No change at all" is now literally true</b> ({@code V54}). It was not before: a failed
+ * dispatch left its abandoned row behind, and both rate rules counted rows by {@code createdAt} —
+ * which is written before the provider call. So one provider refusal blocked the user's next
+ * resend for 60 seconds, and five of them exhausted the hourly ceiling and locked verification for
+ * an hour, without a single message having been sent. The rules now count {@code deliveredAt},
+ * stamped by {@link #recordDelivered}, so an abandoned challenge costs its owner nothing.
  *
  * <p>Between {@code create} and {@code supersedePrevious} two codes are briefly redeemable. That
  * window is the duration of one provider call, and during it the older code is the one the user
@@ -74,10 +81,11 @@ public class OtpChallengeWriter {
         Instant now = Instant.now();
 
         if (enforceCooldown) {
-            verificationCodeRepository.findFirstByUserIdAndPurposeOrderByCreatedAtDesc(userId, purpose)
-                    .map(VerificationCode::getCreatedAt)
-                    .map(createdAt -> OtpService.RESEND_COOLDOWN_SECONDS
-                            - Duration.between(createdAt, now).getSeconds())
+            verificationCodeRepository
+                    .findFirstByUserIdAndPurposeAndDeliveredAtIsNotNullOrderByDeliveredAtDesc(userId, purpose)
+                    .map(VerificationCode::getDeliveredAt)
+                    .map(deliveredAt -> OtpService.RESEND_COOLDOWN_SECONDS
+                            - Duration.between(deliveredAt, now).getSeconds())
                     .filter(remaining -> remaining > 0)
                     .ifPresent(remaining -> {
                         throw rateLimited(remaining,
@@ -85,9 +93,9 @@ public class OtpChallengeWriter {
                     });
         }
 
-        long issuedThisHour = verificationCodeRepository.countIssuedSince(
+        long sentThisHour = verificationCodeRepository.countDeliveredSince(
                 userId, purpose, now.minus(ISSUE_WINDOW));
-        if (issuedThisHour >= OtpService.MAX_ISSUES_PER_HOUR) {
+        if (sentThisHour >= OtpService.MAX_ISSUES_PER_HOUR) {
             throw rateLimited(ISSUE_WINDOW.getSeconds(),
                     "Too many codes requested. Please try again later.");
         }
@@ -97,13 +105,19 @@ public class OtpChallengeWriter {
     }
 
     /**
-     * The delivery succeeded: every other open challenge of this purpose for this user is now
-     * superseded and stops working.
+     * The delivery succeeded: record when it went out, and supersede every other open challenge of
+     * this purpose for this user.
+     *
+     * <p>Both in one transaction, because the two facts have to become true together. The delivery
+     * stamp is what the cooldown and the hourly ceiling count ({@code V54}), and the supersede is
+     * what makes the new code the only live one — a crash between them would either leave a
+     * delivered message nobody is spaced out from, or two live codes in the field.
      */
     @Transactional
-    public void supersedePrevious(Long userId, OtpPurpose purpose, Long keepChallengeRowId) {
-        verificationCodeRepository.supersedeOtherOpenChallenges(
-                userId, purpose, keepChallengeRowId, Instant.now());
+    public void recordDelivered(Long userId, OtpPurpose purpose, Long keepChallengeRowId) {
+        Instant now = Instant.now();
+        verificationCodeRepository.markDelivered(keepChallengeRowId, now);
+        verificationCodeRepository.supersedeOtherOpenChallenges(userId, purpose, keepChallengeRowId, now);
     }
 
     /**

@@ -266,9 +266,21 @@ login/otp       -> code redeemed                              -> TOKEN
   intercept self-invocation, so a private method on `OtpService` would silently run on the caller's
   transaction and reintroduce the bug it exists to fix. Same reasoning as the pre-existing
   `LoginAttemptRecorder`.
-- **`VerificationCode.attempts`/`consumedAt` have getters and no setters.** Both are advanced by
-  conditional UPDATEs on the repository, because a read-modify-write loses the race that the attempt
-  cap and the single-use rule depend on.
+- **`VerificationCode.attempts`/`consumedAt`/`deliveredAt` have getters and no setters.** All three
+  are advanced by conditional UPDATEs on the repository, because a read-modify-write loses the race
+  that the attempt cap and the single-use rule depend on.
+- **The two OTP rate rules count `deliveredAt`, not `createdAt`** (`V54`). They are not the same
+  number, and the difference is a bug that reached customers. `created_at` is written when the
+  challenge row is inserted, which is *before* the SES/SNS call; a dispatch that then fails is
+  abandoned and the API answers `OTP_DELIVERY_FAILED`, whose entire meaning is that nothing changed.
+  Counting that row anyway meant **one** provider refusal blocked the user's next resend for 60
+  seconds — right after the UI told them to try again — and **five** exhausted the hourly ceiling and
+  locked them out of verification for an hour without a single message having been sent. Neither rule
+  was relaxed for messages that *were* delivered: 60s of spacing and 5 codes per purpose per hour
+  still hold, and they are what bounds the SMS bill and protects whoever owns the handset. A failed
+  send reaches nobody and costs nothing, so charging a customer's budget for it protected nothing.
+  Request volume from one source stays bounded by `security.AuthRateLimitInterceptor`
+  (10 per 15 minutes on `/api/auth/otp/resend`), which is untouched.
 - **`OtpService.dispatch` catches provider failures and returns `delivered=false`** instead of
   throwing. The right response differs per flow: registration rolls back on a failed dispatch, email
   verification must not (the user really did prove their email), and password reset must report
@@ -280,7 +292,8 @@ login/otp       -> code redeemed                              -> TOKEN
 ### Related documentation
 
 `docs/production-roadmap/reports/prod-MS1-report.md` (full rationale, security review, known
-limitations) · `docs/architecture/api-contract.md` "Production MS1" section · `V46`, `V47`, `V48`.
+limitations) · `docs/architecture/api-contract.md` "Production MS1" section · `V46`, `V47`, `V48`,
+`V54`.
 
 ## Production MS4 (2026-08-26) — Production Security & Configuration
 

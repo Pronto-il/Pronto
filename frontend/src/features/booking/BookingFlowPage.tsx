@@ -337,9 +337,34 @@ export default function BookingFlowPage() {
     clearDraft();
   }
 
+  /**
+   * Back from this flow's very first step must not send the customer to Home (mobile-nav fix,
+   * 2026-08-28) — it returns them to the AI classification screen/result they arrived from,
+   * `/issues/new`'s review step, exactly as `ProfessionMatchPage.handleAddressBack` already does
+   * one hop earlier in this same flow (`/issues/new` → `/issues/:issueId/matching` →
+   * `/issues/:issueId/booking`, this screen).
+   *
+   * The intermediate `/issues/:issueId/matching` screen is deliberately NOT the target: its own
+   * `phase` state resumes straight into the roulette (not the address form) whenever
+   * `draft.address` is already set — which it always is by the time a customer reaches this
+   * step — and that phase auto-advances back into the booking flow once the animation settles.
+   * Landing there would silently bounce the customer right back to where they clicked "back"
+   * from, which is not a working back button.
+   *
+   * `updateDraft` shallow-merges (`BookingDraftProvider.tsx`), so `categoryId`/`description`/
+   * `photos`/`clarificationAnswers`/`issueId` already in the draft from the earlier stages ride
+   * along untouched — only `stage` is rewound. `NewIssuePage` then re-derives the same
+   * classification from that persisted description/photos/answers and, since `issueId` is still
+   * present, `ReviewStep` continues with the same issue instead of creating a duplicate one.
+   */
+  function handleBackToClassification() {
+    updateDraft({ stage: 'ISSUE_REVIEW' });
+    navigate('/issues/new');
+  }
+
   function handleBack() {
     if (step.name === 'address') {
-      navigate('/');
+      handleBackToClassification();
     } else if (step.name === 'professionals') {
       setDirection(-1);
       setStep({ name: 'address' });

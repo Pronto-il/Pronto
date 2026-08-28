@@ -1,48 +1,76 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
- * Drag/clamp/persist for the floating active-issue toolbox (`app/ActiveIssueToolbox.tsx`).
+ * Drag + clamp + persist for the floating active-order toolbox (`app/ActiveIssueToolbox.tsx`).
  *
- * Kept out of the component because three separate concerns tangle here and each one is a
- * source of real bugs: pointer bookkeeping (§5), telling a tap from a drag (§6), and keeping
- * the thing inside a viewport that changes size under it (§4/§7).
+ * ## Free vertical drag, snap-to-nearest-edge horizontal drag (mobile-nav fix, 2026-08-28)
  *
- * No drag library. `setPointerCapture` plus three handlers is the whole implementation, and it
- * covers touch, pen and mouse from one code path — which is what §5 asks for.
+ * The toolbox is a two-axis draggable object: vertically it behaves exactly as it always has
+ * (free drag, clamped between the safe-area top and the bottom navigation, released wherever the
+ * customer let go); horizontally it now follows the pointer live during the drag but, on release,
+ * always settles against whichever screen edge — left or right — it ended up closer to. It never
+ * rests mid-screen.
+ *
+ * This replaces the prior "pinned to `inset-inline-start` by CSS, horizontal drag removed
+ * entirely" behaviour from the earlier mobile-shell redesign. That version over-corrected: its
+ * own goal was "never float in the horizontal centre", but the fix it shipped was "never move
+ * horizontally at all", which also made it impossible to move the toolbox off content it covers
+ * on the side it happened to be pinned to. Snap-to-nearest-edge satisfies the original goal
+ * (still never rests off-edge) without reintroducing the free-floating-anywhere behaviour an even
+ * earlier revision had (which is what motivated removing horizontal drag in the first place).
+ *
+ * Both axes are owned here, in physical pixels — not logical/RTL-relative ones. `top`/`left` are
+ * geometry, and geometry has to be axis-correct regardless of `dir`; RTL correctness here means
+ * the toolbox's *default* resting side is the RTL-natural one (`DEFAULT_SIDE`, the right edge —
+ * where §1 of the original redesign pinned it) and its Hebrew label keeps rendering RTL as
+ * always, not that its horizontal position is logically constrained.
+ *
+ * No drag library. `setPointerCapture` plus three handlers covers touch, pen and mouse from one
+ * code path.
  */
 
-/** `localStorage` key holding the last position the customer dragged the toolbox to (§7). */
-const STORAGE_KEY = 'pronto.toolbox.position';
+/**
+ * `localStorage` key holding the toolbox's last position: a vertical pixel offset plus which
+ * edge it was snapped to. New key, not the old `pronto.toolbox.top` (a bare number, no side) —
+ * that shape can no longer answer "which edge", so a stale value under the old key is simply
+ * ignored rather than half-read, same precedent that key itself set over the `{x, y}` shape
+ * before it.
+ */
+const STORAGE_KEY = 'pronto.toolbox.pos';
+
+type ToolboxSide = 'left' | 'right';
+
+/** The RTL-natural starting edge — where §1 of the original redesign pinned the toolbox. Only a
+ *  default: a customer can still drag it to the left edge and have that choice persist. */
+const DEFAULT_SIDE: ToolboxSide = 'right';
+
+interface StoredPosition {
+  top: number;
+  side: ToolboxSide;
+}
 
 /**
- * Movement, in CSS pixels, at which a press stops being a tap and becomes a drag (§6).
+ * Movement, in CSS pixels, at which a press stops being a tap and becomes a drag. Measured on the
+ * *total* pointer movement (both axes), so a mostly-horizontal swipe suppresses the tap exactly
+ * as a mostly-vertical one does — both are now real, live drag gestures.
  *
- * 8px sits inside the 5-10px the brief asks for and above the couple of pixels a thumb rolls
- * during an ordinary tap on glass — below ~5px every tap on a phone registers as a drag and the
- * toolbox stops navigating at all.
+ * 8px sits above the couple of pixels a thumb rolls during an ordinary tap and below a
+ * deliberate drag.
  */
 const DRAG_THRESHOLD_PX = 8;
 
-/** Gap kept between the toolbox and every viewport edge, so it never sits flush. */
+/** Gap kept between the toolbox and every viewport edge, so it never sits flush — on all four
+ *  sides: top, the two horizontal snap edges, and (via the nav/safe-area subtraction below) the
+ *  bottom. */
 const EDGE_MARGIN_PX = 12;
 
 /** Matches `BottomNav.module.css`'s own `@media (max-width: 640px)` — the width at which the
  *  fixed bottom navigation exists at all, and therefore has to be avoided. */
 const MOBILE_MAX_WIDTH_PX = 640;
 
-export interface ToolboxPosition {
-  /** Distance from the viewport's LEFT edge, in CSS pixels. Deliberately physical, not logical:
-   *  a dragged position is a screen coordinate, and mirroring it under RTL would move the
-   *  toolbox away from where the finger let go. */
-  x: number;
-  y: number;
-}
-
-interface Bounds {
-  minX: number;
-  maxX: number;
-  minY: number;
-  maxY: number;
+interface AxisBounds {
+  min: number;
+  max: number;
 }
 
 /** Reads a `--custom-property` off `:root` and returns its px value (0 when unset/auto). */
@@ -56,48 +84,60 @@ function readRootPx(name: string): number {
 }
 
 /**
- * The rectangle the toolbox's top-left corner may occupy.
+ * The vertical range the toolbox's top edge may occupy — unchanged from before this fix.
  *
  * The bottom edge subtracts the fixed navigation and the iOS home-indicator inset — both read
- * from the CSS custom properties that also lay the nav out, so the two can't disagree (§10's
- * "toolbox cannot be dragged over/under the nav bar"). Above 640px the nav is `display: none`,
- * so its height is not subtracted.
+ * from the CSS custom properties that also lay the nav out, so the two can't disagree ("the
+ * floating toolbox does not collide with the bottom navigation"). Above 640px the nav is
+ * `display: none`, so its height is not subtracted.
  */
-function computeBounds(size: { width: number; height: number }): Bounds {
-  const viewportWidth = window.innerWidth;
+function computeVerticalBounds(height: number): AxisBounds {
   const viewportHeight = window.innerHeight;
   const safeBottom = readRootPx('--safe-area-bottom');
   const safeTop = readRootPx('--safe-area-top');
   const navHeight = window.innerWidth <= MOBILE_MAX_WIDTH_PX ? readRootPx('--bottom-nav-height') : 0;
 
-  const minX = EDGE_MARGIN_PX;
-  const minY = EDGE_MARGIN_PX + safeTop;
-  // `Math.max(minX, ...)` matters on a viewport narrower than the toolbox: without it maxX lands
-  // below minX and the later clamp would pin the toolbox off-screen instead of at the edge.
-  const maxX = Math.max(minX, viewportWidth - size.width - EDGE_MARGIN_PX);
-  const maxY = Math.max(minY, viewportHeight - size.height - navHeight - safeBottom - EDGE_MARGIN_PX);
+  const min = EDGE_MARGIN_PX + safeTop;
+  // `Math.max(min, ...)` guards a viewport shorter than the toolbox: without it max lands above
+  // min and the clamp would pin the toolbox off-screen instead of at the edge.
+  const max = Math.max(min, viewportHeight - height - navHeight - safeBottom - EDGE_MARGIN_PX);
 
-  return { minX, maxX, minY, maxY };
+  return { min, max };
 }
 
-function clamp(position: ToolboxPosition, bounds: Bounds): ToolboxPosition {
-  return {
-    x: Math.min(Math.max(position.x, bounds.minX), bounds.maxX),
-    y: Math.min(Math.max(position.y, bounds.minY), bounds.maxY),
-  };
+/** The horizontal range the toolbox's left edge may occupy — `min` is the left-edge snap
+ *  target, `max` is the right-edge one. Nothing about the bottom nav applies horizontally. */
+function computeHorizontalBounds(width: number): AxisBounds {
+  const viewportWidth = window.innerWidth;
+  const min = EDGE_MARGIN_PX;
+  const max = Math.max(min, viewportWidth - width - EDGE_MARGIN_PX);
+  return { min, max };
 }
 
-/**
- * §4's default: lower-left, clear of the bottom navigation. Computed rather than stored, so a
- * customer who has never dragged the toolbox gets a sensible spot on any screen size.
- */
-function defaultPosition(bounds: Bounds): ToolboxPosition {
-  // 24px is the middle of §4's "20-30px from the left edge"; clamped, so a very narrow
-  // viewport still yields a legal coordinate.
-  return clamp({ x: 24, y: bounds.maxY }, bounds);
+function clamp(value: number, bounds: AxisBounds): number {
+  return Math.min(Math.max(value, bounds.min), bounds.max);
 }
 
-function readStoredPosition(): ToolboxPosition | null {
+/** §1's default resting spot: low on the side, just above the bottom navigation — where a
+ *  floating side shortcut is least likely to cover the content the customer is reading. */
+function defaultTop(bounds: AxisBounds): number {
+  return bounds.max;
+}
+
+/** The pixel `left` for a given snapped edge, against the current horizontal bounds. */
+function leftForSide(side: ToolboxSide, bounds: AxisBounds): number {
+  return side === 'left' ? bounds.min : bounds.max;
+}
+
+/** Which edge a given `left` is closer to — used only at the moment a drag ends, never to
+ *  re-derive a resting position (that always goes through the authoritative `sideRef`, so a
+ *  viewport resize can't flip which edge an already-settled toolbox is pinned to). */
+function nearestSide(left: number, bounds: AxisBounds): ToolboxSide {
+  const midpoint = (bounds.min + bounds.max) / 2;
+  return left < midpoint ? 'left' : 'right';
+}
+
+function readStoredPosition(): StoredPosition | null {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) {
@@ -105,14 +145,15 @@ function readStoredPosition(): ToolboxPosition | null {
     }
     const parsed: unknown = JSON.parse(raw);
     if (
-      typeof parsed === 'object' &&
       parsed !== null &&
-      typeof (parsed as ToolboxPosition).x === 'number' &&
-      typeof (parsed as ToolboxPosition).y === 'number' &&
-      Number.isFinite((parsed as ToolboxPosition).x) &&
-      Number.isFinite((parsed as ToolboxPosition).y)
+      typeof parsed === 'object' &&
+      'top' in parsed &&
+      'side' in parsed &&
+      typeof (parsed as StoredPosition).top === 'number' &&
+      Number.isFinite((parsed as StoredPosition).top) &&
+      ((parsed as StoredPosition).side === 'left' || (parsed as StoredPosition).side === 'right')
     ) {
-      return { x: (parsed as ToolboxPosition).x, y: (parsed as ToolboxPosition).y };
+      return parsed as StoredPosition;
     }
     return null;
   } catch {
@@ -122,7 +163,7 @@ function readStoredPosition(): ToolboxPosition | null {
   }
 }
 
-function writeStoredPosition(position: ToolboxPosition): void {
+function writeStoredPosition(position: StoredPosition): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(position));
   } catch {
@@ -131,8 +172,13 @@ function writeStoredPosition(position: ToolboxPosition): void {
 }
 
 export interface UseToolboxPositionResult {
-  /** `null` until the element has been measured, which is when a real position can be computed. */
-  position: ToolboxPosition | null;
+  /** Vertical offset in CSS pixels from the viewport top, applied as `top`. `null` until the
+   *  element has been measured, which is when a real position can be computed. */
+  top: number | null;
+  /** Horizontal offset in CSS pixels from the viewport left, applied as `left`. Follows the
+   *  pointer live during a drag; at rest it always equals one of the two edge snap targets.
+   *  `null` until measured, in lockstep with `top`. */
+  left: number | null;
   /** Attach to the toolbox element — used for measurement and pointer capture. */
   elementRef: (node: HTMLElement | null) => void;
   onPointerDown: (event: React.PointerEvent<HTMLElement>) => void;
@@ -147,40 +193,63 @@ export interface UseToolboxPositionResult {
 }
 
 export function useToolboxPosition(): UseToolboxPositionResult {
-  const [position, setPosition] = useState<ToolboxPosition | null>(null);
+  const [top, setTop] = useState<number | null>(null);
+  const [left, setLeft] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
   const nodeRef = useRef<HTMLElement | null>(null);
-  const sizeRef = useRef({ width: 0, height: 0 });
-  /** Offset from the element's top-left to where the pointer actually grabbed it, so the
-   *  toolbox doesn't jump to centre itself under the finger on the first move. */
-  const grabOffsetRef = useRef({ x: 0, y: 0 });
+  const heightRef = useRef(0);
+  const widthRef = useRef(0);
+  /** Offset from the element's top/left edge to where the pointer grabbed it, so the toolbox
+   *  doesn't jump to centre itself under the finger on the first move. */
+  const grabOffsetYRef = useRef(0);
+  const grabOffsetXRef = useRef(0);
   const startPointRef = useRef({ x: 0, y: 0 });
   const exceededThresholdRef = useRef(false);
-  const positionRef = useRef<ToolboxPosition | null>(null);
+  const topRef = useRef<number | null>(null);
+  const leftRef = useRef<number | null>(null);
+  /** The authoritative "which edge is this pinned to", updated only on load and on each
+   *  successful snap — never re-derived from geometry, so a resize re-clamps position without
+   *  ever flipping which edge an already-settled toolbox is on. */
+  const sideRef = useRef<ToolboxSide>(DEFAULT_SIDE);
 
-  const commit = useCallback((next: ToolboxPosition) => {
-    positionRef.current = next;
-    setPosition(next);
+  const commit = useCallback((nextTop: number, nextLeft: number) => {
+    topRef.current = nextTop;
+    leftRef.current = nextLeft;
+    setTop(nextTop);
+    setLeft(nextLeft);
   }, []);
 
-  /** Re-measures and re-clamps. Also the mount path: the first call is what turns `position`
-   *  from null into either the stored spot or the computed default. */
+  /** Re-measures and re-clamps both axes. Also the mount path: the first call is what turns
+   *  `top`/`left` from null into either the stored position or the computed default. */
   const settle = useCallback(() => {
     const node = nodeRef.current;
     if (!node) {
       return;
     }
     const rect = node.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) {
-      sizeRef.current = { width: rect.width, height: rect.height };
+    if (rect.height > 0) {
+      heightRef.current = rect.height;
     }
-    const bounds = computeBounds(sizeRef.current);
-    const current = positionRef.current ?? readStoredPosition();
-    // §7: a stored position from a larger screen (or a rotated one) is clamped back in rather
-    // than trusted, which is the difference between "restores where I left it" and "the toolbox
-    // is gone".
-    commit(current ? clamp(current, bounds) : defaultPosition(bounds));
+    if (rect.width > 0) {
+      widthRef.current = rect.width;
+    }
+    const vBounds = computeVerticalBounds(heightRef.current);
+    const hBounds = computeHorizontalBounds(widthRef.current);
+
+    if (topRef.current === null) {
+      // First settle: load the stored position (top + side), or fall back to the defaults.
+      const stored = readStoredPosition();
+      sideRef.current = stored?.side ?? DEFAULT_SIDE;
+      const nextTop = stored ? clamp(stored.top, vBounds) : defaultTop(vBounds);
+      commit(nextTop, leftForSide(sideRef.current, hBounds));
+      return;
+    }
+
+    // Viewport changed (resize, rotation, desktop window resize): re-clamp the vertical offset
+    // (§7: a position from a taller screen must not leave the toolbox off-screen on a shorter
+    // one) and re-derive the horizontal one from the authoritative side, never from raw geometry.
+    commit(clamp(topRef.current, vBounds), leftForSide(sideRef.current, hBounds));
   }, [commit]);
 
   const elementRef = useCallback(
@@ -194,8 +263,8 @@ export function useToolboxPosition(): UseToolboxPositionResult {
   );
 
   // Viewport changes: rotation, browser-chrome collapse, desktop window resize. `orientationchange`
-  // is listened for separately because iOS fires it before `innerHeight` has settled, so the
-  // rAF defers the re-clamp until after the new metrics are readable.
+  // is listened for separately because iOS fires it before `innerHeight` has settled, so the rAF
+  // defers the re-clamp until after the new metrics are readable.
   useEffect(() => {
     function handleResize() {
       requestAnimationFrame(settle);
@@ -219,8 +288,10 @@ export function useToolboxPosition(): UseToolboxPositionResult {
       return;
     }
     const rect = node.getBoundingClientRect();
-    sizeRef.current = { width: rect.width, height: rect.height };
-    grabOffsetRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    heightRef.current = rect.height;
+    widthRef.current = rect.width;
+    grabOffsetYRef.current = event.clientY - rect.top;
+    grabOffsetXRef.current = event.clientX - rect.left;
     startPointRef.current = { x: event.clientX, y: event.clientY };
     exceededThresholdRef.current = false;
     // Capture means pointermove/up keep arriving even when the finger outruns the element,
@@ -245,36 +316,48 @@ export function useToolboxPosition(): UseToolboxPositionResult {
         setIsDragging(true);
       }
 
-      const bounds = computeBounds(sizeRef.current);
+      // Both axes follow the pointer live while dragging. Horizontal only snaps to an edge on
+      // release (below); while the gesture is in progress it can sit anywhere between the two
+      // horizontal bounds, same as vertical always could.
+      const vBounds = computeVerticalBounds(heightRef.current);
+      const hBounds = computeHorizontalBounds(widthRef.current);
       commit(
-        clamp(
-          {
-            x: event.clientX - grabOffsetRef.current.x,
-            y: event.clientY - grabOffsetRef.current.y,
-          },
-          bounds,
-        ),
+        clamp(event.clientY - grabOffsetYRef.current, vBounds),
+        clamp(event.clientX - grabOffsetXRef.current, hBounds),
       );
     },
     [commit],
   );
 
-  const onPointerUp = useCallback((event: React.PointerEvent<HTMLElement>) => {
-    const node = nodeRef.current;
-    if (node?.hasPointerCapture(event.pointerId)) {
-      node.releasePointerCapture(event.pointerId);
-    }
-    if (exceededThresholdRef.current) {
-      setIsDragging(false);
-      if (positionRef.current) {
-        writeStoredPosition(positionRef.current);
+  const onPointerUp = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      const node = nodeRef.current;
+      if (node?.hasPointerCapture(event.pointerId)) {
+        node.releasePointerCapture(event.pointerId);
       }
-    }
-    // `exceededThresholdRef` is deliberately NOT reset here: the click event fires after
-    // pointerup, and `wasTap()` has to still be able to see what this gesture was.
-  }, []);
+      if (exceededThresholdRef.current) {
+        setIsDragging(false);
+        const hBounds = computeHorizontalBounds(widthRef.current);
+        // leftRef is set by every onPointerMove once the threshold is exceeded, so it reflects
+        // the pointer's last live position — exactly what "nearest edge" should be measured
+        // against.
+        const finalSide = nearestSide(leftRef.current ?? hBounds.max, hBounds);
+        sideRef.current = finalSide;
+        const snappedLeft = leftForSide(finalSide, hBounds);
+        const settledTop = topRef.current ?? defaultTop(computeVerticalBounds(heightRef.current));
+        // The snap itself: horizontal jumps (CSS-transitions, since `.dragging`'s `transition:
+        // none` is removed the same render) to whichever edge it ended up closer to. Vertical is
+        // left exactly where the gesture released it — unchanged clamped-free-drag behaviour.
+        commit(settledTop, snappedLeft);
+        writeStoredPosition({ top: settledTop, side: finalSide });
+      }
+      // `exceededThresholdRef` is deliberately NOT reset here: the click event fires after
+      // pointerup, and `wasTap()` has to still be able to see what this gesture was.
+    },
+    [commit],
+  );
 
   const wasTap = useCallback(() => !exceededThresholdRef.current, []);
 
-  return { position, elementRef, onPointerDown, onPointerMove, onPointerUp, isDragging, wasTap };
+  return { top, left, elementRef, onPointerDown, onPointerMove, onPointerUp, isDragging, wasTap };
 }

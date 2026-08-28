@@ -1,6 +1,7 @@
 package com.pronto.auth.email;
 
 import com.pronto.auth.entity.OtpPurpose;
+import com.pronto.common.config.ProntoEnvironment;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.AwsErrorSummary;
 import com.pronto.common.exception.ErrorCode;
@@ -56,11 +57,14 @@ public class SesEmailSender implements EmailSender {
 
     private final SesV2Client client;
     private final String fromAddress;
+    private final ProntoEnvironment environment;
 
     public SesEmailSender(@Value("${pronto.email.from}") String fromAddress,
                            @Value("${pronto.email.ses-region}") String region,
-                           @Value("${pronto.email.timeout-ms:10000}") long timeoutMs) {
+                           @Value("${pronto.email.timeout-ms:10000}") long timeoutMs,
+                           ProntoEnvironment environment) {
         this.fromAddress = fromAddress;
+        this.environment = environment;
         this.client = SesV2Client.builder()
                 .region(Region.of(region))
                 .overrideConfiguration(ClientOverrideConfiguration.builder()
@@ -111,6 +115,15 @@ public class SesEmailSender implements EmailSender {
             // recipient. `kind` says which message class failed, which is what an operator needs to
             // tell "SES is down" apart from "one customer's address bounces".
             log.error("SES send failed for {}: {}", kind, AwsErrorSummary.of(e));
+            // Local only, and deliberately so. AwsErrorSummary reports the exception TYPE and
+            // nothing else, which is right for a deployment (SES rejection text quotes the
+            // recipient) but leaves a developer with a bare "SdkClientException" and no way to tell
+            // a credential-chain failure from a connect timeout. On a developer machine there is no
+            // customer data to protect and no log aggregator to leak into, so print the whole cause
+            // chain. isLocal() is false in every deployed environment, so nothing changes there.
+            if (environment.isLocal()) {
+                log.error("SES send failed for {} — local diagnostics, full cause chain:", kind, e);
+            }
             throw new ApiException(ErrorCode.OTP_DELIVERY_FAILED,
                     "Could not send the message right now. Please try again.");
         }

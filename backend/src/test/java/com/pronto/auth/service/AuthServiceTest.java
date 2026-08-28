@@ -1,5 +1,6 @@
 package com.pronto.auth.service;
 
+import com.pronto.auth.config.AuthOtpPolicy;
 import com.pronto.auth.config.VerificationPolicy;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import com.pronto.professionals.entity.ProfessionalServiceCity;
@@ -212,7 +213,7 @@ class AuthServiceTest {
         authService = new AuthService(userRepository, accountWriter, otpService, jwtService,
                 passwordEncoder, professionalCoverageService, serviceCoverageValidator,
                 subServiceSelectionValidator,
-                new VerificationPolicy(true));
+                new VerificationPolicy(true), new AuthOtpPolicy("true"));
 
         when(userRepository.existsByEmail(anyString())).thenReturn(false);
         Mockito.lenient().when(userRepository.existsByPhone(anyString())).thenReturn(false);
@@ -580,7 +581,7 @@ class AuthServiceTest {
                         new ServiceCoverageValidator(serviceRegionRepository, serviceCityRepository)),
                 new ServiceCoverageValidator(serviceRegionRepository, serviceCityRepository),
                 new SubServiceSelectionValidator(subServiceRepository),
-                new VerificationPolicy(true));
+                new VerificationPolicy(true), new AuthOtpPolicy("true"));
 
         assertThatThrownBy(() -> serviceWithFailingStorage.register(
                 professionalRequest(validProfessionalData()), pdfDocument(), null))

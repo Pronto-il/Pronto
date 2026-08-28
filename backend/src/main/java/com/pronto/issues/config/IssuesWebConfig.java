@@ -2,9 +2,13 @@ package com.pronto.issues.config;
 
 import com.pronto.common.security.RoleRequiredInterceptor;
 import com.pronto.users.entity.UserRole;
+import com.pronto.auth.security.AuthRateLimitInterceptor;
+import com.pronto.auth.security.ClientIpResolver;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+import java.time.Duration;
 
 /**
  * Registers a {@link RoleRequiredInterceptor} for the two Milestone 2 {@code /api/issues/*}
@@ -38,6 +42,12 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class IssuesWebConfig implements WebMvcConfigurer {
 
+    private final ClientIpResolver clientIpResolver;
+
+    public IssuesWebConfig(ClientIpResolver clientIpResolver) {
+        this.clientIpResolver = clientIpResolver;
+    }
+
     /**
      * {@code /api/issues/*}{@code /category} ({@code PATCH}, the customer's classification
      * correction) joins the two literal Milestone 2 paths. It is the one pattern here that is not
@@ -48,7 +58,26 @@ public class IssuesWebConfig implements WebMvcConfigurer {
      */
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        // /api/issues/classify is deliberately NOT here any more. Deferred authentication: a guest
+        // must be able to describe a problem and have it classified before they have an account,
+        // because requiring one first is the auth wall this change exists to move. Classification
+        // writes no row, reads no other user's data, and returns a category for some text.
+        //
+        // The two that remain are writes: POST /api/issues creates a row owned by a customer, and
+        // PATCH .../category edits one.
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.CUSTOMER.name()))
-                .addPathPatterns("/api/issues/classify", "/api/issues", "/api/issues/*/category");
+                .addPathPatterns("/api/issues", "/api/issues/*/category");
+
+        // Classification is now reachable without an account AND spends an OpenAI call on every
+        // request, which is a combination nothing else in this API has. The per-IP limiter that
+        // already protects the auth routes is the whole mitigation: same interceptor, same
+        // ClientIpResolver (correct behind the ALB via TRUSTED_PROXIES), a bucket of its own.
+        //
+        // 20 per 10 minutes: a real customer reaching a category takes one call plus at most two
+        // clarification rounds, so three. Twenty leaves room for restarts, second issues and a
+        // shared household IP, while bounding what one source can spend to something that shows up
+        // as a rate-limit graph rather than as a bill.
+        registry.addInterceptor(new AuthRateLimitInterceptor(20, Duration.ofMinutes(10), clientIpResolver))
+                .addPathPatterns("/api/issues/classify");
     }
 }

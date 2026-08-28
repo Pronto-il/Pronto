@@ -137,13 +137,27 @@ function takePrefetched(path: string): Promise<ProfessionalListingResponse> | nu
  * decide when it is safe to navigate. Safe to call repeatedly for the same params — a second
  * call for a path already prefetched returns the in-flight promise rather than a new request.
  */
-export function prefetchProfessionalListing(
-  issueId: number,
-  location: ServiceLocation,
-  sort?: ProfessionalSort,
-): Promise<ProfessionalListingResponse> {
+/**
+ * Identifies WHAT the customer needs a professional for.
+ *
+ * Deferred authentication: during matching there is usually no issue yet — it is created at the
+ * booking commit, together with the order — so the listing is keyed on the category the review
+ * step confirmed. `issueId` remains for the one case that still has one: a customer returning to
+ * an issue they created on an earlier pass.
+ *
+ * Exactly one of the two is sent. The backend takes `issueId` in preference when both arrive and
+ * authorizes it against the caller, so sending both would just make the ownership check decide
+ * something the category already answered.
+ */
+export type ListingSubject = { issueId: number } | { categoryId: number };
+
+function listingParams(subject: ListingSubject, location: ServiceLocation, sort?: ProfessionalSort) {
   const params = new URLSearchParams();
-  params.set('issueId', String(issueId));
+  if ('issueId' in subject) {
+    params.set('issueId', String(subject.issueId));
+  } else {
+    params.set('categoryId', String(subject.categoryId));
+  }
   params.set('city', location.city);
   params.set('street', location.street);
   params.set('houseNumber', location.houseNumber);
@@ -153,7 +167,15 @@ export function prefetchProfessionalListing(
   if (sort) {
     params.set('sort', sort);
   }
-  const path = `/api/bookings/professionals?${params.toString()}`;
+  return `/api/bookings/professionals?${params.toString()}`;
+}
+
+export function prefetchProfessionalListing(
+  subject: ListingSubject,
+  location: ServiceLocation,
+  sort?: ProfessionalSort,
+): Promise<ProfessionalListingResponse> {
+  const path = listingParams(subject, location, sort);
 
   if (prefetchEntry && prefetchEntry.path === path && Date.now() - prefetchEntry.storedAt <= PREFETCH_TTL_MS) {
     return prefetchEntry.promise;
@@ -176,22 +198,11 @@ export function prefetchProfessionalListing(
  * api-contract-bookings.md §2.2's original prose implies.
  */
 export function getProfessionalsForIssue(
-  issueId: number,
+  subject: ListingSubject,
   location: ServiceLocation,
   sort?: ProfessionalSort,
 ): Promise<ProfessionalListingResponse> {
-  const params = new URLSearchParams();
-  params.set('issueId', String(issueId));
-  params.set('city', location.city);
-  params.set('street', location.street);
-  params.set('houseNumber', location.houseNumber);
-  if (location.apartment) {
-    params.set('apartment', location.apartment);
-  }
-  if (sort) {
-    params.set('sort', sort);
-  }
-  const path = `/api/bookings/professionals?${params.toString()}`;
+  const path = listingParams(subject, location, sort);
   return takePrefetched(path) ?? httpClient.get<ProfessionalListingResponse>(path);
 }
 
@@ -228,9 +239,21 @@ export interface AvailableWindowsResponse {
  * expected response (no derived availability fits a full job) — not an error, same UX as the
  * old empty-`slots` case.
  */
-export function getAvailableWindows(professionalId: number, issueId: number): Promise<AvailableWindowsResponse> {
+/**
+ * `issueId` is optional as of deferred authentication: during selection there is usually no
+ * issue, and a professional's free windows are derived from their own published hours and
+ * existing bookings rather than from the customer's request. When an issue IS supplied the
+ * backend additionally checks it belongs to the caller and that the professional serves its
+ * category — so passing it when you have it is strictly better, and omitting it is correct
+ * rather than a workaround.
+ */
+export function getAvailableWindows(
+  professionalId: number,
+  issueId?: number,
+): Promise<AvailableWindowsResponse> {
+  const query = issueId === undefined ? '' : `?issueId=${issueId}`;
   return httpClient.get<AvailableWindowsResponse>(
-    `/api/bookings/professionals/${professionalId}/available-windows?issueId=${issueId}`,
+    `/api/bookings/professionals/${professionalId}/available-windows${query}`,
   );
 }
 

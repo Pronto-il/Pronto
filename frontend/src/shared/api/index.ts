@@ -19,6 +19,7 @@ export {
   requestPasswordReset,
   confirmPasswordReset,
 } from './auth';
+export type { ListingSubject } from './bookings';
 export type {
   UserRole,
   RegisterableRole,

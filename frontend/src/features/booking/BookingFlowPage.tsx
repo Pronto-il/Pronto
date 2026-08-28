@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import type { TargetAndTransition, Transition, Variants } from 'framer-motion';
 import { Info } from 'lucide-react';
@@ -12,6 +12,7 @@ import {
   validateAddressTextOnly,
 } from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
+import type { ListingSubject } from '../../shared/api';
 import { getProfessionalsForIssue, getAvailableWindows, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type {
   AvailableWindow,
@@ -90,9 +91,18 @@ function toDraftSort(sort: ProfessionalSort): 'RECOMMENDED' | 'CHEAPEST' {
  */
 export default function BookingFlowPage() {
   const navigate = useNavigate();
-  const { issueId: issueIdParam } = useParams<{ issueId: string }>();
-  const issueId = Number(issueIdParam);
   const { draft, updateDraft, clearDraft } = useBookingDraft();
+  // No issue id in the route: deferred authentication moved issue creation to the booking
+  // commit, so during selection there is usually no issue. The draft carries what the listing
+  // needs -- the category the review step confirmed -- and `issueId` is present only for a
+  // customer returning to an issue created on an earlier pass.
+  const issueId = draft?.issueId;
+  const listingSubject: ListingSubject | null =
+    issueId !== undefined
+      ? { issueId }
+      : draft?.categoryId !== undefined
+        ? { categoryId: draft.categoryId }
+        : null;
 
   const [address, setAddress] = useState<AddressValue>(EMPTY_ADDRESS);
   const [addressMode, setAddressMode] = useState<AddressMode>('CUSTOM');
@@ -132,7 +142,11 @@ export default function BookingFlowPage() {
       setIsLoadingProfessionals(true);
       setProfessionalsError(null);
       try {
-        const result = await getProfessionalsForIssue(issueId, currentAddress, nextSort);
+        if (!listingSubject) {
+          setProfessionalsError(GENERIC_ERROR_MESSAGE);
+          return;
+        }
+        const result = await getProfessionalsForIssue(listingSubject, currentAddress, nextSort);
         setProfessionals(result.professionals);
         setCategoryId(result.categoryId);
       } catch (error) {
@@ -187,7 +201,11 @@ export default function BookingFlowPage() {
       setIsLoadingProfessionals(true);
       setProfessionalsError(null);
       try {
-        const listing = await getProfessionalsForIssue(issueId, draft.address!, resumeSort);
+        const listing = await getProfessionalsForIssue(
+          draft.issueId !== undefined ? { issueId: draft.issueId } : { categoryId: draft.categoryId! },
+          draft.address!,
+          resumeSort,
+        );
         setProfessionals(listing.professionals);
         setCategoryId(listing.categoryId);
 
@@ -371,6 +389,30 @@ export default function BookingFlowPage() {
     navigate('/issues/new');
   }
 
+  /**
+   * The guest hit the book button. Persist where they are, then send them to sign in.
+   *
+   * <p>`BOOKING_CONFIRM` is the stage `resolveDraftRoute` maps back to this screen, so after
+   * login/registration the customer returns to this exact confirmation card with their
+   * professional, slot and address intact — see `useSessionLanding`, which resumes the draft
+   * instead of landing on Home.
+   *
+   * <p>`state.from` is not used: the draft is a better record than a URL, because it survives a
+   * closed tab and carries the selection as well as the location.
+   */
+  function handleAuthRequired() {
+    if (step.name === 'confirm') {
+      updateDraft({
+        stage: 'BOOKING_CONFIRM',
+        address,
+        addressMode,
+        professionalId: step.professional.professionalId,
+        bookedStart: step.bookedStart,
+      });
+    }
+    navigate('/login', { state: { from: { pathname: '/booking' } } });
+  }
+
   function handleBack() {
     if (step.name === 'address') {
       handleBackToClassification();
@@ -500,6 +542,10 @@ export default function BookingFlowPage() {
             {step.name === 'confirm' && categoryId !== null && (
               <BookingSummary
                 issueId={issueId}
+                issueDescription={draft?.description ?? ''}
+                issueImageKeys={(draft?.photos ?? []).map((photo) => photo.imageKey)}
+                issueClarificationAnswers={draft?.clarificationAnswers ?? []}
+                onAuthRequired={handleAuthRequired}
                 categoryId={categoryId}
                 professional={step.professional}
                 bookedStart={step.bookedStart}

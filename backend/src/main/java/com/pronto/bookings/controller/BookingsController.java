@@ -57,18 +57,38 @@ public class BookingsController {
         this.bookingsService = bookingsService;
     }
 
+    /**
+     * The caller's id, or {@code null} when nobody is signed in.
+     *
+     * <p>Only the guest-reachable read routes may receive a null principal — every write route in
+     * this controller is behind a {@code RoleRequiredInterceptor}, which rejects an anonymous
+     * request before the handler runs. Written as a helper rather than an inline
+     * {@code principal == null ? null : principal.id()} at each call site so that "this route
+     * tolerates a guest" is a visible, greppable decision instead of a null check somebody could
+     * copy onto a route where it is wrong.
+     */
+    private static Long callerId(AuthenticatedUser principal) {
+        return principal == null ? null : principal.id();
+    }
+
     @GetMapping("/professionals")
     public ResponseEntity<ProfessionalListingResponse> listProfessionals(
             @AuthenticationPrincipal AuthenticatedUser principal,
             @RequestParam(name = "issueId", required = false) String issueIdRaw,
+            @RequestParam(name = "categoryId", required = false) String categoryIdRaw,
             @RequestParam(name = "city", required = false) String city,
             @RequestParam(name = "street", required = false) String street,
             @RequestParam(name = "houseNumber", required = false) String houseNumber,
             @RequestParam(name = "apartment", required = false) String apartment,
             @RequestParam(name = "sort", required = false) String sort) {
         Long issueId = parseQueryId(issueIdRaw, "issueId");
+        Long categoryId = parseQueryId(categoryIdRaw, "categoryId");
         ServiceLocation location = parseServiceLocation(city, street, houseNumber, apartment);
-        return ResponseEntity.ok(bookingsService.listProfessionals(principal.id(), issueId, location, sort));
+        // principal is null for a guest -- this route is permitAll (see auth.config.SecurityConfig's
+        // "guest journey" block). callerId flows through as null and every consumer of it in
+        // BookingsService already treats "no caller" as a real state.
+        return ResponseEntity.ok(bookingsService.listProfessionals(callerId(principal), issueId,
+                categoryId, location, sort));
     }
 
     @GetMapping("/professionals/{professionalId}/available-windows")
@@ -78,7 +98,7 @@ public class BookingsController {
             @RequestParam(name = "issueId", required = false) String issueIdRaw) {
         Long professionalId = parsePathId(professionalIdRaw);
         Long issueId = parseQueryId(issueIdRaw, "issueId");
-        return ResponseEntity.ok(bookingsService.listAvailableWindows(principal.id(), professionalId, issueId));
+        return ResponseEntity.ok(bookingsService.listAvailableWindows(callerId(principal), professionalId, issueId));
     }
 
     @PostMapping("/orders")

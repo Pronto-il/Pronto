@@ -116,6 +116,41 @@ public class SecurityConfig {
                         // reason /api/categories is — professional registration needs it before
                         // an account exists — and no more sensitive: a list of Israeli city names.
                         .requestMatchers(HttpMethod.GET, "/api/service-areas").permitAll()
+
+                        // ---- the guest journey ----
+                        //
+                        // Deferred authentication: a visitor may describe a problem, have it
+                        // classified, answer clarification questions, see who could take the job and
+                        // when they are free, WITHOUT an account. Authentication is required at the
+                        // moment a booking or an SOS request would be COMMITTED, and not before —
+                        // see bookings.BookingsWebConfig and sos.SosWebConfig, which still gate
+                        // every write.
+                        //
+                        // Each of these is a READ that produces no row and touches no other user's
+                        // data:
+                        //
+                        //   classify           stateless; returns a category for some text. Costs an
+                        //                      OpenAI call, which is why it — alone among these — is
+                        //                      rate limited per IP (issues.IssuesWebConfig).
+                        //   professionals      the marketplace listing for a category. Already
+                        //                      public information: these are people advertising for
+                        //                      work. The only customer-specific value it ever
+                        //                      carried was a favourites count, which is 0 for a
+                        //                      guest.
+                        //   available-windows  a professional's free slots. Derived entirely from
+                        //                      their own published working hours and existing
+                        //                      bookings; it discloses no customer and no order.
+                        //   professionals/{id} the public profile behind a listing card.
+                        //
+                        // What is deliberately NOT here: POST /api/issues, POST /api/bookings/orders,
+                        // every /api/sos write, and everything under /api/users. Guests read; they
+                        // do not write, and they cause no professional to be contacted.
+                        .requestMatchers(HttpMethod.POST, "/api/issues/classify").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/bookings/professionals").permitAll()
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/bookings/professionals/*/available-windows").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/professionals/*").permitAll()
+
                         .requestMatchers("/ws/**").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(eh -> eh.authenticationEntryPoint(authenticationEntryPoint))

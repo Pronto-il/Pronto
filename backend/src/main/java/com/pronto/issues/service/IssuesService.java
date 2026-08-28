@@ -122,12 +122,20 @@ public class IssuesService {
      * guaranteed rather than enforced by throwing.
      */
     public ClassifyResponse classify(Long callerId, ClassifyRequest request) {
-        // Production MS1 (pre-DONE audit): classification is the first step of the marketplace
-        // issue flow and every call spends an OpenAI request. Gating only POST /api/issues left an
-        // unverified account able to drive the model indefinitely. The route is already
-        // authenticated and CUSTOMER-only (SecurityConfig + IssuesWebConfig) -- there is no
-        // anonymous classification flow this can break.
-        contactVerificationGuard.requireVerifiedContactChannels(callerId);
+        // Deferred authentication: callerId is null for a guest, and that is now a supported state.
+        //
+        // The MS1 note that used to sit here reasoned that classification spends an OpenAI request
+        // and so must be gated behind a verified account. The spend concern was right and is still
+        // handled -- by a per-IP rate limit in issues.config.IssuesWebConfig, which bounds an
+        // anonymous source the way the verification gate bounded an unverified account. What was
+        // wrong was the placement: requiring a verified account to find out WHICH TRADE you need
+        // put the entire product behind a signup form, and classification writes nothing.
+        //
+        // The verification guard still runs, unchanged, on the two operations that commit: creating
+        // an issue and creating an order.
+        if (callerId != null) {
+            contactVerificationGuard.requireVerifiedContactChannels(callerId);
+        }
 
         List<String> imageKeys = validateImageKeys(callerId, request.imageKeys());
         List<ClarificationExchange> answers = toExchanges(request.clarificationAnswers());

@@ -11,14 +11,16 @@ import styles from './ProfessionalCard.module.css';
  *  flow this card was rendered from. Deliberately transient — lost on refresh/direct visit,
  *  an accepted degradation to a view-only page. */
 export interface ViewProfileContext {
-  issueId: number;
+  /** Optional as of deferred authentication: a guest browsing the listing has no issue yet, and
+   *  the profile screen only uses this to offer a "back to your results" affordance. */
+  issueId?: number;
   urgencyType: 'STANDARD' | 'SOS';
 }
 
 /** The actual `location.state` shape landed on by `/professionals/:id` — `fromIssueId`
  *  (not `issueId`) to read unambiguously on a page that has no "current issue" of its own. */
 export interface ProfessionalDetailLocationState {
-  fromIssueId: number;
+  fromIssueId?: number;
   urgencyType: 'STANDARD' | 'SOS';
 }
 

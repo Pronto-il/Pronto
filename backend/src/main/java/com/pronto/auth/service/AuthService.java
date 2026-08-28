@@ -157,6 +157,23 @@ public class AuthService {
             // OtpService#issue is never reached, so no challenge row is written, no code is
             // generated and SES is not called at all -- the same shape of bypass as the login one,
             // and for the same reason: a code that cannot be delivered is not a verification step.
+            //
+            // AND THE SESSION IS ISSUED HERE, rather than sending the user to log in with the
+            // password they typed thirty seconds ago. Registration has always minted the first
+            // session at the moment the last required verification step completes -- that is what
+            // verifyPhone does. When no verification step is required, that moment is now, so this
+            // is the existing rule applied to a shorter list of requirements, not a new exception
+            // to it. Bouncing to /login instead was the previous behaviour and it was simply an
+            // omission: it asked the person who just proved they hold the credentials to prove it
+            // again.
+            //
+            // Deliberately NOT conditioned on AUTH_OTP_REQUIRED. That flag governs whether a
+            // RETURNING user needs a second factor to reopen a session; it says nothing about
+            // whether the account's creator may hold the session they just created. Reading it
+            // here would mean an account could be created that its own creator cannot enter.
+            if (registrationIsComplete(user)) {
+                return authenticatedSession(user);
+            }
             return AuthStepResponse.goToLogin(user.isEmailVerified(), user.isPhoneVerified());
         }
 
@@ -195,7 +212,16 @@ public class AuthService {
             // phoneVerified is reported honestly in every case. The client uses it to decide what
             // to show, and claiming a phone was proved when it was not would corrupt the very state
             // that reversing this policy depends on.
-            return AuthStepResponse.goToLogin(true, user.isPhoneVerified());
+            //
+            // The session is issued here for the same reason register does it: this IS the moment
+            // the last required verification step completed, which is precisely when verifyPhone
+            // has always minted the first session. Sending someone who just redeemed an emailed
+            // code to a login form to retype the password they chose two screens ago was friction
+            // with no security content -- the code they redeemed proves more about them than the
+            // password re-entry would.
+            return registrationIsComplete(user)
+                    ? authenticatedSession(user)
+                    : AuthStepResponse.goToLogin(true, user.isPhoneVerified());
         }
 
         IssuedChallenge challenge = otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false);
@@ -556,6 +582,25 @@ public class AuthService {
      * how "the bypass grants a slightly different session" would get introduced without anyone
      * deciding to.
      */
+    /**
+     * Is there any verification step this account still owes before it may hold a session?
+     *
+     * <p>Asks the policy, never the columns. {@code email_verified} and {@code phone_verified}
+     * stay {@code false} for an account that genuinely never proved either channel — the flags
+     * decide whether an unproved channel <b>blocks</b>, and writing {@code true} to make the
+     * blocking go away would destroy the one record that says who still owes what. Turning a
+     * requirement back on must ask exactly the right people to prove exactly the right thing, and
+     * that is only possible while the columns remain honest.
+     *
+     * <p>The phone half additionally accepts an already-proved number, so an account that did
+     * complete phone verification is not asked again by a later policy change.
+     */
+    private boolean registrationIsComplete(User user) {
+        boolean emailSettled = !verificationPolicy.isEmailVerificationRequired() || user.isEmailVerified();
+        boolean phoneSettled = !verificationPolicy.isSmsVerificationRequired() || user.isPhoneVerified();
+        return emailSettled && phoneSettled;
+    }
+
     private AuthStepResponse authenticatedSession(User user) {
         return AuthStepResponse.authenticated(session(user), user.isEmailVerified(), user.isPhoneVerified());
     }

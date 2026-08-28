@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../../shared/hooks';
+import { resolveDraftRoute, useAuth, useBookingDraft } from '../../shared/hooks';
 import type { AuthSession } from '../../shared/api';
 
 /**
@@ -19,6 +19,7 @@ import type { AuthSession } from '../../shared/api';
 export function useSessionLanding() {
   const navigate = useNavigate();
   const { establishSession } = useAuth();
+  const { draft } = useBookingDraft();
 
   return useCallback(
     async (session: AuthSession) => {
@@ -26,9 +27,23 @@ export function useSessionLanding() {
       // screen, so it must come from the server's answer rather than from anything the login
       // response happened to carry.
       const me = await establishSession(session);
+
+      // Deferred authentication: a customer who was sent here by the book button is mid-booking,
+      // and landing them on Home would throw away the journey at the exact moment they did what
+      // was asked of them. The draft is read rather than `location.state.from` because it is the
+      // stronger record — it survives a closed tab, and it carries the professional and slot as
+      // well as the route.
+      //
+      // Only a CUSTOMER resumes: a professional or admin signing in on a browser that happens to
+      // hold a booking draft belongs on their own dashboard, and the draft is about to be
+      // discarded by the provider's owner-mismatch rule anyway.
+      if (me.role === 'CUSTOMER' && draft) {
+        navigate(resolveDraftRoute(draft), { replace: true });
+        return;
+      }
       navigate(landingFor(me.role), { replace: true });
     },
-    [establishSession, navigate],
+    [establishSession, navigate, draft],
   );
 }
 

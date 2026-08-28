@@ -44,10 +44,17 @@ public class IssuesController {
         this.issuesService = issuesService;
     }
 
+    /**
+     * Reachable without an account (deferred authentication). {@code principal} is {@code null}
+     * for a guest — the route is {@code permitAll} in {@code auth.config.SecurityConfig} and rate
+     * limited per IP in {@code issues.config.IssuesWebConfig}, since it is the one public route
+     * that spends an OpenAI call.
+     */
     @PostMapping("/classify")
     public ResponseEntity<ClassifyResponse> classify(@AuthenticationPrincipal AuthenticatedUser principal,
                                                        @Valid @RequestBody ClassifyRequest request) {
-        return ResponseEntity.ok(issuesService.classify(principal.id(), request));
+        Long callerId = principal == null ? null : principal.id();
+        return ResponseEntity.ok(issuesService.classify(callerId, request));
     }
 
     @PostMapping

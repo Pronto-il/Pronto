@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, useReducedMotion } from 'framer-motion';
 import type { TargetAndTransition } from 'framer-motion';
 import { Button, EMPTY_ADDRESS, PageHeader, toAddressValue } from '../../shared/components';
@@ -73,8 +73,14 @@ interface ResolvedIssue {
 export default function ProfessionMatchPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { issueId: issueIdParam } = useParams<{ issueId: string }>();
-  const issueId = Number(issueIdParam);
+  // No issue id in the route any more. Deferred authentication moved issue creation to the
+  // booking commit, so at this point in the journey there is usually no issue at all -- for a
+  // guest because they have no account, and for a signed-in customer because nothing has been
+  // committed. The draft is the state.
+  //
+  // `draft.issueId` is still read, and is still meaningful in exactly one case: a customer who
+  // created an issue on an earlier pass and came back to it. Everything downstream treats it as
+  // optional.
   const { user } = useAuth();
   const { draft, updateDraft } = useBookingDraft();
   const shouldReduceMotion = useReducedMotion();
@@ -96,7 +102,10 @@ export default function ProfessionMatchPage() {
    * already given. The draft is the same one the booking flow reads, so there is one stored
    * answer, not two.
    */
-  const draftMatchesIssue = draft?.issueId === issueId;
+  const issueId = draft?.issueId;
+  // The draft IS this journey now, rather than one of several drafts keyed by issue. There is
+  // only ever one in localStorage, so "does it match?" reduces to "is there one?".
+  const draftMatchesIssue = draft != null;
   const [phase, setPhase] = useState<'address' | 'matching'>(
     draftMatchesIssue && draft?.address ? 'matching' : 'address',
   );
@@ -161,10 +170,20 @@ export default function ProfessionMatchPage() {
     setPhase('matching');
   }
 
-  // The issue is authoritative. Only fetched when the hand-off didn't carry the category —
-  // i.e. on refresh, remount or a direct visit — so the common path costs no extra request.
+  // The category comes from the hand-off (the common path), then the draft, and only then from
+  // the issue itself. That last source now applies to one case: a customer returning to an issue
+  // they created on an earlier pass. A guest has no issue to fetch and does not need one -- the
+  // draft carries the category the review step confirmed.
   useEffect(() => {
-    if (resolved || !Number.isFinite(issueId)) {
+    if (resolved) {
+      return;
+    }
+    if (draft?.categoryId !== undefined && draft.urgencyType !== undefined) {
+      setResolved({ categoryId: draft.categoryId, urgencyType: draft.urgencyType });
+      return;
+    }
+    if (issueId === undefined || !Number.isFinite(issueId)) {
+      setLoadError(GENERIC_ERROR_MESSAGE);
       return;
     }
     let cancelled = false;
@@ -182,11 +201,11 @@ export default function ProfessionMatchPage() {
     return () => {
       cancelled = true;
     };
-  }, [issueId, resolved]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issueId, resolved, draft?.categoryId, draft?.urgencyType]);
 
   const isKnownCategory = resolved !== null && CATEGORIES.some((category) => category.id === resolved.categoryId);
-  const bookingPath =
-    resolved?.urgencyType === 'SOS' ? `/issues/${issueId}/sos-booking` : `/issues/${issueId}/booking`;
+  const bookingPath = resolved?.urgencyType === 'SOS' ? '/sos-booking' : '/booking';
 
   /**
    * Warms the exact request the booking flow is about to make. Resolves either way — a failed
@@ -206,7 +225,14 @@ export default function ProfessionMatchPage() {
     // The address the customer just chose — default or one-off — is what the listing is warmed
     // with, so service-area relevance, distance and ETA are computed for the place the
     // professional actually has to reach.
-    preloadRef.current = prefetchProfessionalListing(issueId, address, RESUME_SORT)
+    // Keyed on the issue when one exists, otherwise on the category the review step
+    // confirmed -- the same subject the listing screen itself will use, so the warmed request is
+    // the one it adopts rather than a near miss it has to redo.
+    preloadRef.current = prefetchProfessionalListing(
+      issueId !== undefined ? { issueId } : { categoryId: resolved.categoryId },
+      address,
+      RESUME_SORT,
+    )
       .catch(() => undefined)
       // Ready either way — a failed prefetch shouldn't hold the customer on this screen; the
       // listing screen owns that error.

@@ -11,12 +11,16 @@ import {
   getProfessionalNameHe,
 } from '../../shared/api';
 import type { ClarificationAnswer, ClassifyIssueResponse, IssueUrgencyType } from '../../shared/api';
+import { useAuth } from '../../shared/hooks';
 import styles from './ReviewStep.module.css';
 
 /** The subset of `IssueResponse` the flow actually carries forward once an issue exists — see
  *  `ReviewStepProps.existingIssue` for why confirming doesn't always produce a full one. */
 export interface ConfirmedIssue {
-  id: number;
+  /** `null` when the review was confirmed without persisting an issue — the guest case, where
+   *  `POST /api/issues` is deferred to the booking commit. The category is known either way,
+   *  which is all the rest of the flow actually reads. */
+  id: number | null;
   categoryId: number;
   urgencyType: IssueUrgencyType;
 }
@@ -65,6 +69,8 @@ export function ReviewStep({
   existingIssue,
   onConfirmed,
 }: ReviewStepProps) {
+  const { token } = useAuth();
+  const isAuthenticated = Boolean(token);
   const [categoryId, setCategoryId] = useState(String(classification.suggestedCategoryId ?? ''));
   const [isChangingCategory, setIsChangingCategory] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -77,6 +83,22 @@ export function ReviewStep({
     // still the right one, so nothing is written and the flow simply continues with it.
     if (existingIssue && existingIssue.categoryId === chosenCategoryId) {
       onConfirmed({ id: existingIssue.id, categoryId: existingIssue.categoryId, urgencyType });
+      return;
+    }
+
+    // ---- deferred authentication ----
+    //
+    // Confirming the review no longer creates the issue. `POST /api/issues` is a write, and the
+    // person doing it may not have an account yet -- this screen sits in the middle of the guest
+    // journey now. The issue is created at the booking commit instead, where authentication has
+    // already happened, together with the order.
+    //
+    // A guest therefore leaves this screen with everything captured in the draft and nothing
+    // persisted. A SIGNED-IN customer who has already created an issue on a previous pass still
+    // gets the category correction below, because that issue really does exist and really can go
+    // stale.
+    if (!isAuthenticated && !existingIssue) {
+      onConfirmed({ id: null, categoryId: chosenCategoryId, urgencyType });
       return;
     }
 

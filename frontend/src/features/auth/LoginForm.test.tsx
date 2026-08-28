@@ -32,7 +32,15 @@ vi.mock('../../shared/api', async () => {
 
 vi.mock('../../shared/hooks', async () => {
   const actual = await vi.importActual<typeof import('../../shared/hooks')>('../../shared/hooks');
-  return { ...actual, useAuth: () => ({ establishSession }) };
+  // `useSessionLanding` now also reads the booking draft, so that a customer who was sent here by
+  // the book button resumes their booking instead of landing on Home. Stubbed to "no draft" here,
+  // which is the plain-login case these four tests are about — the resume behaviour has its own
+  // coverage in useSessionLanding.test.tsx.
+  return {
+    ...actual,
+    useAuth: () => ({ establishSession }),
+    useBookingDraft: () => ({ draft: null, updateDraft: vi.fn(), clearDraft: vi.fn() }),
+  };
 });
 
 const SESSION = {

@@ -94,6 +94,7 @@ class BookingsServiceTest {
     private AvailabilityDerivationService availabilityDerivationService;
     private ProfessionalCoverageService professionalCoverageService;
     private ServiceAddressGeocoder serviceAddressGeocoder;
+    private com.pronto.professionals.repository.CategoryRepository categoryRepository;
     private ProfessionalLocationService professionalLocationService;
     private LocationProperties locationProperties;
     private BookingsService bookingsService;
@@ -112,6 +113,10 @@ class BookingsServiceTest {
         availabilityDerivationService = Mockito.mock(AvailabilityDerivationService.class);
         professionalCoverageService = Mockito.mock(ProfessionalCoverageService.class);
         serviceAddressGeocoder = Mockito.mock(ServiceAddressGeocoder.class);
+        categoryRepository = Mockito.mock(com.pronto.professionals.repository.CategoryRepository.class);
+        // Every category the listing tests name exists, so requireListingCategory's
+        // "unknown category" branch is only reached by the test that asks for it.
+        Mockito.lenient().when(categoryRepository.existsById(Mockito.anyLong())).thenReturn(true);
         professionalLocationService = Mockito.mock(ProfessionalLocationService.class);
         locationProperties = new LocationProperties();
         bookingsService = new BookingsService(issueRepository, professionalRepository, professionalListingRepository,
@@ -120,7 +125,8 @@ class BookingsServiceTest {
                 professionalCoverageService, Mockito.mock(ContactVerificationGuard.class),
                 serviceAddressGeocoder, professionalLocationService, locationProperties,
                 new com.pronto.maps.service.ArrivalVerifier(professionalLocationService, locationProperties),
-                new com.pronto.maps.service.SelectedPlaceValidator());
+                new com.pronto.maps.service.SelectedPlaceValidator(),
+                categoryRepository);
         // MS2: geocoding is stubbed to "unresolvable" by default. Every pre-existing test in this
         // class is about booking mechanics, not geography, and a default that quietly produced
         // coordinates would make them silently depend on a provider they never mention. The MS2
@@ -662,7 +668,7 @@ class BookingsServiceTest {
 
         ServiceLocation location = new ServiceLocation("AnyCity", "St", "1", null);
         ProfessionalListingResponse response =
-                bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, location, "FASTEST");
+                bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, null, location, "FASTEST");
 
         assertThat(response.professionals()).extracting(ProfessionalCard::professionalId)
                 .containsExactly(20L, 10L);
@@ -690,7 +696,7 @@ class BookingsServiceTest {
                         10L, EtaResult.unavailable(RouteUnavailableReason.PROFESSIONAL_LOCATION_STALE),
                         20L, EtaResult.available(new BigDecimal("40.0"), 88, true)));
 
-        ProfessionalListingResponse response = bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID,
+        ProfessionalListingResponse response = bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, null,
                 new ServiceLocation("AnyCity", "St", "1", null), "FASTEST");
 
         assertThat(response.professionals()).extracting(ProfessionalCard::professionalId)
@@ -717,7 +723,7 @@ class BookingsServiceTest {
         when(professionalListingRepository.listByCategory(CATEGORY_ID, CUSTOMER_ID)).thenReturn(cards);
         when(distanceEtaStrategy.calculateBatch(any(), any(), any())).thenReturn(Map.of());
 
-        bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID,
+        bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, null,
                 new ServiceLocation("AnyCity", "St", "1", null), "FASTEST");
 
         verify(distanceEtaStrategy, times(1)).calculateBatch(any(), any(), any());
@@ -742,7 +748,7 @@ class BookingsServiceTest {
 
         ServiceLocation location = new ServiceLocation("AnyCity", "St", "1", null);
         ProfessionalListingResponse response =
-                bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, location, null);
+                bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, null, location, null);
 
         // Default/CHEAPEST -- DB (base-price-ascending) order is untouched even though it
         // differs from the ETA-based order.

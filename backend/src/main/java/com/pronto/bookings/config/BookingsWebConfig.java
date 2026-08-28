@@ -46,9 +46,18 @@ public class BookingsWebConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        // Deferred authentication: the two READ routes that used to be here -- the professional
+        // listing and a professional's free windows -- are now reachable by a guest, so that
+        // somebody can see who could take their job, and when, before deciding whether Pronto is
+        // worth registering for. Neither produces a row, and neither discloses another customer:
+        // the listing's only customer-specific value was a favourites count (0 for a guest) and
+        // availability is derived from the professional's own published hours.
+        //
+        // POST /api/bookings/orders stays, and it is now the FIRST authenticated step of the whole
+        // customer journey. It is where an order row is written and where a professional is
+        // notified, which is exactly the boundary this change moves authentication to.
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.CUSTOMER.name()))
-                .addPathPatterns("/api/bookings/professionals", "/api/bookings/professionals/*/available-windows",
-                        "/api/bookings/orders");
+                .addPathPatterns("/api/bookings/orders");
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.PROFESSIONAL.name()))
                 .addPathPatterns("/api/bookings/orders/*/accept", "/api/bookings/orders/*/reject",
                         "/api/bookings/orders/*/on-the-way",

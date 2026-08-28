@@ -213,6 +213,98 @@ class BookingsServiceTest {
         return order;
     }
 
+
+    // ---- deferred authentication: the guest read paths ----
+    //
+    // Added to this class rather than a sibling so the guest cases run against exactly the same
+    // wiring the authenticated ones do. The point being made is that ONE service answers both --
+    // not that a parallel guest path behaves plausibly on its own fixture.
+    //
+    // Not covered here, deliberately: "a guest cannot create an order". That is decided by
+    // BookingsWebConfig's RoleRequiredInterceptor, which rejects the request before createOrder is
+    // entered, so a service-level assertion would be testing a guard that is not in the picture.
+
+    private static final ServiceLocation GUEST_ADDRESS =
+            new ServiceLocation("תל אביב-יפו", "דיזנגוף", "100", null);
+
+    @Test
+    void guest_listsProfessionalsByCategoryWithNoAccountAndNoIssue() {
+        ProfessionalListingResponse response =
+                bookingsService.listProfessionals(null, null, CATEGORY_ID, GUEST_ADDRESS, null);
+
+        assertThat(response.categoryId()).isEqualTo(CATEGORY_ID);
+        // No issue exists yet -- the guest has committed nothing, so there is nothing to name.
+        assertThat(response.issueId()).isNull();
+        assertThat(response.professionals()).isNotNull();
+    }
+
+    @Test
+    void guest_listingWithNeitherIssueNorCategoryIsRefused() {
+        // Not "show me everything": a malformed request. Answering with an empty list would read
+        // to a customer as "nobody serves you", which is a different and untrue answer.
+        assertThatThrownBy(() -> bookingsService.listProfessionals(null, null, null, GUEST_ADDRESS, null))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(ErrorCode.VALIDATION_ERROR);
+    }
+
+    @Test
+    void guest_unknownCategoryIsRefusedRatherThanReturningAnEmptyListing() {
+        when(categoryRepository.existsById(999L)).thenReturn(false);
+
+        assertThatThrownBy(() -> bookingsService.listProfessionals(null, null, 999L, GUEST_ADDRESS, null))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(ErrorCode.VALIDATION_ERROR);
+    }
+
+    @Test
+    void guest_cannotReadSomebodyElsesIssueByNamingItsId() {
+        // The authorization deferred authentication must NOT have loosened. An issue belongs to a
+        // customer; a null caller is not its owner, it is nobody.
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(openIssue(IssueUrgencyType.STANDARD)));
+
+        assertThatThrownBy(() -> bookingsService.listProfessionals(null, ISSUE_ID, null, GUEST_ADDRESS, null))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(ErrorCode.FORBIDDEN);
+    }
+
+    @Test
+    void guest_readsAvailableWindowsWithNoIssue() {
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(activeProfessional()));
+        stubFullyAvailable();
+
+        AvailableWindowsResponse response =
+                bookingsService.listAvailableWindows(null, PROFESSIONAL_ID, null);
+
+        assertThat(response.professionalId()).isEqualTo(PROFESSIONAL_ID);
+        assertThat(response.windows()).isNotNull();
+    }
+
+    @Test
+    void guest_availableWindowsForAnIssueStillRequireOwningIt() {
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(openIssue(IssueUrgencyType.STANDARD)));
+
+        assertThatThrownBy(() -> bookingsService.listAvailableWindows(null, PROFESSIONAL_ID, ISSUE_ID))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(ErrorCode.FORBIDDEN);
+    }
+
+    @Test
+    void signedInCustomerListingByIssueIsUnchanged() {
+        // The pre-existing authenticated path, asserted beside the guest one so the two cannot
+        // quietly merge into each other.
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(openIssue(IssueUrgencyType.STANDARD)));
+
+        ProfessionalListingResponse response =
+                bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, null, GUEST_ADDRESS, null);
+
+        assertThat(response.issueId()).isEqualTo(ISSUE_ID);
+        assertThat(response.categoryId()).isEqualTo(CATEGORY_ID);
+    }
+
     // ---- SOS surcharge ----
 
     @Test

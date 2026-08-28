@@ -373,7 +373,23 @@ resource "aws_ecs_task_definition" "backend" {
       # database: accounts created while it is false keep phone_verified = false, so flipping it
       # back asks exactly the right people to prove exactly the right thing. Set to "true" once AWS
       # approves production SMS -- confirm delivery works BEFORE flipping it, or the trap returns.
-      { name = "SMS_VERIFICATION_REQUIRED", value = tostring(var.sms_verification_required) },
+      #
+      # Hardcoded "false" rather than tostring(var.sms_verification_required): this is the same SMS
+      # sandbox condition as AUTH_OTP_REQUIRED below, and the two are being disabled together as one
+      # deliberate operator decision, not derived from a variable whose default (true) still applies
+      # anywhere else it might be read from. Re-enable by restoring tostring(var.sms_verification_required)
+      # once AWS approves production SMS -- see the note above.
+      { name = "SMS_VERIFICATION_REQUIRED", value = "false" },
+
+      # TEMPORARY, pre-user stage (see auth.config.AuthOtpPolicy's own Javadoc). AWS End User
+      # Messaging is still SMS-sandboxed with an exhausted monthly spend quota, so a login OTP
+      # cannot reliably be delivered -- an undeliverable second factor is not security, it is a
+      # locked door with the key on the wrong side. Password verification, account lockout, login
+      # rate limiting, JWT issuance/validation, every route guard, and the email-verified
+      # requirement are all unchanged; this removes exactly one step from POST /api/auth/login.
+      # Re-enable with AUTH_OTP_REQUIRED=true (or remove this line, since application.yml's own
+      # default is already "true") once SMS delivery is confirmed working again.
+      { name = "AUTH_OTP_REQUIRED", value = "false" },
 
       { name = "MAPS_MODE", value = "google" },
 

@@ -434,7 +434,7 @@ resource "aws_iam_role" "github_ecr_push" {
   # Deliberately short-lived even relative to github_deploy's own hour: this role's job is a few
   # minutes of build+push, not a multi-step deploy that can legitimately run long.
   assume_role_policy   = data.aws_iam_policy_document.github_ecr_push_assume.json
-  max_session_duration = 1800
+  max_session_duration = 3600
 }
 
 data "aws_iam_policy_document" "github_ecr_push" {

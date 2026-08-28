@@ -1,9 +1,12 @@
 /*
- * Fixed mobile tab bar. `height` is the bar's own chrome; the home-indicator inset is added as
- * padding *below* it so the touch targets stay clear of the indicator instead of being
- * overlapped by it. Both values come from the `--bottom-nav-height`/`--safe-area-bottom` tokens
- * in `index.css`, which `AppLayout` reuses for scroll clearance and `useToolboxPosition` reads
- * from JavaScript to bound the draggable toolbox — one source of truth for all three.
+ * Fixed mobile tab bar with an elevated central action (redesign §4). `height` is the bar's own
+ * chrome; the home-indicator inset is added as padding *below* it so the touch targets stay
+ * clear of the indicator. Both values come from the `--bottom-nav-height`/`--safe-area-bottom`
+ * tokens in `index.css`, which `AppLayout` reuses for scroll clearance and `useToolboxPosition`
+ * reads from JavaScript to bound the draggable toolbox — one source of truth for all three.
+ *
+ * `overflow: visible` so the centre circle can rise above the bar's top edge without being
+ * clipped.
  */
 .bar {
   display: none;
@@ -14,6 +17,7 @@
 
   height: calc(var(--bottom-nav-height) + var(--safe-area-bottom));
   padding-block-end: var(--safe-area-bottom);
+  overflow: visible;
 
   background: var(--color-surface);
   border-top: 1px solid var(--color-border);
@@ -27,8 +31,8 @@
 
 .item {
   flex: 1;
-  /* Four items now instead of three. `min-width: 0` lets them share a 320px viewport without
-     the widest label forcing the bar to overflow. */
+  /* Five slots share the bar now (four tabs + the centre action). `min-width: 0` lets them
+     share a 320px viewport without the widest label forcing the bar to overflow. */
   min-width: 0;
 
   display: flex;
@@ -43,8 +47,8 @@
   font-weight: var(--font-weight-semibold);
 }
 
-/* At four items a long Hebrew label on a 320px screen would otherwise wrap to two lines and
-   push the icon out of vertical centre. */
+/* A long Hebrew label on a 320px screen would otherwise wrap to two lines and push the icon out
+   of vertical centre. */
 .label {
   max-width: 100%;
   overflow: hidden;
@@ -54,4 +58,73 @@
 
 .active {
   color: var(--color-primary);
+}
+
+/*
+ * The central "תקלה חדשה" action. Same flex slot as a tab (so the five items space evenly), but
+ * its circle is lifted above the bar by `--bottom-nav-cta-lift` — `AppLayout` adds that same
+ * value to the mobile scroll clearance so the lifted circle never overlaps the last line of
+ * content (§7).
+ */
+.centerAction {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-decoration: none;
+  /* Keeps the label baseline aligned with the tab labels despite the lifted circle above it. */
+  justify-content: flex-end;
+}
+
+.centerCircle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  /* The same teal the removed header CTA used — the one primary action colour. */
+  background: var(--color-primary);
+  color: #ffffff;
+  /* Lift it above the bar; the circle is the main visual emphasis. */
+  margin-block-start: calc(-1 * var(--bottom-nav-cta-lift));
+  box-shadow: var(--shadow-elevated);
+  /* A ring in the surface colour so the lifted circle reads as sitting on top of the bar. */
+  border: 3px solid var(--color-surface);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.centerAction:hover .centerCircle {
+  background: var(--color-primary-hover);
+}
+
+.centerAction:active .centerCircle {
+  background: var(--color-primary-active);
+}
+
+.centerAction:focus-visible {
+  outline: none;
+}
+
+.centerAction:focus-visible .centerCircle {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.centerLabel {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .centerCircle {
+    transition: none;
+  }
 }

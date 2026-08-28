@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isCelebrationState, resolveToolboxState } from './toolboxState';
+import { celebrationKindFor, isInNewIssueFlow, resolveToolboxState } from './toolboxState';
 import { selectActiveOrder } from '../shared/hooks';
 import type { ActiveOrderSelection } from '../shared/hooks';
 import type { BookingDraft } from '../shared/hooks/bookingDraftContext';
@@ -146,20 +146,23 @@ describe('state 3 — arrival is a status, not a stopwatch', () => {
     expect(state.primaryText).not.toBe('השאר ביקורת');
   });
 
-  it('celebrates on entering ARRIVED, and also on REVIEW when a poll gap skipped ARRIVED', () => {
-    expect(isCelebrationState(resolveToolboxState({ selection: selection('ARRIVED'), draft: null, ...NO_ETA }))).toBe(true);
+  it('celebrates ARRIVED with the arrival kind', () => {
+    expect(celebrationKindFor(resolveToolboxState({ selection: selection('ARRIVED'), draft: null, ...NO_ETA }))).toBe('ARRIVED');
+  });
+
+  it('celebrates REVIEW (i.e. the order just reached COMPLETED) with the completion kind, even when a poll gap skipped ARRIVED', () => {
     expect(
-      isCelebrationState(resolveToolboxState({ selection: selection('COMPLETED_UNACKNOWLEDGED'), draft: null, ...NO_ETA })),
-    ).toBe(true);
+      celebrationKindFor(resolveToolboxState({ selection: selection('COMPLETED_UNACKNOWLEDGED'), draft: null, ...NO_ETA })),
+    ).toBe('COMPLETED');
   });
 
   it('does not celebrate the request or ETA states', () => {
-    expect(isCelebrationState(resolveToolboxState({ selection: selection('PENDING_CONFIRMED'), draft: null, ...NO_ETA }))).toBe(false);
+    expect(celebrationKindFor(resolveToolboxState({ selection: selection('PENDING_CONFIRMED'), draft: null, ...NO_ETA }))).toBeNull();
     expect(
-      isCelebrationState(
+      celebrationKindFor(
         resolveToolboxState({ selection: selection('ON_THE_WAY'), draft: null, remainingMinutes: 5, isArriving: false }),
       ),
-    ).toBe(false);
+    ).toBeNull();
   });
 });
 
@@ -204,5 +207,31 @@ describe('selectActiveOrder now covers ARRIVED', () => {
 
     expect(isLiveActiveOrder(selection('ARRIVED'))).toBe(true);
     expect(isLiveActiveOrder(selection('COMPLETED_UNACKNOWLEDGED'))).toBe(false);
+  });
+});
+
+describe('isInNewIssueFlow (mobile-nav fix)', () => {
+  it('matches every route in the new-issue / order-creation flow', () => {
+    expect(isInNewIssueFlow('/issues/new')).toBe(true);
+    expect(isInNewIssueFlow('/issues/42/matching')).toBe(true);
+    expect(isInNewIssueFlow('/issues/42/booking')).toBe(true);
+    expect(isInNewIssueFlow('/issues/42/sos-booking')).toBe(true);
+  });
+
+  it('matches nested paths under any of the flow routes', () => {
+    expect(isInNewIssueFlow('/issues/new/anything')).toBe(true);
+    expect(isInNewIssueFlow('/issues/42/booking/confirm')).toBe(true);
+  });
+
+  it('does not match unrelated customer routes, including other /orders and /issues paths', () => {
+    expect(isInNewIssueFlow('/')).toBe(false);
+    expect(isInNewIssueFlow('/orders')).toBe(false);
+    expect(isInNewIssueFlow('/orders/42')).toBe(false);
+    expect(isInNewIssueFlow('/orders/42/review')).toBe(false);
+    expect(isInNewIssueFlow('/favorites')).toBe(false);
+    expect(isInNewIssueFlow('/profile')).toBe(false);
+    // A single issue id segment with no recognised flow suffix — not one of the four routes.
+    expect(isInNewIssueFlow('/issues/42')).toBe(false);
+    expect(isInNewIssueFlow('/issues/42/somethingelse')).toBe(false);
   });
 });

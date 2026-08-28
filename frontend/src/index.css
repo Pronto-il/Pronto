@@ -80,6 +80,10 @@
   --bottom-nav-height: 68px;
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   --safe-area-top: env(safe-area-inset-top, 0px);
+  /* How far the bottom-nav centre "תקלה חדשה" action lifts above the bar. One source of truth:
+     `BottomNav.module.css` uses it to raise the circle, and `AppLayout.module.css` adds it to the
+     mobile scroll clearance so the lifted circle never overlaps the last line of content. */
+  --bottom-nav-cta-lift: 18px;
 
   /* --- Radius (§84) --- */
   --radius-sm: 8px;

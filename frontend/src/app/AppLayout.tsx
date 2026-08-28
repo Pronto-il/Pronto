@@ -69,10 +69,7 @@ import styles from './AppLayout.module.css';
  *   down from six. `BookingDraftIndicator` moved inside `.desktopOnlyNav` (it keeps the draft's
  *   dismiss action, which exists nowhere else in the app, reachable on desktop); the mobile-only
  *   profile icon is deleted outright. Both jobs are covered on mobile by the two elements below.
- * - **§2 — the new-issue CTA is the one dominant action under the header.** Same `<Link to=
- *   "/issues/new">` element and the same navigation as before, restyled by the stylesheet into a
- *   ~96px full-width block on its own row. It is emphatically *not* the active-order control
- *   (§17): this link always starts a new issue.
+ * - **§2 — the new-issue CTA.** *(Superseded by the 2026-08-28 nav redesign below.)*
  * - **§3-§8 — `<ActiveOrderIndicator>` is replaced by `<ActiveIssueToolbox>`**, a draggable
  *   toolbox rendered as a sibling of `<main>`. It keeps the review-prompt behaviour and the
  *   route resolution the old indicator had, and additionally covers the booking draft that
@@ -81,6 +78,19 @@ import styles from './AppLayout.module.css';
  * - **§9 — "פרופיל" returns to `<BottomNav>`**, making it the four-item bar `DESIGN_SYSTEM.md`
  *   §50 specifies. The desktop profile link is untouched, since `BottomNav` is hidden above
  *   640px and removing it there would strand `/profile`.
+ *
+ * **Mobile nav redesign (2026-08-28).** Removes the oversized new-issue banner and moves that
+ * action into the bottom bar:
+ *
+ * - **§3 — the `.issueCta` banner is gone.** The full-width teal "יש לך תקלה? בוא נטפל בזה"
+ *   block that sat under the header on mobile (and inline in the bar on desktop) is removed
+ *   entirely, along with its stylesheet rules. It was one of two competing primary CTAs on the
+ *   Home screen — `HomePage` has its own "יש לי תקלה" service-entry card, which is untouched.
+ * - **§4/§6 — the new-issue action lives in `<BottomNav>`** as an elevated centre button, the
+ *   single mobile entry point. It reuses `/issues/new`, so there is one flow.
+ * - **Desktop keeps a new-issue entry** as a compact "תקלה חדשה" nav link inside
+ *   `.desktopOnlyNav` (there is no bottom nav above 640px). This is the one deliberate desktop
+ *   change: a prominent teal button became a normal nav link, consistent with its siblings.
  */
 export default function AppLayout() {
   const { user, logout } = useAuth();
@@ -106,21 +116,6 @@ export default function AppLayout() {
             <span className={styles.logo} style={{ backgroundImage: `url(${logoUrl})` }} />
           </Link>
 
-          {/* The customer's primary action, in the chrome rather than on one page: reporting a
-              fault is what this product is for, and it should be one tap away from wherever the
-              customer already is. `CUSTOMER`-only — `/issues/new` is behind `RequireAuth
-              role="CUSTOMER"`, so offering it to a guest, a professional or an operator would be
-              a link to a bounce. One element at every width: on desktop it sits inline in the bar
-              between the brand and the nav actions; under 640px `.headerInner` wraps and it
-              becomes a full-width row directly under them (see the stylesheet), which is what
-              keeps the full sentence readable on a phone instead of truncating it. */}
-          {user?.role === 'CUSTOMER' && (
-            <Link to="/issues/new" className={styles.issueCta}>
-              <Wrench size={18} aria-hidden="true" />
-              <span>יש לך תקלה? בוא נטפל בזה</span>
-            </Link>
-          )}
-
           <nav className={styles.nav}>
             {user ? (
               <>
@@ -135,6 +130,17 @@ export default function AppLayout() {
                 </div>
                 <NotificationBell />
                 <div className={styles.desktopOnlyNav}>
+                  {/* Redesign §3/§4: the oversized "יש לך תקלה? בוא נטפל בזה" header banner is
+                      removed. On mobile the new-issue entry is now `BottomNav`'s elevated centre
+                      action; on desktop, where there is no bottom nav, it stays reachable from
+                      the chrome as this compact nav link (same `/issues/new` destination, §6).
+                      `CUSTOMER`-only — the route is behind `RequireAuth role="CUSTOMER"`. */}
+                  {user.role === 'CUSTOMER' && (
+                    <Link to="/issues/new" className={styles.navLink}>
+                      <Wrench size={18} aria-hidden="true" />
+                      <span>תקלה חדשה</span>
+                    </Link>
+                  )}
                   {user.role === 'CUSTOMER' && (
                     <Link to="/orders" className={styles.navLink}>
                       <ClipboardList size={18} aria-hidden="true" />

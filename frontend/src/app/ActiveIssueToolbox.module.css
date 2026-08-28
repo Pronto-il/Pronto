@@ -1,17 +1,20 @@
 /*
- * The toolbox IS the button (§3): no circle, no pill, no card, no surface behind it. Hence the
+ * The toolbox IS the button: no circle, no pill, no card, no surface behind it. Hence the
  * transparent background, zero padding and no border — the only thing painted is the SVG object
  * itself, and the only shadow is the soft one cast on the page beneath it.
  *
- * Positioned from `left`/`top` (set inline by `ActiveIssueToolbox` from the drag hook) rather
- * than the logical `inset-inline-*`: a dragged coordinate is a physical screen position, and
- * flipping it under RTL would send the toolbox to the opposite side of where the finger let go.
+ * Mobile-nav fix (2026-08-28): both `top` and `left` are set inline by `ActiveIssueToolbox` from
+ * `useToolboxPosition` — no `inset-inline-start` (or any other inset) here. That property is what
+ * used to permanently pin the toolbox to one RTL-logical side; the fix for "must be draggable to
+ * either physical edge" is removing the CSS constraint itself, not layering a workaround on top
+ * of it. See `useToolboxPosition.ts`'s doc comment for the full snap-to-nearest-edge behaviour.
  */
 .toolbox {
   position: fixed;
   z-index: var(--z-floating);
 
-  width: 108px;
+  /* Visual redesign: a compact card, not a wide illustration — was 108px. */
+  width: 80px;
   padding: 0;
   border: none;
   background: transparent;
@@ -26,9 +29,16 @@
   -webkit-tap-highlight-color: transparent;
 
   /* §22: the shadow is the only resting decoration, and the transition covers the press
-     feedback below — never a loop, never an entrance animation. */
-  filter: drop-shadow(0 6px 10px rgba(21, 41, 63, 0.28));
-  transition: transform var(--duration-fast) var(--ease-out);
+     feedback below — never a loop, never an entrance animation. Softened for the new compact
+     white card (the old wide navy illustration carried a heavier shadow to read as an object
+     floating above the page; a small light card needs only a subtle lift). `left` is animated
+     too — it is what makes the horizontal snap-to-edge on release (`useToolboxPosition.ts`)
+     read as a deliberate little glide into place rather than a jump. `.dragging` below turns
+     both transitions off while a gesture is live, same as always. */
+  filter: drop-shadow(0 4px 10px rgba(21, 41, 63, 0.16));
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    left var(--duration-quick) var(--ease-out);
 }
 
 /* Subtle press feedback (§22's "optional subtle scale on tap"). */
@@ -46,7 +56,7 @@
    the element is already following the pointer every frame, and easing that would make it lag. */
 .dragging {
   cursor: grabbing;
-  filter: drop-shadow(0 12px 18px rgba(21, 41, 63, 0.34));
+  filter: drop-shadow(0 8px 16px rgba(21, 41, 63, 0.22));
   transition: none;
 }
 
@@ -74,6 +84,6 @@
    The label steps down with it, in `ToolboxGraphic.module.css`'s matching query. */
 @media (max-width: 360px) {
   .toolbox {
-    width: 94px;
+    width: 68px;
   }
 }

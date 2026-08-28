@@ -3,22 +3,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useToolboxPosition } from './useToolboxPosition';
 
 /**
- * The draggable toolbox's position logic.
+ * The floating toolbox's drag/clamp/persist logic (mobile-nav fix, 2026-08-28): free vertical
+ * drag (unchanged from the prior redesign) plus snap-to-nearest-horizontal-edge drag (new — the
+ * prior redesign removed horizontal movement entirely and pinned the toolbox to one CSS
+ * `inset-inline-start` side permanently, which is the bug this fixes).
  *
- * Three properties are worth pinning down here, because each one is a defect the customer would
- * hit rather than a detail: **the toolbox never leaves the viewport** (§4/§7 — including after a
- * rotation that invalidates a stored position), **a tap is not a drag** (§6 — get the threshold
- * wrong and the control either never navigates or navigates every time it is nudged), and **the
- * bottom navigation is never draggable-under** (§10).
+ * Worth pinning down here: the toolbox **stays inside the viewport and above the bottom
+ * navigation** vertically (unchanged), it **always settles against one of the two horizontal
+ * edges, never mid-screen**, a drag **can move it from either edge to the other**, a **tap is not
+ * a drag** on either axis, and a **resize re-clamps without ever flipping which edge an
+ * already-settled toolbox is pinned to** (side is authoritative state, not re-derived from raw
+ * geometry every time).
  *
  * The element is faked rather than rendered: this hook's contract is a `getBoundingClientRect`
  * and a stream of pointer events, and driving it directly is what makes the boundary arithmetic
- * observable at all.
+ * observable.
  */
 
-const TOOLBOX_WIDTH = 108;
 const TOOLBOX_HEIGHT = 94;
-const STORAGE_KEY = 'pronto.toolbox.position';
+const TOOLBOX_WIDTH = 80;
+const STORAGE_KEY = 'pronto.toolbox.pos';
 
 /** Mirrors `index.css` — the hook reads these off `:root` at runtime. */
 function stubRootTokens({ navHeight = '68px', safeBottom = '0px', safeTop = '0px' } = {}) {
@@ -50,8 +54,8 @@ function fakeElement(): HTMLElement {
     ({
       width: TOOLBOX_WIDTH,
       height: TOOLBOX_HEIGHT,
-      left: Number.parseFloat(node.style.left || '0'),
       top: Number.parseFloat(node.style.top || '0'),
+      left: Number.parseFloat(node.style.left || '0'),
     }) as DOMRect;
   return node;
 }
@@ -64,12 +68,12 @@ function pointerEvent(x: number, y: number, pointerId = 1) {
     React.PointerEvent<HTMLElement>;
 }
 
-/** Mirrors what React does with the component's inline `left`/`top`, so the fake element's
- *  rect agrees with the hook's committed position — which is what makes the grab-offset
- *  arithmetic in `onPointerDown` observable. */
-function syncRect(node: HTMLElement, result: { current: Handlers }) {
-  node.style.left = `${result.current.position?.x ?? 0}px`;
-  node.style.top = `${result.current.position?.y ?? 0}px`;
+/** Mirrors what React does with the component's inline `top`/`left`, so the fake element's rect
+ *  agrees with the hook's committed position — which is what makes the grab-offset arithmetic
+ *  observable on both axes. */
+function syncPosition(node: HTMLElement, result: { current: Handlers }) {
+  node.style.top = `${result.current.top ?? 0}px`;
+  node.style.left = `${result.current.left ?? 0}px`;
 }
 
 function mountHook(node: HTMLElement) {
@@ -77,18 +81,18 @@ function mountHook(node: HTMLElement) {
   act(() => {
     view.result.current.elementRef(node);
   });
-  syncRect(node, view.result);
+  syncPosition(node, view.result);
   return view;
 }
 
 /** Drives a full press → move → release gesture, keeping the fake element's rect in step. */
 function drag(result: { current: Handlers }, node: HTMLElement, from: [number, number], to: [number, number]) {
-  syncRect(node, result);
+  syncPosition(node, result);
   act(() => result.current.onPointerDown(pointerEvent(from[0], from[1])));
   act(() => result.current.onPointerMove(pointerEvent(to[0], to[1])));
   act(() => {
-    node.style.left = `${result.current.position?.x ?? 0}px`;
-    node.style.top = `${result.current.position?.y ?? 0}px`;
+    node.style.top = `${result.current.top ?? 0}px`;
+    node.style.left = `${result.current.left ?? 0}px`;
     result.current.onPointerUp(pointerEvent(to[0], to[1]));
   });
 }
@@ -109,14 +113,17 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
+// Horizontal bounds on the default 390px viewport: min = 12 (EDGE_MARGIN), max = 390 - 80 - 12 = 298.
+const RIGHT_EDGE = 298;
+const LEFT_EDGE = 12;
+
 describe('initial placement', () => {
-  it('defaults to the lower-left, clear of the bottom navigation', () => {
+  it('defaults to the right edge, low on the side, just above the bottom navigation', () => {
     const { result } = mountHook(fakeElement());
 
-    // §4: 20-30px from the left edge.
-    expect(result.current.position?.x).toBe(24);
-    // §10: above the 68px nav, with the 12px edge margin. 844 - 94 - 68 - 12 = 670.
-    expect(result.current.position?.y).toBe(670);
+    // 844 - 94 - 68 (nav) - 12 (margin) = 670.
+    expect(result.current.top).toBe(670);
+    expect(result.current.left).toBe(RIGHT_EDGE);
   });
 
   it('leaves room for the iOS home indicator on top of the nav bar', () => {
@@ -124,60 +131,91 @@ describe('initial placement', () => {
     const { result } = mountHook(fakeElement());
 
     // 844 - 94 - 68 - 34 - 12 = 636 — 34px higher than without the inset.
-    expect(result.current.position?.y).toBe(636);
+    expect(result.current.top).toBe(636);
   });
 
   it('ignores the nav bar above the 640px breakpoint, where it is not rendered', () => {
     setViewport(1280, 900);
     const { result } = mountHook(fakeElement());
 
-    // No 68px subtraction: 900 - 94 - 12 = 794.
-    expect(result.current.position?.y).toBe(794);
+    // No 68px subtraction: 900 - 94 - 12 = 794. Horizontal: 1280 - 80 - 12 = 1188.
+    expect(result.current.top).toBe(794);
+    expect(result.current.left).toBe(1188);
   });
 
-  it('restores a previously stored position', () => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ x: 200, y: 300 }));
+  it('restores a previously stored position — both the vertical offset and the snapped side', () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ top: 300, side: 'left' }));
     const { result } = mountHook(fakeElement());
 
-    expect(result.current.position).toEqual({ x: 200, y: 300 });
+    expect(result.current.top).toBe(300);
+    expect(result.current.left).toBe(LEFT_EDGE);
   });
 
-  it('clamps a stored position that no longer fits the viewport', () => {
-    // Saved on a tablet, reopened on a small phone — §7's explicit requirement.
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ x: 980, y: 1400 }));
+  it('clamps a stored vertical offset that no longer fits the viewport', () => {
+    // Saved on a tall screen, reopened on a short one.
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ top: 1400, side: 'right' }));
     const { result } = mountHook(fakeElement());
 
-    expect(result.current.position).toEqual({ x: 390 - TOOLBOX_WIDTH - 12, y: 670 });
+    expect(result.current.top).toBe(670); // clamped down to the max
   });
 
-  it('falls back to the default when the stored value is corrupt', () => {
-    window.localStorage.setItem(STORAGE_KEY, '{"x":"left"}');
+  it('falls back to the defaults when the stored value is malformed', () => {
+    window.localStorage.setItem(STORAGE_KEY, '{"y":"low"}');
     const { result } = mountHook(fakeElement());
 
-    expect(result.current.position).toEqual({ x: 24, y: 670 });
+    expect(result.current.top).toBe(670);
+    expect(result.current.left).toBe(RIGHT_EDGE);
+  });
+
+  it('ignores a stale bare-number value left by the previous (pre-side) storage shape', () => {
+    // The old key, `pronto.toolbox.top`, held a bare number under the vertical-only redesign.
+    // A value of that shape under the new key must not be half-read.
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(300));
+    const { result } = mountHook(fakeElement());
+
+    expect(result.current.top).toBe(670); // default, not 300
+    expect(result.current.left).toBe(RIGHT_EDGE);
+  });
+
+  it('ignores a stale {x, y} value from an even earlier storage shape', () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ x: 24, y: 300 }));
+    const { result } = mountHook(fakeElement());
+
+    expect(result.current.top).toBe(670); // default, not 300
   });
 });
 
-describe('tap versus drag (§6)', () => {
+describe('tap versus drag', () => {
   it('treats movement below the threshold as a tap and does not move the toolbox', () => {
     const node = fakeElement();
     const { result } = mountHook(node);
-    const start = result.current.position;
+    const startTop = result.current.top;
+    const startLeft = result.current.left;
 
-    drag(result, node, [100, 400], [104, 402]); // ~4.5px — a thumb roll
+    drag(result, node, [340, 400], [343, 402]); // ~3.6px — a thumb roll
 
     expect(result.current.wasTap()).toBe(true);
-    expect(result.current.position).toEqual(start);
+    expect(result.current.top).toBe(startTop);
+    expect(result.current.left).toBe(startLeft);
   });
 
-  it('treats movement past the threshold as a drag and suppresses the tap', () => {
+  it('treats vertical movement past the threshold as a drag and suppresses the tap', () => {
     const node = fakeElement();
     const { result } = mountHook(node);
 
-    drag(result, node, [100, 400], [160, 300]);
+    drag(result, node, [340, 400], [340, 300]);
 
     expect(result.current.wasTap()).toBe(false);
-    expect(result.current.position).not.toEqual({ x: 24, y: 670 });
+    expect(result.current.top).not.toBe(670);
+  });
+
+  it('treats horizontal movement past the threshold as a drag and suppresses the tap', () => {
+    const node = fakeElement();
+    const { result } = mountHook(node);
+
+    drag(result, node, [340, 400], [40, 400]);
+
+    expect(result.current.wasTap()).toBe(false);
   });
 
   it('still reports a drag after the pointer is released, so the click handler can see it', () => {
@@ -186,91 +224,202 @@ describe('tap versus drag (§6)', () => {
     const node = fakeElement();
     const { result } = mountHook(node);
 
-    drag(result, node, [100, 400], [200, 400]);
+    drag(result, node, [340, 400], [40, 400]);
 
     expect(result.current.isDragging).toBe(false);
     expect(result.current.wasTap()).toBe(false);
   });
 });
 
-describe('viewport boundaries (§4)', () => {
-  it('cannot be dragged off the left or top edge', () => {
+describe('vertical boundaries (free drag, unchanged)', () => {
+  it('cannot be dragged off the top edge', () => {
     const node = fakeElement();
     const { result } = mountHook(node);
 
-    drag(result, node, [100, 400], [-500, -500]);
+    drag(result, node, [340, 400], [340, -500]);
 
-    expect(result.current.position).toEqual({ x: 12, y: 12 });
-  });
-
-  it('cannot be dragged off the right edge', () => {
-    const node = fakeElement();
-    const { result } = mountHook(node);
-
-    drag(result, node, [100, 400], [5000, 400]);
-
-    expect(result.current.position?.x).toBe(390 - TOOLBOX_WIDTH - 12);
+    expect(result.current.top).toBe(12); // EDGE_MARGIN
   });
 
   it('cannot be dragged down behind the bottom navigation', () => {
     const node = fakeElement();
     const { result } = mountHook(node);
 
-    drag(result, node, [100, 400], [100, 5000]);
+    drag(result, node, [340, 400], [340, 5000]);
 
-    // Bottom-most legal top is the same 670 the default uses.
-    expect(result.current.position?.y).toBe(670);
+    expect(result.current.top).toBe(670); // same max the default uses
+  });
+
+  it('is released exactly where the gesture ended, not snapped to any particular value', () => {
+    const node = fakeElement();
+    const { result } = mountHook(node);
+    // Grabbed exactly at the element's current corner (zero offset), so the drop point commits
+    // directly — isolates this assertion from grab-offset arithmetic.
+    const start: [number, number] = [result.current.left!, result.current.top!];
+
+    drag(result, node, start, [start[0], 250]);
+
+    expect(result.current.top).toBe(250);
   });
 });
 
-describe('persistence (§7)', () => {
-  it('writes the position to localStorage after a drag', () => {
+describe('horizontal snap-to-edge (mobile-nav fix)', () => {
+  it('follows the pointer live while the drag is in progress, before any snap happens', () => {
+    const node = fakeElement();
+    const { result } = mountHook(node); // starts pinned to the right edge (298)
+
+    syncPosition(node, result);
+    act(() => result.current.onPointerDown(pointerEvent(340, 400)));
+    // grabOffsetX = 340 - 298 = 42; next left = clamp(150 - 42, bounds) = 108.
+    act(() => result.current.onPointerMove(pointerEvent(150, 400)));
+
+    expect(result.current.left).toBe(108);
+    expect(result.current.left).not.toBe(LEFT_EDGE);
+    expect(result.current.left).not.toBe(RIGHT_EDGE);
+  });
+
+  it('can snap to the right edge after a drag that ends on the right half', () => {
     const node = fakeElement();
     const { result } = mountHook(node);
 
-    drag(result, node, [100, 400], [200, 500]);
+    // Start from the left edge so the drag is a genuine move, not a no-op at the same edge.
+    drag(result, node, [340, 400], [20, 400]);
+    expect(result.current.left).toBe(LEFT_EDGE);
+
+    drag(result, node, [20, 400], [350, 400]);
+
+    expect(result.current.left).toBe(RIGHT_EDGE);
+  });
+
+  it('can snap to the left edge after a drag that ends on the left half', () => {
+    const node = fakeElement();
+    const { result } = mountHook(node); // starts at the right edge
+
+    drag(result, node, [340, 400], [20, 400]);
+
+    expect(result.current.left).toBe(LEFT_EDGE);
+  });
+
+  it('switches the snapped side each time a drag crosses to the other half', () => {
+    const node = fakeElement();
+    const { result } = mountHook(node);
+
+    expect(result.current.left).toBe(RIGHT_EDGE);
+    drag(result, node, [340, 400], [20, 400]);
+    expect(result.current.left).toBe(LEFT_EDGE);
+    drag(result, node, [20, 400], [370, 400]);
+    expect(result.current.left).toBe(RIGHT_EDGE);
+    drag(result, node, [370, 400], [30, 400]);
+    expect(result.current.left).toBe(LEFT_EDGE);
+  });
+
+  it('never rests mid-screen — a release near the midpoint still snaps to the nearer edge', () => {
+    const node = fakeElement();
+    const { result } = mountHook(node);
+    const midpoint = (LEFT_EDGE + RIGHT_EDGE) / 2; // 155
+    const top0 = result.current.top!;
+
+    // Each drag is grabbed at zero offset (the element's own current corner), so the release
+    // x lands exactly on the pre-snap value the nearest-edge decision is made from.
+    drag(result, node, [result.current.left!, top0], [midpoint - 5, top0]);
+    expect(result.current.left).toBe(LEFT_EDGE);
+
+    drag(result, node, [result.current.left!, top0], [midpoint + 5, top0]);
+    expect(result.current.left).toBe(RIGHT_EDGE);
+  });
+
+  it('preserves the current vertical position while snapping horizontally', () => {
+    const node = fakeElement();
+    const { result } = mountHook(node);
+
+    drag(result, node, [result.current.left!, result.current.top!], [40, 250]);
+
+    expect(result.current.top).toBe(250); // vertical: released exactly here, unchanged behaviour
+    expect(result.current.left).toBe(LEFT_EDGE); // horizontal: snapped
+  });
+
+  it('keeps the toolbox clear of the bottom nav / safe area after snapping horizontally', () => {
+    stubRootTokens({ safeBottom: '20px' });
+    const node = fakeElement();
+    const { result } = mountHook(node);
+
+    drag(result, node, [340, 400], [20, 5000]); // drag toward the left edge, off the bottom
+
+    expect(result.current.left).toBe(LEFT_EDGE);
+    // 844 - 94 - 68 - 20 - 12 = 650 — still clamped above the nav + inset, exactly as vertical
+    // clamping already guaranteed before this fix.
+    expect(result.current.top).toBe(650);
+  });
+
+  it('persists the snapped side (not a raw x) so a resize cannot flip which edge it is on', () => {
+    const node = fakeElement();
+    const { result } = mountHook(node);
+
+    drag(result, node, [340, 400], [20, 400]); // snap left
+    expect(result.current.left).toBe(LEFT_EDGE);
+
+    act(() => {
+      node.style.top = `${result.current.top}px`;
+      node.style.left = `${result.current.left}px`;
+      setViewport(320, 480); // much narrower and shorter
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    // Still the left edge (12) on the new, narrower viewport — re-clamped, not re-derived from
+    // the old raw x, which on a narrower screen could otherwise have read as "closer to the
+    // other side" and silently flipped which edge the toolbox rests against.
+    expect(result.current.left).toBe(LEFT_EDGE);
+  });
+});
+
+describe('persistence', () => {
+  it('writes the vertical offset and the snapped side to localStorage after a drag', () => {
+    const node = fakeElement();
+    const { result } = mountHook(node);
+
+    drag(result, node, [340, 400], [20, 250]);
 
     const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? 'null');
-    expect(stored).toEqual(result.current.position);
+    expect(stored).toEqual({ top: result.current.top, side: 'left' });
   });
 
   it('does not write anything for a mere tap', () => {
     const node = fakeElement();
     const { result } = mountHook(node);
 
-    drag(result, node, [100, 400], [102, 401]);
+    drag(result, node, [340, 400], [341, 401]);
 
     expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
   it('survives a localStorage that throws, rather than breaking the toolbox', () => {
-    // Safari private mode. A toolbox at its default spot is a complete recovery.
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('QuotaExceededError');
     });
     const node = fakeElement();
     const { result } = mountHook(node);
 
-    expect(() => drag(result, node, [100, 400], [200, 500])).not.toThrow();
-    expect(result.current.position).toBeTruthy();
+    expect(() => drag(result, node, [340, 400], [20, 250])).not.toThrow();
+    expect(result.current.top).not.toBeNull();
+    expect(result.current.left).not.toBeNull();
   });
 });
 
 describe('viewport changes', () => {
-  it('re-clamps into view when the window shrinks under it', () => {
+  it('re-clamps the vertical position into view when the window shrinks under it', () => {
     const node = fakeElement();
     const { result } = mountHook(node);
-    drag(result, node, [100, 400], [260, 200]);
-    expect(result.current.position?.x).toBe(260 - (100 - 24));
+    // Default on the tall screen sits at 670, which is below the short screen's usable range.
+    expect(result.current.top).toBe(670);
 
     act(() => {
-      node.style.left = `${result.current.position?.x}px`;
-      node.style.top = `${result.current.position?.y}px`;
-      setViewport(320, 568);
+      node.style.top = `${result.current.top}px`;
+      node.style.left = `${result.current.left}px`;
+      setViewport(320, 480);
       window.dispatchEvent(new Event('resize'));
     });
 
-    expect(result.current.position?.x).toBeLessThanOrEqual(320 - TOOLBOX_WIDTH - 12);
-    expect(result.current.position?.y).toBeLessThanOrEqual(568 - TOOLBOX_HEIGHT - 68 - 12);
+    // Max top on the short screen: 480 - 94 - 68 - 12 = 306. The stale 670 is clamped to it.
+    expect(result.current.top).toBe(306);
   });
 });

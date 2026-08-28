@@ -1,7 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { PageHeader } from '../../shared/components';
-import { useAuth } from '../../shared/hooks';
 import {
   loginOtp,
   verifyEmail,
@@ -11,6 +10,7 @@ import {
   type OtpChallenge,
 } from '../../shared/api';
 import { OtpForm } from './OtpForm';
+import { useSessionLanding } from './useSessionLanding';
 import styles from './formStyles.module.css';
 
 /**
@@ -58,7 +58,7 @@ const HEADINGS: Record<string, { title: string; description: string; submit: str
 export default function AuthChallengePage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { establishSession } = useAuth();
+  const land = useSessionLanding();
 
   // A challenge-bearing step with no challenge is a shape the backend cannot produce — `register`,
   // `verify-email`, `login` and `login/otp` always populate `challenge` unless `nextStep` is
@@ -69,18 +69,10 @@ export default function AuthChallengePage() {
   const initial = raw?.challenge ? raw : null;
   const [state, setState] = useState<AuthChallengeState | null>(initial);
 
-  const landingFor = useCallback((role: string) => {
-    // MS1: an ADMIN lands on the operator review queue — the only screen their role can reach.
-    if (role === 'PROFESSIONAL') return '/pro';
-    if (role === 'ADMIN') return '/admin/professionals';
-    return '/';
-  }, []);
-
   const advance = useCallback(
     async (response: AuthStepResponse) => {
       if (response.nextStep === 'AUTHENTICATED' && response.session) {
-        const me = await establishSession(response.session);
-        navigate(landingFor(me.role), { replace: true });
+        await land(response.session);
         return;
       }
       if (response.nextStep === 'LOGIN' || !response.challenge) {
@@ -100,7 +92,7 @@ export default function AuthChallengePage() {
       }
       setState({ nextStep: response.nextStep, challenge: response.challenge });
     },
-    [establishSession, landingFor, navigate],
+    [land, navigate],
   );
 
   if (!state) {

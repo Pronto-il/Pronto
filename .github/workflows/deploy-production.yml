@@ -176,6 +176,13 @@ jobs:
     # No `environment:` here on purpose. This job needs to push to ECR but must not be able to touch
     # the running service, and it deliberately runs BEFORE the approval gate so a reviewer can
     # approve a deployment of an image that already exists and has already been scanned.
+    #
+    # Because it has no `environment:`, it never receives an `environment:production`-scoped OIDC
+    # subject claim, and therefore cannot assume the deploy-backend/deploy-frontend jobs' role below
+    # (infra/terraform/iam.tf's github_deploy, whose trust is deliberately environment-only). It
+    # assumes a separate role instead -- github_ecr_push, trusted for `ref:refs/heads/main` and
+    # authorized for nothing but pushing to the one backend ECR repository. See that role's own
+    # comment in iam.tf for why this is a second role rather than broadening github_deploy's trust.
     permissions:
       contents: read
       id-token: write
@@ -191,9 +198,10 @@ jobs:
         with:
           # An ARN, not a key. No AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY exists for this
           # deployment -- the credentials here are minted by STS for this job, expire in an hour,
-          # and cannot be exfiltrated for later use. Stored as a repository VARIABLE rather than a
-          # secret because an ARN is not sensitive and is useless without the trust relationship.
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          # and cannot be exfiltrated for later use. Stored as a repository VARIABLE (not
+          # environment-scoped, since this job has no environment) rather than a secret because an
+          # ARN is not sensitive and is useless without the trust relationship.
+          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Log in to ECR

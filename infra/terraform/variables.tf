@@ -351,3 +351,21 @@ variable "sms_verification_required" {
   type        = bool
   default     = true
 }
+
+variable "github_repository_immutable" {
+  description = <<-EOT
+    The same repository as github_repository, in GitHub's IMMUTABLE OIDC form:
+    `<owner>@<ownerId>/<name>@<repoId>`.
+
+    GitHub mints OIDC subject claims with numeric ids so that renaming or transferring a repository
+    does not break its cloud trust relationships. Read it from
+    `gh api repos/<owner>/<repo>/actions/oidc/customization/sub` -> `sub_claim_prefix`, which
+    reports the exact prefix tokens will carry.
+
+    Both spellings are trusted (see iam.tf), because which one GitHub serves depends on the rollout
+    and on whether the repository has been transferred. Trusting both is not a widening: each is an
+    exact match naming this repository and this environment.
+  EOT
+  type        = string
+  default     = "Pronto-il@321479622/Pronto@1181615069"
+}

@@ -46,7 +46,9 @@ import java.util.UUID;
  *   <li><b>{@value #RESEND_COOLDOWN_SECONDS}s cooldown and {@value #MAX_ISSUES_PER_HOUR} codes per
  *       purpose per hour.</b> The cooldown spaces requests; the hourly ceiling is what actually
  *       bounds them, since a cooldown alone permits one message a minute forever — which is both an
- *       SMS bill and a way to harass whoever owns that handset.</li>
+ *       SMS bill and a way to harass whoever owns that handset. Both count messages the provider
+ *       <em>accepted</em>, never messages merely attempted — see {@link OtpChallengeWriter}, where
+ *       counting attempts used to turn one provider refusal into a locked-out customer.</li>
  * </ul>
  *
  * <p><b>The plaintext code never leaves this class except towards a provider.</b> It is generated
@@ -118,7 +120,8 @@ public class OtpService {
      * successful delivery, never before it. Invalidating first would mean that a provider failure
      * destroys a code the user could still have used and replaces it with one that never arrived.
      * Here a failed delivery abandons the new challenge instead, so the net effect is nothing at all
-     * and the user's existing code keeps working.
+     * and the user's existing code keeps working — including, since {@code V54}, costing its owner
+     * neither their cooldown nor a slot in their hourly ceiling.
      *
      * @param enforceCooldown {@code true} for a user-initiated resend, where the
      *                        {@value #RESEND_COOLDOWN_SECONDS}s spacing rule applies. {@code false}
@@ -138,7 +141,7 @@ public class OtpService {
         boolean delivered = dispatch(user, purpose, code);
 
         if (delivered) {
-            challengeWriter.supersedePrevious(user.getId(), purpose, challenge.getId());
+            challengeWriter.recordDelivered(user.getId(), purpose, challenge.getId());
         } else {
             challengeWriter.abandon(challenge.getId());
         }

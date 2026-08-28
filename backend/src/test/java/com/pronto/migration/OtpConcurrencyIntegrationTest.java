@@ -343,6 +343,111 @@ class OtpConcurrencyIntegrationTest {
         assertThat(abandoned).isEqualTo(1);
     }
 
+    // ---- Case E: the two rate rules, against real JPQL (V54) ----
+    //
+    // These belong here rather than in OtpServiceTest for a reason that is not merely thoroughness.
+    // Both rules are expressed as repository queries, and the cooldown's is a DERIVED query --
+    // Spring Data parses its method name at context startup. A unit test mocks the repository and
+    // would happily pass against a name that no parser accepts, while the real application refused
+    // to boot. Only building the genuine repository proves the name resolves at all.
+
+    /** Persists a challenge that was dispatched successfully {@code ageSeconds} ago. */
+    private Long deliveredChallenge(OtpPurpose purpose, long ageSeconds) {
+        Long id = liveChallenge(purpose);
+        transactionTemplate.execute(status -> repository.markDelivered(id, Instant.now()));
+        jdbc.update("UPDATE verification_codes SET created_at = created_at - make_interval(secs => ?), "
+                + "delivered_at = delivered_at - make_interval(secs => ?) WHERE id = ?",
+                ageSeconds, ageSeconds, id);
+        return id;
+    }
+
+    /** Persists a challenge whose dispatch failed: inserted, never stamped, then abandoned. */
+    private Long undeliveredChallenge(OtpPurpose purpose) {
+        Long id = liveChallenge(purpose);
+        transactionTemplate.execute(status -> repository.consume(id, Instant.now()));
+        return id;
+    }
+
+    @Test
+    void caseE_theCooldownLookupFindsTheNewestDeliveredCode_andIgnoresOneThatWasNeverSent() {
+        Long delivered = deliveredChallenge(OtpPurpose.PHONE_VERIFICATION, 90);
+        undeliveredChallenge(OtpPurpose.PHONE_VERIFICATION);
+
+        VerificationCode newest = transactionTemplate.execute(status -> repository
+                .findFirstByUserIdAndPurposeAndDeliveredAtIsNotNullOrderByDeliveredAtDesc(
+                        userId, OtpPurpose.PHONE_VERIFICATION)
+                .orElse(null));
+
+        assertThat(newest).isNotNull();
+        assertThat(newest.getId())
+                .as("the failed dispatch is newer, but nothing was sent, so it is not what spaces the next one")
+                .isEqualTo(delivered);
+    }
+
+    @Test
+    void caseE_withNothingEverDelivered_thereIsNoCooldownToServe() {
+        undeliveredChallenge(OtpPurpose.PHONE_VERIFICATION);
+        undeliveredChallenge(OtpPurpose.PHONE_VERIFICATION);
+
+        VerificationCode newest = transactionTemplate.execute(status -> repository
+                .findFirstByUserIdAndPurposeAndDeliveredAtIsNotNullOrderByDeliveredAtDesc(
+                        userId, OtpPurpose.PHONE_VERIFICATION)
+                .orElse(null));
+
+        assertThat(newest).isNull();
+    }
+
+    @Test
+    void caseE_theHourlyCeilingCountsWhatWasSent_notWhatWasAttempted() {
+        deliveredChallenge(OtpPurpose.PHONE_VERIFICATION, 10);
+        deliveredChallenge(OtpPurpose.PHONE_VERIFICATION, 20);
+        for (int i = 0; i < 6; i++) {
+            undeliveredChallenge(OtpPurpose.PHONE_VERIFICATION);
+        }
+        // Delivered, but outside the window.
+        deliveredChallenge(OtpPurpose.PHONE_VERIFICATION, 7200);
+
+        Long counted = transactionTemplate.execute(status -> repository.countDeliveredSince(
+                userId, OtpPurpose.PHONE_VERIFICATION, Instant.now().minusSeconds(3600)));
+
+        assertThat(counted).isEqualTo(2L);
+    }
+
+    @Test
+    void caseE_theCeilingIsPerPurpose_soAFailedSmsRunDoesNotTouchTheEmailBudget() {
+        deliveredChallenge(OtpPurpose.EMAIL_LOGIN_OTP, 10);
+        for (int i = 0; i < 5; i++) {
+            undeliveredChallenge(OtpPurpose.PHONE_VERIFICATION);
+        }
+
+        Long sms = transactionTemplate.execute(status -> repository.countDeliveredSince(
+                userId, OtpPurpose.PHONE_VERIFICATION, Instant.now().minusSeconds(3600)));
+        Long email = transactionTemplate.execute(status -> repository.countDeliveredSince(
+                userId, OtpPurpose.EMAIL_LOGIN_OTP, Instant.now().minusSeconds(3600)));
+
+        assertThat(sms).isZero();
+        assertThat(email).isEqualTo(1L);
+    }
+
+    /** The stamp is written once — a retry must not push a user's own cooldown forward. */
+    @Test
+    void caseE_theDeliveryStampIsWrittenOnce() {
+        Long id = liveChallenge(OtpPurpose.PHONE_VERIFICATION);
+
+        Integer stamped = transactionTemplate.execute(
+                status -> repository.markDelivered(id, Instant.now()));
+        assertThat(stamped).isEqualTo(1);
+        Instant first = jdbc.queryForObject(
+                "SELECT delivered_at FROM verification_codes WHERE id = ?", Instant.class, id);
+
+        Integer again = transactionTemplate.execute(
+                status -> repository.markDelivered(id, Instant.now().plusSeconds(600)));
+        assertThat(again).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT delivered_at FROM verification_codes WHERE id = ?", Instant.class, id))
+                .isEqualTo(first);
+    }
+
     private static void await(CountDownLatch latch) {
         try {
             latch.await();

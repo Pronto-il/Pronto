@@ -63,9 +63,19 @@ final class InMemoryVerificationCodes {
         setField(challenge, "expiresAt", Instant.now().minusSeconds(1));
     }
 
-    /** Backdates issuance, so cooldown/hourly-window rules can be tested without sleeping. */
+    /**
+     * Backdates a challenge, so cooldown/hourly-window rules can be tested without sleeping.
+     *
+     * <p>Moves {@code deliveredAt} as well as {@code createdAt} — the two rate rules read the
+     * former ({@code V54}), so backdating only issuance would age a row the rules no longer look
+     * at and every cooldown test would silently stop testing anything. A challenge that was never
+     * delivered has no {@code deliveredAt} to move, which is the whole point of it.
+     */
     static void backdate(VerificationCode challenge, long seconds) {
         setField(challenge, "createdAt", challenge.getCreatedAt().minusSeconds(seconds));
+        if (challenge.getDeliveredAt() != null) {
+            setField(challenge, "deliveredAt", challenge.getDeliveredAt().minusSeconds(seconds));
+        }
     }
 
     InMemoryVerificationCodes() {
@@ -85,18 +95,35 @@ final class InMemoryVerificationCodes {
         Mockito.lenient().when(repository.findByChallengeId(any(UUID.class)))
                 .thenAnswer(inv -> Optional.ofNullable(byChallengeId.get(inv.<UUID>getArgument(0))));
 
-        Mockito.lenient().when(repository.findFirstByUserIdAndPurposeOrderByCreatedAtDesc(
+        // Both rate rules see only rows the provider accepted -- the `deliveredAt IS NOT NULL`
+        // predicate and the `c.deliveredAt >= :since` comparison, which skips NULLs in SQL exactly
+        // as this filter does here. A fake that ignored that would keep passing while the bug V54
+        // fixed came straight back.
+        Mockito.lenient().when(repository.findFirstByUserIdAndPurposeAndDeliveredAtIsNotNullOrderByDeliveredAtDesc(
                         anyLong(), any(OtpPurpose.class)))
                 .thenAnswer(inv -> matching(inv.getArgument(0), inv.getArgument(1)).stream()
-                        .max(Comparator.comparing(VerificationCode::getCreatedAt)));
+                        .filter(c -> c.getDeliveredAt() != null)
+                        .max(Comparator.comparing(VerificationCode::getDeliveredAt)));
 
-        Mockito.lenient().when(repository.countIssuedSince(anyLong(), any(OtpPurpose.class), any(Instant.class)))
+        Mockito.lenient().when(repository.countDeliveredSince(anyLong(), any(OtpPurpose.class), any(Instant.class)))
                 .thenAnswer(inv -> {
                     Instant since = inv.getArgument(2);
                     return matching(inv.getArgument(0), inv.getArgument(1)).stream()
-                            .filter(c -> !c.getCreatedAt().isBefore(since))
+                            .filter(c -> c.getDeliveredAt() != null)
+                            .filter(c -> !c.getDeliveredAt().isBefore(since))
                             .count();
                 });
+
+        // Guarded by deliveredAt IS NULL, like the JPQL: a second call cannot move the stamp
+        // forward and extend the user's own cooldown.
+        Mockito.lenient().when(repository.markDelivered(anyLong(), any(Instant.class))).thenAnswer(inv -> {
+            VerificationCode challenge = byId.get(inv.<Long>getArgument(0));
+            if (challenge == null || challenge.getDeliveredAt() != null) {
+                return 0;
+            }
+            setField(challenge, "deliveredAt", inv.getArgument(1));
+            return 1;
+        });
 
         // The three conditional UPDATEs. Each returns the row count its JPQL would.
         Mockito.lenient().when(repository.registerFailedAttempt(anyLong(), anyShort())).thenAnswer(inv -> {

@@ -16,6 +16,8 @@ import org.mockito.Mockito;
 
 import java.util.List;
 
+import static com.pronto.auth.service.OtpService.MAX_ISSUES_PER_HOUR;
+import static com.pronto.auth.service.OtpService.RESEND_COOLDOWN_SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -282,6 +284,109 @@ class OtpServiceTest {
 
         assertThatCode(() -> otpService.issue(user, OtpPurpose.EMAIL_VERIFICATION, true))
                 .doesNotThrowAnyException();
+    }
+
+    // ---- a failed dispatch must cost its owner nothing (V54) --------------------
+
+    /**
+     * The reported bug, at its source.
+     *
+     * <p>The user's cooldown had expired, they tapped "send code again", and the provider refused.
+     * The UI told them so and invited them to try again — and Pronto then refused them for another
+     * 60 seconds, because both rate rules counted the row that was inserted <em>before</em> the
+     * provider call and abandoned after it. Nothing had been sent, and they were spaced out from it
+     * anyway.
+     */
+    @Test
+    void aFailedDispatchDoesNotStartTheCooldown_soTheRetryTheUiInvitesActuallyWorks() {
+        otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false);
+        InMemoryVerificationCodes.backdate(codes.newest(), RESEND_COOLDOWN_SECONDS + 1);
+
+        doThrow(new ApiException(ErrorCode.OTP_DELIVERY_FAILED, "provider refused"))
+                .when(smsSender).sendOtp(anyString(), any(), anyString());
+        assertThat(otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, true).delivered()).isFalse();
+
+        // The provider recovers and the user taps resend again, seconds later.
+        Mockito.reset(smsSender);
+        OtpService.IssuedChallenge retry = otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, true);
+
+        assertThat(retry.delivered()).isTrue();
+        verify(smsSender).sendOtp(eq(PHONE), eq(OtpPurpose.PHONE_VERIFICATION), anyString());
+    }
+
+    /**
+     * The same defect at the hourly ceiling, where it was worse: five refusals locked the account
+     * out of verification for an hour without a single message ever having been sent.
+     */
+    @Test
+    void failedDispatchesDoNotConsumeTheHourlyCeiling_soAProviderOutageCannotLockAnAccountOut() {
+        doThrow(new ApiException(ErrorCode.OTP_DELIVERY_FAILED, "provider refused"))
+                .when(smsSender).sendOtp(anyString(), any(), anyString());
+        for (int i = 0; i < MAX_ISSUES_PER_HOUR * 2; i++) {
+            assertThat(otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false).delivered()).isFalse();
+        }
+        verify(smsSender, Mockito.times(MAX_ISSUES_PER_HOUR * 2))
+                .sendOtp(anyString(), any(), anyString());
+
+        Mockito.reset(smsSender);
+        assertThatCode(() -> otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false))
+                .as("nothing was ever delivered, so nothing should have been counted")
+                .doesNotThrowAnyException();
+        verify(smsSender).sendOtp(eq(PHONE), any(), anyString());
+    }
+
+    /**
+     * The other half of the rule, and the one that must not be weakened: the ceiling still counts
+     * every code that <em>was</em> sent, whether or not the user ever redeemed it. That is what
+     * bounds the SMS bill and protects whoever owns the handset.
+     */
+    @Test
+    void deliveredCodesStillCountTowardTheCeiling_evenWhenTheyAreLaterSuperseded() {
+        for (int i = 0; i < MAX_ISSUES_PER_HOUR; i++) {
+            assertThat(otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false).delivered()).isTrue();
+        }
+
+        assertThatThrownBy(() -> otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.RATE_LIMITED));
+    }
+
+    /** A partial outage counts exactly what it sent, and no more. */
+    @Test
+    void theCeilingCountsTheDeliveredCodesAndSkipsTheFailedOnes() {
+        otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false);
+        otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false);
+
+        doThrow(new ApiException(ErrorCode.OTP_DELIVERY_FAILED, "provider refused"))
+                .when(smsSender).sendOtp(anyString(), any(), anyString());
+        for (int i = 0; i < 6; i++) {
+            otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false);
+        }
+        Mockito.reset(smsSender);
+
+        // Two delivered so far, so three more are allowed and the fourth is refused.
+        for (int i = 0; i < MAX_ISSUES_PER_HOUR - 2; i++) {
+            assertThat(otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false).delivered()).isTrue();
+        }
+        assertThatThrownBy(() -> otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false))
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.RATE_LIMITED));
+    }
+
+    /** The delivery stamp is written once, so a resend cannot extend the user's own cooldown. */
+    @Test
+    void theDeliveryStampIsRecordedOnceAndOnlyForCodesThatWereSent() {
+        otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false);
+        VerificationCode delivered = codes.newest();
+        assertThat(delivered.getDeliveredAt()).isNotNull();
+
+        InMemoryVerificationCodes.backdate(delivered, RESEND_COOLDOWN_SECONDS + 1);
+        doThrow(new ApiException(ErrorCode.OTP_DELIVERY_FAILED, "provider refused"))
+                .when(smsSender).sendOtp(anyString(), any(), anyString());
+        otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, true);
+
+        VerificationCode abandoned = codes.newest();
+        assertThat(abandoned.getDeliveredAt()).as("never sent, never stamped").isNull();
+        assertThat(abandoned.getConsumedAt()).as("and killed, so it cannot be redeemed").isNotNull();
     }
 
     @Test

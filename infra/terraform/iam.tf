@@ -237,10 +237,32 @@ data "aws_iam_policy_document" "github_assume" {
     # MS1 report's CI-state findings): a ref-scoped trust would mean anyone who can push could
     # deploy.
     # ------------------------------------------------------------------------------------------
+    # TWO accepted subjects, because GitHub has two spellings of the same repository.
+    #
+    # The familiar one is `repo:<owner>/<name>:environment:<env>`. The other embeds numeric ids --
+    # `repo:<owner>@<ownerId>/<name>@<repoId>:environment:<env>` -- and is GitHub's IMMUTABLE
+    # subject claim, which exists precisely so that renaming or transferring a repository does not
+    # silently invalidate its cloud trust relationships.
+    #
+    # This repository was transferred into the Pronto-il organisation, and GitHub now mints its
+    # tokens with the immutable form. Nothing in the workflow or the API says so directly; the
+    # evidence is the repo's OIDC customization endpoint reporting
+    # `sub_claim_prefix = repo:Pronto-il@321479622/Pronto@1181615069`. A trust policy matching only
+    # the readable form fails with "Not authorized to perform sts:AssumeRoleWithWebIdentity", which
+    # names neither the claim nor the mismatch.
+    #
+    # Both are listed rather than picking one: StringEquals over a list is OR, and GitHub may serve
+    # either spelling depending on the rollout. This costs nothing in strictness -- each value is a
+    # full exact match naming this repository and this environment, and the id-bearing form is
+    # strictly harder to impersonate than the name-based one, since ids cannot be reused by
+    # registering a freed-up name.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:environment:${var.github_environment}"]
+      values = [
+        "repo:${var.github_repository}:environment:${var.github_environment}",
+        "repo:${var.github_repository_immutable}:environment:${var.github_environment}",
+      ]
     }
   }
 }

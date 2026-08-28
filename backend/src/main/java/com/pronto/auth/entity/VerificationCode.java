@@ -70,6 +70,20 @@ public class VerificationCode {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    /**
+     * When the provider accepted this code ({@code V54}). {@code NULL} means it was never sent —
+     * the dispatch failed and {@code OtpChallengeWriter#abandon} killed the challenge.
+     *
+     * <p>Both OTP rate rules read this rather than {@link #createdAt}, which is written before the
+     * provider call and therefore counts attempts rather than messages. Charging a customer's 60s
+     * cooldown and their hourly ceiling for a send that reached nobody is what turned a transient
+     * provider failure into an account that could not verify its phone number at all.
+     *
+     * <p>No setter, for the reason the class Javadoc gives: it is advanced by a conditional UPDATE.
+     */
+    @Column(name = "delivered_at")
+    private Instant deliveredAt;
+
     protected VerificationCode() {
         // JPA
     }
@@ -128,6 +142,10 @@ public class VerificationCode {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public Instant getDeliveredAt() {
+        return deliveredAt;
     }
 
     /** True while this challenge is still redeemable: never consumed and not yet expired. */

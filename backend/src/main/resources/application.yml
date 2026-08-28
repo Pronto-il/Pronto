@@ -284,6 +284,41 @@ pronto:
     sender-id: ${AWS_SMS_SENDER_ID:}
     timeout-ms: ${SMS_TIMEOUT_MS:10000}
 
+  auth:
+    # Must LOGIN present a one-time password in addition to the password itself?
+    #
+    #   true (the default, and the intended long-term rule)
+    #       POST /api/auth/login checks the password and answers LOGIN_OTP with a challenge. The
+    #       session is minted one step later, by POST /api/auth/login/otp, only once the code has
+    #       been redeemed. "A password alone never yields a session" -- see auth.service.AuthService.
+    #
+    #   false (TEMPORARY, pre-user stage)
+    #       POST /api/auth/login answers AUTHENTICATED with the same session a redeemed code would
+    #       have produced. No challenge row is written, no code is generated, and neither SES nor SNS
+    #       is called on the login path. AWS End User Messaging is still in the SMS sandbox with an
+    #       exhausted monthly spend quota, so a phone second factor currently cannot be delivered at
+    #       all; an undeliverable second factor is not security, it is a locked door with the key on
+    #       the wrong side.
+    #
+    # WHAT false DOES NOT DO. It does not weaken anything else on the login path: the password is
+    # still verified against its BCrypt hash, the account lockout counter still applies, the login
+    # rate limiter (auth.security.AuthRateLimitInterceptor) is untouched, JWTs are issued and
+    # validated identically, and every role/route guard is unchanged. It does not relax the
+    # email-verified requirement -- an account that never confirmed its address still gets a
+    # VERIFY_EMAIL challenge instead of a session. It does not remove or bypass any OTP machinery:
+    # OtpService, both SmsSender implementations, SesEmailSender, the verification_codes table, the
+    # verify/resend endpoints, the rate limits and every OTP test remain exactly as they were, and
+    # registration's email verification is entirely unaffected. This is NOT anonymous access.
+    #
+    # DELIBERATELY NOT DERIVED FROM pronto.environment, unlike every other switch in this package.
+    # Inferring the second factor from an environment name would make "which environment am I?"
+    # decide "is authentication complete?". Only an explicit AUTH_OTP_REQUIRED=false reaches it.
+    #
+    # Accepts exactly 'true' or 'false'; anything else refuses the boot rather than guessing, and
+    # the active mode is logged at startup as "Authentication OTP requirement: ENABLED|DISABLED".
+    # See auth.config.AuthOtpPolicy. RE-ENABLING is one variable: AUTH_OTP_REQUIRED=true.
+    otp-required: ${AUTH_OTP_REQUIRED:true}
+
   verification:
     # Must an account prove its PHONE NUMBER as well as its email address?
     #

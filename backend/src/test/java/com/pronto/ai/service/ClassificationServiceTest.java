@@ -56,12 +56,12 @@ class ClassificationServiceTest {
     }
 
     private ClassificationResponse confident(String code) {
-        return new ClassificationResponse(code, 0.95, false, null,
+        return new ClassificationResponse("אינסטלטור", code, 0.95, false, null,
                 List.of(new CategoryCandidate(code, 0.95)), null);
     }
 
     private ClassificationResponse ambiguous(String first, String second, String questionText) {
-        return new ClassificationResponse(first, 0.5, true, "Source of the fault is unclear.",
+        return new ClassificationResponse("אינסטלטור", first, 0.5, true, "Source of the fault is unclear.",
                 List.of(new CategoryCandidate(first, 0.5), new CategoryCandidate(second, 0.45)),
                 new ClarificationQuestion("q", questionText,
                         List.of("אפשרות א", "אפשרות ב", "אני לא בטוח/ה"), List.of(first, second)));

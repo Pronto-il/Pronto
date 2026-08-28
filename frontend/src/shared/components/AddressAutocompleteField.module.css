@@ -1,0 +1,61 @@
+.wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/**
+ * In normal flow rather than absolutely positioned. On a phone the on-screen keyboard covers the
+ * lower half of the layout viewport, and a floating dropdown either renders behind it or has to
+ * track the visual viewport by hand; letting the list push the form down is both simpler and what
+ * actually stays visible while typing.
+ */
+.suggestions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  overflow: hidden;
+  max-height: 18rem;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.suggestion {
+  display: block;
+  width: 100%;
+  /* Comfortably above the 44px minimum touch target: address lists get tapped one-handed,
+     often while standing at the door of the place being described. */
+  min-height: 3rem;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--color-text);
+  text-align: start;
+  cursor: pointer;
+}
+
+.suggestion:hover,
+.suggestion:focus-visible {
+  background: var(--color-surface-muted);
+}
+
+.suggestion + .suggestion {
+  border-top: 1px solid var(--color-border);
+}
+
+.confirmed {
+  margin: 0;
+  color: var(--color-success, var(--color-text-muted));
+  font-size: var(--font-size-sm);
+}
+
+.status {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}

@@ -86,7 +86,73 @@ final class FewShotExamples {
                             + "failed lock produce the identical sentence. One closed question — is it the "
                             + "door itself that catches on the frame, or the lock/bolt that will not "
                             + "engage? — separates them. Committing here is a coin flip wearing a "
-                            + "confidence score.")
+                            + "confidence score."),
+
+            // ---- profession-first: out-of-catalogue cases (classification-v5) ----
+            //
+            // These teach the shape the schema now permits and the previous prompt did not: a
+            // correct profession with NO Pronto category. Written as real Hebrew a customer types
+            // -- short, unpunctuated, occasionally misspelled -- because that is what arrives, and
+            // an example set written in clean English teaches recognition of clean English.
+            new Example(
+                    "\"יש ריח של גז במטבח\"",
+                    "detectedProfession = \"טכנאי גז\", primaryCategoryCode = null, candidates = []. A gas "
+                            + "supply fault is a licensed gas technician's work. Pronto has no gas category, "
+                            + "so the honest answer is to name the trade and map to nothing. Do NOT route to "
+                            + "plumbing because gas arrives in a pipe, and do NOT route to general_handyman: "
+                            + "neither may legally touch a gas line. Confidence stays HIGH (~0.95) — you are "
+                            + "certain what is needed; Pronto simply cannot supply it."),
+            new Example(
+                    "\"יש לי ג׳וקים במטבח, המון\" (slang, no punctuation)",
+                    "detectedProfession = \"מדביר\", primaryCategoryCode = null, candidates = []. Pest "
+                            + "control. Nothing in Pronto's list is even adjacent; a handyman does not "
+                            + "exterminate. Commit to the profession and stop — do not ask a question, there "
+                            + "is nothing ambiguous about cockroaches."),
+            new Example(
+                    "\"נשבר לי חלון בסלון צריך להחליף זכוכית\"",
+                    "detectedProfession = \"זגג\", primaryCategoryCode = null, candidates = []. Glazing. "
+                            + "general_handyman covers small fixings, not cutting and fitting glass to a "
+                            + "window frame — the temptation to route this to handyman is exactly the "
+                            + "forcing this section forbids."),
+            new Example(
+                    "\"צריך מישהו שיגזום את העץ בחצר\"",
+                    "detectedProfession = \"גנן\", primaryCategoryCode = null, candidates = []. Gardening/"
+                            + "tree work is outside the catalogue. Being outdoors does not make it handyman "
+                            + "work."),
+
+            // ---- profession-first: SUPPORTED cases that look out-of-catalogue ----
+            //
+            // The counterweight. Without these the unsupported examples above generalise into
+            // "any specialist-sounding trade is unsupported", which would break appliance_repair --
+            // the category most likely to be described by a specialist profession name.
+            new Example(
+                    "\"המקרר שלי לא מקרר\"",
+                    "detectedProfession = \"טכנאי מקררים\", primaryCategoryCode = appliance_repair. The "
+                            + "profession the customer needs IS a refrigerator technician, and that is what "
+                            + "you name — but Pronto's appliance_repair category explicitly covers "
+                            + "fridges and freezers that do not cool, so it maps. Naming a specialist trade "
+                            + "is not a reason to return null; check the category boundaries first."),
+            new Example(
+                    "\"המכונת כביסה לא מסתובבת ומשמיעה רעש\"",
+                    "detectedProfession = \"טכנאי מכונות כביסה\", primaryCategoryCode = appliance_repair. "
+                            + "Same rule. The washing machine is a domestic appliance as a self-contained "
+                            + "machine, which is precisely appliance_repair's scope."),
+            new Example(
+                    "\"אין לי מים חמים, הדוד לא עובד\"",
+                    "detectedProfession = \"טכנאי דודי שמש\" or \"אינסטלטור\", primaryCategoryCode = "
+                            + "plumbing. Pronto has no separate boiler-technician category and does not need "
+                            + "one: water-heater work is plumbing's scope. Map it rather than returning "
+                            + "null — the trade IS covered, under a different name."),
+
+            // ---- profession-first: the boundary between unsupported and ambiguous ----
+            new Example(
+                    "\"ריח של גז ליד הדוד\" — nothing else stated.",
+                    "ASK. This is the one gas-adjacent case that is genuinely ambiguous: the smell could "
+                            + "be the gas supply (טכנאי גז, unsupported) or the gas water heater itself "
+                            + "(plumbing, supported). Include plumbing in `candidates`, set "
+                            + "needsClarification = true, and ask one closed question. An empty candidate "
+                            + "list is only correct when you are confident nothing Pronto offers applies — "
+                            + "here you are not.")
     );
 
     private FewShotExamples() {

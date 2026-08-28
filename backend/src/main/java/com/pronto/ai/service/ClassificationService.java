@@ -107,12 +107,25 @@ public class ClassificationService {
         RoutingDecision decision = routingDecisionPolicy.decide(response, categories, priorExchanges,
                 priorExchanges.size());
 
-        log.info("ai.classification.decided outcome={} category={} confidence={} candidates=[{}] round={}",
+        // The demand signal for professions Pronto does not yet offer, carried on the line that
+        // already exists rather than in a new table: the outcome names it as unsupported, the
+        // profession is the trade that was asked for, and the log timestamp is when. No issues row
+        // exists at this point in the flow -- an unsupported request never becomes one -- so
+        // issue_classifications (keyed by issue_id) could not have held it anyway.
+        //
+        // The description is included TRUNCATED, and only here. This package's rule is that prompt
+        // bodies are never logged; one capped line of the customer's own problem statement on the
+        // unsupported path is the smallest thing that makes "which professions are people asking
+        // for" answerable later, and it is deliberately not logged on any other outcome.
+        log.info("ai.classification.decided outcome={} profession=\"{}\" category={} confidence={} "
+                        + "candidates=[{}] round={}{}",
                 decision.outcome(),
+                decision.detectedProfession() == null ? "" : decision.detectedProfession(),
                 decision.category() == null ? "none" : decision.category().code(),
                 decision.confidence(),
                 renderCandidates(decision.candidates()),
-                priorExchanges.size());
+                priorExchanges.size(),
+                decision.isUnsupportedProfession() ? " request=\"" + truncate(description) + "\"" : "");
 
         return toSuggestion(decision);
     }
@@ -127,17 +140,28 @@ public class ClassificationService {
      */
     private ClassificationSuggestion toSuggestion(RoutingDecision decision) {
         if (decision.outcome() == RoutingDecision.Outcome.ASK_CLARIFICATION) {
-            return new ClassificationSuggestion(ClassificationStatus.QUESTIONS, null, null, decision.confidence(),
-                    false, false, decision.ambiguityReason(), decision.candidates(),
-                    List.of(decision.question()));
+            return new ClassificationSuggestion(ClassificationStatus.QUESTIONS, decision.detectedProfession(),
+                    null, null, decision.confidence(), false, false, decision.ambiguityReason(),
+                    decision.candidates(), List.of(decision.question()));
+        }
+
+        if (decision.outcome() == RoutingDecision.Outcome.UNSUPPORTED_PROFESSION) {
+            // Neither lowConfidence nor unresolved. Both of those describe a routing decision Pronto
+            // was not sure about; this is a decision Pronto is sure about and cannot act on. Setting
+            // either would make the unresolved-fallback rate — the metric that exists to stop hard
+            // cases being quietly diverted to general_handyman — count out-of-catalogue trades too,
+            // and the two need to move independently to mean anything.
+            return new ClassificationSuggestion(ClassificationStatus.UNSUPPORTED_PROFESSION,
+                    decision.detectedProfession(), null, null, decision.confidence(), false, false,
+                    decision.ambiguityReason(), decision.candidates(), List.of());
         }
 
         boolean unresolved = decision.outcome() == RoutingDecision.Outcome.FINAL_UNRESOLVED;
         boolean lowConfidence = unresolved || decision.outcome() == RoutingDecision.Outcome.FINAL_LOW_CONFIDENCE;
 
-        return new ClassificationSuggestion(ClassificationStatus.CLASSIFIED, decision.category().id(),
-                decision.category().code(), decision.confidence(), lowConfidence, unresolved,
-                decision.ambiguityReason(), decision.candidates(), List.of());
+        return new ClassificationSuggestion(ClassificationStatus.CLASSIFIED, decision.detectedProfession(),
+                decision.category().id(), decision.category().code(), decision.confidence(), lowConfidence,
+                unresolved, decision.ambiguityReason(), decision.candidates(), List.of());
     }
 
     /**
@@ -157,6 +181,15 @@ public class ClassificationService {
             throw new ApiException(ErrorCode.AI_SERVICE_ERROR,
                     "AI classification service failed to produce a result.");
         }
+    }
+
+    /** Enough to recognise the request, short enough not to turn a log line into a transcript. */
+    private static String truncate(String description) {
+        if (description == null || description.isBlank()) {
+            return "";
+        }
+        String collapsed = description.trim().replaceAll("\s+", " ");
+        return collapsed.length() <= 160 ? collapsed : collapsed.substring(0, 160) + "…";
     }
 
     private String renderCandidates(List<CategoryCandidate> candidates) {

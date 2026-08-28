@@ -109,13 +109,13 @@ class IssuesServiceTest {
     }
 
     private ClassificationSuggestion classified() {
-        return new ClassificationSuggestion(ClassificationStatus.CLASSIFIED, 3L, "ac_hvac", 0.94, false, false,
-                null, List.of(new CategoryCandidate("ac_hvac", 0.94)), List.of());
+        return new ClassificationSuggestion(ClassificationStatus.CLASSIFIED, "טכנאי מזגנים", 3L, "ac_hvac",
+                0.94, false, false, null, List.of(new CategoryCandidate("ac_hvac", 0.94)), List.of());
     }
 
     private ClassificationSuggestion asking() {
-        return new ClassificationSuggestion(ClassificationStatus.QUESTIONS, null, null, 0.5, false, false,
-                "Leak source unclear.",
+        return new ClassificationSuggestion(ClassificationStatus.QUESTIONS, "אינסטלטור", null, null, 0.5,
+                false, false, "Leak source unclear.",
                 List.of(new CategoryCandidate("plumbing", 0.5), new CategoryCandidate("ac_hvac", 0.45)),
                 List.of(new ClarificationQuestion("q1", "מאיפה מגיעים המים?",
                         List.of("מהמזגן", "מצינור", "אני לא בטוח/ה"), List.of("ac_hvac", "plumbing"))));
@@ -180,9 +180,15 @@ class IssuesServiceTest {
 
         // The wire shape itself is the guarantee: candidates, confidence, ambiguity reason and
         // distinguishesBetween have no field to travel in.
+        //
+        // `detectedProfession` is the one deliberate addition, and it is not a diagnostic: it is
+        // the Hebrew trade name the unsupported-profession screen renders, without which "we do
+        // not cover that" names nothing. Asserted exactly, so a future field cannot be added to
+        // this response without someone deciding to.
         assertThat(ClassifyResponse.class.getRecordComponents())
                 .extracting(java.lang.reflect.RecordComponent::getName)
-                .containsExactly("status", "suggestedCategoryId", "suggestedCategoryCode", "questions");
+                .containsExactly("status", "detectedProfession", "suggestedCategoryId",
+                        "suggestedCategoryCode", "questions");
     }
 
     // -- create ------------------------------------------------------------------------------

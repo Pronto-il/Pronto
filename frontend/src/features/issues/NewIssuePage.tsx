@@ -19,17 +19,24 @@ import { ClarifyQuestionsStep } from './ClarifyQuestionsStep';
 import { ReviewStep } from './ReviewStep';
 import type { ConfirmedIssue } from './ReviewStep';
 import { AiAnalyzingOverlay } from './AiAnalyzingOverlay';
+import { UnsupportedProfessionStep } from './UnsupportedProfessionStep';
 import styles from './NewIssuePage.module.css';
 
 type Step =
   | { name: 'describe' }
   | { name: 'clarify'; classification: ClassifyIssueResponse }
-  | { name: 'review'; classification: ClassifyIssueResponse };
+  | { name: 'review'; classification: ClassifyIssueResponse }
+  // Terminal. Pronto identified the trade and does not offer it, so there is no issue to create
+  // and nothing to match against — the flow ends here rather than continuing to review.
+  | { name: 'unsupported'; detectedProfession: string | null };
 
 const STEP_LABELS: Partial<Record<Step['name'], string>> = {
   describe: 'שלב 1 מתוך 3',
   clarify: 'שלב 2 מתוך 3',
   review: 'שלב 3 מתוך 3',
+  // No "step N of 3" for the unsupported state, and no entry in STEP_NUMBERS below: it is not a
+  // step on the way to anything. Showing progress towards a report that will never be created
+  // would be the same small lie as animating a search that cannot succeed.
 };
 
 /** Feeds `PageHeader`'s `steps` progress-bar prop (design doc §7.1). Every step in this
@@ -218,6 +225,19 @@ export default function NewIssuePage() {
    * one-shot stage. The backend's own budget is what ends the loop, not this component.
    */
   function handleClassified(result: ClassifyIssueResponse, answers: ClarificationAnswer[] = []) {
+    // Checked first: an unsupported profession is a successful classification with no way
+    // forward, so it must not fall through to the review step, which exists to confirm a category
+    // this result deliberately does not have.
+    if (result.status === 'UNSUPPORTED_PROFESSION') {
+      setDirection(1);
+      setClarificationAnswers(answers);
+      setStep({ name: 'unsupported', detectedProfession: result.detectedProfession });
+      setReusableIssue(undefined);
+      // The draft is left at its current stage on purpose. Nothing was created, and rewriting it
+      // to a stage that does not exist in ISSUE_DRAFT_STAGES would strand the resume logic.
+      return;
+    }
+
     const nextStep: Step =
       result.status === 'QUESTIONS'
         ? { name: 'clarify', classification: result }
@@ -370,6 +390,9 @@ export default function NewIssuePage() {
                   onClassified={handleClassified}
                   onAnalyzingChange={setIsAnalyzing}
                 />
+              )}
+              {step.name === 'unsupported' && (
+                <UnsupportedProfessionStep detectedProfession={step.detectedProfession} />
               )}
               {step.name === 'review' && (
                 <ReviewStep

@@ -31,6 +31,12 @@ public class ClassificationSchema {
 
     public Map<String, Object> build(List<String> categoryCodes) {
         Map<String, Object> properties = new LinkedHashMap<>();
+        // Free text, and that is the entire point: it is the one field in this schema not bounded
+        // by Pronto's catalogue, so the model can name the trade the customer actually needs even
+        // when Pronto does not offer it. Constraining it to an enum would recreate exactly the
+        // forcing this field exists to remove. It is a label for the customer and for telemetry;
+        // it is never matched against anything and can never become a routing target.
+        properties.put("detectedProfession", Map.of("type", "string"));
         properties.put("primaryCategoryCode", nullableCategoryCode(categoryCodes));
         properties.put("confidence", Map.of("type", "number"));
         properties.put("needsClarification", Map.of("type", "boolean"));

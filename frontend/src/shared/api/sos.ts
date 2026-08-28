@@ -124,8 +124,15 @@ export interface CreateSosRequestPayload {
   serviceFloor?: string;
   serviceEntrance?: string;
   serviceAddressNotes?: string;
+  /** The DEVICE's own fix, when the handset had one — distinct from the selected place below. */
   latitude?: number;
   longitude?: number;
+  /** The place the customer selected for the destination (`V55`). Same conditional requirement
+   *  as booking: omittable for the caller's own saved default address, required for any other. */
+  servicePlaceId?: string;
+  serviceFormattedAddress?: string;
+  serviceLatitude?: number;
+  serviceLongitude?: number;
 }
 
 /**

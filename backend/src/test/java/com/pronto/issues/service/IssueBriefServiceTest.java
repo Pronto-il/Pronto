@@ -192,8 +192,8 @@ class IssueBriefServiceTest {
         when(professionalBriefService.generateFromResolved(anyString(), anyList(), anyLong(), any(), anyList()))
                 .thenReturn(someBrief());
         when(classificationService.classifyResolved(anyString(), anyList(), any(), anyList()))
-                .thenReturn(new ClassificationSuggestion(ClassificationStatus.CLASSIFIED, CATEGORY_ID,
-                        "plumbing", 0.91, false, false, null, List.of(), List.of()));
+                .thenReturn(new ClassificationSuggestion(ClassificationStatus.CLASSIFIED, "אינסטלטור",
+                        CATEGORY_ID, "plumbing", 0.91, false, false, null, List.of(), List.of()));
         when(classificationRepository.findById(ISSUE_ID)).thenReturn(Optional.empty());
 
         service(true).generateFor(ISSUE_ID);

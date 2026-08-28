@@ -4,6 +4,8 @@ import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import jakarta.validation.ValidatorFactory;
+import java.math.BigDecimal;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -39,7 +41,7 @@ class DefaultAddressRequestTest {
     }
 
     private static DefaultAddressRequest fullAddress() {
-        return new DefaultAddressRequest("Tel Aviv", "Dizengoff", "100", "4", "2", "A", "Back entrance");
+        return new DefaultAddressRequest("Tel Aviv", "Dizengoff", "100", "4", "2", "A", "Back entrance", "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
     }
 
     private Set<String> violatedFields(DefaultAddressRequest address) {
@@ -54,37 +56,37 @@ class DefaultAddressRequestTest {
 
     @Test
     void minimalAddress_requiredFieldsOnly_hasNoViolations() {
-        DefaultAddressRequest minimal = new DefaultAddressRequest("Haifa", "Herzl", "5", null, null, null, null);
+        DefaultAddressRequest minimal = new DefaultAddressRequest("Haifa", "Herzl", "5", null, null, null, null, "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
         assertThat(validator.validate(minimal)).isEmpty();
     }
 
     @Test
     void blankCity_isRejected() {
-        DefaultAddressRequest address = new DefaultAddressRequest(" ", "Dizengoff", "100", null, null, null, null);
+        DefaultAddressRequest address = new DefaultAddressRequest(" ", "Dizengoff", "100", null, null, null, null, "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
         assertThat(violatedFields(address)).contains("city");
     }
 
     @Test
     void nullCity_isRejected() {
-        DefaultAddressRequest address = new DefaultAddressRequest(null, "Dizengoff", "100", null, null, null, null);
+        DefaultAddressRequest address = new DefaultAddressRequest(null, "Dizengoff", "100", null, null, null, null, "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
         assertThat(violatedFields(address)).contains("city");
     }
 
     @Test
     void blankStreet_isRejected() {
-        DefaultAddressRequest address = new DefaultAddressRequest("Tel Aviv", "", "100", null, null, null, null);
+        DefaultAddressRequest address = new DefaultAddressRequest("Tel Aviv", "", "100", null, null, null, null, "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
         assertThat(violatedFields(address)).contains("street");
     }
 
     @Test
     void blankHouseNumber_isRejected() {
-        DefaultAddressRequest address = new DefaultAddressRequest("Tel Aviv", "Dizengoff", "", null, null, null, null);
+        DefaultAddressRequest address = new DefaultAddressRequest("Tel Aviv", "Dizengoff", "", null, null, null, null, "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
         assertThat(violatedFields(address)).contains("houseNumber");
     }
 
     @Test
     void apartmentFloorEntranceAddressNotes_areOptional() {
-        DefaultAddressRequest address = new DefaultAddressRequest("Tel Aviv", "Dizengoff", "100", null, null, null, null);
+        DefaultAddressRequest address = new DefaultAddressRequest("Tel Aviv", "Dizengoff", "100", null, null, null, null, "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
         assertThat(violatedFields(address)).doesNotContain("apartment", "floor", "entrance", "addressNotes");
     }
 }

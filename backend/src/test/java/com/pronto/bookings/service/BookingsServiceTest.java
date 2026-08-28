@@ -119,7 +119,8 @@ class BookingsServiceTest {
                 notificationService, distanceEtaStrategy, storageService, availabilityDerivationService,
                 professionalCoverageService, Mockito.mock(ContactVerificationGuard.class),
                 serviceAddressGeocoder, professionalLocationService, locationProperties,
-                new com.pronto.maps.service.ArrivalVerifier(professionalLocationService, locationProperties));
+                new com.pronto.maps.service.ArrivalVerifier(professionalLocationService, locationProperties),
+                new com.pronto.maps.service.SelectedPlaceValidator());
         // MS2: geocoding is stubbed to "unresolvable" by default. Every pre-existing test in this
         // class is about booking mechanics, not geography, and a default that quietly produced
         // coordinates would make them silently depend on a provider they never mention. The MS2
@@ -221,7 +222,8 @@ class BookingsServiceTest {
 
         Instant bookedStart = Instant.now().plus(1, ChronoUnit.DAYS);
         CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, bookedStart,
-                "Tel Aviv", "Herzl", "10", null, null, null, null);
+                "Tel Aviv", "Herzl", "10", null, null, null, null,
+                "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
         OrderResponse response = bookingsService.createOrder(CUSTOMER_ID, request);
 
         assertThat(response.sosSurcharge()).isEqualByComparingTo("0.00");
@@ -249,7 +251,8 @@ class BookingsServiceTest {
 
         Instant bookedStart = Instant.now().plus(1, ChronoUnit.DAYS);
         CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, bookedStart,
-                "Tel Aviv", "Herzl", "10", null, null, null, null);
+                "Tel Aviv", "Herzl", "10", null, null, null, null,
+                "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
         OrderResponse response = bookingsService.createOrder(CUSTOMER_ID, request);
 
         assertThat(response.bookedStart()).isEqualTo(bookedStart);
@@ -272,7 +275,8 @@ class BookingsServiceTest {
 
         Instant bookedStart = Instant.now().plus(1, ChronoUnit.DAYS);
         CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, bookedStart,
-                "Tel Aviv", "Herzl", "10", null, null, null, null);
+                "Tel Aviv", "Herzl", "10", null, null, null, null,
+                "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
 
         assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
                 .isInstanceOf(ApiException.class)
@@ -300,7 +304,8 @@ class BookingsServiceTest {
                 .thenReturn(List.of(CalendarSegment.available(bookedStart, bookedStart.plus(Duration.ofMinutes(30)))));
 
         CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, bookedStart,
-                "Tel Aviv", "Herzl", "10", null, null, null, null);
+                "Tel Aviv", "Herzl", "10", null, null, null, null,
+                "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
 
         assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
                 .isInstanceOf(ApiException.class)
@@ -317,7 +322,8 @@ class BookingsServiceTest {
 
         Instant pastStart = Instant.now().minus(1, ChronoUnit.HOURS);
         CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, pastStart,
-                "Tel Aviv", "Herzl", "10", null, null, null, null);
+                "Tel Aviv", "Herzl", "10", null, null, null, null,
+                "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
 
         assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
                 .isInstanceOf(ApiException.class)
@@ -344,7 +350,8 @@ class BookingsServiceTest {
 
         Instant bookedStart = Instant.now().plus(1, ChronoUnit.DAYS);
         CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, bookedStart,
-                "Tel Aviv", "Herzl", "10", null, null, null, null);
+                "Tel Aviv", "Herzl", "10", null, null, null, null,
+                "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
 
         assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
                 .isInstanceOf(ApiException.class)
@@ -368,7 +375,8 @@ class BookingsServiceTest {
 
         Instant bookedStart = Instant.now().plus(1, ChronoUnit.DAYS);
         CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, bookedStart,
-                "Tel Aviv", "Herzl", "10", null, null, null, null);
+                "Tel Aviv", "Herzl", "10", null, null, null, null,
+                "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
 
         assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
                 .isSameAs(otherViolation);
@@ -473,6 +481,125 @@ class BookingsServiceTest {
         assertThat(response.customerPhone()).isEqualTo("0501234567");
     }
 
+
+    // ---- address validation (V55) ----
+
+    /**
+     * Sets up an otherwise-valid {@code createOrder} and returns the customer, whose saved default
+     * address is Dizengoff 100, Tel Aviv.
+     */
+    private User stubCreateOrderWithSavedDefaultAddress() {
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(activeProfessional()));
+        when(userRepository.findById(99L)).thenReturn(Optional.of(activeUser(99L)));
+        stubFullyAvailable();
+        when(issueRepository.bookIfOpen(eq(ISSUE_ID), any())).thenReturn(1);
+        when(orderRepository.saveAndFlush(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        User customer = new User("Customer Name", "customer@example.com", "hash", UserRole.CUSTOMER);
+        setField(customer, "id", CUSTOMER_ID);
+        customer.setDefaultCity("Tel Aviv");
+        customer.setDefaultStreet("Dizengoff");
+        customer.setDefaultHouseNumber("100");
+        when(userRepository.findById(CUSTOMER_ID)).thenReturn(Optional.of(customer));
+        return customer;
+    }
+
+    private static CreateOrderRequest orderTo(String city, String street, String houseNumber,
+                                               String placeId, BigDecimal latitude, BigDecimal longitude) {
+        return new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, Instant.now().plus(1, ChronoUnit.DAYS),
+                city, street, houseNumber, null, null, null, null,
+                placeId, placeId == null ? null : "Formatted, Israel", latitude, longitude);
+    }
+
+    @Test
+    void createOrder_anotherAddressWithNoSelectedPlace_isRefused() {
+        // THE test for this feature. Before it, this exact request created an order to a street and
+        // house number that need not exist, and dispatched a professional to it.
+        stubCreateOrderWithSavedDefaultAddress();
+
+        assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID,
+                orderTo("Tel Aviv", "Nonexistent Street", "9999", null, null, null)))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode())
+                        .isEqualTo(ErrorCode.VALIDATION_ERROR));
+
+        verify(orderRepository, never()).saveAndFlush(any(Order.class));
+    }
+
+    @Test
+    void createOrder_anotherAddressWithASelectedPlace_isAcceptedAndSnapshotsIt() {
+        stubCreateOrderWithSavedDefaultAddress();
+        ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
+        when(orderRepository.saveAndFlush(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        bookingsService.createOrder(CUSTOMER_ID, orderTo("Haifa", "Herzl", "5",
+                "ChIJselectedHaifa", new BigDecimal("32.7940"), new BigDecimal("34.9896")));
+
+        Order saved = captor.getValue();
+        assertThat(saved.getServicePlaceId()).isEqualTo("ChIJselectedHaifa");
+        assertThat(saved.getServiceFormattedAddress()).isEqualTo("Formatted, Israel");
+        // The coordinates come from the SELECTION, not from a geocode -- serviceAddressGeocoder is
+        // stubbed unresolvable in this class, so a non-null value here can only have come from the
+        // selected place.
+        assertThat(saved.getServiceLatitude()).isEqualByComparingTo("32.794000");
+        assertThat(saved.getServiceLongitude()).isEqualByComparingTo("34.989600");
+    }
+
+    @Test
+    void createOrder_theCallersOwnLegacyDefaultAddress_isGrandfatheredWithNoSelectedPlace() {
+        // The backward-compatibility guarantee. A customer whose saved address predates V55 books
+        // exactly as before; they are not stopped mid-flow to re-select an address that has been
+        // working. Note this is the SAME payload the test above refuses -- the only difference is
+        // that this address is already on the caller's own users row.
+        stubCreateOrderWithSavedDefaultAddress();
+        ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
+        when(orderRepository.saveAndFlush(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        bookingsService.createOrder(CUSTOMER_ID, orderTo("Tel Aviv", "Dizengoff", "100", null, null, null));
+
+        assertThat(captor.getValue().getServicePlaceId()).isNull();
+        assertThat(captor.getValue().getServiceCity()).isEqualTo("Tel Aviv");
+    }
+
+    @Test
+    void createOrder_grandfatheringIgnoresSpacingAndCase() {
+        // Compared by the V50 content digest, so "  dizengoff  " is still the same saved address.
+        // If this compared raw strings, a client that normalised whitespace differently would be
+        // told to re-select an address the customer never changed.
+        stubCreateOrderWithSavedDefaultAddress();
+
+        assertThatCode(() -> bookingsService.createOrder(CUSTOMER_ID,
+                orderTo("  Tel   Aviv ", " Dizengoff ", "100", null, null, null)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void createOrder_coordinatesWithoutAPlaceIdAreRefusedEvenForTheSavedDefaultAddress() {
+        // Grandfathering permits "no claim at all". It does not permit a HALF claim: coordinates
+        // with no place id are exactly what a hand-assembled payload looks like, and accepting
+        // them would let arbitrary coordinates be snapshotted onto an order.
+        stubCreateOrderWithSavedDefaultAddress();
+
+        assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID,
+                orderTo("Tel Aviv", "Dizengoff", "100", null,
+                        new BigDecimal("51.5074"), new BigDecimal("-0.1278"))))
+                .isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    void createOrder_aSelectedPlaceOutsideTheServiceAreaIsRefused() {
+        stubCreateOrderWithSavedDefaultAddress();
+
+        assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID,
+                orderTo("London", "Baker Street", "221B", "ChIJlondon",
+                        new BigDecimal("51.5074"), new BigDecimal("-0.1278"))))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode())
+                        .isEqualTo(ErrorCode.VALIDATION_ERROR));
+    }
+
     // ---- service-address snapshot independence ----
 
     @Test
@@ -489,11 +616,13 @@ class BookingsServiceTest {
 
         Instant firstStart = Instant.now().plus(1, ChronoUnit.DAYS);
         CreateOrderRequest first = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, firstStart,
-                "Tel Aviv", "Herzl", "10", "2", null, null, null);
+                "Tel Aviv", "Herzl", "10", "2", null, null, null,
+                "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
         bookingsService.createOrder(CUSTOMER_ID, first);
         Instant secondStart = Instant.now().plus(2, ChronoUnit.DAYS);
         CreateOrderRequest second = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID, secondStart,
-                "Jerusalem", "Jaffa Rd", "99", null, null, null, null);
+                "Jerusalem", "Jaffa Rd", "99", null, null, null, null,
+                "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
         bookingsService.createOrder(CUSTOMER_ID, second);
 
         List<Order> saved = captor.getAllValues();
@@ -793,7 +922,8 @@ class BookingsServiceTest {
         when(issueRepository.bookIfOpen(eq(ISSUE_ID), any())).thenReturn(0);
 
         CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID,
-                Instant.now().plus(1, ChronoUnit.DAYS), "Tel Aviv", "Herzl", "10", null, null, null, null);
+                Instant.now().plus(1, ChronoUnit.DAYS), "Tel Aviv", "Herzl", "10", null, null, null, null,
+                "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
         assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.ISSUE_NOT_BOOKABLE));
@@ -824,7 +954,8 @@ class BookingsServiceTest {
         when(professionalRepository.existsEligibleById(PROFESSIONAL_ID)).thenReturn(false);
 
         CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID,
-                Instant.now().plus(1, ChronoUnit.DAYS), "Tel Aviv", "Herzl", "10", null, null, null, null);
+                Instant.now().plus(1, ChronoUnit.DAYS), "Tel Aviv", "Herzl", "10", null, null, null, null,
+                "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
         assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
@@ -847,7 +978,8 @@ class BookingsServiceTest {
         when(userRepository.findById(PROFESSIONAL_USER_ID)).thenReturn(Optional.of(deleted));
 
         CreateOrderRequest request = new CreateOrderRequest(ISSUE_ID, PROFESSIONAL_ID,
-                Instant.now().plus(1, ChronoUnit.DAYS), "Tel Aviv", "Herzl", "10", null, null, null, null);
+                Instant.now().plus(1, ChronoUnit.DAYS), "Tel Aviv", "Herzl", "10", null, null, null, null,
+                "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
         assertThatThrownBy(() -> bookingsService.createOrder(CUSTOMER_ID, request))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));

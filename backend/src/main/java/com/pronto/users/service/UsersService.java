@@ -2,6 +2,8 @@ package com.pronto.users.service;
 
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
+import com.pronto.maps.SelectedPlace;
+import com.pronto.maps.service.SelectedPlaceValidator;
 import com.pronto.maps.service.ServiceAddressGeocoder;
 import com.pronto.common.security.AuthenticatedUser;
 import com.pronto.professionals.entity.Professional;
@@ -34,13 +36,16 @@ public class UsersService {
     private final ProfessionalCoverageService professionalCoverageService;
     private final PhoneNumberNormalizer phoneNumberNormalizer;
     private final ServiceAddressGeocoder serviceAddressGeocoder;
+    private final SelectedPlaceValidator selectedPlaceValidator;
 
     public UsersService(UserRepository userRepository, ProfessionalRepository professionalRepository,
                          StorageService storageService,
                          ProfessionalCoverageService professionalCoverageService,
                          PhoneNumberNormalizer phoneNumberNormalizer,
-                         ServiceAddressGeocoder serviceAddressGeocoder) {
+                         ServiceAddressGeocoder serviceAddressGeocoder,
+                         SelectedPlaceValidator selectedPlaceValidator) {
         this.serviceAddressGeocoder = serviceAddressGeocoder;
+        this.selectedPlaceValidator = selectedPlaceValidator;
         this.userRepository = userRepository;
         this.professionalRepository = professionalRepository;
         this.storageService = storageService;
@@ -66,7 +71,8 @@ public class UsersService {
         if (user.getRole() == UserRole.CUSTOMER && user.getDefaultCity() != null) {
             defaultAddress = new DefaultAddressInfo(user.getDefaultCity(), user.getDefaultStreet(),
                     user.getDefaultHouseNumber(), user.getDefaultApartment(), user.getDefaultFloor(),
-                    user.getDefaultEntrance(), user.getDefaultAddressNotes());
+                    user.getDefaultEntrance(), user.getDefaultAddressNotes(),
+                    user.getDefaultPlaceId(), user.getDefaultFormattedAddress());
         }
 
         // Production MS1: no longer blanked for a PROFESSIONAL. The CUSTOMER-only rule was right
@@ -103,11 +109,26 @@ public class UsersService {
             throw new ApiException(ErrorCode.FORBIDDEN, "This action requires role CUSTOMER.");
         }
 
+        UpdateUserMeRequest.Address address = request.defaultAddress();
+        // Address validation (V55). This endpoint IS "the customer is editing their saved
+        // address", which is the one moment a legacy free-text row is expected to become a
+        // validated one -- so a selection is required here even though a legacy row that nobody
+        // edits keeps working untouched.
+        //
+        // Deliberately the FIRST thing this method does, before the entity is touched at all.
+        // The rollback on ApiException would undo a partial mutation anyway, but only in the
+        // database: an in-memory entity that has already had fullName and phone overwritten is a
+        // trap for anything holding the same instance, and "validate, then mutate" is a much
+        // easier property to keep true than "every mutation is inside a transaction that will
+        // definitely roll back".
+        SelectedPlace place = selectedPlaceValidator.requireSelected(address.placeId(),
+                address.formattedAddress(), address.latitude(), address.longitude(),
+                SelectedPlaceValidator.FieldNames.nested("defaultAddress."));
+
         User user = loadActiveUser(caller.id());
         user.setFullName(request.fullName());
         applyPhoneChange(user, request.phone());
 
-        UpdateUserMeRequest.Address address = request.defaultAddress();
         user.setDefaultCity(address.city());
         user.setDefaultStreet(address.street());
         user.setDefaultHouseNumber(address.houseNumber());
@@ -126,12 +147,18 @@ public class UsersService {
         // synchronously, so a read that lands between the edit and the re-resolve cannot route to
         // where the customer used to live.
         //
-        // Geocoding HERE rather than on the listing read is the point: this is a read-write
-        // transaction, so the resolved coordinates actually persist. A read path cannot do it --
-        // a listing runs readOnly, where the mutation would be discarded at flush and the geocode
-        // paid for again on every single request.
+        // Persisting HERE rather than on the listing read is the point: this is a read-write
+        // transaction, so the coordinates actually persist. A read path cannot do it -- a listing
+        // runs readOnly, where the mutation would be discarded at flush and the work paid for
+        // again on every single request.
+        //
+        // As of V55 the second call adopts the place the customer SELECTED instead of geocoding
+        // the text they typed, so an address edit now costs zero provider calls rather than one.
+        // The invalidation above still runs first and still matters: it also clears the PREVIOUS
+        // place id, so an edit can never leave new address text wearing the old address's proof
+        // of selection.
         serviceAddressGeocoder.invalidateCustomerDefault(user);
-        serviceAddressGeocoder.resolveCustomerDefault(user, Instant.now());
+        serviceAddressGeocoder.applyCustomerDefaultFromSelectedPlace(user, place, Instant.now());
         userRepository.save(user);
 
         return getMe(user.getId());

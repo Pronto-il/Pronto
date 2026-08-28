@@ -27,6 +27,14 @@ import java.util.List;
  *                          the {@code general_handyman} fallback. <b>Not a prediction</b> —
  *                          {@link EvaluationReport} reports these separately so accuracy
  *                          cannot be improved by quietly diverting hard cases to the fallback.
+ * @param unsupportedProfession the pipeline ended in the unsupported-profession state — it named
+ *                          the trade and Pronto offers no category for it. Distinct from
+ *                          {@code unresolved}: that means "diverted to the handyman fallback",
+ *                          this means "no category at all was returned".
+ * @param detectedProfession the free-text trade name the model returned, for reading the
+ *                          unsupported failures by eye — a case that came back "טכנאי גז" when the
+ *                          label said plumbing is a different problem from one that came back with
+ *                          no label.
  * @param unmatchedQuestion a question the scripted answers had no entry for, if any — a gap in
  *                          the dataset rather than in the system
  * @param rounds            every clarification exchange with the classification state either
@@ -46,6 +54,8 @@ public record EvaluationOutcome(
         int questionsAsked,
         boolean lowConfidence,
         boolean unresolved,
+        boolean unsupportedProfession,
+        String detectedProfession,
         String unmatchedQuestion,
         boolean expectedClarification,
         List<ClarificationRound> rounds,
@@ -92,11 +102,37 @@ public record EvaluationOutcome(
         return expectedClarification && questionsAsked == 0;
     }
 
+    /** True when the correct answer for this case is the unsupported-profession state. */
+    public boolean expectedUnsupported() {
+        return EvaluationCase.EXPECTED_UNSUPPORTED.equalsIgnoreCase(expectedCategory);
+    }
+
+    /**
+     * The failure this whole change exists to eliminate: a trade Pronto does not offer that was
+     * nevertheless routed to a Pronto category.
+     *
+     * <p>Counted separately from ordinary wrongness because it is worse than being wrong. An
+     * out-of-catalogue request routed to {@code general_handyman} does not merely mis-rank a
+     * category — it sends a real professional to a job they cannot do, and bills a customer for
+     * the privilege. Reported by name so it can never be averaged into a headline accuracy figure.
+     */
+    public boolean forcedIntoSupportedCategory() {
+        return expectedUnsupported() && finalCategory != null;
+    }
+
     public boolean initiallyCorrect() {
+        if (expectedUnsupported()) {
+            // "Correct at the first pass" for an unsupported case means the first pass already
+            // declined to name a category. bestGuess() records null in exactly that situation.
+            return initialCategory == null;
+        }
         return expectedCategory.equals(initialCategory);
     }
 
     public boolean finallyCorrect() {
+        if (expectedUnsupported()) {
+            return unsupportedProfession && finalCategory == null;
+        }
         return expectedCategory.equals(finalCategory);
     }
 

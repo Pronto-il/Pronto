@@ -58,6 +58,31 @@ function assertProductionApiBaseUrl(apiBaseUrl: string | undefined) {
   }
 }
 
+/**
+ * Address validation — refuse to build a production bundle that cannot search for an address.
+ *
+ * Same reasoning as the API-origin guard above, and the failure it prevents is nastier because it
+ * is silent: with no `VITE_GOOGLE_MAPS_BROWSER_KEY`, the autocomplete field renders, accepts
+ * typing, and returns no suggestions ever — so no customer can select an address, and therefore
+ * nobody can register, edit their profile, or book to a new address. Nothing errors; the product
+ * simply stops accepting new customers.
+ *
+ * This is a DIFFERENT key from the backend's `MAPS_API_KEY`. It is compiled into the bundle and is
+ * therefore public, which is safe only because it is restricted in the Google Console by HTTP
+ * referrer to Pronto's own origins and to the Places API alone. Never put the backend's key here.
+ */
+function assertProductionMapsBrowserKey(browserKey: string | undefined) {
+  if (!browserKey?.trim()) {
+    throw new Error(
+      'Refusing to build a production bundle: VITE_GOOGLE_MAPS_BROWSER_KEY is not set.\n' +
+        '  Address autocomplete would render but never return a suggestion, so no customer\n' +
+        '  could register, save a profile address, or book to a new address — silently.\n' +
+        '  Set it to a BROWSER key restricted to the Places API and to Pronto’s own HTTP\n' +
+        '  referrers. This is NOT the backend’s MAPS_API_KEY, which must never reach a bundle.',
+    )
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ command, mode }) => {
   if (command === 'build' && mode === 'production') {
@@ -65,6 +90,7 @@ export default defineConfig(({ command, mode }) => {
     // deployment is just as likely to put the value as in the shell.
     const env = loadEnv(mode, process.cwd(), 'VITE_')
     assertProductionApiBaseUrl(env.VITE_API_BASE_URL)
+    assertProductionMapsBrowserKey(env.VITE_GOOGLE_MAPS_BROWSER_KEY)
   }
 
   return {

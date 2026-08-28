@@ -88,6 +88,42 @@ public class MockAiClassificationClient implements AiClassificationClient {
     );
 
     /**
+     * Trades Pronto does not offer, and the Hebrew a customer actually types when they need one.
+     *
+     * <p>Checked <b>before</b> the category scoring, and it is the only way the mock can produce
+     * an {@code UNSUPPORTED_PROFESSION} outcome — without it, mock mode would score "ג׳וקים"
+     * against the category keywords, match nothing, and fall back to handyman, so the entire new
+     * branch would be unreachable offline and untested on every build. The mock's job is to keep
+     * the whole pipeline exercisable without a key, and that now includes this path.
+     *
+     * <p>Deliberately a short, obvious list rather than an attempt at coverage: these are
+     * fixtures, not a model. Note the absence of "מקרר" and "כביסה" — those ARE supported, via
+     * appliance_repair, and putting them here would encode the exact mistake the real prompt's
+     * worked examples exist to prevent.
+     */
+    private record UnsupportedProfession(String nameHe, List<String> keywords) {
+    }
+
+    private static final List<UnsupportedProfession> UNSUPPORTED_PROFESSIONS = List.of(
+            new UnsupportedProfession("טכנאי גז",
+                    List.of("ריח גז", "ריח של גז", "בלון גז", "צינור גז", "טכנאי גז")),
+            new UnsupportedProfession("מדביר",
+                    List.of("ג׳וק", "גוק", "ג'וק", "מקק", "עכבר", "חולדה", "נמלים", "הדברה", "מזיקים")),
+            new UnsupportedProfession("זגג",
+                    // "חלון" on its own, not only "חלון נשבר": a customer writes "נשבר לי חלון",
+                    // and a fixture set that only matches one word order is testing the fixture
+                    // rather than the flow.
+                    List.of("זכוכית", "חלון", "שמשה", "זגג")),
+            new UnsupportedProfession("גנן",
+                    List.of("גינה", "גיזום", "לגזום", "עץ בחצר", "דשא", "גנן")),
+            new UnsupportedProfession("מוביל",
+                    List.of("הובלה", "מוביל", "הובלת דירה", "מנוף")),
+            new UnsupportedProfession("איטום גגות",
+                    List.of("גג דולף", "רעפים", "איטום גג")),
+            new UnsupportedProfession("טכנאי אנטנות",
+                    List.of("אנטנה", "צלחת לוויין", "ממיר")));
+
+    /**
      * Canned Hebrew questions for the overlaps that actually matter, keyed by the competing
      * pair. Mirrors the real disambiguation rules in {@code catalog.CategoryRoutingProfiles}
      * so the mock asks something plausible rather than filler. A pair with no entry here
@@ -130,10 +166,21 @@ public class MockAiClassificationClient implements AiClassificationClient {
     @Override
     public ClassificationResponse classify(ClassificationRequest request) {
         List<String> availableCodes = catalog.categories().stream().map(ServiceCategory::code).toList();
-        List<CategoryCandidate> candidates = score(scoringText(request), availableCodes);
+        String text = scoringText(request);
+
+        // Profession first, exactly as the real prompt instructs: an out-of-catalogue trade is
+        // recognised before any Pronto category is scored, and returns no category and no
+        // candidates -- which is what RoutingDecisionPolicy reads as unsupported.
+        String unsupported = detectUnsupportedProfession(text);
+        if (unsupported != null) {
+            return new ClassificationResponse(unsupported, null, 0.92, false,
+                    "Mock heuristic matched an out-of-catalogue profession.", List.of(), null);
+        }
+
+        List<CategoryCandidate> candidates = score(text, availableCodes);
 
         if (candidates.isEmpty()) {
-            return new ClassificationResponse(ServiceCategoryCatalog.FALLBACK_CATEGORY_CODE, 0.3, false,
+            return new ClassificationResponse(null, ServiceCategoryCatalog.FALLBACK_CATEGORY_CODE, 0.3, false,
                     "Mock heuristic matched no keyword.",
                     List.of(new CategoryCandidate(ServiceCategoryCatalog.FALLBACK_CATEGORY_CODE, 0.3)), null);
         }
@@ -152,8 +199,46 @@ public class MockAiClassificationClient implements AiClassificationClient {
                         + " almost equally."
                 : null;
 
-        return new ClassificationResponse(top.categoryCode(), top.confidence(), question != null,
-                ambiguityReason, candidates, question);
+        return new ClassificationResponse(professionFor(top.categoryCode()), top.categoryCode(),
+                top.confidence(), question != null, ambiguityReason, candidates, question);
+    }
+
+    /**
+     * The first out-of-catalogue trade whose keywords appear in the text, or {@code null}.
+     *
+     * <p>First match wins in declaration order — a {@code List} rather than a {@code Map} precisely
+     * so that order is real and not a hash artefact. That is enough for fixtures: these keyword
+     * sets do not overlap, and a mock that tried to arbitrate between "ריח גז" and "ג׳וק" would be
+     * modelling a problem the real model handles.
+     */
+    private static String detectUnsupportedProfession(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        for (UnsupportedProfession profession : UNSUPPORTED_PROFESSIONS) {
+            if (profession.keywords().stream().anyMatch(text::contains)) {
+                return MOCK_PREFIX + profession.nameHe();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * A plausible Hebrew trade name for a supported category, so the mock fills
+     * {@code detectedProfession} on every response rather than only the unsupported ones — the
+     * real model does, and a mock that left it null would hide any consumer that came to depend
+     * on it.
+     */
+    private static String professionFor(String categoryCode) {
+        return MOCK_PREFIX + switch (categoryCode) {
+            case CategoryRoutingProfiles.CODE_PLUMBING -> "אינסטלטור";
+            case CategoryRoutingProfiles.CODE_ELECTRICAL -> "חשמלאי";
+            case CategoryRoutingProfiles.CODE_AC_HVAC -> "טכנאי מזגנים";
+            case CategoryRoutingProfiles.CODE_APPLIANCE_REPAIR -> "טכנאי מוצרי חשמל";
+            case CategoryRoutingProfiles.CODE_LOCKSMITH -> "מנעולן";
+            case CategoryRoutingProfiles.CODE_PAINTING -> "צבע";
+            default -> "הנדימן";
+        };
     }
 
     @Override

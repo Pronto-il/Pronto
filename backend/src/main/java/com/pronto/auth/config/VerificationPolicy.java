@@ -1,5 +1,8 @@
 package com.pronto.auth.config;
 
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -25,28 +28,54 @@ import org.springframework.stereotype.Component;
  * behaviour with no code change and no data migration -- accounts verified while it was
  * {@code false} keep {@code phone_verified = false} and are then correctly asked to prove it.
  *
- * <p><b>What it deliberately does NOT relax.</b> Email verification. Under either setting an
- * account is unverified until it has redeemed an emailed code, because that is the only proof the
- * address behind the account belongs to the person using it. See
- * {@code users.service.ContactVerificationGuard}, which requires email unconditionally and consults
- * this policy only for the phone half.
- *
- * <p>Three places read this, and they are the whole surface:
+ * <p>Three places read the phone half, and they are its whole surface:
  * <ul>
  *   <li>{@code ContactVerificationGuard} -- the customer-side gate on issues, bookings and SOS</li>
  *   <li>{@code ProfessionalEligibility.PHONE_VERIFIED_JPQL} -- the professional-side discoverability
  *       rule, which reads this bean through SpEL so no repository signature has to change</li>
  *   <li>{@code AuthService#verifyEmail} -- whether to issue a phone challenge after the email one</li>
  * </ul>
+ *
+ * <h2>The email half</h2>
+ *
+ * <p>Email verification was, until the closed beta, the one channel this class did not make
+ * conditional — the paragraph here used to say so explicitly. {@link #isEmailVerificationRequired()}
+ * is the same shape of temporary, operator-named relaxation as the phone half, for the same kind of
+ * reason: <b>AWS SES is still in the sandbox and Production Access has not been approved</b>, so SES
+ * rejects every recipient address that has not itself been individually verified in the console. A
+ * verification code that the provider refuses to send is not a weaker verification step; it is a
+ * registration that always ends in {@code OTP_DELIVERY_FAILED}, for every real user, with the
+ * account already created and no way forward.
+ *
+ * <p><b>Both halves default to {@code true} and neither is derived from
+ * {@code pronto.environment}.</b> The bypass is reachable only by an operator who set
+ * {@code EMAIL_VERIFICATION_REQUIRED=false} and meant it.
+ *
+ * <p>Four places read the email half, and they are its whole surface — verified by walking every
+ * {@code isEmailVerified()} call site in {@code src/main}:
+ * <ul>
+ *   <li>{@code AuthService#register} -- whether to dispatch the {@code EMAIL_VERIFICATION} code</li>
+ *   <li>{@code AuthService#login} -- whether an unproved address is challenged instead of signed in</li>
+ *   <li>{@code ContactVerificationGuard} -- the gate on issues, bookings and SOS</li>
+ *   <li>{@code AuthService#requestPasswordReset} -- which accounts may start a reset at all</li>
+ * </ul>
+ * Gating only the first would produce a beta in which everybody registers successfully and is then
+ * unable to book <em>or</em> to recover a password, which is a worse failure than the one being
+ * fixed because it looks like the product working.
  */
 @Component("verificationPolicy")
 public class VerificationPolicy {
 
+    private static final Logger log = LoggerFactory.getLogger(VerificationPolicy.class);
+
     private final boolean smsVerificationRequired;
+    private final boolean emailVerificationRequired;
 
     public VerificationPolicy(
-            @Value("${pronto.verification.sms-required:true}") boolean smsVerificationRequired) {
+            @Value("${pronto.verification.sms-required:true}") boolean smsVerificationRequired,
+            @Value("${pronto.verification.email-required:true}") boolean emailVerificationRequired) {
         this.smsVerificationRequired = smsVerificationRequired;
+        this.emailVerificationRequired = emailVerificationRequired;
     }
 
     /**
@@ -59,5 +88,42 @@ public class VerificationPolicy {
      */
     public boolean isSmsVerificationRequired() {
         return smsVerificationRequired;
+    }
+
+    /**
+     * {@code true} (the default) when a new account must redeem an emailed code before it is
+     * treated as verified. {@code false} for the closed beta, while SES is sandboxed.
+     *
+     * <p><b>{@code false} does not write {@code email_verified = true} for anybody.</b> Accounts
+     * created while it is off keep {@code email_verified = false}, exactly as the phone half keeps
+     * {@code phone_verified = false} — the column continues to mean "this address was proved", and
+     * nothing here makes it lie. That is what makes reversal a one-variable change: flip it back and
+     * those accounts are asked to verify at their next login, through the {@code VERIFY_EMAIL}
+     * branch that already exists for an abandoned registration. No migration, no backfill.
+     */
+    public boolean isEmailVerificationRequired() {
+        return emailVerificationRequired;
+    }
+
+    /**
+     * Announced at boot for the same reason {@link AuthOtpPolicy} announces itself: an operator
+     * must not have to infer the state of a verification requirement from whether a message
+     * arrived, because that inference cannot tell "the requirement is off" from "the requirement is
+     * on and delivery is broken" — and here those two states are one property apart.
+     */
+    @PostConstruct
+    void announce() {
+        log.info("Contact verification requirements: email={} sms={}",
+                emailVerificationRequired ? "REQUIRED" : "NOT REQUIRED",
+                smsVerificationRequired ? "REQUIRED" : "NOT REQUIRED");
+        if (!emailVerificationRequired) {
+            log.warn("Email verification is DISABLED (pronto.verification.email-required=false, "
+                    + "EMAIL_VERIFICATION_REQUIRED). Registration creates the account without "
+                    + "dispatching an EMAIL_VERIFICATION code, and an unproved address no longer "
+                    + "blocks login, booking or password reset. Accounts still record "
+                    + "email_verified=false. Password checks, lockout, rate limiting and every route "
+                    + "guard remain in force. Set EMAIL_VERIFICATION_REQUIRED=true once SES "
+                    + "Production Access is approved.");
+        }
     }
 }

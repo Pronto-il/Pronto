@@ -3,7 +3,9 @@ package com.pronto.bookings.dto;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 
 /**
@@ -25,6 +27,20 @@ import java.time.Instant;
  * deliberately **not** a field here at all — it is always computed server-side as
  * {@code bookedStart + BookingsService.DEFAULT_JOB_DURATION_MINUTES}, never accepted from the
  * client, so a malicious/buggy client can never request an arbitrary-length booking.
+ *
+ * <p><b>The {@code servicePlaceId}/{@code serviceFormattedAddress}/{@code serviceLatitude}/
+ * {@code serviceLongitude} group identifies the place the customer SELECTED</b> ({@code V55}),
+ * for the "another address for this booking" case. Validated together by
+ * {@code maps.service.SelectedPlaceValidator} — a partial claim is refused.
+ *
+ * <p><b>They are conditionally required, and the condition is deliberate.</b> A customer booking
+ * to their own saved default address may omit them, because that address is already on their
+ * {@code users} row and may legitimately predate address validation; requiring a re-selection
+ * would stop existing customers mid-booking to re-enter an address that has been working. Any
+ * <em>other</em> address is new text nobody has confirmed, and must carry a selected place.
+ * {@code BookingsService} decides which case applies by comparing the submitted address against
+ * the caller's own stored default with the {@code V50} address digest — a comparison a caller
+ * cannot exploit, since it only ever admits an address already saved on their own account.
  */
 public record CreateOrderRequest(
         @NotNull @Positive Long issueId,
@@ -36,6 +52,10 @@ public record CreateOrderRequest(
         String serviceApartment,
         String serviceFloor,
         String serviceEntrance,
-        String serviceAddressNotes
+        String serviceAddressNotes,
+        @Size(max = 255) String servicePlaceId,
+        @Size(max = 500) String serviceFormattedAddress,
+        BigDecimal serviceLatitude,
+        BigDecimal serviceLongitude
 ) {
 }

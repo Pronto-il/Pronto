@@ -7,6 +7,7 @@ import com.pronto.maps.GeocodeStatus;
 import com.pronto.maps.GeocodingProvider;
 import com.pronto.maps.MapsProviderException;
 import com.pronto.maps.PostalAddress;
+import com.pronto.maps.SelectedPlace;
 import com.pronto.maps.config.MapsProperties;
 import com.pronto.users.entity.User;
 import org.slf4j.Logger;
@@ -145,6 +146,31 @@ public class ServiceAddressGeocoder {
         GeocodeResult result = resolve(address);
         applyToUser(user, address, result, now);
         return result.isResolved() ? result.coordinates() : null;
+    }
+
+    /**
+     * Adopt a place the customer <b>selected</b> as their default address's resolution, instead of
+     * geocoding the text they typed.
+     *
+     * <p><b>This removes a provider call rather than adding one.</b> The coordinates already
+     * arrived with the selection, so the geocode {@link #resolveCustomerDefault} would have
+     * performed is simply not needed — and the answer is better, because it describes the place a
+     * human picked rather than the best match for a string.
+     *
+     * <p>Everything downstream is deliberately unchanged. The address digest is written exactly as
+     * a geocode would write it, so reuse, the cache-age bound and the "an edit invalidates the
+     * coordinates" rule all keep working with no special case for selected addresses; and the
+     * advisory {@code service_cities} reconciliation still runs.
+     *
+     * <p>Mutates the passed {@link User} and relies on the caller's transaction to flush it —
+     * callers must be write paths, same as {@link #resolveCustomerDefault}.
+     */
+    public void applyCustomerDefaultFromSelectedPlace(User user, SelectedPlace place, Instant now) {
+        PostalAddress address = new PostalAddress(user.getDefaultCity(), user.getDefaultStreet(),
+                user.getDefaultHouseNumber());
+        user.applySelectedPlace(place, now, address.contentHash());
+        user.setDefaultServiceCityId(reconcileCity(user.getDefaultCity()));
+        log.info("maps.place.applied source=selected");
     }
 
     /**

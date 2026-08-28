@@ -97,6 +97,12 @@ export interface RegisterAddressPayload {
   floor?: string;
   entrance?: string;
   addressNotes?: string;
+  /** The place the customer selected from autocomplete (`V55`). Required at registration — a
+   *  brand-new address has never been confirmed by anybody, so there is nothing to grandfather. */
+  placeId?: string;
+  formattedAddress?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface RegisterCustomerPayload {
@@ -210,6 +216,10 @@ export function registerCustomer(payload: RegisterCustomerPayload): Promise<Auth
         floor: undefinedIfBlank(payload.address.floor),
         entrance: undefinedIfBlank(payload.address.entrance),
         addressNotes: undefinedIfBlank(payload.address.addressNotes),
+        placeId: payload.address.placeId,
+        formattedAddress: payload.address.formattedAddress,
+        latitude: payload.address.latitude,
+        longitude: payload.address.longitude,
       },
     },
     professional: null,

@@ -238,7 +238,21 @@ pronto:
     # Never committed — env-var-sourced only, same treatment as JWT_SECRET. Required only
     # when pronto.ai.mode=openai, and startup-checked there since Production MS4.
     api-key: ${OPENAI_API_KEY:}
-    model: ${OPENAI_MODEL:gpt-4o-mini}
+    # Raised from gpt-4o-mini alongside the profession-first classification prompt
+    # (classification-v5), which asks the model to name the trade a customer needs BEFORE
+    # consulting Pronto's catalogue and to return no category when Pronto covers no such trade —
+    # a negative, multi-step instruction that a weaker model tends to answer helpfully instead of
+    # correctly.
+    #
+    # THE DEFAULT IS CHANGED TOO, not only Production's env var, and deliberately: with a default
+    # here the variable is never actually absent, so an evaluation run that does not set
+    # OPENAI_MODEL would otherwise measure a different model from the one Production runs — and
+    # then be quoted as if it were Production's accuracy. The eval harness and Production must
+    # default to the same model or the numbers are about nothing.
+    #
+    # Still the only place any model name appears outside infra/terraform. Nothing in Java names a
+    # model; changing it is this line plus compute.tf.
+    model: ${OPENAI_MODEL:gpt-4.1-mini}
     timeout-ms: ${OPENAI_TIMEOUT_MS:10000}
 
   email:
@@ -345,6 +359,43 @@ pronto:
     # pronto.sms.mode=aws and that an origination identity exists first -- turning the requirement
     # back on while delivery is still broken recreates the trap this setting was added to escape.
     sms-required: ${SMS_VERIFICATION_REQUIRED:true}
+
+    # Must an account prove its EMAIL ADDRESS?
+    #
+    # true (the default, and the intended long-term rule)
+    #     Registration dispatches an EMAIL_VERIFICATION code and returns no token; login refuses a
+    #     session to an account that never redeemed one; a customer cannot create an issue, booking
+    #     or SOS request until the address is proved; only a verified account may start a password
+    #     reset. Email is the account identity, and this is the only proof that the address behind
+    #     an account belongs to the person using it.
+    #
+    # false (TEMPORARY, closed beta, production only)
+    #     AWS SES is still in the SANDBOX and Production Access has not been approved, so SES
+    #     rejects every recipient address that has not itself been individually verified in the
+    #     console. With the rule enforced, registration creates the account and then fails with
+    #     OTP_DELIVERY_FAILED for every real user, and login re-issues the same undeliverable code
+    #     forever. There is no way forward for anyone who is not already on the console allowlist.
+    #
+    # WHAT false DOES NOT DO. It does not write email_verified = true for anybody -- accounts
+    # created while it is false keep email_verified = false, exactly as the SMS half keeps
+    # phone_verified = false. It does not remove the EMAIL_VERIFICATION purpose, the verify/resend
+    # endpoints, SesEmailSender, or any test. It does not touch login OTP (AUTH_OTP_REQUIRED owns
+    # that), password verification, lockout, rate limiting or any route guard.
+    #
+    # IT IS A REAL RELAXATION, and it is worth naming: while this is false, an account's email
+    # address is unproved, so a typo'd or someone else's address will reach the marketplace.
+    # Accepted deliberately for the beta -- see auth.config.VerificationPolicy and
+    # users.service.ContactVerificationGuard.
+    #
+    # NOTE: password reset still DELIVERS over SES, so it remains unusable in the sandbox
+    # regardless of this setting. This flag only stops email_verified from being the thing that
+    # blocks it.
+    #
+    # RE-ENABLING is one variable: EMAIL_VERIFICATION_REQUIRED=true, the moment SES Production
+    # Access is approved. Accounts created during the beta are then correctly asked to verify at
+    # their next login, through the VERIFY_EMAIL branch that already exists for an abandoned
+    # registration. No migration, no backfill, no code change.
+    email-required: ${EMAIL_VERIFICATION_REQUIRED:true}
 
   otp:
     # Server-side key for the HMAC that protects stored one-time passwords

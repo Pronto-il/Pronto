@@ -96,6 +96,18 @@ public class SosRequest {
     @Column(name = "geocode_status", length = 20)
     private String geocodeStatus;
 
+    /**
+     * The place the customer <b>selected</b> for this SOS destination ({@code V55}), rather than
+     * the text they typed. Same snapshot and grandfathering semantics as
+     * {@code bookings.entity.Order#getServicePlaceId()}: written at creation, never rewritten,
+     * and legitimately null for a request raised against a legacy default address.
+     */
+    @Column(name = "service_place_id", length = 255)
+    private String servicePlaceId;
+
+    @Column(name = "service_formatted_address", length = 500)
+    private String serviceFormattedAddress;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 40)
     private SosRequestStatus status;
@@ -231,6 +243,33 @@ public class SosRequest {
 
     public String getGeocodeStatus() {
         return geocodeStatus;
+    }
+
+    public String getServicePlaceId() {
+        return servicePlaceId;
+    }
+
+    public String getServiceFormattedAddress() {
+        return serviceFormattedAddress;
+    }
+
+    /**
+     * Record the place the customer selected for this destination ({@code V55}), and adopt its
+     * coordinates when the request does not already have a position.
+     *
+     * <p>The coordinate half defers to {@link #applyGeocode}'s existing rule — a client-supplied
+     * device fix already on the row wins, because "where the phone says I am" is a better answer
+     * for an emergency than "the address I picked". The place id is recorded either way: which
+     * address was chosen and where the handset was are two different facts, and SOS wants both.
+     */
+    public void applySelectedPlace(com.pronto.maps.SelectedPlace place) {
+        if (place == null) {
+            return;
+        }
+        this.servicePlaceId = place.placeId();
+        this.serviceFormattedAddress = place.formattedAddress();
+        applyGeocode(place.coordinates().latitude(), place.coordinates().longitude(),
+                com.pronto.maps.GeocodeStatus.RESOLVED);
     }
 
     @PrePersist

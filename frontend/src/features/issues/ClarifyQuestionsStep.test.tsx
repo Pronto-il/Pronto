@@ -35,6 +35,7 @@ function question(overrides: Partial<ClassifyQuestion> = {}): ClassifyQuestion {
 function classified(): ClassifyIssueResponse {
   return {
     status: 'CLASSIFIED',
+    detectedProfession: 'אינסטלטור',
     suggestedCategoryId: 1,
     suggestedCategoryCode: 'plumbing',
     questions: [],
@@ -44,6 +45,7 @@ function classified(): ClassifyIssueResponse {
 function asking(next: ClassifyQuestion): ClassifyIssueResponse {
   return {
     status: 'QUESTIONS',
+    detectedProfession: null,
     suggestedCategoryId: null,
     suggestedCategoryCode: null,
     questions: [next],

@@ -257,6 +257,13 @@ export interface CreateOrderRequest {
   serviceFloor?: string;
   serviceEntrance?: string;
   serviceAddressNotes?: string;
+  /** The place the customer selected for this booking's destination (`V55`). Required by the
+   *  backend for any address other than the caller's own saved default, which stays
+   *  grandfathered so an existing customer is never stopped mid-booking. */
+  servicePlaceId?: string;
+  serviceFormattedAddress?: string;
+  serviceLatitude?: number;
+  serviceLongitude?: number;
 }
 
 export interface OrderResponse {

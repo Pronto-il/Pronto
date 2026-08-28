@@ -27,6 +27,11 @@ export interface UserMeDefaultAddress {
   floor: string | null;
   entrance: string | null;
   addressNotes: string | null;
+  /** Google place id of the suggestion this address was selected from (`V55`). `null` for an
+   *  address saved before address validation existed — such an address is grandfathered for
+   *  booking and must be re-selected the next time it is edited. */
+  placeId: string | null;
+  formattedAddress: string | null;
 }
 
 /**
@@ -84,6 +89,15 @@ export interface UpdateUserMeRequest {
     floor?: string;
     entrance?: string;
     addressNotes?: string;
+    /** The selected place (`V55`). Required by the backend on this endpoint: editing a saved
+     *  address is exactly the moment a legacy free-text one must become validated. Sent as
+     *  `undefined` rather than `null` for an unresolved address so the request shape is the same
+     *  "omit what you do not have" convention the optional text fields already use — the backend
+     *  refuses it either way. */
+    placeId?: string;
+    formattedAddress?: string;
+    latitude?: number;
+    longitude?: number;
   };
 }
 

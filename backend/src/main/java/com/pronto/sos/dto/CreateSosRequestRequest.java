@@ -27,7 +27,15 @@ import java.math.BigDecimal;
  *
  * @param issueSummary optional short headline shown on the professional's dispatch card
  * @param urgency      optional; defaults to {@link SosUrgency#URGENT}
- * @param latitude     optional, and not read by v1 matching — see {@code V34}'s column comment
+ * @param latitude     the DEVICE's own position when the handset had a fix. Distinct from
+ *                     {@code serviceLatitude} below, which is the selected place's position —
+ *                     "where the phone says I am" and "which address I chose" are different
+ *                     claims, and SOS has always been able to use the first when it exists.
+ * @param servicePlaceId the place the customer SELECTED for the destination address
+ *                     ({@code V55}), on the same conditional-requirement rule as
+ *                     {@code bookings.dto.CreateOrderRequest}: omittable for the caller's own
+ *                     saved default address, required for any other. Validated by
+ *                     {@code maps.service.SelectedPlaceValidator}.
  */
 public record CreateSosRequestRequest(
         @NotNull @Positive Long issueId,
@@ -41,6 +49,10 @@ public record CreateSosRequestRequest(
         @Size(max = 20) String serviceEntrance,
         @Size(max = 500) String serviceAddressNotes,
         @DecimalMin("-90.0") @DecimalMax("90.0") BigDecimal latitude,
-        @DecimalMin("-180.0") @DecimalMax("180.0") BigDecimal longitude
+        @DecimalMin("-180.0") @DecimalMax("180.0") BigDecimal longitude,
+        @Size(max = 255) String servicePlaceId,
+        @Size(max = 500) String serviceFormattedAddress,
+        BigDecimal serviceLatitude,
+        BigDecimal serviceLongitude
 ) {
 }

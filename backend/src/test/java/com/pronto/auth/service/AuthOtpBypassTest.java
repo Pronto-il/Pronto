@@ -94,7 +94,8 @@ class AuthOtpBypassTest {
                 Mockito.mock(com.pronto.storage.service.StorageService.class),
                 passwordEncoder, new PhoneNumberNormalizer("IL"),
                 loginAttemptRecorder, otpService,
-                Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class));
+                Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class),
+                new com.pronto.maps.service.SelectedPlaceValidator());
 
         account = new User("Israel Israeli", EMAIL, passwordEncoder.encode(PASSWORD), role);
         InMemoryVerificationCodes.setField(account, "id", 42L);
@@ -115,7 +116,8 @@ class AuthOtpBypassTest {
                 Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
                 Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
-                new VerificationPolicy(true), new AuthOtpPolicy(String.valueOf(otpRequired)));
+                new VerificationPolicy(true, true), new AuthOtpPolicy(String.valueOf(otpRequired)),
+                new com.pronto.maps.service.SelectedPlaceValidator());
     }
 
     // ---- OTP DISABLED ---------------------------------------------------------

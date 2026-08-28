@@ -37,7 +37,22 @@ export type { DocumentUploadFieldProps } from './DocumentUploadField';
 export { AddressFormFields } from './AddressFormFields';
 export type { AddressFormFieldsProps } from './AddressFormFields';
 
-export { EMPTY_ADDRESS, toAddressValue } from './addressTypes';
+export { AddressAutocompleteField } from './AddressAutocompleteField';
+export type { AddressAutocompleteFieldProps } from './AddressAutocompleteField';
+
+export {
+  EMPTY_ADDRESS,
+  toAddressValue,
+  isAddressResolved,
+  withSelectedPlace,
+  withEditedAddressText,
+  validateAddress,
+  validateAddressTextOnly,
+  ADDRESS_NOT_SELECTED_MESSAGE,
+} from './addressTypes';
+export type { ResolvedPlace } from './addressTypes';
+export { googlePlacesProvider } from './googlePlaces';
+export type { AddressSuggestion, AddressSuggestionProvider } from './googlePlaces';
 export type { AddressValue, SavedDefaultAddress } from './addressTypes';
 
 export { WeeklyHoursFields } from './WeeklyHoursFields';

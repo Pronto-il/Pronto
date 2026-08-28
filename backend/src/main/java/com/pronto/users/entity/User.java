@@ -122,6 +122,25 @@ public class User {
     private Long defaultServiceCityId;
 
     /**
+     * The place the customer <b>selected</b> from address autocomplete ({@code V55}), as opposed
+     * to the free text they typed into {@link #defaultCity} and friends.
+     *
+     * <p>Answers a different question from the coordinates above. Those say "where does this text
+     * resolve to?", which a geocoder will attempt for any string; this says "a human picked this
+     * from a list of places that exist". Only the second makes an address <em>validated</em>.
+     *
+     * <p><b>Null means legacy, not broken.</b> Every address saved before {@code V55} has no place
+     * id, is deliberately not backfilled, and keeps working for booking exactly as before. It
+     * gains one the next time the customer edits the address, which is the only moment a
+     * re-selection can be asked for without interrupting somebody who was not editing anything.
+     */
+    @Column(name = "default_place_id", length = 255)
+    private String defaultPlaceId;
+
+    @Column(name = "default_formatted_address", length = 500)
+    private String defaultFormattedAddress;
+
+    /**
      * Phone number in canonical E.164, e.g. {@code +972501234567}.
      *
      * <p><b>Production MS1 changed what this column means.</b> It arrived (V28) as free-text
@@ -359,9 +378,46 @@ public class User {
      * <p>Called when the address is edited. The coordinates go first and synchronously, so no read
      * between the edit and the next resolve can route to where the customer used to live.
      */
+    public String getDefaultPlaceId() {
+        return defaultPlaceId;
+    }
+
+    public String getDefaultFormattedAddress() {
+        return defaultFormattedAddress;
+    }
+
+    /**
+     * Adopt a selected place as this account's default address: its identity, its normalized
+     * rendering, and its coordinates, which are marked {@code RESOLVED} against the current
+     * address text.
+     *
+     * <p><b>This is a write path that costs no provider call.</b> The coordinates came from the
+     * place the customer picked, which is a better answer than geocoding the text would produce
+     * and one that has already been paid for. The address hash is still written, so every
+     * existing reuse and invalidation rule in {@code ServiceAddressGeocoder} continues to apply
+     * unchanged — including "an address edit invalidates its coordinates".
+     *
+     * <p>One method rather than four setters, for the reason {@link #applyDefaultGeocode} gives:
+     * these fields are one fact, and {@code ck_users_default_geocode_consistency} refuses a row
+     * that holds half of it.
+     */
+    public void applySelectedPlace(com.pronto.maps.SelectedPlace place, Instant resolvedAt,
+                                    String addressHash) {
+        applyDefaultGeocode(place.coordinates().latitude(), place.coordinates().longitude(),
+                com.pronto.maps.GeocodeStatus.RESOLVED.name(), resolvedAt, addressHash);
+        this.defaultPlaceId = place.placeId();
+        this.defaultFormattedAddress = place.formattedAddress();
+    }
+
     public void clearDefaultGeocode() {
         applyDefaultGeocode(null, null, null, null, null);
         this.defaultServiceCityId = null;
+        // The selected place describes the address that was just replaced, so it goes with the
+        // coordinates. Leaving it behind would mean a freshly-typed address inheriting the
+        // previous one's proof of selection -- which is precisely the "edit invalidates the
+        // selection" rule, enforced in the entity rather than trusted to each edit path.
+        this.defaultPlaceId = null;
+        this.defaultFormattedAddress = null;
     }
 
     public String getPhone() {

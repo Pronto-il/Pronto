@@ -92,14 +92,16 @@ class AuthFlowTest {
                 Mockito.mock(com.pronto.availability.repository.ProfessionalWorkingHoursRepository.class),
                 Mockito.mock(com.pronto.storage.service.StorageService.class),
                 passwordEncoder, new PhoneNumberNormalizer("IL"),
-                Mockito.mock(LoginAttemptRecorder.class), otpService, Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class));
+                Mockito.mock(LoginAttemptRecorder.class), otpService, Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class),
+                new com.pronto.maps.service.SelectedPlaceValidator());
 
         authService = new AuthService(userRepository, accountWriter, otpService, jwtService,
                 passwordEncoder,
                 Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
                 Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
-                new VerificationPolicy(true), new AuthOtpPolicy("true"));
+                new VerificationPolicy(true, true), new AuthOtpPolicy("true"),
+                new com.pronto.maps.service.SelectedPlaceValidator());
 
         account = new User("Israel Israeli", EMAIL, passwordEncoder.encode(PASSWORD), UserRole.CUSTOMER);
         InMemoryVerificationCodes.setField(account, "id", 42L);

@@ -8,6 +8,8 @@ import {
   PageHeader,
   Skeleton,
   toAddressValue,
+  validateAddress,
+  validateAddressTextOnly,
 } from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
 import { AddressSelectionStep } from '../booking';
@@ -26,15 +28,6 @@ import type { IssueDetailResponse } from '../../shared/api';
 import { SOS_ERROR_MESSAGES } from './sosUiState';
 import ProntoSosScreen from './ProntoSosScreen';
 import styles from './ProntoSosEntryPage.module.css';
-
-/** Required-field check, identical to the one the booking flow's own address step applies. */
-function validateAddress(address: AddressValue): Partial<Record<keyof AddressValue, string>> {
-  const errors: Partial<Record<keyof AddressValue, string>> = {};
-  if (!address.city.trim()) errors.city = 'יש להזין עיר.';
-  if (!address.street.trim()) errors.street = 'יש להזין רחוב.';
-  if (!address.houseNumber.trim()) errors.houseNumber = 'יש להזין מספר בית.';
-  return errors;
-}
 
 function toUserMessage(error: unknown): string {
   if (error instanceof ApiError && SOS_ERROR_MESSAGES[error.code]) {
@@ -173,6 +166,12 @@ export default function ProntoSosEntryPage() {
           serviceFloor: effectiveAddress.floor.trim() || undefined,
           serviceEntrance: effectiveAddress.entrance.trim() || undefined,
           serviceAddressNotes: effectiveAddress.addressNotes.trim() || undefined,
+          // V55. Omitted for a grandfathered legacy default address -- which SOS relies on more
+          // than any other flow, since it activates against the saved address without asking.
+          servicePlaceId: effectiveAddress.placeId ?? undefined,
+          serviceFormattedAddress: effectiveAddress.formattedAddress ?? undefined,
+          serviceLatitude: effectiveAddress.latitude ?? undefined,
+          serviceLongitude: effectiveAddress.longitude ?? undefined,
         });
         setSosRequestId(created.id);
       } catch (err) {
@@ -200,11 +199,27 @@ export default function ProntoSosEntryPage() {
   );
 
   /**
+   * Address validation, mode-aware — and the mode really matters here.
+   *
+   * A one-off address typed for this SOS must be selected from autocomplete, exactly as in the
+   * booking flow. The customer's own saved default address must NOT be, because it may predate
+   * autocomplete and the backend grandfathers it. Applying the strict rule to a legacy default
+   * address would send a customer with a burst pipe to an address-editing screen instead of
+   * looking for a plumber -- and `hasUsableAddress` below would suppress the automatic
+   * activation this whole screen is built around.
+   */
+  function validateCurrentAddress(): Partial<Record<keyof AddressValue, string>> {
+    return addressMode === 'DEFAULT'
+      ? validateAddressTextOnly(address)
+      : validateAddress(address);
+  }
+
+  /**
    * The address step's own action. It no longer hands back to a confirmation card — filling in
    * where to send somebody is the last question this flow has, so answering it starts the search.
    */
   function handleAddressContinue() {
-    const errors = validateAddress(address);
+    const errors = validateCurrentAddress();
     setAddressErrors(errors);
     if (Object.keys(errors).length === 0) {
       setIsEditingAddress(false);
@@ -223,7 +238,7 @@ export default function ProntoSosEntryPage() {
     void activate(address);
   }, [activate, address]);
 
-  const hasUsableAddress = Object.keys(validateAddress(address)).length === 0;
+  const hasUsableAddress = Object.keys(validateCurrentAddress()).length === 0;
 
   /**
    * Exactly one automatic activation per mount. A ref, not state: two effect runs in the same

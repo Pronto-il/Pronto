@@ -44,6 +44,11 @@ public final class ClassificationResponseParser {
             throw malformed("classification payload was not a JSON object");
         }
 
+        // Soft, not hard. A missing profession label degrades the customer-facing message for an
+        // unsupported trade; it does not make the response unreasonable-about, and failing the whole
+        // classification over a label would be a worse outcome than the generic wording the policy
+        // falls back to. Same severity split the rest of this parser uses.
+        String detectedProfession = optionalText(payload, "detectedProfession");
         String primaryCategoryCode = optionalText(payload, "primaryCategoryCode");
         double confidence = requiredConfidence(payload, "confidence");
 
@@ -65,8 +70,13 @@ public final class ClassificationResponseParser {
                     + "of asking.");
         }
 
-        return new ClassificationResponse(primaryCategoryCode, confidence, needsClarification, ambiguityReason,
-                candidates, nextQuestion);
+        if (detectedProfession == null && primaryCategoryCode == null && candidates.isEmpty()) {
+            log.warn("ai.classification.parse profession=absent primary=null candidates=0 — nothing to "
+                    + "route on and nothing to name; the routing policy will fall back.");
+        }
+
+        return new ClassificationResponse(detectedProfession, primaryCategoryCode, confidence,
+                needsClarification, ambiguityReason, candidates, nextQuestion);
     }
 
     private static List<CategoryCandidate> parseCandidates(JsonNode node) {

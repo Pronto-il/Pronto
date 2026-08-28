@@ -31,6 +31,7 @@ import com.pronto.availability.entity.SosAvailability;
 import com.pronto.availability.repository.ProfessionalWorkingHoursRepository;
 import com.pronto.availability.repository.SosAvailabilityRepository;
 import com.pronto.common.exception.ApiException;
+import com.pronto.maps.SelectedPlace;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.entity.ProfessionalSubService;
@@ -64,6 +65,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -105,6 +107,7 @@ class AuthServiceTest {
     private SmsSender smsSender;
     private OtpService otpService;
     private AuthAccountWriter accountWriter;
+    private com.pronto.maps.service.ServiceAddressGeocoder serviceAddressGeocoder;
     private JwtService jwtService;
     private LoginAttemptRecorder loginAttemptRecorder;
     private StorageService storageService;
@@ -204,16 +207,19 @@ class AuthServiceTest {
         // Production MS1 pre-DONE audit: the account-side writes moved to AuthAccountWriter so the
         // provider call could leave the transaction. A real instance is used here rather than a mock,
         // because every registration rule this class asserts now lives inside it.
+        serviceAddressGeocoder = Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class);
         accountWriter = new AuthAccountWriter(userRepository, professionalRepository,
                 sosAvailabilityRepository, professionalSubServiceRepository,
                 professionalCategoryRepository, professionalServiceCityRepository,
                 professionalWorkingHoursRepository, storageService, passwordEncoder,
-                new PhoneNumberNormalizer("IL"), loginAttemptRecorder, otpService, Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class));
+                new PhoneNumberNormalizer("IL"), loginAttemptRecorder, otpService, serviceAddressGeocoder,
+                new com.pronto.maps.service.SelectedPlaceValidator());
 
         authService = new AuthService(userRepository, accountWriter, otpService, jwtService,
                 passwordEncoder, professionalCoverageService, serviceCoverageValidator,
                 subServiceSelectionValidator,
-                new VerificationPolicy(true), new AuthOtpPolicy("true"));
+                new VerificationPolicy(true, true), new AuthOtpPolicy("true"),
+                new com.pronto.maps.service.SelectedPlaceValidator());
 
         when(userRepository.existsByEmail(anyString())).thenReturn(false);
         Mockito.lenient().when(userRepository.existsByPhone(anyString())).thenReturn(false);
@@ -317,7 +323,7 @@ class AuthServiceTest {
     }
 
     private static DefaultAddressRequest fullAddress() {
-        return new DefaultAddressRequest("Tel Aviv", "Dizengoff", "100", "4", "2", "A", "Back entrance");
+        return new DefaultAddressRequest("Tel Aviv", "Dizengoff", "100", "4", "2", "A", "Back entrance", "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
     }
 
     private static RegisterRequest professionalRequest(ProfessionalRegistrationData data) {
@@ -380,11 +386,60 @@ class AuthServiceTest {
 
     @Test
     void register_customer_optionalAddressFieldsOmitted_stillSucceeds() {
-        DefaultAddressRequest minimal = new DefaultAddressRequest("Haifa", "Herzl", "5", null, null, null, null);
+        DefaultAddressRequest minimal = new DefaultAddressRequest("Haifa", "Herzl", "5", null, null, null, null, "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
 
         AuthStepResponse response = authService.register(customerRequest(minimal), null, null);
 
         assertThat(response.nextStep()).isEqualTo(AuthNextStep.VERIFY_EMAIL);
+    }
+
+    // ---- address validation (V55) ----
+
+    @Test
+    void register_customer_addressWithNoSelectedPlace_isRefusedAndCreatesNoAccount() {
+        // Free text alone is no longer a registerable address. Checked before the transaction
+        // opens, so a refused registration leaves no users row behind -- which is the whole reason
+        // this rule lives in validateRoleSpecificFields rather than in AuthAccountWriter.
+        DefaultAddressRequest typedButNotSelected = new DefaultAddressRequest(
+                "Tel Aviv", "Nonexistent Street", "9999", null, null, null, null,
+                null, null, null, null);
+
+        assertThatThrownBy(() -> authService.register(customerRequest(typedButNotSelected), null, null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void register_customer_addressWithHalfASelectedPlace_isRefused() {
+        DefaultAddressRequest halfClaim = new DefaultAddressRequest(
+                "Tel Aviv", "Dizengoff", "100", null, null, null, null,
+                null, null, new BigDecimal("32.0811"), new BigDecimal("34.7739"));
+
+        assertThatThrownBy(() -> authService.register(customerRequest(halfClaim), null, null))
+                .isInstanceOf(ApiException.class);
+
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void register_customer_adoptsTheSelectedPlaceInsteadOfGeocodingTheText() {
+        // The selection already carries coordinates, so registration costs ZERO provider calls
+        // where it previously cost one. Asserted against the collaborator because the geocoder is
+        // a mock here; the entity write it performs is covered by
+        // maps.service.ServiceAddressGeocoderPlaceTest.
+        authService.register(customerRequest(fullAddress()), null, null);
+
+        ArgumentCaptor<SelectedPlace> captor = ArgumentCaptor.forClass(SelectedPlace.class);
+        verify(serviceAddressGeocoder).applyCustomerDefaultFromSelectedPlace(any(User.class),
+                captor.capture(), any());
+        assertThat(captor.getValue().placeId()).isEqualTo("ChIJprontoTestPlaceId");
+        assertThat(captor.getValue().formattedAddress()).isEqualTo("Test Address, Israel");
+        assertThat(captor.getValue().coordinates().latitude()).isEqualByComparingTo("32.081100");
+
+        // The text geocode is the call that no longer happens.
+        verify(serviceAddressGeocoder, never()).resolveCustomerDefault(any(User.class), any());
     }
 
     @Test
@@ -573,7 +628,8 @@ class AuthServiceTest {
                 sosAvailabilityRepository, professionalSubServiceRepository,
                 professionalCategoryRepository, professionalServiceCityRepository,
                 professionalWorkingHoursRepository, failingStorageService, passwordEncoder,
-                new PhoneNumberNormalizer("IL"), loginAttemptRecorder, otpService, Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class));
+                new PhoneNumberNormalizer("IL"), loginAttemptRecorder, otpService, Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class),
+                new com.pronto.maps.service.SelectedPlaceValidator());
         AuthService serviceWithFailingStorage = new AuthService(userRepository, failingWriter, otpService,
                 jwtService, passwordEncoder,
                 new ProfessionalCoverageService(professionalCategoryRepository, professionalServiceCityRepository,
@@ -581,7 +637,8 @@ class AuthServiceTest {
                         new ServiceCoverageValidator(serviceRegionRepository, serviceCityRepository)),
                 new ServiceCoverageValidator(serviceRegionRepository, serviceCityRepository),
                 new SubServiceSelectionValidator(subServiceRepository),
-                new VerificationPolicy(true), new AuthOtpPolicy("true"));
+                new VerificationPolicy(true, true), new AuthOtpPolicy("true"),
+                new com.pronto.maps.service.SelectedPlaceValidator());
 
         assertThatThrownBy(() -> serviceWithFailingStorage.register(
                 professionalRequest(validProfessionalData()), pdfDocument(), null))

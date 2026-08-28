@@ -6,6 +6,7 @@ import com.pronto.auth.dto.AuthNextStep;
 import com.pronto.auth.dto.AuthSession;
 import com.pronto.auth.dto.AuthStepResponse;
 import com.pronto.auth.dto.CapturePhoneRequest;
+import com.pronto.auth.dto.DefaultAddressRequest;
 import com.pronto.auth.dto.LoginRequest;
 import com.pronto.auth.dto.OtpChallengeResponse;
 import com.pronto.auth.dto.OtpSubmissionRequest;
@@ -25,6 +26,7 @@ import com.pronto.common.dto.FieldError;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.locations.service.ServiceCoverageValidator;
+import com.pronto.maps.service.SelectedPlaceValidator;
 import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.professionals.service.SubServiceSelectionValidator;
 import com.pronto.users.entity.User;
@@ -96,6 +98,7 @@ public class AuthService {
     private final SubServiceSelectionValidator subServiceSelectionValidator;
     private final VerificationPolicy verificationPolicy;
     private final AuthOtpPolicy authOtpPolicy;
+    private final SelectedPlaceValidator selectedPlaceValidator;
 
     public AuthService(UserRepository userRepository,
                         AuthAccountWriter accountWriter,
@@ -106,7 +109,8 @@ public class AuthService {
                         ServiceCoverageValidator serviceCoverageValidator,
                         SubServiceSelectionValidator subServiceSelectionValidator,
                         VerificationPolicy verificationPolicy,
-                        AuthOtpPolicy authOtpPolicy) {
+                        AuthOtpPolicy authOtpPolicy,
+                        SelectedPlaceValidator selectedPlaceValidator) {
         this.userRepository = userRepository;
         this.accountWriter = accountWriter;
         this.otpService = otpService;
@@ -117,6 +121,7 @@ public class AuthService {
         this.subServiceSelectionValidator = subServiceSelectionValidator;
         this.verificationPolicy = verificationPolicy;
         this.authOtpPolicy = authOtpPolicy;
+        this.selectedPlaceValidator = selectedPlaceValidator;
     }
 
     // ------------------------------------------------------------------ registration
@@ -135,12 +140,25 @@ public class AuthService {
      * recovery path is simply to log in, which returns a fresh {@code VERIFY_EMAIL} challenge for an
      * account that never finished verifying. That is a better outcome for a professional who just
      * uploaded a licence, and it is the same path an abandoned registration already used.
+     *
+     * <p><b>Dispatches nothing when {@link VerificationPolicy} reports
+     * {@code pronto.verification.email-required=false}</b> — the closed-beta setting, while SES is
+     * sandboxed and would reject every recipient that is not individually console-verified. The
+     * account is created identically and the caller is sent to log in. See the policy's Javadoc for
+     * why the account still records {@code email_verified = false}.
      */
     public AuthStepResponse register(RegisterRequest request, MultipartFile verificationDocument,
                                       MultipartFile profilePhoto) {
         validateRoleSpecificFields(request, verificationDocument);
 
         User user = accountWriter.createAccount(request, verificationDocument, profilePhoto);
+
+        if (!verificationPolicy.isEmailVerificationRequired()) {
+            // OtpService#issue is never reached, so no challenge row is written, no code is
+            // generated and SES is not called at all -- the same shape of bypass as the login one,
+            // and for the same reason: a code that cannot be delivered is not a verification step.
+            return AuthStepResponse.goToLogin(user.isEmailVerified(), user.isPhoneVerified());
+        }
 
         IssuedChallenge challenge = otpService.issue(user, OtpPurpose.EMAIL_VERIFICATION, false);
         requireDelivered(challenge);
@@ -227,12 +245,20 @@ public class AuthService {
      * settings.</b> {@code AUTH_OTP_REQUIRED=false} removes the second factor from login; it does
      * not make an unproved email address into a proved one, and an account that has never confirmed
      * the address it registered with is not one this method is willing to mint a session for.
+     *
+     * <p><b>That branch is itself conditional on {@link VerificationPolicy} while
+     * {@code pronto.verification.email-required=false}.</b> The two settings are independent and
+     * answer different questions: {@code AUTH_OTP_REQUIRED} decides whether a proved account needs a
+     * second factor, {@code EMAIL_VERIFICATION_REQUIRED} decides whether the account had to prove
+     * its address in the first place. With email verification off, challenging here would issue a
+     * code SES cannot deliver, on the one path a beta user has left — which is the whole failure
+     * being fixed, relocated from registration to login.
      */
     public AuthStepResponse login(LoginRequest request) {
         AuthAccountWriter.VerifiedLogin verified = accountWriter.verifyPassword(request);
         User user = verified.user();
 
-        if (!user.isEmailVerified()) {
+        if (verificationPolicy.isEmailVerificationRequired() && !user.isEmailVerified()) {
             IssuedChallenge challenge = otpService.issue(user, OtpPurpose.EMAIL_VERIFICATION, false);
             requireDelivered(challenge);
             return AuthStepResponse.challenge(AuthNextStep.VERIFY_EMAIL, toDto(challenge),
@@ -348,9 +374,14 @@ public class AuthService {
      * unauthenticated endpoint.
      */
     public OtpChallengeResponse requestPasswordReset(PasswordResetRequest request) {
+        // The email-verified filter is conditional for the same reason the login branch above is:
+        // with EMAIL_VERIFICATION_REQUIRED=false, no beta account has a proved address, so an
+        // unconditional filter would silently route every real reset request into the decoy branch
+        // -- an endpoint that is enumeration-neutral by design and therefore reports success either
+        // way. Password recovery would be comprehensively broken and would look like it worked.
         Optional<User> account = accountWriter.resolveIdentifier(request.identifier()).user()
                 .filter(u -> u.getDeletedAt() == null)
-                .filter(User::isEmailVerified);
+                .filter(u -> u.isEmailVerified() || !verificationPolicy.isEmailVerificationRequired());
 
         if (account.isPresent()) {
             try {
@@ -424,6 +455,15 @@ public class AuthService {
         if (request.role() == UserRole.CUSTOMER) {
             if (request.customer() == null || request.customer().defaultAddress() == null) {
                 errors.add(new FieldError("customer.defaultAddress", "is required for customer registration"));
+            } else {
+                // Address validation (V55): a registering customer must have picked their address
+                // from autocomplete, not merely typed one. Checked here rather than inside
+                // AuthAccountWriter so it runs before the transaction opens -- a submission that
+                // fails leaves no row behind, which is the rule this whole method exists to keep.
+                DefaultAddressRequest address = request.customer().defaultAddress();
+                selectedPlaceValidator.requireSelected(address.placeId(), address.formattedAddress(),
+                        address.latitude(), address.longitude(),
+                        SelectedPlaceValidator.FieldNames.nested("customer.defaultAddress."));
             }
         } else if (request.role() == UserRole.PROFESSIONAL) {
             ProfessionalRegistrationData professional = request.professional();

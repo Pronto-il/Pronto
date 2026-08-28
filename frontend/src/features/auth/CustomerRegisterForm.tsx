@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { Input, AddressFormFields, EMPTY_ADDRESS } from '../../shared/components';
+import { Input, AddressFormFields, EMPTY_ADDRESS, validateAddress } from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
 import { registerCustomer, ApiError, getFieldErrorMessages, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { AuthStepResponse } from '../../shared/api';
@@ -77,12 +77,11 @@ export function CustomerRegisterForm({ onSuccess, onExit }: CustomerRegisterForm
     return next;
   }
 
+  /** Delegates to the shared rule, which also enforces "an address must have been selected".
+   *  Previously three inline `if`s here, duplicated on three other screens -- only one of which
+   *  would have grown the selection requirement. */
   function validateStage2(): Partial<Record<keyof AddressValue, string>> {
-    const next: Partial<Record<keyof AddressValue, string>> = {};
-    if (!address.city.trim()) next.city = 'יש להזין עיר.';
-    if (!address.street.trim()) next.street = 'יש להזין רחוב.';
-    if (!address.houseNumber.trim()) next.houseNumber = 'יש להזין מספר בית.';
-    return next;
+    return validateAddress(address);
   }
 
   function goToStage(stage: number, dir: number) {
@@ -148,6 +147,10 @@ export function CustomerRegisterForm({ onSuccess, onExit }: CustomerRegisterForm
           city: address.city.trim(),
           street: address.street.trim(),
           houseNumber: address.houseNumber.trim(),
+          placeId: address.placeId ?? undefined,
+          formattedAddress: address.formattedAddress ?? undefined,
+          latitude: address.latitude ?? undefined,
+          longitude: address.longitude ?? undefined,
           apartment: address.apartment,
           floor: address.floor,
           entrance: address.entrance,

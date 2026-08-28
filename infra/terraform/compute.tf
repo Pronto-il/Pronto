@@ -355,7 +355,20 @@ resource "aws_ecs_task_definition" "backend" {
       { name = "DB_URL_PARAMS", value = "?sslmode=require" },
 
       { name = "AI_MODE", value = "openai" },
-      { name = "OPENAI_MODEL", value = "gpt-4o-mini" },
+      # Read by pronto.ai.openai.model. Deliberately a plain environment variable and nothing more:
+      # no model name appears anywhere in Java, so changing it is this one line and a redeploy.
+      #
+      # gpt-4.1-mini, raised from gpt-4o-mini for issue classification. The routing prompt asks the
+      # model to name the trade a customer needs BEFORE consulting Pronto's catalogue, and to
+      # decline to map it when Pronto covers no such trade -- an instruction that only pays off if
+      # the model reliably follows a multi-step, negative constraint ("do not pick the nearest
+      # entry") rather than defaulting to the helpful-looking answer.
+      #
+      # Measure before and after with the labelled harness rather than trusting the version number:
+      #   PRONTO_AI_EVAL=true OPENAI_API_KEY=sk-… OPENAI_MODEL=gpt-4.1-mini \
+      #     mvn test -Dtest=OpenAiClassificationEvaluationRunnerTest
+      # Reverting is this line; nothing else in the codebase names a model.
+      { name = "OPENAI_MODEL", value = "gpt-4.1-mini" },
 
       { name = "EMAIL_MODE", value = "ses" },
       { name = "EMAIL_FROM", value = local.email_from },
@@ -385,11 +398,35 @@ resource "aws_ecs_task_definition" "backend" {
       # Messaging is still SMS-sandboxed with an exhausted monthly spend quota, so a login OTP
       # cannot reliably be delivered -- an undeliverable second factor is not security, it is a
       # locked door with the key on the wrong side. Password verification, account lockout, login
-      # rate limiting, JWT issuance/validation, every route guard, and the email-verified
-      # requirement are all unchanged; this removes exactly one step from POST /api/auth/login.
+      # rate limiting, JWT issuance/validation and every route guard are all unchanged; this removes
+      # exactly one step from POST /api/auth/login. (It used to be true to add "and the
+      # email-verified requirement" here; EMAIL_VERIFICATION_REQUIRED below now relaxes that
+      # separately, so this line no longer claims it.)
       # Re-enable with AUTH_OTP_REQUIRED=true (or remove this line, since application.yml's own
       # default is already "true") once SMS delivery is confirmed working again.
       { name = "AUTH_OTP_REQUIRED", value = "false" },
+
+      # TEMPORARY, closed beta (see auth.config.VerificationPolicy's own Javadoc). AWS SES is still
+      # in the SANDBOX and Production Access has not been approved, so SES rejects every recipient
+      # that has not itself been individually verified in the console. With the requirement on, a
+      # real user registers, the account is created, and the request then fails with
+      # OTP_DELIVERY_FAILED -- and every subsequent login re-issues the same undeliverable code.
+      # Nobody outside the console allowlist can get into the product at all.
+      #
+      # This writes nothing to the database: accounts created while it is false keep
+      # email_verified = false, exactly like the SMS half above, so flipping it back asks exactly
+      # the right people to prove exactly the right thing with no migration.
+      #
+      # IT IS A REAL RELAXATION: while this is false an account's email address is unproved, and a
+      # typo'd or someone else's address reaches the marketplace. Accepted deliberately so the
+      # closed beta can happen at all.
+      #
+      # Hardcoded "false" rather than a variable, for the same reason as SMS_VERIFICATION_REQUIRED:
+      # this is one deliberate operator decision tied to a specific provider-sandbox condition, not
+      # a setting anything else should derive. DELETE THIS LINE the moment SES Production Access is
+      # approved -- application.yml's own default is already "true", so removal is the whole
+      # reversal.
+      { name = "EMAIL_VERIFICATION_REQUIRED", value = "false" },
 
       { name = "MAPS_MODE", value = "google" },
 

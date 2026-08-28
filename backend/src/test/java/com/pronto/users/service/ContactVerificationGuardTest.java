@@ -41,7 +41,12 @@ class ContactVerificationGuardTest {
 
     /** The guard wired to a given value of {@code pronto.verification.sms-required}. */
     private ContactVerificationGuard guardWithSmsRequired(boolean smsRequired) {
-        return new ContactVerificationGuard(userRepository, new VerificationPolicy(smsRequired));
+        return new ContactVerificationGuard(userRepository, new VerificationPolicy(smsRequired, true));
+    }
+
+    /** The guard wired to a given value of {@code pronto.verification.email-required}. */
+    private ContactVerificationGuard guardWithEmailRequired(boolean emailRequired) {
+        return new ContactVerificationGuard(userRepository, new VerificationPolicy(true, emailRequired));
     }
 
     private User account(boolean emailVerified, boolean phoneVerified) {
@@ -172,11 +177,60 @@ class ContactVerificationGuardTest {
     void smsRequired_isTheDefaultWhenThePropertyIsAbsent() {
         // Guards against the relaxation silently becoming permanent: if the property is ever
         // dropped from configuration, the strict rule must be what comes back.
-        assertThat(new VerificationPolicy(true).isSmsVerificationRequired()).isTrue();
+        assertThat(new VerificationPolicy(true, true).isSmsVerificationRequired()).isTrue();
 
         account(true, false);
         assertThatThrownBy(() -> guardWithSmsRequired(true).requireVerifiedContactChannels(USER_ID))
                 .satisfies(e -> assertThat(((ApiException) e).getCode())
                         .isEqualTo(ErrorCode.PHONE_VERIFICATION_REQUIRED));
+    }
+
+    // ---- email-required, the closed-beta relaxation ---------------------------
+
+    @Test
+    void emailNotRequired_anUnverifiedEmail_reachesTheMarketplace() {
+        // The whole point of the beta flag at this gate: a registered user who never received an
+        // SES message can still create an issue, book and raise SOS. Note phoneVerified is true
+        // here so that only the email rule is under test.
+        account(false, true);
+
+        assertThatCode(() -> guardWithEmailRequired(false).requireVerifiedContactChannels(USER_ID))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void emailNotRequired_doesNotAlsoRelaxThePhoneRule() {
+        // The two halves are independent. Checking them through separate policy reads rather than
+        // User#isFullyVerified() is what keeps this true; if either ever routes through the other,
+        // this fails.
+        account(false, false);
+
+        assertThatThrownBy(() -> new ContactVerificationGuard(userRepository,
+                new VerificationPolicy(true, false)).requireVerifiedContactChannels(USER_ID))
+                .satisfies(e -> assertThat(((ApiException) e).getCode())
+                        .isEqualTo(ErrorCode.PHONE_VERIFICATION_REQUIRED));
+    }
+
+    @Test
+    void emailNotRequired_softDeletedAccount_isStillUnauthorized() {
+        // The relaxation is about verification state only. A deleted account is not a verification
+        // question and must stay refused under every setting.
+        User user = account(false, true);
+        user.setDeletedAt(Instant.now());
+
+        assertThatThrownBy(() -> guardWithEmailRequired(false).requireVerifiedContactChannels(USER_ID))
+                .satisfies(e -> assertThat(((ApiException) e).getCode())
+                        .isEqualTo(ErrorCode.UNAUTHORIZED));
+    }
+
+    @Test
+    void emailRequired_isTheDefaultWhenThePropertyIsAbsent() {
+        // The same guard-against-permanence as the SMS case above.
+        assertThat(new VerificationPolicy(true, true).isEmailVerificationRequired()).isTrue();
+
+        account(false, true);
+        assertThatThrownBy(() -> guardWithEmailRequired(true).requireVerifiedContactChannels(USER_ID))
+                .satisfies(e -> assertThat(((ApiException) e).getCode())
+                        .isEqualTo(ErrorCode.EMAIL_NOT_VERIFIED));
     }
 }

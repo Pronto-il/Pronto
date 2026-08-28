@@ -5,6 +5,7 @@ import java.util.List;
 import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
+import com.pronto.maps.SelectedPlace;
 import com.pronto.common.security.AuthenticatedUser;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRepository;
@@ -16,6 +17,8 @@ import com.pronto.users.entity.UserRole;
 import com.pronto.users.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 
 import java.lang.reflect.Field;
@@ -30,6 +33,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 /**
@@ -53,6 +58,7 @@ class UsersServiceTest {
     private ProfessionalRepository professionalRepository;
     private StorageService storageService;
     private ProfessionalCoverageService professionalCoverageService;
+    private com.pronto.maps.service.ServiceAddressGeocoder serviceAddressGeocoder;
     private UsersService usersService;
 
     private final AuthenticatedUser customerCaller = new AuthenticatedUser(CALLER_ID, "CUSTOMER");
@@ -64,8 +70,10 @@ class UsersServiceTest {
         professionalRepository = Mockito.mock(ProfessionalRepository.class);
         storageService = Mockito.mock(StorageService.class);
         professionalCoverageService = Mockito.mock(ProfessionalCoverageService.class);
+        serviceAddressGeocoder = Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class);
         usersService = new UsersService(userRepository, professionalRepository, storageService,
-                professionalCoverageService, new PhoneNumberNormalizer("IL"), Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class));
+                professionalCoverageService, new PhoneNumberNormalizer("IL"), serviceAddressGeocoder,
+                new com.pronto.maps.service.SelectedPlaceValidator());
         // MS4: every pre-existing test in this class describes an ordinary, fully-configured
         // professional, so coverage and categories are stubbed to a sane default here; the tests
         // that care override them per-test. ProfessionalCoverageService's own rules are covered by
@@ -97,7 +105,55 @@ class UsersServiceTest {
         return new UpdateUserMeRequest(
                 "ישראל ישראלי",
                 "050-223-4567",
-                new UpdateUserMeRequest.Address("תל אביב", "אלנבי", "12", "4", "2", "א", "קוד כניסה 1234"));
+                new UpdateUserMeRequest.Address("תל אביב", "אלנבי", "12", "4", "2", "א", "קוד כניסה 1234",
+                        "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739")));
+    }
+
+    // ---- address validation (V55) ----
+
+    @Test
+    void updateMe_addressWithNoSelectedPlace_isRefusedAndLeavesTheStoredAddressUntouched() {
+        // The "heals on edit" half of the legacy policy: a saved address that nobody touches keeps
+        // working, but an EDIT must produce a validated address. And a refused edit must not leave
+        // the row half-replaced -- validation runs before the first setter.
+        User user = new User("שם ישן", "customer@example.com", "hash", UserRole.CUSTOMER);
+        setField(user, "id", CALLER_ID);
+        user.setDefaultCity("עיר ישנה");
+        user.setDefaultStreet("רחוב ישן");
+        user.setDefaultHouseNumber("1");
+        when(userRepository.findById(CALLER_ID)).thenReturn(Optional.of(user));
+
+        UpdateUserMeRequest freeTextOnly = new UpdateUserMeRequest("ישראל ישראלי", "050-223-4567",
+                new UpdateUserMeRequest.Address("תל אביב", "רחוב שלא קיים", "9999",
+                        null, null, null, null, null, null, null, null));
+
+        assertThatThrownBy(() -> usersService.updateMe(customerCaller, freeTextOnly))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+
+        assertThat(user.getDefaultCity()).isEqualTo("עיר ישנה");
+        assertThat(user.getDefaultStreet()).isEqualTo("רחוב ישן");
+        assertThat(user.getFullName()).isEqualTo("שם ישן");
+    }
+
+    @Test
+    void updateMe_invalidatesThePreviousSelectionBeforeAdoptingTheNewOne() {
+        // "Editing invalidates the previous selection". If the old place id survived an edit, new
+        // address text would be wearing the previous address's proof of selection -- exactly the
+        // state address validation exists to make impossible. The ORDER is the assertion: the
+        // invalidation must precede the adoption, or it would wipe the value it just wrote.
+        User user = new User("שם ישן", "customer@example.com", "hash", UserRole.CUSTOMER);
+        setField(user, "id", CALLER_ID);
+        when(userRepository.findById(CALLER_ID)).thenReturn(Optional.of(user));
+
+        usersService.updateMe(customerCaller, validRequest());
+
+        ArgumentCaptor<SelectedPlace> captor = ArgumentCaptor.forClass(SelectedPlace.class);
+        InOrder inOrder = Mockito.inOrder(serviceAddressGeocoder);
+        inOrder.verify(serviceAddressGeocoder).invalidateCustomerDefault(user);
+        inOrder.verify(serviceAddressGeocoder).applyCustomerDefaultFromSelectedPlace(eq(user),
+                captor.capture(), any());
+        assertThat(captor.getValue().placeId()).isEqualTo("ChIJprontoTestPlaceId");
     }
 
     @Test

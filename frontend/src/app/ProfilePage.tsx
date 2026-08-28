@@ -2,7 +2,16 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Heart } from 'lucide-react';
-import { Card, Button, Input, AddressFormFields, EMPTY_ADDRESS, ProfilePhoto } from '../shared/components';
+import {
+  Card,
+  Button,
+  Input,
+  AddressFormFields,
+  EMPTY_ADDRESS,
+  ProfilePhoto,
+  toAddressValue as sharedToAddressValue,
+  validateAddress,
+} from '../shared/components';
 import type { AddressValue } from '../shared/components';
 import { useAuth } from '../shared/hooks';
 import {
@@ -46,18 +55,15 @@ const ADDRESS_FIELD_KEYS: (keyof AddressValue)[] = [
   'addressNotes',
 ];
 
+/** Delegates to the shared normaliser rather than repeating it, so the profile screen cannot
+ *  drift from the booking flow's idea of what a saved address becomes -- including the
+ *  `placeId`, which is what tells this screen whether the saved address predates autocomplete. */
 function toAddressValue(address: UserMeDefaultAddress | null): AddressValue {
   if (!address) {
     return EMPTY_ADDRESS;
   }
   return {
-    city: address.city,
-    street: address.street,
-    houseNumber: address.houseNumber,
-    apartment: address.apartment ?? '',
-    floor: address.floor ?? '',
-    entrance: address.entrance ?? '',
-    addressNotes: address.addressNotes ?? '',
+    ...sharedToAddressValue(address),
   };
 }
 
@@ -132,8 +138,17 @@ export default function ProfilePage() {
     setAddressErrors({});
     setSavedAt(null);
 
-    if (!fullName.trim() || !phone.trim() || !address.city.trim() || !address.street.trim() || !address.houseNumber.trim()) {
+    if (!fullName.trim() || !phone.trim()) {
       setBannerError('יש למלא את כל השדות הנדרשים.');
+      return;
+    }
+    // Saving the profile IS "editing the saved address", which is the moment a legacy free-text
+    // address is expected to become a validated one. A customer who never opens this screen keeps
+    // their old address working; one who edits it must pick a real suggestion.
+    const nextAddressErrors = validateAddress(address);
+    if (Object.keys(nextAddressErrors).length > 0) {
+      setAddressErrors(nextAddressErrors);
+      setBannerError(nextAddressErrors.placeId ?? 'יש למלא את כל השדות הנדרשים.');
       return;
     }
 
@@ -150,6 +165,10 @@ export default function ProfilePage() {
           floor: address.floor.trim() || undefined,
           entrance: address.entrance.trim() || undefined,
           addressNotes: address.addressNotes.trim() || undefined,
+          placeId: address.placeId ?? undefined,
+          formattedAddress: address.formattedAddress ?? undefined,
+          latitude: address.latitude ?? undefined,
+          longitude: address.longitude ?? undefined,
         },
       });
       setSavedAt(Date.now());

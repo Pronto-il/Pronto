@@ -375,6 +375,107 @@ resource "aws_iam_role_policy" "github_deploy" {
 }
 
 # ==================================================================================================
+# 3b. GITHUB ACTIONS ECR-PUSH ROLE -- for the build-image job specifically
+# ==================================================================================================
+#
+# WHY THIS EXISTS. `build-image` deliberately has no `environment:` block (deploy-production.yml's
+# own comment: it must be able to build and push an image, and be scanned, BEFORE the manual
+# approval gate, so a reviewer approves a deployment of an image that already exists rather than
+# waiting on the build). A job with no `environment:` never receives an
+# `environment:production`-scoped OIDC subject claim, so it structurally cannot assume
+# `github_deploy` above -- that role's trust is deliberately environment-only (see its own comment:
+# "a ref-scoped trust would mean anyone who can push could deploy"). Discovered when the first real
+# `deploy_backend=true` run failed at "Configure AWS credentials" with an empty role ARN (the
+# variable that role needs is itself environment-scoped, for the same reason).
+#
+# The fix is NOT to broaden github_deploy's trust to also accept a ref-scoped subject -- that would
+# undo the exact protection its own comment describes, given `main` is still unprotected. It is a
+# second role: ref-scoped trust (main only, both GitHub subject spellings, matching the
+# github_deploy precedent), and a permission set that stops at "push an image to this one ECR
+# repository" -- no ecs:*, no iam:PassRole, no S3, no CloudFront. A workflow run on main can publish
+# a backend image; it cannot make that image (or any other) run anywhere.
+
+data "aws_iam_policy_document" "github_ecr_push_assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [local.github_oidc_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    # Scoped to `main` specifically, not to the whole repository: deploy-production.yml is
+    # workflow_dispatch-only and is meant to be run from main, and a ref-scoped trust (unlike the
+    # environment-scoped one above) grants nothing beyond "GitHub says this run is on that branch" --
+    # narrowing the branch is the only tightening this trust shape has available, so it is applied.
+    # Both GitHub subject spellings, same reasoning as github_assume above (this repository was
+    # transferred into the Pronto-il organisation, and GitHub may mint either form).
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values = [
+        "repo:${var.github_repository}:ref:refs/heads/main",
+        "repo:${var.github_repository_immutable}:ref:refs/heads/main",
+      ]
+    }
+  }
+}
+
+resource "aws_iam_role" "github_ecr_push" {
+  name        = "${var.project}-${var.environment_name}-github-ecr-push"
+  description = "Assumed by the build-image job through OIDC, before the production approval gate. Pushes to ECR; nothing else."
+  # Deliberately short-lived even relative to github_deploy's own hour: this role's job is a few
+  # minutes of build+push, not a multi-step deploy that can legitimately run long.
+  assume_role_policy   = data.aws_iam_policy_document.github_ecr_push_assume.json
+  max_session_duration = 3600
+}
+
+data "aws_iam_policy_document" "github_ecr_push" {
+  # Identical reasoning to github_deploy's own EcrAuth statement: GetAuthorizationToken takes no
+  # resource, AWS defines it that way.
+  statement {
+    sid       = "EcrAuth"
+    effect    = "Allow"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  # Push-only, and one read (DescribeImages) for the "already built for this SHA, reuse it" check
+  # deploy-production.yml's build step makes before pushing. No BatchGetImage, no
+  # GetDownloadUrlForLayer -- both are PULL operations `docker push`/`ecr describe-images` never
+  # call, and this role has no reason to be able to read an image back out.
+  statement {
+    sid    = "EcrPushOnly"
+    effect = "Allow"
+    actions = [
+      "ecr:DescribeImages",
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:InitiateLayerUpload",
+      "ecr:UploadLayerPart",
+      "ecr:CompleteLayerUpload",
+      "ecr:PutImage",
+    ]
+    resources = [aws_ecr_repository.backend.arn]
+  }
+
+  # No ecs:*, no iam:PassRole, no s3:*, no cloudfront:* -- see the block comment above. This role
+  # cannot register a task definition, update the service, or touch the frontend bucket/CDN.
+}
+
+resource "aws_iam_role_policy" "github_ecr_push" {
+  name   = "${var.project}-github-ecr-push-policy"
+  role   = aws_iam_role.github_ecr_push.id
+  policy = data.aws_iam_policy_document.github_ecr_push.json
+}
+
+# ==================================================================================================
 # 4. Terraform's own identity is NOT defined here.
 #
 # Applying this configuration requires broad permissions -- creating IAM roles, VPCs and databases.

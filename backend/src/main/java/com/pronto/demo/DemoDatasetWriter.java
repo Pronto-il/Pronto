@@ -92,6 +92,16 @@ class DemoDatasetWriter {
     static final String DEMO_EMAIL_DOMAIN = "demo.pronto.invalid";
 
     /**
+     * Prefixed onto every demo PROFESSIONAL's displayed name (not customers' -- customers are never
+     * browsed/selected by a stranger the way a professional is). The email-domain marker above is
+     * sufficient to identify a demo row in the database, but this dataset is now written into the
+     * real production database alongside genuine accounts rather than into an isolated demo-only
+     * one, so a marker visible in the product UI itself -- not only in a query -- is worth the one
+     * extra string concatenation.
+     */
+    private static final String DEMO_PROFESSIONAL_NAME_PREFIX = "(דמו) ";
+
+    /**
      * Tables {@link #reset()} never touches: Flyway's own history (deleting it would make the
      * database claim it has no schema) and the reference tables that are schema-owned seed
      * data, not demo data — {@code categories} and {@code sub_services} arrive via {@code V10},
@@ -543,7 +553,7 @@ class DemoDatasetWriter {
                                                     boolean withSubServices, boolean sosAvailable) {
         CategorySeed primary = categories.get(0);
         CategoryContent content = DemoContent.forCategory(primary.code());
-        String name = fullName(index);
+        String name = DEMO_PROFESSIONAL_NAME_PREFIX + fullName(index);
         BigDecimal basePrice = basePrice(content, index);
 
         RegionSeed region = regionFor(regions, index);

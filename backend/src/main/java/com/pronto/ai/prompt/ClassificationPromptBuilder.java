@@ -45,9 +45,15 @@ public class ClassificationPromptBuilder {
      *       measured: the electrical/handyman boundary no longer sends light-fitting
      *       installation to Handyman, the handyman/locksmith boundary states its "ask" case on
      *       both sides, and the worked examples gained the locksmith-vs-leaf ASK case.</li>
+     *   <li>{@code classification-v5} — profession-first. The model now names the trade the
+     *       customer needs as free text BEFORE considering Pronto's catalogue, and may decline to
+     *       map it. Adds the {@code detectedProfession} output field and the PROFESSIONS PRONTO
+     *       DOES NOT COVER section; the category list no longer reads as a menu that must be
+     *       chosen from. <b>Not comparable with v4 numbers on out-of-catalogue cases</b> — under
+     *       v4 those were scored against whichever Pronto category they were forced into.</li>
      * </ul>
      */
-    public static final String PROMPT_VERSION = "classification-v4";
+    public static final String PROMPT_VERSION = "classification-v5";
 
     /**
      * @param categories       the live category rows, in display order
@@ -58,6 +64,7 @@ public class ClassificationPromptBuilder {
         return String.join("\n\n",
                 taskDefinition(),
                 "AVAILABLE CATEGORIES\n" + categoryList(categories),
+                "PROFESSIONS PRONTO DOES NOT COVER\n" + unsupportedProfessionRules(),
                 "ROUTING PRINCIPLES\n" + routingPrinciples(),
                 "CATEGORY BOUNDARIES\n" + categoryBoundaries(categories),
                 "AMBIGUITY\n" + ambiguityRules(),
@@ -151,11 +158,73 @@ public class ClassificationPromptBuilder {
         return """
                 You route home-service requests for Pronto, an on-demand home-services marketplace in Israel.
 
-                Your job is to answer one question: WHICH PRONTO PROFESSIONAL SHOULD BE SENT TO THIS CUSTOMER?
+                Answer TWO questions, strictly in this order:
+
+                  1. WHICH PROFESSION does this customer actually need? Answer honestly, from the evidence
+                     alone, WITHOUT considering what Pronto happens to offer. Put it in
+                     `detectedProfession`, in Hebrew, as the trade would normally be named in Israel
+                     ("אינסטלטור", "חשמלאי", "טכנאי מזגנים", "טכנאי גז", "מדביר", "זגג").
+
+                  2. ONLY THEN, does that profession match one of Pronto's categories below? If it does,
+                     put that category code in `primaryCategoryCode`. If it does not, leave
+                     `primaryCategoryCode` null.
+
+                Getting question 1 right matters more than producing a Pronto category. A correct
+                profession with no category is a useful, correct answer. A wrong profession that happens
+                to be on Pronto's list is a wrong answer that sends the wrong person to someone's home.
 
                 This is a routing problem, not a technical diagnosis problem. You are not deciding which
-                technical field a symptom belongs to in the abstract; you are deciding which trade Pronto
-                should dispatch. Those two answers differ more often than they agree on hard cases.""";
+                technical field a symptom belongs to in the abstract; you are deciding which trade should
+                be dispatched. Those two answers differ more often than they agree on hard cases.""";
+    }
+
+    /**
+     * The instruction that makes an out-of-catalogue answer expressible.
+     *
+     * <p>Before this section the prompt said only "these are the only valid categories", and the
+     * schema enforced it — so a customer needing a gas technician got whichever listed trade was
+     * least wrong, with a confident-looking number attached. The model was not failing; it was
+     * doing exactly what it had been told, having been given no way to say "none of these".
+     *
+     * <p><b>The application does not trust this section to be the decision.</b>
+     * {@code decision.RoutingDecisionPolicy} decides support by resolving the returned code
+     * against the live {@code categories} table, so a model that ignores these rules and forces a
+     * category still produces a supported result, and one that invents a code still produces an
+     * unsupported one. This section changes what the model is willing to say; the catalogue
+     * decides what that means.
+     */
+    private String unsupportedProfessionRules() {
+        return """
+                Pronto's category list is the list of trades Pronto can currently DISPATCH. It is not a
+                list of the trades that exist, and it is not a menu you must pick from.
+
+                When the profession the customer needs is not on that list:
+                  - name it truthfully in `detectedProfession`;
+                  - set `primaryCategoryCode` to null;
+                  - return an EMPTY `candidates` array — do not list the "closest" Pronto category as a
+                    candidate to appear helpful. An empty list is how you say "none of these fit";
+                  - set needsClarification = false and nextQuestion = null;
+                  - keep `confidence` honest about the PROFESSION. If you are certain it is a gas
+                    technician, say 0.95. Do not lower your confidence merely because Pronto does not
+                    offer it — those are different facts, and the application handles them separately.
+
+                NEVER do any of the following:
+                  - route a trade Pronto does not cover to general_handyman, or to the nearest specialist,
+                    because it is "close enough". A handyman does not certify a gas line, exterminate a
+                    wasp nest or cut glass. Sending one is not a partial answer, it is a wasted visit;
+                  - ask a clarification question because a profession is unsupported. Being outside
+                    Pronto's catalogue is not ambiguity — you already know the answer. Questions exist
+                    only to separate two trades you genuinely cannot choose between;
+                  - invent a category code, or return one that is not on the list.
+
+                When the profession IS on the list, name it in `detectedProfession` anyway and set
+                `primaryCategoryCode` normally. That field is always filled, for every request.
+
+                THE ONE CASE THAT IS STILL AMBIGUITY: when the evidence genuinely does not settle whether
+                the customer needs a Pronto trade or an outside one — a smell of gas near a boiler could be
+                the gas supply (unsupported) or the water heater (plumbing) — that IS ambiguity. Include
+                the Pronto trade in `candidates`, set needsClarification = true, and ask. Only return an
+                empty candidate list when you are actually confident nothing Pronto offers applies.""";
     }
 
     private String categoryList(List<ServiceCategory> categories) {
@@ -280,14 +349,19 @@ public class ClassificationPromptBuilder {
     private String outputContract() {
         return """
                 Return the structured object only.
-                  - primaryCategoryCode: one of the listed codes, or null if you cannot commit at all.
+                  - detectedProfession: the trade the customer actually needs, in HEBREW, always filled,
+                    whether or not Pronto covers it. Free text — this is the one field not restricted to
+                    Pronto's list. Name the profession, not the fault: "טכנאי מזגנים", not "המזגן מטפטף".
+                  - primaryCategoryCode: the listed code that profession maps to; null when Pronto covers
+                    no such trade, or when you cannot commit at all.
                   - confidence: 0..1 for primaryCategoryCode.
                   - needsClarification: true only under the rules above, and only if you also supply
                     nextQuestion.
                   - ambiguityReason: one short English sentence naming what is unresolved, or null when
                     nothing is. Internal only — the customer never sees it.
-                  - candidates: every plausible category with its confidence, strongest first. Include the
-                    primary category. Use real codes only.
+                  - candidates: every plausible Pronto category with its confidence, strongest first.
+                    Include the primary category. Use real codes only. EMPTY when the detected profession
+                    maps to no Pronto category — do not pad it with a near miss.
                   - nextQuestion: the single question, or null.
 
                 Do not include reasoning, chain-of-thought or commentary anywhere in the output.""";

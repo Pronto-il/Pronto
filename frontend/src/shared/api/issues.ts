@@ -32,9 +32,18 @@ export interface ClassifyQuestion {
  *
  * `questions` holds at most one entry. Pronto asks one question at a time and re-classifies
  * after each answer, so `QUESTIONS` may come back more than once, up to the server-side limit.
+ *
+ * `UNSUPPORTED_PROFESSION` means classification SUCCEEDED and Pronto does not offer the trade
+ * that was identified: `suggestedCategoryId`/`suggestedCategoryCode` are `null`, `questions` is
+ * empty, and `detectedProfession` names the trade. It is a terminal state — there is no issue to
+ * create and no professional to match — and deliberately distinct from a `CLASSIFIED` result that
+ * later finds zero available professionals, which is a supported trade with nobody free right now.
  */
 export interface ClassifyIssueResponse {
-  status: 'CLASSIFIED' | 'QUESTIONS';
+  status: 'CLASSIFIED' | 'QUESTIONS' | 'UNSUPPORTED_PROFESSION';
+  /** The trade Pronto identified, in Hebrew. Populated on every status; rendered only on
+   *  `UNSUPPORTED_PROFESSION`, where naming the trade is the whole content of the message. */
+  detectedProfession: string | null;
   suggestedCategoryId: number | null;
   suggestedCategoryCode: string | null;
   questions: ClassifyQuestion[];

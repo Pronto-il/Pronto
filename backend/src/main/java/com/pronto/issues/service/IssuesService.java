@@ -139,8 +139,8 @@ public class IssuesService {
                 .map(this::toQuestionResponse)
                 .toList();
 
-        return new ClassifyResponse(suggestion.status(), suggestion.categoryId(), suggestion.categoryCode(),
-                questions);
+        return new ClassifyResponse(suggestion.status(), suggestion.detectedProfession(),
+                suggestion.categoryId(), suggestion.categoryCode(), questions);
     }
 
     /**

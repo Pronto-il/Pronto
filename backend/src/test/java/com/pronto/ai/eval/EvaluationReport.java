@@ -217,6 +217,52 @@ public class EvaluationReport {
                 .toList();
     }
 
+    /** Cases whose ground truth is "Pronto does not cover this trade". */
+    public List<EvaluationOutcome> unsupportedCases() {
+        return outcomes.stream().filter(EvaluationOutcome::expectedUnsupported).toList();
+    }
+
+    /**
+     * Of the cases that SHOULD end in the unsupported state, how many did.
+     *
+     * <p>Reported separately from headline accuracy rather than folded into it, and the reason is
+     * the same one the unresolved-fallback rate exists for: these two populations can move in
+     * opposite directions. A model that got cautious and returned no category for everything would
+     * score 100% here while destroying supported routing, and a model that forced every trade into
+     * a category would score 0% here while leaving headline accuracy untouched. One number cannot
+     * show both.
+     */
+    public double unsupportedAccuracy() {
+        List<EvaluationOutcome> unsupported = unsupportedCases();
+        if (unsupported.isEmpty()) {
+            return Double.NaN;
+        }
+        return (double) unsupported.stream().filter(EvaluationOutcome::finallyCorrect).count()
+                / unsupported.size();
+    }
+
+    /**
+     * The worst failure mode in this report: a trade Pronto does not offer, routed to a Pronto
+     * category anyway.
+     *
+     * <p>Listed by case rather than summarised, because each one is a professional dispatched to a
+     * job they cannot do — the specific category it was forced into is exactly what a reader needs
+     * in order to fix the prompt boundary that allowed it.
+     */
+    public List<EvaluationOutcome> forcedIntoSupportedCategory() {
+        return outcomes.stream().filter(EvaluationOutcome::forcedIntoSupportedCategory).toList();
+    }
+
+    /**
+     * The mirror image: a trade Pronto DOES cover, reported as unsupported. A customer turned away
+     * from a job Pronto could have done — quieter than the previous failure, and just as wrong.
+     */
+    public List<EvaluationOutcome> wronglyReportedUnsupported() {
+        return outcomes.stream()
+                .filter(outcome -> !outcome.expectedUnsupported() && outcome.unsupportedProfession())
+                .toList();
+    }
+
     public List<EvaluationOutcome> failures() {
         return outcomes.stream().filter(EvaluationOutcome::failed).toList();
     }
@@ -281,6 +327,14 @@ public class EvaluationReport {
                 notSureOfferedRate() * 100));
         report.append(String.format("high-confidence wrong (>=%.2f)  %d%n",
                 highConfidenceThreshold, highConfidenceWrong().size()));
+        if (!unsupportedCases().isEmpty()) {
+            report.append(String.format("unsupported-profession accuracy %.1f%%  [n=%d]%n",
+                    unsupportedAccuracy() * 100, unsupportedCases().size()));
+            report.append(String.format("  forced into a Pronto category %d   <- a professional sent to a "
+                    + "job they cannot do%n", forcedIntoSupportedCategory().size()));
+            report.append(String.format("  supported, wrongly refused    %d   <- a customer turned away from "
+                    + "a job Pronto covers%n", wronglyReportedUnsupported().size()));
+        }
         report.append(String.format("pipeline failures              %d%n", failures().size()));
         report.append(String.format("total AI calls                 %d  (%.2f per case)%n",
                 totalAiCalls(), outcomes.isEmpty() ? 0 : totalAiCalls() / (double) outcomes.size()));

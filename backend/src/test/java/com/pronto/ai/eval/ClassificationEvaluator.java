@@ -89,10 +89,16 @@ public class ClassificationEvaluator {
                     pendingQuestion = null;
                 }
 
-                if (suggestion.status() == ClassificationStatus.CLASSIFIED) {
+                // Both terminal states end the run. UNSUPPORTED_PROFESSION carries a null category
+                // by construction, which is what finallyCorrect() checks for an unsupported case --
+                // and what makes "forced into a supported category" detectable as a non-null one.
+                if (suggestion.status() == ClassificationStatus.CLASSIFIED
+                        || suggestion.status() == ClassificationStatus.UNSUPPORTED_PROFESSION) {
+                    boolean unsupported = suggestion.status() == ClassificationStatus.UNSUPPORTED_PROFESSION;
                     return new EvaluationOutcome(testCase.id(), testCase.expectedCategory(), testCase.tier(),
                             initialCategory, suggestion.categoryCode(), suggestion.confidence(), answers.size(),
-                            suggestion.lowConfidence(), suggestion.unresolved(), unmatchedQuestion,
+                            suggestion.lowConfidence(), suggestion.unresolved(), unsupported,
+                            suggestion.detectedProfession(), unmatchedQuestion,
                             testCase.requiresClarification(), List.copyOf(rounds),
                             elapsedMillis(startedAtNanos), null);
                 }
@@ -119,14 +125,16 @@ public class ClassificationEvaluator {
             // Recorded as a failure rather than quietly ignored — an unbounded clarification
             // loop is exactly the bug this harness should surface.
             return new EvaluationOutcome(testCase.id(), testCase.expectedCategory(), testCase.tier(),
-                    initialCategory, null, null, answers.size(), false, false, unmatchedQuestion,
-                    testCase.requiresClarification(), List.copyOf(rounds), elapsedMillis(startedAtNanos),
+                    initialCategory, null, null, answers.size(), false, false, false, null,
+                    unmatchedQuestion, testCase.requiresClarification(), List.copyOf(rounds),
+                    elapsedMillis(startedAtNanos),
                     "pipeline kept asking questions past the configured maximum of " + maxRounds);
 
         } catch (Exception e) {
             return new EvaluationOutcome(testCase.id(), testCase.expectedCategory(), testCase.tier(),
-                    initialCategory, null, null, answers.size(), false, false, unmatchedQuestion,
-                    testCase.requiresClarification(), List.copyOf(rounds), elapsedMillis(startedAtNanos),
+                    initialCategory, null, null, answers.size(), false, false, false, null,
+                    unmatchedQuestion, testCase.requiresClarification(), List.copyOf(rounds),
+                    elapsedMillis(startedAtNanos),
                     e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }

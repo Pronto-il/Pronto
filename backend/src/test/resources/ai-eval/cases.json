@@ -1,6 +1,6 @@
 {
-  "version": "ms3-2026-08-25i",
-  "notes": "MS3 evaluation dataset. 'core' is the approved regression set the >=95% final accuracy target is measured on; 'challenge' cases are deliberately adversarial or multi-trade and are reported separately so they can neither flatter nor depress the headline number. Labels for case-001..case-024 were frozen before the MS3 baseline run and have not been edited since. Cases 049/050/053/054/060 had their scripted-answer keyword coverage widened, and case-062's label was corrected, after the first v2 run — all documented in prod-MS3-report.md. Cases 071-083 are the locksmith<->handyman door boundary stress set added during MS3 review; they carry expectsClarification to assert that an under-specified description must produce a question rather than a guess. Cases 090-094 are a HELD-OUT door generalisation set: phrasings deliberately absent from both the boundary rule text and the 071-083 tuning cases.",
+  "version": "v5-2026-08-28-profession-first",
+  "notes": "MS3 evaluation dataset. 'core' is the approved regression set the >=95% final accuracy target is measured on; 'challenge' cases are deliberately adversarial or multi-trade and are reported separately so they can neither flatter nor depress the headline number. Labels for case-001..case-024 were frozen before the MS3 baseline run and have not been edited since. Cases 049/050/053/054/060 had their scripted-answer keyword coverage widened, and case-062's label was corrected, after the first v2 run — all documented in prod-MS3-report.md. Cases 071-083 are the locksmith<->handyman door boundary stress set added during MS3 review; they carry expectsClarification to assert that an under-specified description must produce a question rather than a guess. Cases 090-094 are a HELD-OUT door generalisation set: phrasings deliberately absent from both the boundary rule text and the 071-083 tuning cases. | classification-v5 added cases 101-115: out-of-catalogue trades labelled with the sentinel expectedCategory='unsupported', plus supported specialist trades (fridge/washing-machine/oven/boiler technicians) that must NOT be reported unsupported, plus one gas-vs-boiler borderline that must ask rather than dead-end. Unsupported cases are scored by EvaluationReport.unsupportedAccuracy() and forcedIntoSupportedCategory(), separately from headline accuracy.",
   "cases": [
     {
       "id": "case-001",
@@ -1006,6 +1006,116 @@
         "מיושר": "הידית מסתובבת אבל הבריח לא זז",
         "בעיה": "הידית מסתובבת אבל הבריח לא זז",
         "חלק": "הידית מסתובבת אבל הבריח לא זז"
+      }
+    },
+    {
+      "id": "case-101",
+      "description": "יש ריח של גז במטבח, ריח חזק",
+      "expectedCategory": "unsupported",
+      "notes": "טכנאי גז — Pronto has no gas category. Must NOT go to plumbing because gas arrives in a pipe, nor to handyman.",
+      "tier": "core"
+    },
+    {
+      "id": "case-102",
+      "description": "הבלון גז בחצר דולף",
+      "expectedCategory": "unsupported",
+      "notes": "טכנאי גז. Explicit gas equipment.",
+      "tier": "core"
+    },
+    {
+      "id": "case-103",
+      "description": "יש לי גוקים במטבח המון, כל לילה",
+      "expectedCategory": "unsupported",
+      "notes": "מדביר. Slang spelling without the geresh, no punctuation — the shape a real customer types.",
+      "tier": "core"
+    },
+    {
+      "id": "case-104",
+      "description": "ראיתי עכבר במחסן",
+      "expectedCategory": "unsupported",
+      "notes": "מדביר. Pest control; nothing in the catalogue is adjacent.",
+      "tier": "core"
+    },
+    {
+      "id": "case-105",
+      "description": "נשבר לי חלון בסלון וצריך להחליף את הזכוכית",
+      "expectedCategory": "unsupported",
+      "notes": "זגג. The pull towards general_handyman is strong here and is exactly what must not happen.",
+      "tier": "core"
+    },
+    {
+      "id": "case-106",
+      "description": "צריך מישהו שיגזום את העץ בחצר",
+      "expectedCategory": "unsupported",
+      "notes": "גנן. Being outdoors does not make it handyman work.",
+      "tier": "core"
+    },
+    {
+      "id": "case-107",
+      "description": "אני צריך הובלה לדירה חדשה בשבוע הבא",
+      "expectedCategory": "unsupported",
+      "notes": "מוביל. Not a repair at all.",
+      "tier": "core"
+    },
+    {
+      "id": "case-108",
+      "description": "הגג דולף כשיורד גשם, נכנסים מים",
+      "expectedCategory": "unsupported",
+      "notes": "איטום גגות. Contains 'מים' — the keyword that historically dragged everything to plumbing.",
+      "tier": "challenge"
+    },
+    {
+      "id": "case-109",
+      "description": "האנטנה על הגג התעקמה ואין קליטה בטלוויזיה",
+      "expectedCategory": "unsupported",
+      "notes": "טכנאי אנטנות. Mentions טלוויזיה, a general_handyman keyword (mounting a TV) — must not be routed there.",
+      "tier": "challenge"
+    },
+    {
+      "id": "case-110",
+      "description": "צריך להתקין מזרון חדש ולהרכיב מיטה חדשה שקניתי",
+      "expectedCategory": "general_handyman",
+      "notes": "general_handyman — furniture assembly IS covered. Included among the unsupported cases deliberately, as the counterweight.",
+      "tier": "core"
+    },
+    {
+      "id": "case-111",
+      "description": "המקרר שלי לא מקרר בכלל, הכל נמס במקפיא",
+      "expectedCategory": "appliance_repair",
+      "notes": "appliance_repair. The customer needs a fridge technician, which IS appliance_repair's scope. The single most likely false-unsupported.",
+      "tier": "core"
+    },
+    {
+      "id": "case-112",
+      "description": "מכונת הכביסה לא מסתובבת ומשמיעה רעש חזק",
+      "expectedCategory": "appliance_repair",
+      "notes": "appliance_repair. Washing-machine technician, covered.",
+      "tier": "core"
+    },
+    {
+      "id": "case-113",
+      "description": "אין לי מים חמים, הדוד לא מחמם",
+      "expectedCategory": "plumbing",
+      "notes": "plumbing. No boiler-technician category exists and none is needed — water-heater work is plumbing.",
+      "tier": "core"
+    },
+    {
+      "id": "case-114",
+      "description": "התנור לא מתחמם והתצוגה מראה שגיאה",
+      "expectedCategory": "appliance_repair",
+      "notes": "appliance_repair. Oven technician, covered.",
+      "tier": "core"
+    },
+    {
+      "id": "case-115",
+      "description": "יש ריח של גז ליד הדוד",
+      "expectedCategory": "plumbing",
+      "notes": "The boundary case. A smell near the boiler could be the gas supply (unsupported) or the gas water heater (plumbing). Genuine ambiguity, so a question is expected — NOT an unsupported dead end. The scripted answer points at the heater.",
+      "tier": "challenge",
+      "expectsClarification": true,
+      "clarificationAnswers": {
+        "דוד": "מהדוד עצמו",
+        "ריח": "מהדוד עצמו"
       }
     }
   ]

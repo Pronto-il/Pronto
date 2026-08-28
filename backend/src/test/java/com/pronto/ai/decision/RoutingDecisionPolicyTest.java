@@ -47,8 +47,11 @@ class RoutingDecisionPolicyTest {
 
     private ClassificationResponse response(String primary, double confidence, boolean needsClarification,
                                              List<CategoryCandidate> candidates, ClarificationQuestion question) {
-        return new ClassificationResponse(primary, confidence, needsClarification, needsClarification ? "unclear" : null,
-                candidates, question);
+        // A profession label is supplied on every fixture, matching the real model: it is filled
+        // on every response, not only unsupported ones. The unsupported-specific fixtures below
+        // supply their own.
+        return new ClassificationResponse("בעל מקצוע", primary, confidence, needsClarification,
+                needsClarification ? "unclear" : null, candidates, question);
     }
 
     @Test
@@ -357,12 +360,27 @@ class RoutingDecisionPolicyTest {
     }
 
     /** Case D: nothing survived validation — fall back rather than invent a route. */
+    /**
+     * A response that named no profession either — genuinely unusable model output, as opposed to
+     * a correctly-identified trade Pronto does not offer.
+     *
+     * <p>The distinction is new in classification-v5 and is the whole point of the unsupported
+     * outcome: "I have no idea" and "you need a gas technician" both fail to produce a Pronto
+     * category, and they call for opposite responses — the controlled handyman fallback for the
+     * first, an honest dead end for the second. These two fixtures make each test say which it
+     * means instead of relying on a default.
+     */
+    private ClassificationResponse responseWithoutProfession(String primary, double confidence,
+                                                              List<CategoryCandidate> candidates) {
+        return new ClassificationResponse(null, primary, confidence, false, null, candidates, null);
+    }
+
     @Test
-    void noValidCandidateAtAllFallsBackToTheSeededHandymanCategoryAsUnresolved() {
+    void noValidCandidateAndNoProfessionFallsBackToTheSeededHandymanCategoryAsUnresolved() {
         RoutingDecision decision = policy.decide(
-                response(null, 0.1, false,
+                responseWithoutProfession(null, 0.1,
                         List.of(new CategoryCandidate("SOMETHING_MADE_UP", 0.9),
-                                new CategoryCandidate("ALSO_FAKE", 0.5)), null),
+                                new CategoryCandidate("ALSO_FAKE", 0.5))),
                 categories, List.of(), 0);
 
         assertThat(decision.outcome()).isEqualTo(RoutingDecision.Outcome.FINAL_UNRESOLVED);
@@ -372,9 +390,9 @@ class RoutingDecisionPolicyTest {
     }
 
     @Test
-    void anEmptyCandidateListAlsoFallsBackRatherThanThrowing() {
+    void anEmptyCandidateListWithNoProfessionAlsoFallsBackRatherThanThrowing() {
         RoutingDecision decision = policy.decide(
-                response(null, 0.0, false, List.of(), null), categories, List.of(), 0);
+                responseWithoutProfession(null, 0.0, List.of()), categories, List.of(), 0);
 
         assertThat(decision.outcome()).isEqualTo(RoutingDecision.Outcome.FINAL_UNRESOLVED);
         assertThat(decision.category().code()).isEqualTo(ServiceCategoryCatalog.FALLBACK_CATEGORY_CODE);

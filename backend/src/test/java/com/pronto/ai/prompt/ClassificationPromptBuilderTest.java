@@ -64,7 +64,12 @@ class ClassificationPromptBuilderTest {
     void theTaskIsFramedAsRoutingNotDiagnosis() {
         String prompt = builder.buildSystemPrompt(categories, 2);
 
-        assertThat(prompt).contains("WHICH PRONTO PROFESSIONAL SHOULD BE SENT");
+        // classification-v5 reframed this as two ordered questions -- which profession is needed,
+        // and only then whether Pronto covers it -- so the old single-sentence framing is gone by
+        // design. What must survive is the ordering and the routing-not-diagnosis rule.
+        assertThat(prompt).contains("WHICH PROFESSION does this customer actually need");
+        assertThat(prompt).contains("WITHOUT considering what Pronto happens to offer");
+        assertThat(prompt).contains("ONLY THEN");
         assertThat(prompt).contains("routing problem, not a technical diagnosis problem");
     }
 

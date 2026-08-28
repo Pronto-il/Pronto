@@ -19,13 +19,13 @@ class EvaluationReportTest {
     private EvaluationOutcome outcome(String id, String expected, String initial, String finalCategory,
                                        Double confidence, int questions) {
         return new EvaluationOutcome(id, expected, EvaluationCase.TIER_CORE, initial, finalCategory, confidence,
-                questions, false, false, null, false, List.of(), 0L, null);
+                questions, false, false, false, null, null, false, List.of(), 0L, null);
     }
 
     /** An intentional fallback: routed to general_handyman because nothing could be separated. */
     private EvaluationOutcome fallback(String id, String expected) {
         return new EvaluationOutcome(id, expected, EvaluationCase.TIER_CORE, null, "general_handyman", null, 2,
-                true, true, null, false, List.of(), 0L, null);
+                true, true, false, null, null, false, List.of(), 0L, null);
     }
 
     /**
@@ -42,7 +42,7 @@ class EvaluationReportTest {
     private EvaluationOutcome withRounds(String id, String expected, String finalCategory,
                                           List<ClarificationRound> rounds) {
         return new EvaluationOutcome(id, expected, EvaluationCase.TIER_CORE, expected, finalCategory, 0.9,
-                rounds.size(), false, false, null, false, rounds, 0L, null);
+                rounds.size(), false, false, false, null, null, false, rounds, 0L, null);
     }
 
     @Test
@@ -108,7 +108,7 @@ class EvaluationReportTest {
                 outcome("b", "ac_hvac", "electrical", "electrical", 0.8, 0),
                 outcome("c", "plumbing", "plumbing", "plumbing", 0.9, 0),
                 new EvaluationOutcome("d", "locksmith", EvaluationCase.TIER_CORE, null, null, null, 0, false,
-                        false, null, false, List.of(), 0L, "boom")
+                        false, false, null, null, false, List.of(), 0L, "boom")
         ), HIGH_CONFIDENCE);
 
         assertThat(report.confusionMatrix())
@@ -259,7 +259,7 @@ class EvaluationReportTest {
     private EvaluationOutcome mustAsk(String id, String expected, String finalCategory, Double confidence,
                                        int questions) {
         return new EvaluationOutcome(id, expected, EvaluationCase.TIER_CHALLENGE, expected, finalCategory,
-                confidence, questions, false, false, null, true, List.of(), 0L, null);
+                confidence, questions, false, false, false, null, null, true, List.of(), 0L, null);
     }
 
     /**

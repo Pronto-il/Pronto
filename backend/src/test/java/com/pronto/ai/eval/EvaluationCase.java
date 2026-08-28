@@ -18,7 +18,12 @@ import java.util.Map;
  *                             be asked, so matching is by keyword; an unmatched question falls
  *                             back to the "not sure" option and is reported, which is itself a
  *                             useful signal about the dataset.
- * @param expectedCategory     the ground-truth {@code categories.code} Pronto should route to
+ * @param expectedCategory     the ground-truth {@code categories.code} Pronto should route to, or
+ *                             the sentinel {@link #EXPECTED_UNSUPPORTED} for a case whose correct
+ *                             answer is "Pronto does not cover this trade at all". A sentinel
+ *                             rather than {@code null}, deliberately: {@code null} is what a case
+ *                             with a FORGOTTEN label also looks like, and the two must not be
+ *                             indistinguishable in a file that defines ground truth.
  * @param notes                why this case is in the set — usually which overlap it probes
  * @param tier                 {@code core} for the approved regression set the 95% target is
  *                             measured on, {@code challenge} for deliberately adversarial or
@@ -47,6 +52,20 @@ public record EvaluationCase(
         Boolean expectsClarification,
         List<String> imageKeys
 ) {
+
+    /**
+     * Ground-truth label for "the correct answer is that Pronto does not offer this trade".
+     *
+     * <p>Not a category code and never matched against one — {@code ServiceCategoryCatalog} would
+     * not resolve it, which is exactly the property that keeps it from being mistaken for a real
+     * routing target if it ever leaked out of the dataset.
+     */
+    public static final String EXPECTED_UNSUPPORTED = "unsupported";
+
+    /** True when this case's correct outcome is the unsupported-profession state. */
+    public boolean expectsUnsupported() {
+        return EXPECTED_UNSUPPORTED.equalsIgnoreCase(expectedCategory);
+    }
 
     public static final String TIER_CORE = "core";
     public static final String TIER_CHALLENGE = "challenge";

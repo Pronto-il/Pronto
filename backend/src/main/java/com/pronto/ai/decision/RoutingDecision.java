@@ -11,7 +11,13 @@ import java.util.List;
  * output of {@link RoutingDecisionPolicy}, and the only place the routing branch is made.
  *
  * @param outcome        see {@link Outcome}
- * @param category       the routing target; {@code null} only for {@link Outcome#ASK_CLARIFICATION}
+ * @param detectedProfession the trade the customer actually needs, in Hebrew, as the model named
+ *                       it — carried through on every outcome, not only the unsupported one, so
+ *                       telemetry can compare "what the model said this was" against where it
+ *                       was routed. May be {@code null} when the model supplied no label.
+ * @param category       the routing target; {@code null} for {@link Outcome#ASK_CLARIFICATION}
+ *                       and for {@link Outcome#UNSUPPORTED_PROFESSION}, where there is
+ *                       deliberately no Pronto category to name
  * @param confidence     the routed category's self-reported confidence. {@code null} for
  *                       {@link Outcome#FINAL_UNRESOLVED}, where the routed category is the
  *                       fallback rather than a candidate the model actually argued for —
@@ -26,6 +32,7 @@ import java.util.List;
  */
 public record RoutingDecision(
         Outcome outcome,
+        String detectedProfession,
         ServiceCategory category,
         Double confidence,
         List<CategoryCandidate> candidates,
@@ -57,7 +64,25 @@ public record RoutingDecision(
          */
         FINAL_UNRESOLVED,
         /** A specific missing fact could still change the routing, and budget remains. */
-        ASK_CLARIFICATION
+        ASK_CLARIFICATION,
+        /**
+         * The trade the customer needs was identified, and Pronto does not offer it.
+         *
+         * <p><b>Not a failure, and not an unresolved case.</b> {@link #FINAL_UNRESOLVED} means
+         * "two Pronto categories are still live and I cannot separate them"; this means "I know
+         * exactly which professional is needed and Pronto has none of them". Conflating the two
+         * is how a gas technician becomes a handyman: the fallback exists to pick between
+         * plausible Pronto trades, and there is nothing plausible to pick between here.
+         *
+         * <p><b>Deliberately independent of confidence.</b> The model may be 98% sure the answer
+         * is a gas technician; that is a confident, correct classification whose only property is
+         * that Pronto cannot serve it. It is neither low-confidence nor a reason to ask a
+         * question — see {@code RoutingDecisionPolicy}'s ordering.
+         *
+         * <p>{@code category} is {@code null}: naming any Pronto category here, even the
+         * fallback, would be the forcing this outcome exists to end.
+         */
+        UNSUPPORTED_PROFESSION
     }
 
     public RoutingDecision {
@@ -66,5 +91,10 @@ public record RoutingDecision(
 
     public boolean isFinal() {
         return outcome != Outcome.ASK_CLARIFICATION;
+    }
+
+    /** True when Pronto identified the trade and does not offer it. */
+    public boolean isUnsupportedProfession() {
+        return outcome == Outcome.UNSUPPORTED_PROFESSION;
     }
 }

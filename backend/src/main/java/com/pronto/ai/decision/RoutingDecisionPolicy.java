@@ -19,6 +19,30 @@ import java.util.Optional;
  * The single place where "commit or ask?" is decided, and the only place an AI-supplied
  * category becomes a real Pronto category.
  *
+ * <p><b>The first question is not "which category?" but "does Pronto cover this trade at all?"</b>
+ * The model names the profession the customer actually needs as free text, unconstrained by
+ * Pronto's catalogue, and proposes a category code only when it believes one fits. If nothing it
+ * proposed resolves against the live {@code categories} table and it did name a profession, the
+ * answer is {@link RoutingDecision.Outcome#UNSUPPORTED_PROFESSION} — Pronto identified the right
+ * trade and does not offer it.
+ *
+ * <p>Three properties of that check are deliberate and each is load-bearing:
+ * <ul>
+ *   <li><b>The catalogue decides, not the model.</b> There is no "isSupported" field in the
+ *       response. Support is {@link ServiceCategoryCatalog} resolving a code and nothing else, so
+ *       adding a row to {@code categories} makes a trade supported with no change here.</li>
+ *   <li><b>It is checked before clarification.</b> "You need a gas technician" is a complete
+ *       answer, not an ambiguous one; spending a question on it would re-learn what is already
+ *       known. Real ambiguity between a Pronto trade and an outside one still asks, because the
+ *       model lists that Pronto trade as a candidate — which resolves and never reaches the
+ *       unsupported branch.</li>
+ *   <li><b>It is independent of confidence.</b> No threshold appears in the condition. A trade
+ *       Pronto does not offer is unsupported at 0.98 exactly as at 0.31; confidence describes how
+ *       sure the model is about the trade, not whether Pronto sells it.</li>
+ * </ul>
+ *
+ * <p>Everything below applies once a Pronto category <em>is</em> in play.
+ *
  * <p><b>Confidence is not probability.</b> The number the model reports is a self-assessment,
  * not a calibrated posterior, so it is never the sole criterion. The decision combines four
  * independent signals:
@@ -93,36 +117,92 @@ public class RoutingDecisionPolicy {
         List<CategoryCandidate> candidates = validCandidates(response, categories);
         ServiceCategory primary = resolvePrimary(response, categories, candidates);
         Double topConfidence = topConfidence(response, candidates, primary);
+        String profession = normalizeProfession(response.detectedProfession());
+
+        // ---- Does Pronto cover this trade at all? Asked FIRST, and answered HERE. ----
+        //
+        // `primary` is null exactly when nothing the model proposed resolved against the live
+        // categories table -- neither its stated primary code nor any candidate. Combined with a
+        // named profession, that is not uncertainty; it is a clear answer Pronto cannot serve.
+        //
+        // THE CATALOGUE DECIDES, NOT THE MODEL. There is deliberately no "isSupported" field in
+        // the response for this to read. Support is `ServiceCategoryCatalog` resolving a code, and
+        // nothing else, so adding a category to the categories table makes it supported with no
+        // change here and no second list to keep in step.
+        //
+        // ORDERED ABOVE THE CLARIFICATION BRANCH ON PURPOSE. "I need a gas technician" is a
+        // complete answer; asking a question about it would spend a round to re-learn something
+        // already known, and the customer would answer it only to be told the same thing.
+        // Genuine ambiguity still asks, and still reaches the branch below -- because a model that
+        // is torn between a Pronto trade and an outside one lists that Pronto trade as a
+        // candidate, which resolves `primary` and never arrives here.
+        //
+        // AND IT IS INDEPENDENT OF CONFIDENCE. There is no threshold in this condition. A
+        // profession Pronto does not offer is unsupported at 0.98 and at 0.31 alike; confidence
+        // describes how sure the model is about the trade, not whether Pronto sells it.
+        if (primary == null && profession != null) {
+            log.info("ai.classification.unsupported profession=\"{}\" confidence={} needsClarification={}",
+                    profession, response.confidence(), response.needsClarification());
+            return new RoutingDecision(RoutingDecision.Outcome.UNSUPPORTED_PROFESSION, profession, null,
+                    clamp(response.confidence()), candidates, response.ambiguityReason(), null);
+        }
 
         boolean ambiguous = isAmbiguous(response, candidates, topConfidence);
         int budget = remainingBudget(answeredQuestions);
         ClarificationQuestion question = usableQuestion(response, categories, priorExchanges);
 
         if (ambiguous && budget > 0 && question != null) {
-            return new RoutingDecision(RoutingDecision.Outcome.ASK_CLARIFICATION, null, topConfidence,
-                    candidates, response.ambiguityReason(), question);
+            return new RoutingDecision(RoutingDecision.Outcome.ASK_CLARIFICATION, profession, null,
+                    topConfidence, candidates, response.ambiguityReason(), question);
         }
 
         // No further question will be asked. Where to route is now a separate decision.
         if (primary == null) {
-            log.warn("routing.unresolved reason=no-valid-candidate candidates={}", candidates.size());
-            return unresolved(categories, candidates, response.ambiguityReason());
+            // Nothing resolved AND no profession was named — the model gave us neither a Pronto
+            // category nor a trade. That is genuinely unusable output rather than an unsupported
+            // trade, so it keeps the existing controlled fallback.
+            log.warn("routing.unresolved reason=no-valid-candidate candidates={} profession=absent",
+                    candidates.size());
+            return unresolved(categories, candidates, response.ambiguityReason(), profession);
         }
 
         if (!ambiguous) {
-            return new RoutingDecision(RoutingDecision.Outcome.FINAL, primary, topConfidence, candidates,
-                    response.ambiguityReason(), null);
+            return new RoutingDecision(RoutingDecision.Outcome.FINAL, profession, primary, topConfidence,
+                    candidates, response.ambiguityReason(), null);
         }
 
         if (isDominant(response, candidates)) {
-            return new RoutingDecision(RoutingDecision.Outcome.FINAL_LOW_CONFIDENCE, primary, topConfidence,
-                    candidates, response.ambiguityReason(), null);
+            return new RoutingDecision(RoutingDecision.Outcome.FINAL_LOW_CONFIDENCE, profession, primary,
+                    topConfidence, candidates, response.ambiguityReason(), null);
         }
 
         log.warn("routing.unresolved reason=competing-categories candidates=[{}] budget={}",
                 renderCandidates(candidates), budget);
-        return unresolved(categories, candidates, response.ambiguityReason());
+        return unresolved(categories, candidates, response.ambiguityReason(), profession);
     }
+
+    /**
+     * Trims the model's free-text profession label and treats blank as absent.
+     *
+     * <p>Capped rather than rejected when over-long: this string is shown to the customer inside a
+     * sentence, and a model that returned a paragraph should degrade to a truncated label rather
+     * than take down the classification. It is never matched against anything, so its content
+     * carries no authority — only its presence does.
+     */
+    private String normalizeProfession(String detectedProfession) {
+        if (detectedProfession == null || detectedProfession.isBlank()) {
+            return null;
+        }
+        String trimmed = detectedProfession.trim();
+        return trimmed.length() <= MAX_PROFESSION_LENGTH ? trimmed
+                : trimmed.substring(0, MAX_PROFESSION_LENGTH).trim();
+    }
+
+    /**
+     * Long enough for any real Hebrew trade name ("טכנאי מזגנים ומערכות קירור" is 26), short
+     * enough that a runaway generation cannot become a paragraph in a customer-facing sentence.
+     */
+    static final int MAX_PROFESSION_LENGTH = 60;
 
     /**
      * Is one validated candidate clearly enough ahead that the remaining doubt no longer
@@ -165,14 +245,14 @@ public class RoutingDecisionPolicy {
      * fallback fired stays inspectable.
      */
     private RoutingDecision unresolved(List<ServiceCategory> categories, List<CategoryCandidate> candidates,
-                                        String ambiguityReason) {
+                                        String ambiguityReason, String detectedProfession) {
         ServiceCategory fallback = ServiceCategoryCatalog.findByCode(
                         categories, ServiceCategoryCatalog.FALLBACK_CATEGORY_CODE)
                 .orElseThrow(() -> new IllegalStateException("Seeded category '"
                         + ServiceCategoryCatalog.FALLBACK_CATEGORY_CODE
                         + "' is missing from the categories table."));
-        return new RoutingDecision(RoutingDecision.Outcome.FINAL_UNRESOLVED, fallback, null, candidates,
-                ambiguityReason, null);
+        return new RoutingDecision(RoutingDecision.Outcome.FINAL_UNRESOLVED, detectedProfession, fallback,
+                null, candidates, ambiguityReason, null);
     }
 
     private String renderCandidates(List<CategoryCandidate> candidates) {

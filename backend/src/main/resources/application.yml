@@ -238,7 +238,21 @@ pronto:
     # Never committed — env-var-sourced only, same treatment as JWT_SECRET. Required only
     # when pronto.ai.mode=openai, and startup-checked there since Production MS4.
     api-key: ${OPENAI_API_KEY:}
-    model: ${OPENAI_MODEL:gpt-4o-mini}
+    # Raised from gpt-4o-mini alongside the profession-first classification prompt
+    # (classification-v5), which asks the model to name the trade a customer needs BEFORE
+    # consulting Pronto's catalogue and to return no category when Pronto covers no such trade —
+    # a negative, multi-step instruction that a weaker model tends to answer helpfully instead of
+    # correctly.
+    #
+    # THE DEFAULT IS CHANGED TOO, not only Production's env var, and deliberately: with a default
+    # here the variable is never actually absent, so an evaluation run that does not set
+    # OPENAI_MODEL would otherwise measure a different model from the one Production runs — and
+    # then be quoted as if it were Production's accuracy. The eval harness and Production must
+    # default to the same model or the numbers are about nothing.
+    #
+    # Still the only place any model name appears outside infra/terraform. Nothing in Java names a
+    # model; changing it is this line plus compute.tf.
+    model: ${OPENAI_MODEL:gpt-4.1-mini}
     timeout-ms: ${OPENAI_TIMEOUT_MS:10000}
 
   email:

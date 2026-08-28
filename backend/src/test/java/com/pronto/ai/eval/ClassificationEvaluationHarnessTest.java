@@ -61,8 +61,14 @@ class ClassificationEvaluationHarnessTest {
         assertThat(outcomes).hasSameSizeAs(cases);
         assertThat(outcomes).allSatisfy(outcome -> {
             assertThat(outcome.failureReason()).as("case %s must not fail", outcome.caseId()).isNull();
-            assertThat(outcome.finalCategory()).as("case %s must reach a routing decision", outcome.caseId())
-                    .isNotNull();
+            // Every case must TERMINATE; not every case terminates with a category. An
+            // unsupported-profession outcome is a complete, correct answer that deliberately
+            // carries none — asserting a category here would have made the new state untestable
+            // and would have quietly required the fallback this change removes.
+            if (!outcome.unsupportedProfession()) {
+                assertThat(outcome.finalCategory()).as("case %s must reach a routing decision", outcome.caseId())
+                        .isNotNull();
+            }
             assertThat(outcome.questionsAsked())
                     .as("case %s must stay within the clarification budget", outcome.caseId())
                     .isLessThanOrEqualTo(properties.getMaxClarificationQuestions());
@@ -73,10 +79,19 @@ class ClassificationEvaluationHarnessTest {
     void everyRoutedCategoryIsARealProntoCategory() {
         List<EvaluationOutcome> outcomes = evaluator.run(EvaluationCases.load(), TestCategories.IDS_BY_CODE);
 
-        assertThat(outcomes).allSatisfy(outcome ->
-                assertThat(TestCategories.IDS_BY_CODE)
-                        .as("case %s routed to an unknown category", outcome.caseId())
-                        .containsKey(outcome.finalCategory()));
+        assertThat(outcomes).allSatisfy(outcome -> {
+            if (outcome.unsupportedProfession()) {
+                // The point of the state: no category at all, rather than an invented one or the
+                // nearest real one.
+                assertThat(outcome.finalCategory())
+                        .as("case %s is unsupported and must carry no category", outcome.caseId())
+                        .isNull();
+                return;
+            }
+            assertThat(TestCategories.IDS_BY_CODE)
+                    .as("case %s routed to an unknown category", outcome.caseId())
+                    .containsKey(outcome.finalCategory());
+        });
     }
 
     @Test
@@ -92,6 +107,9 @@ class ClassificationEvaluationHarnessTest {
         assertThat(report.averageQuestions()).isGreaterThanOrEqualTo(0);
         assertThat(report.perCategoryAccuracy()).isNotEmpty();
         assertThat(report.render()).contains("FINAL accuracy");
+        assertThat(report.render()).contains("unsupported-profession accuracy");
+        assertThat(report.unsupportedCases()).isNotEmpty();
+        assertThat(report.unsupportedAccuracy()).isBetween(0.0, 1.0);
 
         // Printed so a local run of this test is also a usable (if mock-quality) report.
         System.out.println(report.render());

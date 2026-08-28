@@ -355,7 +355,20 @@ resource "aws_ecs_task_definition" "backend" {
       { name = "DB_URL_PARAMS", value = "?sslmode=require" },
 
       { name = "AI_MODE", value = "openai" },
-      { name = "OPENAI_MODEL", value = "gpt-4o-mini" },
+      # Read by pronto.ai.openai.model. Deliberately a plain environment variable and nothing more:
+      # no model name appears anywhere in Java, so changing it is this one line and a redeploy.
+      #
+      # gpt-4.1-mini, raised from gpt-4o-mini for issue classification. The routing prompt asks the
+      # model to name the trade a customer needs BEFORE consulting Pronto's catalogue, and to
+      # decline to map it when Pronto covers no such trade -- an instruction that only pays off if
+      # the model reliably follows a multi-step, negative constraint ("do not pick the nearest
+      # entry") rather than defaulting to the helpful-looking answer.
+      #
+      # Measure before and after with the labelled harness rather than trusting the version number:
+      #   PRONTO_AI_EVAL=true OPENAI_API_KEY=sk-… OPENAI_MODEL=gpt-4.1-mini \
+      #     mvn test -Dtest=OpenAiClassificationEvaluationRunnerTest
+      # Reverting is this line; nothing else in the codebase names a model.
+      { name = "OPENAI_MODEL", value = "gpt-4.1-mini" },
 
       { name = "EMAIL_MODE", value = "ses" },
       { name = "EMAIL_FROM", value = local.email_from },

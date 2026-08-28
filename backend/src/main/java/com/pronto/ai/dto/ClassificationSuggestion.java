@@ -26,11 +26,21 @@ import java.util.List;
  * </ul>
  * An {@code unresolved} result is always also {@code lowConfidence}; the reverse does not hold.
  *
+ * <p>{@code status == UNSUPPORTED_PROFESSION}: Pronto identified the trade and does not offer
+ * it. {@code categoryId}/{@code categoryCode} are {@code null}, {@code questions} is empty, and
+ * {@code detectedProfession} carries the trade name shown to the customer. Neither
+ * {@code lowConfidence} nor {@code unresolved} is set — this is a successful classification whose
+ * only property is that Pronto cannot serve it, and marking it low-confidence would corrupt the
+ * one metric that tells a hard routing case from an out-of-catalogue one.
+ *
  * <p>{@code candidates}/{@code ambiguityReason}/{@code confidence} are internal diagnostics:
  * persisted and logged, deliberately not forwarded to the customer-facing response.
+ * {@code detectedProfession} is the exception — it IS customer-facing, and only in the
+ * unsupported case, because "we don't cover X" is unhelpful without naming X.
  */
 public record ClassificationSuggestion(
         ClassificationStatus status,
+        String detectedProfession,
         Long categoryId,
         String categoryCode,
         Double confidence,

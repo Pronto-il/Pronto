@@ -89,6 +89,78 @@ over-cautious. It never fabricates certainty, never picks at random, and never t
 customer still reaches the review screen with a real category they can override, so the
 unresolved case needs no new customer-facing flow.
 
+## Profession first, category second
+
+**The model names the trade the customer needs before it looks at Pronto's catalogue, and is
+allowed to say Pronto does not offer it.**
+
+Until `classification-v5` it could not. The response schema's `primaryCategoryCode` was an enum of
+live `categories.code`, and the prompt said "these are the only valid categories" — so a customer
+who needed a gas technician got whichever listed trade was least wrong, with a confident-looking
+number attached. The model was not failing; it was doing exactly what it had been told, having been
+given no way to say "none of these".
+
+| Field | Role |
+|---|---|
+| `detectedProfession` | Free text, Hebrew, **always filled**. The one field in the schema not bounded by the catalogue. A label — never matched against anything, never a routing target. |
+| `primaryCategoryCode` | The category that profession maps to, or `null` when Pronto covers no such trade. Still the enum; still re-validated. |
+| `candidates` | **Empty** when nothing Pronto offers applies. That emptiness, not a self-reported flag, is what the policy reads. |
+
+### The catalogue decides, not the model
+
+There is deliberately **no `isSupported` field** for the policy to trust. `RoutingDecisionPolicy`
+resolves the returned code against `ServiceCategoryCatalog`; if nothing resolves and a profession
+was named, the outcome is `UNSUPPORTED_PROFESSION`. Adding a row to `categories` therefore makes a
+trade supported with no code change and no second list — `UnsupportedProfessionRoutingTest`
+demonstrates this by running the *same* model response against a catalogue with and without a
+category and getting opposite outcomes.
+
+### Three ordering rules, each load-bearing
+
+1. **Checked before clarification.** "You need a gas technician" is a complete answer, not an
+   ambiguous one. Spending a question on it would make the customer answer something in order to be
+   told what was already known.
+2. **Independent of confidence.** No threshold appears in the condition. A trade Pronto does not
+   offer is unsupported at 0.98 exactly as at 0.31 — confidence describes how sure the model is
+   about the trade, not whether Pronto sells it. Unsupported is also **not** `lowConfidence` and
+   **not** `unresolved`: those two measure routing quality, and folding out-of-catalogue traffic
+   into them would make the fallback rate unreadable.
+3. **Real ambiguity still asks.** A model torn between a Pronto trade and an outside one lists the
+   Pronto trade as a candidate — which resolves, so the unsupported branch is never reached and the
+   case is handled as ordinary ambiguity. A smell of gas *near the water heater* is the worked
+   example.
+
+### Three outcomes the product keeps apart
+
+| Situation | Result | What the customer sees |
+|---|---|---|
+| Supported trade, professionals available | `CLASSIFIED` | the normal matching/roulette flow |
+| Supported trade, nobody free | `CLASSIFIED` + an empty listing | "לא נמצאו בעלי מקצוע פנויים" — *try later* |
+| Trade Pronto does not offer | `UNSUPPORTED_PROFESSION` | a dedicated screen naming the trade — *trying later changes nothing* |
+
+The middle and bottom rows were previously the same screen, which is the specific dishonesty this
+change removes: one means "come back tomorrow", the other means "we do not do this".
+
+### Demand signal
+
+`ai.classification.decided outcome=UNSUPPORTED_PROFESSION profession="…" request="…"` — the
+profession asked for, a truncated (160-char) copy of the request, and the log timestamp. **No new
+table**: an unsupported request never becomes an `issues` row, so `issue_classifications` (keyed by
+`issue_id`) could not have held it. The description is included only on this outcome, and nowhere
+else, as a deliberate narrow exception to this package's "prompt bodies are never logged" rule.
+Dedicated demand analytics can be added later; this is the smallest thing that makes the question
+answerable at all.
+
+### Evaluation
+
+Out-of-catalogue cases carry the sentinel `expectedCategory: "unsupported"` (a sentinel, not
+`null`, because `null` is also what a *forgotten* label looks like). `EvaluationReport` adds
+`unsupported-profession accuracy`, `forced into a Pronto category` (a professional sent to a job
+they cannot do) and `supported, wrongly refused` (a customer turned away from a job Pronto covers) —
+all reported separately from headline accuracy, because those populations move independently.
+Cases 101–115 cover gas, pest control, glazing, gardening, moving, roofing and antennas, alongside
+fridge/washing-machine/oven/boiler technicians that **are** covered and must not be refused.
+
 ## Professional Brief
 
 A separate model, a separate prompt and a separate call, run only after routing is final —

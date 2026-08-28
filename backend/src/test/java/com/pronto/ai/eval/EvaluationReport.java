@@ -412,11 +412,19 @@ public class EvaluationReport {
         if (!incorrect().isEmpty()) {
             report.append("\n-- every incorrect case (confident ones first) --\n");
             incorrect().forEach(outcome -> report.append(String.format(
-                    "%-12s [%s] expected=%-18s got=%-18s conf=%-6s questions=%d%s%n",
+                    "%-12s [%s] expected=%-18s got=%-18s conf=%-6s questions=%d profession=%-22s%s%s%n",
                     outcome.caseId(), outcome.tier(), outcome.expectedCategory(),
                     outcome.finalCategory() == null ? "(none)" : outcome.finalCategory(),
                     outcome.finalConfidence() == null ? "n/a" : String.format("%.2f", outcome.finalConfidence()),
-                    outcome.questionsAsked(), outcome.unresolved() ? "  [unresolved fallback]" : "")));
+                    outcome.questionsAsked(),
+                    // The free-text trade the model named. On a v5 failure this is usually the
+                    // fastest diagnosis available: a case that came back with the RIGHT profession
+                    // and the wrong category is a mapping problem in the boundaries, while a wrong
+                    // profession is a comprehension problem in the description. Those need
+                    // opposite fixes, and the category alone cannot tell them apart.
+                    outcome.detectedProfession() == null ? "(none)" : outcome.detectedProfession(),
+                    outcome.unsupportedProfession() ? "  [reported unsupported]" : "",
+                    outcome.unresolved() ? "  [unresolved fallback]" : "")));
         }
 
         if (!unmatchedQuestions().isEmpty()) {

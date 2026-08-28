@@ -76,14 +76,16 @@ class AuthTimingTest {
                 Mockito.mock(com.pronto.availability.repository.ProfessionalWorkingHoursRepository.class),
                 Mockito.mock(com.pronto.storage.service.StorageService.class),
                 passwordEncoder, new PhoneNumberNormalizer("IL"),
-                Mockito.mock(LoginAttemptRecorder.class), otpService, Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class));
+                Mockito.mock(LoginAttemptRecorder.class), otpService, Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class),
+                new com.pronto.maps.service.SelectedPlaceValidator());
 
         authService = new AuthService(userRepository, accountWriter, otpService,
                 Mockito.mock(JwtService.class), passwordEncoder,
                 Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
                 Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
-                new VerificationPolicy(true, true), new AuthOtpPolicy("true"));
+                new VerificationPolicy(true, true), new AuthOtpPolicy("true"),
+                new com.pronto.maps.service.SelectedPlaceValidator());
 
         User account = new User("Israel Israeli", KNOWN_EMAIL, "$2a$10$storedhash", UserRole.CUSTOMER);
         InMemoryVerificationCodes.setField(account, "id", 42L);

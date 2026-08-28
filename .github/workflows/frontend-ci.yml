@@ -48,4 +48,10 @@ jobs:
           # valid placeholder on a reserved example domain — never a real Pronto origin, and never
           # a value anything is deployed with.
           VITE_API_BASE_URL: https://api.pronto.example
+          # Address validation: vite.config.ts also refuses to build a production bundle with no
+          # Places browser key, because a bundle without one renders an autocomplete that never
+          # returns a suggestion -- silently blocking every registration and new booking address.
+          # A dummy value here for the same reason as the origin above: CI proves the bundle
+          # compiles, it does not deploy, and no real key belongs in a workflow file.
+          VITE_GOOGLE_MAPS_BROWSER_KEY: ci-placeholder-not-a-real-key
         run: npm run build

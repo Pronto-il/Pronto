@@ -30,6 +30,8 @@ import com.pronto.issues.repository.IssueRepository;
 import com.pronto.maps.GeoCoordinates;
 import com.pronto.maps.GeocodeResult;
 import com.pronto.maps.PostalAddress;
+import com.pronto.maps.SelectedPlace;
+import com.pronto.maps.service.SelectedPlaceValidator;
 import com.pronto.maps.RouteUnavailableReason;
 import com.pronto.maps.config.LocationProperties;
 import com.pronto.maps.service.ArrivalVerifier;
@@ -138,6 +140,7 @@ public class BookingsService {
     private final ProfessionalLocationService professionalLocationService;
     private final LocationProperties locationProperties;
     private final ArrivalVerifier arrivalVerifier;
+    private final SelectedPlaceValidator selectedPlaceValidator;
 
     public BookingsService(IssueRepository issueRepository,
                             ProfessionalRepository professionalRepository,
@@ -154,8 +157,10 @@ public class BookingsService {
                             ServiceAddressGeocoder serviceAddressGeocoder,
                             ProfessionalLocationService professionalLocationService,
                             LocationProperties locationProperties,
-                            ArrivalVerifier arrivalVerifier) {
+                            ArrivalVerifier arrivalVerifier,
+                            SelectedPlaceValidator selectedPlaceValidator) {
         this.serviceAddressGeocoder = serviceAddressGeocoder;
+        this.selectedPlaceValidator = selectedPlaceValidator;
         this.professionalLocationService = professionalLocationService;
         this.locationProperties = locationProperties;
         this.arrivalVerifier = arrivalVerifier;
@@ -330,7 +335,9 @@ public class BookingsService {
         // simply cannot have its arrival geofence-verified later. Refusing to create an order
         // because a geocoding provider was unreachable would let an external dependency take down
         // the platform's core flow, which is a far worse failure than an unverifiable arrival.
-        order.snapshotServiceCoordinates(resolveOrderDestination(callerId, request, now));
+        OrderDestination destination = resolveOrderDestination(callerId, request, now);
+        order.snapshotServiceCoordinates(destination.coordinates());
+        order.snapshotSelectedPlace(destination.place());
 
         // Step 5: the insert is protected by ck_orders_no_overlap -- the sole authoritative
         // backstop for the true concurrency race (two simultaneous createOrder calls for the
@@ -1121,21 +1128,79 @@ public class BookingsService {
      * those coordinates are already persisted and still current for that exact address text. Only
      * a one-off address typed for this booking is geocoded live — once, here, at write time.
      */
-    private GeoCoordinates resolveOrderDestination(Long callerId, CreateOrderRequest request, Instant now) {
+    private OrderDestination resolveOrderDestination(Long callerId, CreateOrderRequest request, Instant now) {
         PostalAddress requested = new PostalAddress(request.serviceCity(), request.serviceStreet(),
                 request.serviceHouseNumber());
-        if (!requested.isGeocodable()) {
-            return null;
-        }
         User customer = userRepository.findById(callerId).orElse(null);
-        if (customer != null) {
-            PostalAddress defaultAddress = new PostalAddress(customer.getDefaultCity(), customer.getDefaultStreet(),
-                    customer.getDefaultHouseNumber());
-            if (defaultAddress.isGeocodable() && requested.contentHash().equals(defaultAddress.contentHash())) {
-                return serviceAddressGeocoder.resolveCustomerDefault(customer, now);
-            }
+        boolean isOwnSavedDefault = isOwnSavedDefaultAddress(customer, requested);
+
+        // Address validation (V55). The rule differs by case, and deliberately so:
+        //
+        //   * ANOTHER ADDRESS FOR THIS BOOKING -- new text nobody has ever confirmed. A selected
+        //     place is REQUIRED. This is the case the whole feature exists for: it is where a
+        //     customer could previously type a street and house number that do not exist and have
+        //     a professional dispatched to them.
+        //
+        //   * THE CALLER'S OWN SAVED DEFAULT ADDRESS -- grandfathered. It may legitimately predate
+        //     address validation (V55 backfills nothing), and stopping an existing customer
+        //     mid-booking to re-enter an address that has been serving them fine would be a
+        //     self-inflicted outage for a data-quality gain. They are asked to re-select it the
+        //     next time they EDIT it, which is the only moment that costs nobody anything.
+        //
+        // The "is this their own default?" test is the V50 address digest, and it cannot be
+        // exploited to smuggle an unvalidated address through: the only text it admits is text
+        // already saved on the caller's own users row.
+        SelectedPlace place = isOwnSavedDefault
+                ? selectedPlaceValidator.validateOptional(request.servicePlaceId(),
+                        request.serviceFormattedAddress(), request.serviceLatitude(),
+                        request.serviceLongitude(), SelectedPlaceValidator.FieldNames.camelCase("service"))
+                : selectedPlaceValidator.requireSelected(request.servicePlaceId(),
+                        request.serviceFormattedAddress(), request.serviceLatitude(),
+                        request.serviceLongitude(), SelectedPlaceValidator.FieldNames.camelCase("service"));
+
+        if (place != null) {
+            // Zero provider calls: the coordinates came from the place the customer picked, which
+            // is a better answer than geocoding the text would give and one already paid for.
+            return new OrderDestination(place.coordinates(), place);
+        }
+
+        // Grandfathered legacy default address only -- the pre-V55 behaviour, unchanged.
+        if (!requested.isGeocodable()) {
+            return OrderDestination.NONE;
+        }
+        if (isOwnSavedDefault) {
+            return new OrderDestination(serviceAddressGeocoder.resolveCustomerDefault(customer, now), null);
         }
         GeocodeResult result = serviceAddressGeocoder.resolve(requested);
-        return result.isResolved() ? result.coordinates() : null;
+        return new OrderDestination(result.isResolved() ? result.coordinates() : null, null);
+    }
+
+    /**
+     * Is this submitted address the caller's own stored default, character for character?
+     *
+     * <p>Compared by {@link PostalAddress#contentHash()} rather than field by field, so that
+     * whitespace and capitalisation differences do not make the same address look like a new one —
+     * the same digest that already decides whether stored coordinates may be reused.
+     */
+    private static boolean isOwnSavedDefaultAddress(User customer, PostalAddress requested) {
+        if (customer == null || !requested.isGeocodable()) {
+            return false;
+        }
+        PostalAddress defaultAddress = new PostalAddress(customer.getDefaultCity(),
+                customer.getDefaultStreet(), customer.getDefaultHouseNumber());
+        return defaultAddress.isGeocodable()
+                && requested.contentHash().equals(defaultAddress.contentHash());
+    }
+
+    /**
+     * What an order's destination snapshot is made of: where it is, and which place the customer
+     * selected to mean it.
+     *
+     * <p>Both halves are independently nullable and that is not laziness — a grandfathered legacy
+     * address has coordinates but no selected place, and an address the geocoder could not resolve
+     * has neither. Returned as one value so the two can never be fetched from different addresses.
+     */
+    private record OrderDestination(GeoCoordinates coordinates, SelectedPlace place) {
+        static final OrderDestination NONE = new OrderDestination(null, null);
     }
 }

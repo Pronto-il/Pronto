@@ -17,6 +17,8 @@ import com.pronto.auth.sms.SmsSender;
 import com.pronto.users.entity.User;
 import com.pronto.users.entity.UserRole;
 import com.pronto.users.repository.UserRepository;
+import java.math.BigDecimal;
+
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -104,7 +106,8 @@ class EmailVerificationBypassTest {
                 Mockito.mock(com.pronto.storage.service.StorageService.class),
                 passwordEncoder, new PhoneNumberNormalizer("IL"),
                 Mockito.mock(LoginAttemptRecorder.class), otpService,
-                Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class));
+                Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class),
+                new com.pronto.maps.service.SelectedPlaceValidator());
 
         Mockito.lenient().when(userRepository.existsByEmail(anyString())).thenReturn(false);
         Mockito.lenient().when(userRepository.existsByPhone(anyString())).thenReturn(false);
@@ -128,13 +131,14 @@ class EmailVerificationBypassTest {
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
                 Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
                 new VerificationPolicy(true, emailRequired),
-                new AuthOtpPolicy(String.valueOf(otpRequired)));
+                new AuthOtpPolicy(String.valueOf(otpRequired)),
+                new com.pronto.maps.service.SelectedPlaceValidator());
     }
 
     private static RegisterRequest customerRequest() {
         return new RegisterRequest(UserRole.CUSTOMER, "Israel Israeli", EMAIL, "0502234567", PASSWORD,
                 new CustomerRegistrationData(
-                        new DefaultAddressRequest("Tel Aviv", "Dizengoff", "100", null, null, null, null)),
+                        new DefaultAddressRequest("Tel Aviv", "Dizengoff", "100", null, null, null, null, "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"))),
                 null);
     }
 

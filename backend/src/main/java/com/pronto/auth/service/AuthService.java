@@ -6,6 +6,7 @@ import com.pronto.auth.dto.AuthNextStep;
 import com.pronto.auth.dto.AuthSession;
 import com.pronto.auth.dto.AuthStepResponse;
 import com.pronto.auth.dto.CapturePhoneRequest;
+import com.pronto.auth.dto.DefaultAddressRequest;
 import com.pronto.auth.dto.LoginRequest;
 import com.pronto.auth.dto.OtpChallengeResponse;
 import com.pronto.auth.dto.OtpSubmissionRequest;
@@ -25,6 +26,7 @@ import com.pronto.common.dto.FieldError;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.locations.service.ServiceCoverageValidator;
+import com.pronto.maps.service.SelectedPlaceValidator;
 import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.professionals.service.SubServiceSelectionValidator;
 import com.pronto.users.entity.User;
@@ -96,6 +98,7 @@ public class AuthService {
     private final SubServiceSelectionValidator subServiceSelectionValidator;
     private final VerificationPolicy verificationPolicy;
     private final AuthOtpPolicy authOtpPolicy;
+    private final SelectedPlaceValidator selectedPlaceValidator;
 
     public AuthService(UserRepository userRepository,
                         AuthAccountWriter accountWriter,
@@ -106,7 +109,8 @@ public class AuthService {
                         ServiceCoverageValidator serviceCoverageValidator,
                         SubServiceSelectionValidator subServiceSelectionValidator,
                         VerificationPolicy verificationPolicy,
-                        AuthOtpPolicy authOtpPolicy) {
+                        AuthOtpPolicy authOtpPolicy,
+                        SelectedPlaceValidator selectedPlaceValidator) {
         this.userRepository = userRepository;
         this.accountWriter = accountWriter;
         this.otpService = otpService;
@@ -117,6 +121,7 @@ public class AuthService {
         this.subServiceSelectionValidator = subServiceSelectionValidator;
         this.verificationPolicy = verificationPolicy;
         this.authOtpPolicy = authOtpPolicy;
+        this.selectedPlaceValidator = selectedPlaceValidator;
     }
 
     // ------------------------------------------------------------------ registration
@@ -450,6 +455,15 @@ public class AuthService {
         if (request.role() == UserRole.CUSTOMER) {
             if (request.customer() == null || request.customer().defaultAddress() == null) {
                 errors.add(new FieldError("customer.defaultAddress", "is required for customer registration"));
+            } else {
+                // Address validation (V55): a registering customer must have picked their address
+                // from autocomplete, not merely typed one. Checked here rather than inside
+                // AuthAccountWriter so it runs before the transaction opens -- a submission that
+                // fails leaves no row behind, which is the rule this whole method exists to keep.
+                DefaultAddressRequest address = request.customer().defaultAddress();
+                selectedPlaceValidator.requireSelected(address.placeId(), address.formattedAddress(),
+                        address.latitude(), address.longitude(),
+                        SelectedPlaceValidator.FieldNames.nested("customer.defaultAddress."));
             }
         } else if (request.role() == UserRole.PROFESSIONAL) {
             ProfessionalRegistrationData professional = request.professional();

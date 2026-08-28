@@ -152,6 +152,77 @@ The mechanisms, in the order they apply:
    logged at WARN rather than silently dropped — a silent cap reads downstream as "these people
    have no GPS", which is a completely different operational problem.
 
+## Address validation — selected places, not typed text
+
+Added after MS2, for the beta. Until it, every service address in the platform was free text: a
+customer could type any street, house number and city, in any combination, including one that does
+not exist. That text drives matching, distance, ETA, coverage, SOS dispatch and the door a
+professional knocks on, so an address that resolves to nowhere is not a data-quality nit — it is a
+job nobody can arrive at.
+
+**The distinction this adds** is not "where is this text?" — MS2's geocoder already answered that,
+for any string you gave it. It is **"did a human pick this from a list of places that exist?"** A
+place id only exists because Google returned that place as a suggestion and somebody chose it.
+
+| Piece | Role |
+|---|---|
+| `SelectedPlace` | The value type: place id + formatted address + validated coordinates. Never built from request fields directly. |
+| `service.SelectedPlaceValidator` | The only constructor. Structural checks, **no provider call**: all-or-nothing, coordinates in range, inside the Israel service-area box. |
+| `service.ServiceAddressGeocoder#applyCustomerDefaultFromSelectedPlace` | Adopts a selection as a customer's stored resolution, writing the same V50 digest a geocode would. |
+| `V55` | `default_place_id`/`default_formatted_address` on `users`, `service_place_id`/`service_formatted_address` on `orders` and `sos_requests`. All nullable, append-only. |
+
+### Where a selection is required, and where it is not
+
+| Flow | Rule | Why |
+|---|---|---|
+| Customer registration | **Required** | A brand-new address has never been confirmed by anyone. |
+| `PUT /api/users/me` (profile address edit) | **Required** | Editing the saved address *is* the moment a legacy row is expected to become validated. |
+| Booking / SOS — "another address" | **Required** | New text nobody has confirmed. This is the case the feature exists for. |
+| Booking / SOS — the caller's **own saved default address** | **Grandfathered** | It may predate the feature. Stopping an existing customer mid-booking — or mid-SOS — to re-enter an address that has been working is a self-inflicted outage. |
+
+The grandfathering test is `PostalAddress#contentHash()` equality against the caller's own
+`users.default_*`. It cannot be used to smuggle unvalidated text through, because the only text it
+admits is text already saved on the caller's own row.
+
+### Provider call budget — this feature *removes* calls
+
+| Interaction | Before | After |
+|---|---|---|
+| Customer registration | 1 geocode | **0** — the selection carries coordinates |
+| Profile address edit | 1 geocode | **0** |
+| Booking to a newly selected address | 1 geocode | **0** |
+| Booking to a grandfathered legacy default | 1 geocode (cached by digest) | unchanged |
+
+The frontend pays for autocomplete instead, on its own browser-restricted key, billed per session
+rather than per keystroke.
+
+### Two keys, deliberately
+
+`MAPS_API_KEY` (backend, Secrets Manager, Geocoding + Routes) and
+`VITE_GOOGLE_MAPS_BROWSER_KEY` (frontend, inlined into the bundle, Places only, restricted by HTTP
+referrer to Pronto's own origins). **The backend key must never reach a bundle.** The frontend key
+is public by construction; the referrer + API restriction is what makes that acceptable, not
+secrecy. `vite.config.ts` refuses to build a production bundle without it, because a bundle without
+it renders an autocomplete that never returns a suggestion — silently blocking every registration.
+
+### What this does NOT claim
+
+`SelectedPlaceValidator` does not call Google to confirm a place id, and deliberately so: it would
+cost a request per write to re-derive what the client already resolved, and a caller willing to
+fabricate a payload can fabricate a *real* place id just as easily. **The residual is that a
+determined client can submit the identity of a real place other than the one they mean to be at.**
+That is accepted: the address is the customer's own destination, so the only people misled are the
+customer and the professional they summoned, and no privilege boundary is crossed. What is closed
+completely is the ordinary case — an address that does not exist, entered by mistake or by a client
+that never ran the selection flow.
+
+### Backward compatibility
+
+Nothing is backfilled and no existing row is rewritten. `NULL` place id means "saved before address
+validation", which is true, and is handled everywhere rather than treated as corrupt. Existing
+customers keep booking; their address gains a place id the next time they edit it. Orders are
+snapshots and stay exactly as written.
+
 ## Privacy
 
 **A professional's live position is never exposed to a customer.** Customers receive derived

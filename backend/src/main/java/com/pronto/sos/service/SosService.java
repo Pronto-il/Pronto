@@ -12,6 +12,8 @@ import com.pronto.issues.entity.IssueUrgencyType;
 import com.pronto.issues.repository.IssueRepository;
 import com.pronto.maps.GeocodeResult;
 import com.pronto.maps.PostalAddress;
+import com.pronto.maps.SelectedPlace;
+import com.pronto.maps.service.SelectedPlaceValidator;
 import com.pronto.maps.service.ServiceAddressGeocoder;
 import com.pronto.notifications.entity.NotificationMessageType;
 import com.pronto.notifications.service.NotificationService;
@@ -35,6 +37,8 @@ import com.pronto.sos.entity.SosUrgency;
 import com.pronto.sos.repository.SosOfferRepository;
 import com.pronto.sos.repository.SosRequestRepository;
 import com.pronto.users.entity.UserRole;
+import com.pronto.users.entity.User;
+import com.pronto.users.repository.UserRepository;
 import com.pronto.users.service.ContactVerificationGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -82,6 +86,8 @@ public class SosService {
     private final ContactVerificationGuard contactVerificationGuard;
 
     private final ServiceAddressGeocoder serviceAddressGeocoder;
+    private final SelectedPlaceValidator selectedPlaceValidator;
+    private final UserRepository userRepository;
 
     public SosService(SosRequestRepository sosRequestRepository,
                        SosOfferRepository sosOfferRepository,
@@ -94,8 +100,12 @@ public class SosService {
                        NotificationService notificationService,
                        SosProperties properties,
                        ContactVerificationGuard contactVerificationGuard,
-                       ServiceAddressGeocoder serviceAddressGeocoder) {
+                       ServiceAddressGeocoder serviceAddressGeocoder,
+                       SelectedPlaceValidator selectedPlaceValidator,
+                       UserRepository userRepository) {
         this.serviceAddressGeocoder = serviceAddressGeocoder;
+        this.selectedPlaceValidator = selectedPlaceValidator;
+        this.userRepository = userRepository;
         this.sosRequestRepository = sosRequestRepository;
         this.sosOfferRepository = sosOfferRepository;
         this.issueRepository = issueRepository;
@@ -107,6 +117,32 @@ public class SosService {
         this.notificationService = notificationService;
         this.properties = properties;
         this.contactVerificationGuard = contactVerificationGuard;
+    }
+
+    /**
+     * Is this submitted destination the caller's own stored default address?
+     *
+     * <p>The grandfathering test, identical in intent and mechanism to
+     * {@code BookingsService}'s: compared by {@link PostalAddress#contentHash()} so that spacing
+     * and capitalisation do not make the same address look new, and safe to trust because the only
+     * text it admits is text already saved on the caller's own {@code users} row.
+     *
+     * <p><b>SOS is the flow where getting this wrong would hurt most.</b> A customer with a burst
+     * pipe, whose saved address predates address validation, must not be told to go and re-select
+     * it from a dropdown before the platform will look for a plumber.
+     */
+    private boolean isOwnSavedDefaultAddress(Long callerId, PostalAddress requested) {
+        if (!requested.isGeocodable()) {
+            return false;
+        }
+        User customer = userRepository.findById(callerId).orElse(null);
+        if (customer == null) {
+            return false;
+        }
+        PostalAddress defaultAddress = new PostalAddress(customer.getDefaultCity(),
+                customer.getDefaultStreet(), customer.getDefaultHouseNumber());
+        return defaultAddress.isGeocodable()
+                && requested.contentHash().equals(defaultAddress.contentHash());
     }
 
     // ------------------------------------------------------------------
@@ -206,9 +242,24 @@ public class SosService {
         // text is untouched; what a missing destination costs is the ability to match
         // geographically, which SosDispatchService reports honestly as a platform failure rather
         // than as "nobody is available".
+        // Address validation (V55), on the same conditional rule bookings uses: a destination the
+        // customer typed for this request must have been selected from autocomplete, while their
+        // own saved default address is grandfathered because it may predate the feature. See
+        // BookingsService#resolveOrderDestination for why the digest comparison is the right test
+        // and why it cannot be used to smuggle unvalidated text through.
+        PostalAddress requested = new PostalAddress(request.serviceCity(), request.serviceStreet(),
+                request.serviceHouseNumber());
+        SelectedPlace place = isOwnSavedDefaultAddress(callerId, requested)
+                ? selectedPlaceValidator.validateOptional(request.servicePlaceId(),
+                        request.serviceFormattedAddress(), request.serviceLatitude(),
+                        request.serviceLongitude(), SelectedPlaceValidator.FieldNames.camelCase("service"))
+                : selectedPlaceValidator.requireSelected(request.servicePlaceId(),
+                        request.serviceFormattedAddress(), request.serviceLatitude(),
+                        request.serviceLongitude(), SelectedPlaceValidator.FieldNames.camelCase("service"));
+        sosRequest.applySelectedPlace(place);
+
         if (sosRequest.getLatitude() == null || sosRequest.getLongitude() == null) {
-            GeocodeResult geocode = serviceAddressGeocoder.resolve(
-                    new PostalAddress(request.serviceCity(), request.serviceStreet(), request.serviceHouseNumber()));
+            GeocodeResult geocode = serviceAddressGeocoder.resolve(requested);
             sosRequest.applyGeocode(
                     geocode.isResolved() ? geocode.coordinates().latitude() : null,
                     geocode.isResolved() ? geocode.coordinates().longitude() : null,

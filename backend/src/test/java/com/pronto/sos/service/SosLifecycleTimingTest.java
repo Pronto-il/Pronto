@@ -95,7 +95,9 @@ class SosLifecycleTimingTest {
         serviceAddressGeocoder = Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class);
         service = new SosService(sosRequestRepository, sosOfferRepository, issueRepository, orderRepository,
                 professionalRepository, sosDispatchService, sosEventService, assembler, notificationService,
-                properties, Mockito.mock(ContactVerificationGuard.class), serviceAddressGeocoder);
+                properties, Mockito.mock(ContactVerificationGuard.class), serviceAddressGeocoder,
+                new com.pronto.maps.service.SelectedPlaceValidator(),
+                Mockito.mock(com.pronto.users.repository.UserRepository.class));
         // MS2: the SOS destination is geocoded once at creation. Stubbed unresolvable by default --
         // these tests are about lifecycle and timing, and a default that quietly produced
         // coordinates would make them silently depend on geography they never mention.
@@ -435,7 +437,8 @@ class SosLifecycleTimingTest {
 
     private static CreateSosRequestRequest createRequest() {
         return new CreateSosRequestRequest(ISSUE_ID, "Burst pipe", SosUrgency.URGENT,
-                "Tel Aviv", "Dizengoff", "10", null, null, null, null, null, null);
+                "Tel Aviv", "Dizengoff", "10", null, null, null, null, null, null,
+                "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739"));
     }
 
     private static SosRequest request(SosRequestStatus status) {

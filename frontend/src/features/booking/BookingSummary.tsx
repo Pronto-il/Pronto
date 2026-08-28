@@ -95,6 +95,12 @@ export function BookingSummary({
         issueId,
         professionalId: professional.professionalId,
         bookedStart,
+        // V55: the selected place travels with the address. Omitted for a grandfathered legacy
+        // default address, which the backend accepts by recognising it as the caller's own.
+        servicePlaceId: address.placeId ?? undefined,
+        serviceFormattedAddress: address.formattedAddress ?? undefined,
+        serviceLatitude: address.latitude ?? undefined,
+        serviceLongitude: address.longitude ?? undefined,
         serviceCity: address.city,
         serviceStreet: address.street,
         serviceHouseNumber: address.houseNumber,

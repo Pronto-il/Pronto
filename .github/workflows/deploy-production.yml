@@ -131,6 +131,12 @@ jobs:
           # the deploy-frontend job with the real origin; this one only proves the bundle compiles,
           # and vite.config.ts refuses to build a production bundle without a valid HTTPS value.
           VITE_API_BASE_URL: https://api.pronto.example
+          # Address validation: vite.config.ts also refuses to build a production bundle with no
+          # Places browser key, because a bundle without one renders an autocomplete that never
+          # returns a suggestion -- silently blocking every registration and new booking address.
+          # A dummy value here for the same reason as the origin above: CI proves the bundle
+          # compiles, it does not deploy, and no real key belongs in a workflow file.
+          VITE_GOOGLE_MAPS_BROWSER_KEY: ci-placeholder-not-a-real-key
         run: npm run build
 
       # ---- migration immutability ------------------------------------------------------------
@@ -385,10 +391,23 @@ jobs:
           # without a valid HTTPS, non-localhost value, which is why an unset variable fails here
           # rather than shipping a bundle that calls localhost from every user's browser.
           VITE_API_BASE_URL: ${{ vars.PRODUCTION_API_URL }}
+          # The Places BROWSER key. Public once shipped -- it is inlined into the bundle -- but held
+          # as a repository SECRET so it is not committed and can be rotated without a code change.
+          # What actually protects it is the Google Console restriction (HTTP referrers limited to
+          # prontohomeservice.com, APIs limited to Places), NOT its secrecy. This is emphatically
+          # NOT the backend's MAPS_API_KEY, which lives in Secrets Manager and must never be built
+          # into a browser bundle.
+          VITE_GOOGLE_MAPS_BROWSER_KEY: ${{ secrets.GOOGLE_MAPS_BROWSER_KEY }}
         run: |
           if [ -z "${VITE_API_BASE_URL}" ]; then
             echo "::error::PRODUCTION_API_URL is not set. The frontend cannot be built without it."
             echo "::error::This is BLOCKED until a domain and an ALB certificate exist."
+            exit 1
+          fi
+          if [ -z "${VITE_GOOGLE_MAPS_BROWSER_KEY}" ]; then
+            echo "::error::GOOGLE_MAPS_BROWSER_KEY secret is not set."
+            echo "::error::Address autocomplete would silently return no suggestions, so no customer"
+            echo "::error::could register, save a profile address, or book to a new address."
             exit 1
           fi
           npm ci

@@ -113,6 +113,22 @@ public class Order {
     private BigDecimal serviceLongitude;
 
     /**
+     * The place the customer <b>selected</b> for this order's destination ({@code V55}), rather
+     * than the text they typed. Snapshotted at creation and never rewritten, like every other
+     * {@code service_*} column.
+     *
+     * <p>Nullable, and the null means something specific: "nobody confirmed this destination
+     * against a list of real places". That is true of every order created before address
+     * validation existed, and of an order booked to a grandfathered legacy default address — see
+     * {@code V55}'s header for why neither is backfilled.
+     */
+    @Column(name = "service_place_id", length = 255)
+    private String servicePlaceId;
+
+    @Column(name = "service_formatted_address", length = 500)
+    private String serviceFormattedAddress;
+
+    /**
      * Production MS2 — the arrival verification record ({@code V51}). Written once, by the
      * {@code ON_THE_WAY -> ARRIVED} transition, and never rewritten: this is evidence, and
      * evidence that can be overwritten is not evidence.
@@ -333,6 +349,35 @@ public class Order {
         }
         this.serviceLatitude = coordinates.latitude();
         this.serviceLongitude = coordinates.longitude();
+    }
+
+    public String getServicePlaceId() {
+        return servicePlaceId;
+    }
+
+    public String getServiceFormattedAddress() {
+        return serviceFormattedAddress;
+    }
+
+    /**
+     * Record which place the customer selected for this destination ({@code V55}). Called once, at
+     * creation, alongside {@link #snapshotServiceCoordinates}.
+     *
+     * <p>{@code null} is accepted and does nothing, because "no place was selected" is a real and
+     * permitted state for an order booked to a grandfathered legacy default address. <b>Write-once
+     * for the same reason the coordinates are:</b> the selected place is part of the destination
+     * snapshot, and a destination a professional has been dispatched to does not change.
+     */
+    public void snapshotSelectedPlace(com.pronto.maps.SelectedPlace place) {
+        if (place == null) {
+            return;
+        }
+        if (servicePlaceId != null) {
+            throw new IllegalStateException("Order " + id + " already has a selected place; an order's "
+                    + "destination is immutable once created.");
+        }
+        this.servicePlaceId = place.placeId();
+        this.serviceFormattedAddress = place.formattedAddress();
     }
 
     public Instant getArrivedAt() {

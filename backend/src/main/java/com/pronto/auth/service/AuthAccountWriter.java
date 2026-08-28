@@ -2,6 +2,8 @@ package com.pronto.auth.service;
 
 import com.pronto.auth.dto.CustomerRegistrationData;
 import com.pronto.auth.dto.DefaultAddressRequest;
+import com.pronto.maps.SelectedPlace;
+import com.pronto.maps.service.SelectedPlaceValidator;
 import com.pronto.maps.service.ServiceAddressGeocoder;
 import com.pronto.auth.dto.LoginRequest;
 import com.pronto.auth.dto.OtpSubmissionRequest;
@@ -91,6 +93,7 @@ public class AuthAccountWriter {
     private final String dummyPasswordHash;
 
     private final ServiceAddressGeocoder serviceAddressGeocoder;
+    private final SelectedPlaceValidator selectedPlaceValidator;
 
     public AuthAccountWriter(UserRepository userRepository,
                               ProfessionalRepository professionalRepository,
@@ -104,8 +107,10 @@ public class AuthAccountWriter {
                               PhoneNumberNormalizer phoneNumberNormalizer,
                               LoginAttemptRecorder loginAttemptRecorder,
                               OtpService otpService,
-                              ServiceAddressGeocoder serviceAddressGeocoder) {
+                              ServiceAddressGeocoder serviceAddressGeocoder,
+                              SelectedPlaceValidator selectedPlaceValidator) {
         this.serviceAddressGeocoder = serviceAddressGeocoder;
+        this.selectedPlaceValidator = selectedPlaceValidator;
         this.userRepository = userRepository;
         this.professionalRepository = professionalRepository;
         this.sosAvailabilityRepository = sosAvailabilityRepository;
@@ -256,18 +261,30 @@ public class AuthAccountWriter {
         user.setDefaultEntrance(address.entrance());
         user.setDefaultAddressNotes(address.addressNotes());
 
-        // Production MS2. Geocode the address at the moment it is accepted, so every later
-        // read -- every professional listing, every booking -- costs no provider call at all.
+        // Address validation (V55). The customer selected this address from autocomplete, so its
+        // identity and position arrived with it and are adopted directly. AuthService has already
+        // refused a registration that carried no selection, so validateOptional cannot return null
+        // here -- it is called rather than requireSelected so that "which flows demand a
+        // selection?" is answered in exactly one place, the service that owns the registration
+        // rules, and not restated here where it could drift.
         //
-        // This is the write path the whole "geocode on write, never on read" policy rests on:
-        // a listing runs in a readOnly transaction where a mutation would be silently discarded
-        // at flush, so a read path that resolved-and-persisted would pay for a geocode on every
-        // request and throw the result away every time.
-        //
-        // Deliberately best-effort. An unreachable geocoder, or an address that does not
-        // resolve, leaves the coordinates null and the registration completes normally -- the
-        // customer simply has no ETA on their first listing until the address is next written.
-        // Refusing to create an account because a maps API was down would be a far worse trade.
+        // Production MS2's "geocode on write, never on read" policy is unchanged, and this is
+        // still the write path it rests on: a listing runs in a readOnly transaction where a
+        // mutation would be silently discarded at flush, so a read path that resolved-and-
+        // persisted would pay for a geocode on every request and throw the result away every
+        // time. What changed is only where the answer comes from -- the selection, not a text
+        // geocode -- which makes registration cost ZERO provider calls where it used to cost one.
+        SelectedPlace place = selectedPlaceValidator.validateOptional(address.placeId(),
+                address.formattedAddress(), address.latitude(), address.longitude(),
+                SelectedPlaceValidator.FieldNames.nested("customer.defaultAddress."));
+        if (place != null) {
+            serviceAddressGeocoder.applyCustomerDefaultFromSelectedPlace(user, place, Instant.now());
+            return;
+        }
+        // Unreachable through the API. Retained for the demo/seed paths, which construct accounts
+        // directly, and because a best-effort geocode is a strictly better fallback than leaving
+        // an account with no coordinates at all. Deliberately non-fatal: refusing to create an
+        // account because a maps API was down would be a far worse trade.
         serviceAddressGeocoder.resolveCustomerDefault(user, Instant.now());
     }
 

@@ -95,7 +95,8 @@ class BookingsArrivalTest {
                 Mockito.mock(ServiceAddressGeocoder.class), professionalLocationService, locationProperties,
                 // The real verifier, not a mock: the geofence rule IS what this class tests, and
                 // stubbing it would leave the tests asserting that a mock was called.
-                new ArrivalVerifier(professionalLocationService, locationProperties));
+                new ArrivalVerifier(professionalLocationService, locationProperties),
+                new com.pronto.maps.service.SelectedPlaceValidator());
 
         Professional professional = Mockito.mock(Professional.class);
         Mockito.lenient().when(professional.getId()).thenReturn(PROFESSIONAL_ID);
@@ -367,7 +368,8 @@ class BookingsArrivalTest {
                 Mockito.mock(ProfessionalCoverageService.class),
                 Mockito.mock(ContactVerificationGuard.class),
                 Mockito.mock(ServiceAddressGeocoder.class), recording, locationProperties,
-                new ArrivalVerifier(recording, locationProperties));
+                new ArrivalVerifier(recording, locationProperties),
+                new com.pronto.maps.service.SelectedPlaceValidator());
 
         assertThatThrownBy(() -> withRecording.arrived(PROFESSIONAL_USER_ID, ORDER_ID,
                 fixNorthOfDestination(5000, "15")))

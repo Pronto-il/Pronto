@@ -3,7 +3,14 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import type { TargetAndTransition, Transition, Variants } from 'framer-motion';
 import { Info } from 'lucide-react';
-import { PageHeader, EMPTY_ADDRESS, Button, Mascot } from '../../shared/components';
+import {
+  PageHeader,
+  EMPTY_ADDRESS,
+  Button,
+  Mascot,
+  validateAddress,
+  validateAddressTextOnly,
+} from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
 import { getProfessionalsForIssue, getAvailableWindows, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type {
@@ -230,17 +237,19 @@ export default function BookingFlowPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function validateAddress(): boolean {
-    const errors: Partial<Record<keyof AddressValue, string>> = {};
-    if (!address.city.trim()) errors.city = 'יש להזין עיר.';
-    if (!address.street.trim()) errors.street = 'יש להזין רחוב.';
-    if (!address.houseNumber.trim()) errors.houseNumber = 'יש להזין מספר בית.';
+  function validateAddressStep(): boolean {
+    // The saved default address is exempt: it may predate autocomplete, and the backend
+    // grandfathers it by recognising the caller's own stored address. Requiring a re-selection
+    // here would stop an existing customer mid-booking over an address that already works --
+    // and would be a rule the server does not even enforce.
+    const errors =
+      addressMode === 'DEFAULT' ? validateAddressTextOnly(address) : validateAddress(address);
     setAddressErrors(errors);
     return Object.keys(errors).length === 0;
   }
 
   function handleAddressContinue() {
-    if (!validateAddress()) {
+    if (!validateAddressStep()) {
       return;
     }
     setDirection(1);

@@ -4,6 +4,7 @@ import com.pronto.common.dto.FieldError;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
+import com.pronto.common.security.UploadOwner;
 import com.pronto.storage.DocumentContentType;
 import com.pronto.storage.ImageContentType;
 import com.pronto.storage.ImageKeyUtils;
@@ -14,6 +15,8 @@ import com.pronto.storage.client.StoredObject;
 import com.pronto.storage.dto.ImageUploadResponse;
 import com.pronto.storage.dto.PresignedImageUrlEntry;
 import com.pronto.storage.dto.RetrievedImage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -36,6 +39,8 @@ import java.util.UUID;
  */
 @Service
 public class StorageService {
+
+    private static final Logger log = LoggerFactory.getLogger(StorageService.class);
 
     /** §2.3's recommended 8 MB cap. Spring's multipart limit (application.yml) is the
      *  first line of defense (rejects earlier, before bytes are even fully read into this
@@ -74,11 +79,27 @@ public class StorageService {
         return presignedUrlTtl.toSeconds();
     }
 
-    public ImageUploadResponse upload(AuthenticatedUser caller, MultipartFile file) {
+    /**
+     * The issue-photo upload, for either kind of owner. <b>One flow, one set of rules.</b>
+     *
+     * <p>Everything that decides whether an upload is allowed and what it becomes — the
+     * {@code image/jpeg}/{@code png}/{@code webp} allow-list, the 8 MB cap, the
+     * {@code .../issues/temp/{uuid}.{ext}} key template, the presigned URL the response carries and
+     * its TTL — is shared verbatim between an authenticated customer and a guest. The single thing
+     * {@code owner} changes is which owner segment the generated key is namespaced under, via
+     * {@link ImageKeyUtils#issueTempKeyPrefix}. There is deliberately no guest-specific validator,
+     * limit or policy anywhere in this package: a guest photo is an issue photo.
+     */
+    public ImageUploadResponse upload(UploadOwner owner, MultipartFile file) {
         ImageContentType type = validateAndResolveType(file);
-        String key = "customers/" + caller.id() + "/issues/temp/" + UUID.randomUUID() + "." + type.extension();
+        String key = ImageKeyUtils.issueTempKeyPrefix(owner) + UUID.randomUUID() + "." + type.extension();
         StoredObject stored = uploadWithKey(key, file);
         return new ImageUploadResponse(stored.key(), stored.url(), stored.contentType(), stored.sizeBytes());
+    }
+
+    /** Convenience overload for call sites that already hold an {@link AuthenticatedUser}. */
+    public ImageUploadResponse upload(AuthenticatedUser caller, MultipartFile file) {
+        return upload(UploadOwner.customer(caller.id()), file);
     }
 
     /**
@@ -126,14 +147,66 @@ public class StorageService {
      * EXCEPT the one narrow exception documented on
      * {@link #getPresignedUrlAssumingCallerAuthorized}.
      */
-    public String getPresignedUrl(Long callerId, String key) {
-        authorize(callerId, key);
+    public String getPresignedUrl(UploadOwner owner, String key) {
+        authorize(owner, key);
         return storageClient.presignUrl(key, presignedUrlTtl);
+    }
+
+    /** Convenience overload for the (still overwhelmingly common) authenticated-customer case. */
+    public String getPresignedUrl(Long callerId, String key) {
+        return getPresignedUrl(UploadOwner.customer(callerId), key);
     }
 
     /** Convenience overload for call sites that already hold an {@link AuthenticatedUser}. */
     public String getPresignedUrl(AuthenticatedUser caller, String key) {
         return getPresignedUrl(caller.id(), key);
+    }
+
+    /**
+     * Promotes a guest-owned object onto {@code newOwnerId}'s own namespace, returning the new key.
+     *
+     * <p><b>What this is for.</b> A guest attaches photos, then registers, then commits a booking.
+     * At that commit an account finally exists, and the images have to become that account's — not
+     * by a database pointer but by living where every existing read path already knows to look for
+     * a customer's image. Without this, {@code issue_images} would permanently hold
+     * {@code guests/{uuid}/...} keys whose owner is a session that expires within a day, and
+     * {@code getPresignedUrl}'s general ownership check could never authorise them again.
+     *
+     * <p><b>The destination filename is the source filename, on purpose.</b> Promotion is therefore
+     * idempotent: a booking commit that fails after the copy and is retried copies onto the same
+     * destination rather than accumulating a fresh orphan per attempt.
+     *
+     * <p><b>The ownership check is re-run here</b>, against the same {@link #authorize} every other
+     * path uses, even though the caller ({@code issues.service.IssuesService}) has already run it.
+     * This method takes a caller-supplied key and creates an object under another id's namespace;
+     * that is precisely the operation that must not rely on an upstream check staying correct.
+     *
+     * @throws ApiException {@code 403 FORBIDDEN} if {@code owner} does not own {@code guestKey}.
+     */
+    public String promoteGuestImage(UploadOwner owner, String guestKey, Long newOwnerId) {
+        authorize(owner, guestKey);
+        String fileName = guestKey.substring(guestKey.lastIndexOf('/') + 1);
+        String destination = ImageKeyUtils.issueTempKeyPrefix(UploadOwner.customer(newOwnerId)) + fileName;
+        try {
+            storageClient.copy(guestKey, destination);
+        } catch (StorageException e) {
+            throw new ApiException(ErrorCode.STORAGE_SERVICE_ERROR, "Failed to attach an uploaded image.");
+        }
+        return destination;
+    }
+
+    /**
+     * Drops the guest-namespace original of an already-promoted object. Best effort by design: the
+     * copy is what the issue now depends on, so a failure to tidy up the source must never fail a
+     * booking that has already committed. Anything missed here is reclaimed by the
+     * {@code guests/} S3 lifecycle rule (infra/terraform/storage.tf).
+     */
+    public void discardPromotedGuestImage(String guestKey) {
+        try {
+            storageClient.delete(guestKey);
+        } catch (StorageException e) {
+            log.warn("storage.guest.promoted-original.delete-failed key={}", guestKey);
+        }
     }
 
     /**
@@ -209,7 +282,7 @@ public class StorageService {
      *
      * @throws ApiException {@code VALIDATION_ERROR} if {@code keys.size() > MAX_BATCH_SIZE}.
      */
-    public List<PresignedImageUrlEntry> getPresignedUrls(Long callerId, List<String> keys) {
+    public List<PresignedImageUrlEntry> getPresignedUrls(UploadOwner owner, List<String> keys) {
         if (keys.size() > MAX_BATCH_SIZE) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
                     List.of(new FieldError("imageKeys", "must not contain more than " + MAX_BATCH_SIZE + " keys")));
@@ -217,7 +290,7 @@ public class StorageService {
         List<PresignedImageUrlEntry> result = new ArrayList<>();
         for (String key : keys) {
             try {
-                authorize(callerId, key);
+                authorize(owner, key);
                 result.add(new PresignedImageUrlEntry(key, storageClient.presignUrl(key, presignedUrlTtl)));
             } catch (ApiException e) {
                 // Ownership mismatch on a key inside this caller's OWN draft should never
@@ -227,6 +300,11 @@ public class StorageService {
             }
         }
         return result;
+    }
+
+    /** Convenience overload for the authenticated-customer case. */
+    public List<PresignedImageUrlEntry> getPresignedUrls(Long callerId, List<String> keys) {
+        return getPresignedUrls(UploadOwner.customer(callerId), keys);
     }
 
     /**
@@ -288,9 +366,16 @@ public class StorageService {
      * be a pure latency/cost add with no correctness benefit — a genuinely nonexistent key
      * (should not happen in normal operation) simply surfaces as a broken {@code <img>} when
      * the browser follows the URL, not as an API-level {@code 404}.
+     *
+     * <p><b>Guest ownership goes through this same check</b>, via
+     * {@link ImageKeyUtils#belongsTo(String, UploadOwner)} — a {@code guests/{uuid}/...} key is
+     * authorised by exactly the rule a {@code customers/{id}/...} key is, against an owner segment
+     * this backend minted and the caller proved possession of. There is no second authorisation
+     * path for guests, and in particular no branch anywhere that trusts a key merely because it
+     * has the guest prefix.
      */
-    private void authorize(Long callerId, String key) {
-        if (!ImageKeyUtils.isPubliclyReadable(key) && !ImageKeyUtils.belongsTo(key, callerId)) {
+    private void authorize(UploadOwner owner, String key) {
+        if (!ImageKeyUtils.isPubliclyReadable(key) && !ImageKeyUtils.belongsTo(key, owner)) {
             throw new ApiException(ErrorCode.FORBIDDEN, "You do not have access to this image.");
         }
     }

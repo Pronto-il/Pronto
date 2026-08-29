@@ -3,6 +3,7 @@ package com.pronto.bookings.repository;
 import com.pronto.bookings.dto.ProfessionalCard;
 import com.pronto.professionals.ProfessionalCategoryMatch;
 import com.pronto.professionals.ProfessionalEligibility;
+import com.pronto.professionals.ProfessionalServiceAreaMatch;
 import com.pronto.professionals.entity.Professional;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
@@ -53,6 +54,16 @@ public interface ProfessionalListingRepository extends Repository<Professional, 
      * {@code u.deletedAt IS NULL} clause is left where it already was, outside the fragment, per
      * that constant's alias/scope contract.
      *
+     * <p><b>Service-area filter (the Eilat fix):</b> additionally filtered by
+     * {@link ProfessionalServiceAreaMatch#SERVES_CITY_JPQL}. Until it was added this query applied
+     * <em>no geographic predicate at all</em> — a customer in Eilat was served every eligible
+     * professional in the country, and the only thing their address changed was the ETA number
+     * printed on each card. {@code :serviceCityId} is a canonical {@code service_cities} id
+     * resolved by {@code locations.service.ServiceCityResolver} before this query is reached, and
+     * is never null: {@code BookingsService} short-circuits an unresolvable city to an empty
+     * listing rather than binding null and relying on SQL's comparison semantics to filter
+     * everything out by accident.
+     *
      * <p><b>MS4:</b> the category filter is no longer {@code p.categoryId = :categoryId} — a
      * professional holds a <em>set</em> of categories now, and is eligible if the requested one
      * is anywhere in it, not only if it is their first. The membership test is concatenated from
@@ -77,7 +88,10 @@ public interface ProfessionalListingRepository extends Repository<Professional, 
             + "WHERE u.deletedAt IS NULL "
             + "AND " + ProfessionalCategoryMatch.SERVES_CATEGORY_JPQL + " "
             + "AND " + ProfessionalEligibility.ELIGIBLE_JPQL + " "
+            + "AND " + ProfessionalServiceAreaMatch.SERVES_CITY_JPQL + " "
             + "ORDER BY p.basePrice ASC")
-    List<ProfessionalCard> listByCategory(@Param("categoryId") Long categoryId, @Param("customerId") Long customerId);
+    List<ProfessionalCard> listByCategoryAndServiceCity(@Param("categoryId") Long categoryId,
+                                                          @Param("customerId") Long customerId,
+                                                          @Param("serviceCityId") Long serviceCityId);
 
 }

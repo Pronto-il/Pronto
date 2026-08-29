@@ -26,6 +26,74 @@ Frontend Milestone 9. Upload stays backend-proxied and JWT-gated, unaffected by 
 reversal — this is about retrieval only. Full design record:
 `docs/architecture/backend-ms9-presigned-image-urls-design.md`.
 
+## Guest image upload (2026-08-29) — one upload flow, two owners
+
+**A visitor may attach photos before they have an account.** Deferred authentication had already
+moved the auth wall to the booking commit, but `POST /api/storage/images` still required a
+`CUSTOMER` JWT — so the one screen where a customer has the most useful evidence in their hand was
+also the one screen that demanded a signup form. That is the gap this closes.
+
+**Nothing about the upload policy is duplicated or varied.** The content-type allow-list, the 8 MB
+cap, the `.../issues/temp/{uuid}.{ext}` key template, the presigned URL in the response, its TTL,
+the batch-presign cap and the ownership check are all the same code for both kinds of caller. The
+single parameter that varies is *whose namespace the key lands in*, expressed as
+`common.security.UploadOwner` and applied in exactly one place
+(`ImageKeyUtils.issueTempKeyPrefix`). There is deliberately no `GuestUploadValidator`,
+`GuestImageLimits` or `GuestUploadPolicy` anywhere — `service.GuestUploadPolicyParityTest` asserts
+each rule against both owners *in the same parameterised test*, so a guest-specific constant would
+have nowhere to be added without one parameter disagreeing with the other.
+
+| Concern | Authenticated customer | Guest |
+|---|---|---|
+| Identity | JWT (`common.security.AuthenticatedUser`) | Signed session token (`auth.security.GuestSessionTokenService`) |
+| Key namespace | `customers/{userId}/issues/temp/` | `guests/{guestId}/issues/temp/` |
+| Everything else | — identical — | — identical — |
+
+**Why a new token existed to be built.** Nothing backend-side identified a guest: the guest journey
+was a `localStorage` booking draft with `ownerId: null`, pure client state. Every ownership
+mechanism here resolves to a `users` row id, and the two things that were out of bounds were
+inventing a fake `users` row and trusting a client-supplied identifier. So `POST
+/api/storage/guest-sessions` mints a bearer capability naming a random UUID namespace — signed with
+a key *derived* from `pronto.jwt.secret` (`HMAC-SHA256(secret, "pronto.guest-session.v1")`), which
+means a guest session can never verify as a user JWT or vice versa, and no deployment gains another
+required variable. It authenticates nothing and authorises nothing except its own namespace.
+
+**`POST /api/storage/images` is now `permitAll()` at `auth.config.SecurityConfig`, and that is not
+an open upload endpoint.** This is the same relocation of authorization MS9 already performed for
+`GET /images/**`: the filter chain cannot decide, because "no `Authorization` header" is now a
+legitimate state, so `auth.security.UploadOwnerResolver#requireIdentified` decides in the handler
+and answers `401` unless the caller proved *either* identity. Two further controls sit alongside it:
+
+- `config.StorageWebConfig` still registers the `CUSTOMER` role gate on that path — a
+  `PROFESSIONAL` token is still `403`, before multipart resolution, exactly as before. The new
+  `RoleRequiredInterceptor(role, allowAnonymous = true)` opt-in only makes the gate *abstain* when
+  there is no principal at all.
+- Anonymous uploads are rate limited per source address (20 / 10 min), via the same
+  `AuthRateLimitInterceptor` the auth and classify routes use, with a new
+  `onlyWhenUnauthenticated` flag. Being a registered, phone-verified account used to be what
+  bounded writes into the bucket; per-source limiting replaces that bound for callers who have no
+  account, and deliberately does **not** apply to existing customers.
+
+**Promotion, not a pointer.** When the guest finally registers and commits,
+`issues.service.IssuesService` calls `service.StorageService#promoteGuestImage`, which server-side
+copies each object onto `customers/{userId}/issues/temp/` (same filename, so a retried commit is
+idempotent) and returns the new key — that is what `issue_images` records. The alternative,
+persisting `guests/...` keys and teaching every read path about guest owners, was rejected: it
+would put the guest concept permanently into `getPresignedUrl`, the batch presign and
+`GET /api/issues/{id}`, and leave rows whose owner segment names a session that expires within a
+day and can never be re-proved. The guest-namespace original is deleted **after commit**
+(`#discardPromotedGuestImage`), never inline — deleting it inside the transaction would mean a
+rolled-back booking had destroyed the customer's photos.
+
+**Orphan/cleanup.** `guests/` is the one prefix where age alone is a safe signal — nothing durable
+ever points at such a key — so `infra/terraform/storage.tf` expires it after 2 days (the session
+token itself lives 24h; 2 days avoids racing a visitor resuming at hour 23). The pre-existing
+`customers/.../issues/temp/` orphan class, listed under "Assumptions" below, is **unchanged and
+still open**: those keys *are* what `issue_images` stores, so age-based expiry there would delete
+live photos. Guests therefore create no new orphan class; they get a bounded one where the
+authenticated path has an unbounded one. `infra/terraform/iam.tf` grants `s3:DeleteObject` scoped
+to `guests/*` only, so the task role still cannot delete a verification document or an issue photo.
+
 ## Responsibilities
 
 - `POST /api/storage/images` — backend-proxied multipart upload (not pre-signed S3 upload
@@ -355,9 +423,16 @@ resolved URL there stopped being safe (see `issues/README.md`).
   full reasoning (in short: backend-proxying required every `<img src>` consumer to attach a
   JWT `Authorization` header, which a plain `<img>` tag cannot do, causing
   `net::ERR_BLOCKED_BY_ORB` on every such request).
-- No orphaned-upload cleanup job (a customer who uploads photos and abandons the New Issue
-  flow leaves those objects in storage forever, since no DB row ever tracked them) — flagged
-  as a known, accepted MVP gap in the contract doc §4, not built here.
+- No orphaned-upload cleanup job for `customers/`-prefixed keys (a customer who uploads photos and
+  abandons the New Issue flow leaves those objects in storage forever, since no DB row ever tracked
+  them) — flagged as a known, accepted MVP gap in the contract doc §4, not built here, and
+  **deliberately still open after the 2026-08-29 guest-upload work**: a `customers/.../issues/temp/`
+  key is exactly what `issue_images` stores for the life of an issue, so an age-based sweep there
+  would delete live photos rather than orphans. Correctly closing it needs a sweep that diffs
+  against `issue_images`, which is a `list` capability on `StorageClient` plus a scheduler — a
+  subsystem, and one that changes behaviour for authenticated users. `guests/`-prefixed keys are
+  covered (2-day lifecycle rule, see "Guest image upload" above) precisely because they are the one
+  prefix nothing durable ever points at.
 
 ## Status
 

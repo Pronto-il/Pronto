@@ -41,11 +41,15 @@ resource "aws_iam_role" "task" {
 data "aws_iam_policy_document" "task" {
   # ---- S3: the uploads bucket, and only its objects ------------------------------------------
   #
-  # Exactly the three operations storage.client.S3StorageClient performs: putObject, getObject and
-  # headObject. Presigning needs no permission of its own -- S3Presigner signs with the caller's own
+  # Exactly the operations storage.client.S3StorageClient performs: putObject, getObject and
+  # headObject, plus copyObject (guest-upload promotion, below), which needs no action of its own --
+  # it is authorized by GetObject on the source and PutObject on the destination, both of which are
+  # here. Presigning needs no permission of its own either -- S3Presigner signs with the caller's own
   # credentials, so the URL it mints carries whatever this role can already do and nothing more.
-  # Note there is no s3:DeleteObject: nothing in the application deletes an upload, and a role that
-  # cannot delete cannot be used to destroy verification evidence.
+  #
+  # Note there is still no s3:DeleteObject in THIS statement, and that omission still means what it
+  # always meant: a role that cannot delete cannot be used to destroy verification evidence or a
+  # customer's issue photos. The narrow exception is the next statement.
   statement {
     sid    = "UploadsBucketObjects"
     effect = "Allow"
@@ -54,6 +58,26 @@ data "aws_iam_policy_document" "task" {
       "s3:GetObject",
     ]
     resources = ["${aws_s3_bucket.uploads.arn}/*"]
+  }
+
+  # ---- delete, and ONLY under guests/ ----------------------------------------------------------
+  #
+  # Guest image upload: a visitor with no account attaches photos under guests/{sessionId}/, and when
+  # they finally register and commit a booking, issues.service.IssuesService copies each object onto
+  # customers/{userId}/ and then deletes the guest-namespace original. Without this the original
+  # would linger until the guests/ lifecycle rule in storage.tf swept it two days later, so every
+  # committed guest booking would keep a duplicate of every photo for that window.
+  #
+  # The resource ARN is what keeps the original property intact. This role STILL cannot delete a
+  # verification document, an issue photo, or a professional's profile image -- the three things that
+  # are irreplaceable -- because none of them are under guests/. A guests/ object, by contrast, is by
+  # construction either already copied elsewhere or part of an abandoned journey: nothing durable
+  # ever points at one, and issue_images never records one.
+  statement {
+    sid       = "UploadsBucketDeletePromotedGuestObjects"
+    effect    = "Allow"
+    actions   = ["s3:DeleteObject"]
+    resources = ["${aws_s3_bucket.uploads.arn}/guests/*"]
   }
 
   # HeadObject is authorized by s3:GetObject on the object, but ListBucket on the BUCKET is what

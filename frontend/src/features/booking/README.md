@@ -534,9 +534,21 @@ with every prior frontend milestone in this project.
   `user.defaultAddress` is non-null (pre-`V20` accounts, or customers who never had one, see
   only the custom option — no dead radio pointing at nothing); when selected, the saved
   address renders **read-only** (all 7 fields shown as text) for confirmation, never
-  editable, and never triggers any call that would mutate `users.default_*` (no such
-  "update default address" endpoint exists). Used by both `BookingFlowPage` and
-  `SosBookingFlowPage`'s `'address'` step.
+  editable. Used by `BookingFlowPage`, `ProfessionMatchPage` and `SosBookingFlowPage`'s
+  `'address'` step.
+
+  **Address-flow redesign:** picking a one-off address still never writes to `users.default_*`
+  by itself — but the step now offers an opt-in "הפוך את זה לכתובת הבית" checkbox
+  (`offerSaveAsHome`), shown only to a signed-in customer, only in `CUSTOM` mode, and only once
+  the address has actually been confirmed by Google. Ticking it saves the normalised result
+  (place id, formatted address, coordinates) via the new
+  `PUT /api/users/me/default-address` on Continue, then refreshes the cached user. Unticked —
+  the default — it writes nothing, because the whole reason this chooser exists is that the
+  address for one job is frequently not the customer's home, and saving by default would rewrite
+  a home address every time somebody books for a parent. A failed save stops the step with an
+  explanation rather than continuing silently. `offerSaveAsHome` is **not** passed by the SOS
+  entry screen: there `onContinue` dispatches an emergency, and a profile write does not belong
+  in front of that.
 - **Full 7-field address now forwarded to order creation.** Previously only
   `serviceCity`/`serviceStreet`/`serviceHouseNumber`/`serviceApartment` were sent to
   `createOrder`/`createSosOrder` (the two lines below, superseded); `serviceFloor`/

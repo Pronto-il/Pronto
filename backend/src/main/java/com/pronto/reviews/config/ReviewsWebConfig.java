@@ -18,6 +18,15 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * them by itself, so this registration uses {@link RoleRequiredInterceptor}'s HTTP-method-
  * scoped constructor (added for this exact case) rather than the plain single-arg one every
  * other package's config uses.
+ *
+ * <p><b>That method scoping is what let {@code GET} become public on 2026-08-29 without touching
+ * this class at all.</b> The {@code POST}-scoped registration below already declines to run on a
+ * {@code GET}, and the {@code /api/reviews/*} registration covers a path a {@code GET} never uses
+ * (there is no get-by-id endpoint). So the only change needed was one {@code GET}-scoped
+ * {@code permitAll} line in {@code auth.config.SecurityConfig}; the write gates here are
+ * byte-for-byte unchanged and remain the thing that stops a guest — or a professional, or an
+ * admin — creating, editing or deleting a review. Do not widen either pattern: a blanket
+ * {@code permitAll} on this controller would take the {@code POST} gate with it.
  */
 @Configuration
 public class ReviewsWebConfig implements WebMvcConfigurer {

@@ -1,8 +1,12 @@
 package com.pronto.storage.controller;
 
+import com.pronto.auth.security.GuestSessionTokenService;
+import com.pronto.auth.security.UploadOwnerResolver;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
+import com.pronto.common.security.UploadOwner;
+import com.pronto.storage.dto.GuestUploadSessionResponse;
 import com.pronto.storage.dto.ImageUploadResponse;
 import com.pronto.storage.dto.PresignedImageUrlEntry;
 import com.pronto.storage.dto.PresignedImageUrlsRequest;
@@ -17,6 +21,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -52,22 +57,73 @@ public class StorageController {
     private static final String IMAGES_PATH_PREFIX = "/api/storage/images/";
 
     private final StorageService storageService;
+    private final GuestSessionTokenService guestSessionTokenService;
+    private final UploadOwnerResolver uploadOwnerResolver;
 
-    public StorageController(StorageService storageService) {
+    public StorageController(StorageService storageService,
+                              GuestSessionTokenService guestSessionTokenService,
+                              UploadOwnerResolver uploadOwnerResolver) {
         this.storageService = storageService;
+        this.guestSessionTokenService = guestSessionTokenService;
+        this.uploadOwnerResolver = uploadOwnerResolver;
     }
 
+    /**
+     * Mints a guest upload session — the only way to obtain an upload namespace without an
+     * account, and the only new endpoint this feature adds.
+     *
+     * <p>Public, and per-IP rate limited in {@code storage.config.StorageWebConfig} for the same
+     * reason {@code POST /api/issues/classify} is: it is reachable by anyone, and what it hands
+     * out has a cost attached (here, the right to write objects into the uploads bucket). What it
+     * hands out is also deliberately inert on its own — a session with no uploads consumes
+     * nothing, creates no row, and expires by itself.
+     */
+    @PostMapping("/guest-sessions")
+    public ResponseEntity<GuestUploadSessionResponse> createGuestSession() {
+        GuestSessionTokenService.GuestSession session = guestSessionTokenService.issue();
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(new GuestUploadSessionResponse(session.token(), session.expiresInSeconds()));
+    }
+
+    /**
+     * Unchanged for an authenticated customer, and now also reachable by a guest holding a valid
+     * session token.
+     *
+     * <p><b>{@code principal} may be {@code null} here, and that does not make this endpoint
+     * anonymous.</b> {@code auth.config.SecurityConfig} no longer 401s this route at the filter
+     * layer, because a guest legitimately has no JWT — but
+     * {@link UploadOwnerResolver#requireIdentified} refuses a caller who proved neither identity,
+     * so an upload is still authorised on every single request. This is the same relocation of
+     * authorization backend MS9 performed for {@code GET /images/**} (filter chain → issuance
+     * time), applied to the one other route that now has two legitimate kinds of caller. The
+     * {@code CUSTOMER} role restriction is untouched for anyone who <em>does</em> present a JWT —
+     * see {@code storage.config.StorageWebConfig}.
+     */
     @PostMapping(value = "/images", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<ImageUploadResponse> upload(@AuthenticationPrincipal AuthenticatedUser principal,
-                                                        @RequestParam("file") MultipartFile file) {
-        ImageUploadResponse response = storageService.upload(principal, file);
+    public ResponseEntity<ImageUploadResponse> upload(
+            @AuthenticationPrincipal AuthenticatedUser principal,
+            @RequestHeader(value = GuestSessionTokenService.HEADER, required = false) String guestSessionToken,
+            @RequestParam("file") MultipartFile file) {
+        UploadOwner owner = uploadOwnerResolver.requireIdentified(principal, guestSessionToken);
+        ImageUploadResponse response = storageService.upload(owner, file);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
+    /**
+     * The draft-resume batch lookup, now serving a guest's paused draft as well as a customer's.
+     *
+     * <p>A guest who leaves and comes back has exactly the problem this endpoint was built for: the
+     * draft persists bare {@code imageKey}s, never URLs, and the presigned URLs minted at upload
+     * time are long expired. Per-key authorization is the same {@code authorize()} call as before,
+     * against whichever identities the caller proved.
+     */
     @PostMapping("/images/presigned-urls")
-    public ResponseEntity<PresignedImageUrlsResponse> presignedUrls(@AuthenticationPrincipal AuthenticatedUser principal,
-                                                                      @RequestBody PresignedImageUrlsRequest request) {
-        List<PresignedImageUrlEntry> images = storageService.getPresignedUrls(principal.id(), request.imageKeys());
+    public ResponseEntity<PresignedImageUrlsResponse> presignedUrls(
+            @AuthenticationPrincipal AuthenticatedUser principal,
+            @RequestHeader(value = GuestSessionTokenService.HEADER, required = false) String guestSessionToken,
+            @RequestBody PresignedImageUrlsRequest request) {
+        UploadOwner owner = uploadOwnerResolver.requireIdentified(principal, guestSessionToken);
+        List<PresignedImageUrlEntry> images = storageService.getPresignedUrls(owner, request.imageKeys());
         return ResponseEntity.ok(new PresignedImageUrlsResponse(images));
     }
 

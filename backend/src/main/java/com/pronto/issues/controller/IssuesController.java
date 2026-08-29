@@ -1,8 +1,11 @@
 package com.pronto.issues.controller;
 
+import com.pronto.auth.security.GuestSessionTokenService;
+import com.pronto.auth.security.UploadOwnerResolver;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
+import com.pronto.common.security.UploadOwner;
 import com.pronto.issues.dto.ClassifyRequest;
 import com.pronto.issues.dto.ClassifyResponse;
 import com.pronto.issues.dto.CreateIssueRequest;
@@ -19,6 +22,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -39,21 +43,50 @@ import org.springframework.web.bind.annotation.RestController;
 public class IssuesController {
 
     private final IssuesService issuesService;
+    private final UploadOwnerResolver uploadOwnerResolver;
 
-    public IssuesController(IssuesService issuesService) {
+    public IssuesController(IssuesService issuesService, UploadOwnerResolver uploadOwnerResolver) {
         this.issuesService = issuesService;
+        this.uploadOwnerResolver = uploadOwnerResolver;
     }
 
+    /**
+     * Reachable without an account (deferred authentication). {@code principal} is {@code null}
+     * for a guest — the route is {@code permitAll} in {@code auth.config.SecurityConfig} and rate
+     * limited per IP in {@code issues.config.IssuesWebConfig}, since it is the one public route
+     * that spends an OpenAI call.
+     *
+     * <p>The guest-session header is read here for the same reason it is read on the upload route:
+     * a guest's {@code imageKeys} live in a namespace only that token can prove ownership of, and
+     * classification must be able to see the photos the customer attached. Absent, invalid or
+     * expired simply means "not a guest" — a signed-in customer's request is unaffected.
+     */
     @PostMapping("/classify")
-    public ResponseEntity<ClassifyResponse> classify(@AuthenticationPrincipal AuthenticatedUser principal,
-                                                       @Valid @RequestBody ClassifyRequest request) {
-        return ResponseEntity.ok(issuesService.classify(principal.id(), request));
+    public ResponseEntity<ClassifyResponse> classify(
+            @AuthenticationPrincipal AuthenticatedUser principal,
+            @RequestHeader(value = GuestSessionTokenService.HEADER, required = false) String guestSessionToken,
+            @Valid @RequestBody ClassifyRequest request) {
+        UploadOwner owner = uploadOwnerResolver.resolve(principal, guestSessionToken);
+        return ResponseEntity.ok(issuesService.classify(owner, request));
     }
 
+    /**
+     * {@code CUSTOMER}-only and unchanged as a boundary — a guest still cannot create an issue.
+     *
+     * <p>What the header adds is the <b>claim</b>: a person who described their problem as a guest,
+     * registered, and is now committing carries both a JWT and the guest-session token their photos
+     * were uploaded under. Presenting both is what authorises those keys to be attached to this
+     * issue and promoted onto the new account — see {@code IssuesService#create}. Without the token
+     * a guest key is refused with {@code IMAGE_KEY_INVALID}, which is what stops one account
+     * attaching another visitor's photos by quoting a key.
+     */
     @PostMapping
-    public ResponseEntity<IssueResponse> create(@AuthenticationPrincipal AuthenticatedUser principal,
-                                                 @Valid @RequestBody CreateIssueRequest request) {
-        IssueResponse response = issuesService.create(principal.id(), request);
+    public ResponseEntity<IssueResponse> create(
+            @AuthenticationPrincipal AuthenticatedUser principal,
+            @RequestHeader(value = GuestSessionTokenService.HEADER, required = false) String guestSessionToken,
+            @Valid @RequestBody CreateIssueRequest request) {
+        UploadOwner owner = uploadOwnerResolver.resolve(principal, guestSessionToken);
+        IssueResponse response = issuesService.create(owner, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 

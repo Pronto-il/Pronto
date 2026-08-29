@@ -137,13 +137,70 @@ function takePrefetched(path: string): Promise<ProfessionalListingResponse> | nu
  * decide when it is safe to navigate. Safe to call repeatedly for the same params — a second
  * call for a path already prefetched returns the in-flight promise rather than a new request.
  */
-export function prefetchProfessionalListing(
-  issueId: number,
-  location: ServiceLocation,
-  sort?: ProfessionalSort,
-): Promise<ProfessionalListingResponse> {
+/**
+ * Identifies WHAT the customer needs a professional for.
+ *
+ * Deferred authentication: during matching there is usually no issue yet — it is created at the
+ * booking commit, together with the order — so the listing is keyed on the category the review
+ * step confirmed. `issueId` remains for the one case that still has one: a customer returning to
+ * an issue they created on an earlier pass.
+ *
+ * Exactly one of the two is sent. The backend takes `issueId` in preference when both arrive and
+ * authorizes it against the caller, so sending both would just make the ownership check decide
+ * something the category already answered.
+ */
+export type ListingSubject = { issueId: number } | { categoryId: number };
+
+/**
+ * Thrown instead of issuing a listing request that the backend is certain to reject.
+ *
+ * Distinct from `ApiError` on purpose: nothing was sent, so there is no status, no code and no
+ * server message to report. A caller that catches this is looking at its own bug — it asked for
+ * professionals before it had somewhere to send them.
+ */
+export class IncompleteServiceLocationError extends Error {
+  /** The required fields that were blank or malformed. */
+  readonly missing: string[];
+
+  constructor(missing: string[]) {
+    super(`Refusing to request professionals without: ${missing.join(', ')}`);
+    this.name = 'IncompleteServiceLocationError';
+    this.missing = missing;
+  }
+}
+
+/**
+ * **The last line of defence against `?city=&street=&houseNumber=`.**
+ *
+ * `city`/`street`/`houseNumber` are required query params (`400 VALIDATION_ERROR`, one
+ * `FieldError` each). The screens above this module gate on a complete address before they get
+ * here — but this is where every listing request in the app is actually assembled, so it is the
+ * one place that can guarantee an empty one never leaves the browser. The observed 400 came from
+ * a screen whose guard was "is there an address object?" rather than "does it have an address
+ * in it"; the object was `EMPTY_ADDRESS`, non-null and entirely blank, and this function did not
+ * exist to notice.
+ *
+ * `houseNumber` is checked for shape, not just presence: the backend refuses a non-numeric one
+ * too (see `BookingsController#parseServiceLocation`).
+ */
+function assertListable(location: ServiceLocation): void {
+  const missing: string[] = [];
+  if (!location.city?.trim()) missing.push('city');
+  if (!location.street?.trim()) missing.push('street');
+  if (!/^\d{1,20}$/.test(location.houseNumber?.trim() ?? '')) missing.push('houseNumber');
+  if (missing.length > 0) {
+    throw new IncompleteServiceLocationError(missing);
+  }
+}
+
+function listingParams(subject: ListingSubject, location: ServiceLocation, sort?: ProfessionalSort) {
+  assertListable(location);
   const params = new URLSearchParams();
-  params.set('issueId', String(issueId));
+  if ('issueId' in subject) {
+    params.set('issueId', String(subject.issueId));
+  } else {
+    params.set('categoryId', String(subject.categoryId));
+  }
   params.set('city', location.city);
   params.set('street', location.street);
   params.set('houseNumber', location.houseNumber);
@@ -153,7 +210,23 @@ export function prefetchProfessionalListing(
   if (sort) {
     params.set('sort', sort);
   }
-  const path = `/api/bookings/professionals?${params.toString()}`;
+  return `/api/bookings/professionals?${params.toString()}`;
+}
+
+export function prefetchProfessionalListing(
+  subject: ListingSubject,
+  location: ServiceLocation,
+  sort?: ProfessionalSort,
+): Promise<ProfessionalListingResponse> {
+  // A rejected promise rather than a synchronous throw: this is called from an effect that
+  // stores the result and attaches its own `.catch`, and a synchronous throw there would take
+  // the screen down instead of degrading into that handler.
+  let path: string;
+  try {
+    path = listingParams(subject, location, sort);
+  } catch (error) {
+    return Promise.reject(error);
+  }
 
   if (prefetchEntry && prefetchEntry.path === path && Date.now() - prefetchEntry.storedAt <= PREFETCH_TTL_MS) {
     return prefetchEntry.promise;
@@ -173,25 +246,20 @@ export function prefetchProfessionalListing(
  * `GET /api/bookings/professionals?issueId=&city=&street=&houseNumber=&apartment=&sort=`
  * `city`/`street`/`houseNumber` are REQUIRED query params as of Milestone 8 (400
  * VALIDATION_ERROR, one FieldError per missing field) — NOT optional despite what
- * api-contract-bookings.md §2.2's original prose implies.
+ * api-contract-bookings.md §2.2's original prose implies. An incomplete `location` rejects with
+ * {@link IncompleteServiceLocationError} **without issuing a request**.
  */
 export function getProfessionalsForIssue(
-  issueId: number,
+  subject: ListingSubject,
   location: ServiceLocation,
   sort?: ProfessionalSort,
 ): Promise<ProfessionalListingResponse> {
-  const params = new URLSearchParams();
-  params.set('issueId', String(issueId));
-  params.set('city', location.city);
-  params.set('street', location.street);
-  params.set('houseNumber', location.houseNumber);
-  if (location.apartment) {
-    params.set('apartment', location.apartment);
+  let path: string;
+  try {
+    path = listingParams(subject, location, sort);
+  } catch (error) {
+    return Promise.reject(error);
   }
-  if (sort) {
-    params.set('sort', sort);
-  }
-  const path = `/api/bookings/professionals?${params.toString()}`;
   return takePrefetched(path) ?? httpClient.get<ProfessionalListingResponse>(path);
 }
 
@@ -228,9 +296,21 @@ export interface AvailableWindowsResponse {
  * expected response (no derived availability fits a full job) — not an error, same UX as the
  * old empty-`slots` case.
  */
-export function getAvailableWindows(professionalId: number, issueId: number): Promise<AvailableWindowsResponse> {
+/**
+ * `issueId` is optional as of deferred authentication: during selection there is usually no
+ * issue, and a professional's free windows are derived from their own published hours and
+ * existing bookings rather than from the customer's request. When an issue IS supplied the
+ * backend additionally checks it belongs to the caller and that the professional serves its
+ * category — so passing it when you have it is strictly better, and omitting it is correct
+ * rather than a workaround.
+ */
+export function getAvailableWindows(
+  professionalId: number,
+  issueId?: number,
+): Promise<AvailableWindowsResponse> {
+  const query = issueId === undefined ? '' : `?issueId=${issueId}`;
   return httpClient.get<AvailableWindowsResponse>(
-    `/api/bookings/professionals/${professionalId}/available-windows?issueId=${issueId}`,
+    `/api/bookings/professionals/${professionalId}/available-windows${query}`,
   );
 }
 

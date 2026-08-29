@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from 'framer-motion';
 import type { TargetAndTransition } from 'framer-motion';
 import { pageTransition } from '../../shared/motion/variants';
 import { ProfessionalRegisterForm } from './ProfessionalRegisterForm';
+import { useRegistrationLanding } from './useRegistrationLanding';
 
 /**
  * Thin wrapper (design doc §6.1) — `RegistrationWizardShell` (rendered inside
@@ -12,6 +13,7 @@ import { ProfessionalRegisterForm } from './ProfessionalRegisterForm';
  */
 export default function ProfessionalRegisterPage() {
   const navigate = useNavigate();
+  const landAfterRegistration = useRegistrationLanding();
   // See `HomePage.tsx`'s comment: `pageTransition.animate` carries its own embedded
   // `transition`, which wins over a `transition` prop — the `animate` target itself must be
   // overridden to actually neutralize the spring under reduced motion.
@@ -24,14 +26,11 @@ export default function ProfessionalRegisterPage() {
     <motion.div className="focused-page" variants={pageTransition} initial="initial" animate={pageAnimate}>
       <ProfessionalRegisterForm
         onExit={() => navigate('/register')}
-        onSuccess={(response) =>
-          // Production MS1: registration ends on the verification challenge, carried in router
-          // state rather than in the URL -- a challenge id is a live authentication handle, not
-          // something to put in a shareable link or a browser history entry.
-          navigate('/verify', {
-            state: { nextStep: response.nextStep, challenge: response.challenge },
-          })
-        }
+        // Where registration ends is the SERVER's answer, not this page's assumption: a
+        // challenge goes to /verify, and an AUTHENTICATED response (verification switched off)
+        // carries a real session that must be adopted rather than discarded. See
+        // useRegistrationLanding for the failure that came from assuming.
+        onSuccess={landAfterRegistration}
       />
     </motion.div>
   );

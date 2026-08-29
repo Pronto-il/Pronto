@@ -24,7 +24,14 @@ in place rather than restating it in full.
   (`409 ISSUE_NOT_BOOKABLE` otherwise). **As of Milestone 8**: now also requires `city`/
   `street`/`houseNumber` query params (+ optional `apartment`, together the customer's
   per-request `matching.ServiceLocation`) — missing/blank required fields → `400
-  VALIDATION_ERROR`, one `FieldError` per missing field. Each returned card is enriched
+  VALIDATION_ERROR`, one `FieldError` per missing field. **As of the address-flow redesign**:
+  `houseNumber` must additionally be digits only (`maps.HouseNumbers`), so this route cannot be
+  the one door around a rule every write path applies; and `issueId`/`categoryId` are **both
+  optional at the binding layer**, with the service deciding between them. That last part is a
+  bug fix: deferred authentication made a category-keyed listing the normal case, and this
+  controller still parsed `issueId` as required — so every `?categoryId=...` listing was answered
+  `400 VALIDATION_ERROR: issueId is required` no matter how good the address was. `GET
+  .../professionals/{id}/available-windows?issueId=` had the same defect and the same fix. Each returned card is enriched
   (post-fetch, in Java, never in SQL) with `profileImageUrl`/`averageRating`/`reviewCount`/
   `favorited` (correlated subqueries in `ProfessionalListingRepository` over `reviews`/
   `favorites`, resolved/converted in `BookingsService`) and `sameCity`/`distanceKm`/
@@ -858,3 +865,27 @@ in this package. Extended `bookings.service.BookingsServiceTest`; live-validated
 Validations 7–9: the Standard listing dropped from 30-of-30 professionals to 1-of-30 against
 real baseline data, an `APPROVED`-but-incomplete professional is refused `400`, and
 available-windows for an ineligible professional returns `404`).
+
+## The listing is filtered by service coverage (the Eilat fix)
+
+`GET /api/bookings/professionals` used to filter on category, approval, onboarding and phone
+verification — and **no geography at all**. A customer in Eilat was shown every eligible
+professional in the country; the only thing their address changed was the ETA printed on each card.
+So the listing appeared to answer "who does this work, near me?" while actually answering "who does
+this work?".
+
+`BookingsService.listProfessionals` now resolves the customer's city to a canonical `service_cities`
+id (`locations.service.ServiceCityResolver`) and passes it to
+`ProfessionalListingRepository.listByCategoryAndServiceCity`, which applies
+`professionals.ProfessionalServiceAreaMatch.SERVES_CITY_JPQL` — the same constant the SOS hard
+filter uses, so the two surfaces cannot disagree about who serves where.
+
+- **Coverage decides, not base city.** A Tel Aviv-based professional listing Eilat is eligible
+  there; one listing only Gush Dan cities is not, however close their base city is.
+- **Coverage decides, not distance.** ETA is computed from a live device position that may be
+  anywhere and degrades to "unavailable" when routing is down. It ranks; it never gates.
+- **All three sort modes share one candidate set.** `enrichAndSort` only ever reorders what the
+  query returned, so RECOMMENDED/CHEAPEST/FASTEST cannot reintroduce an out-of-area professional.
+- **An unresolvable city short-circuits to an empty listing**, with a
+  `bookings.listing.uncovered` log line, rather than binding null and relying on SQL null semantics
+  to filter everything out by accident.

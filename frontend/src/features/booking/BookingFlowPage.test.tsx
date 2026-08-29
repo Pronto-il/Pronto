@@ -1,8 +1,10 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import BookingFlowPage from './BookingFlowPage';
+import { httpClient } from '../../shared/api/httpClient';
+import { EMPTY_ADDRESS } from '../../shared/components';
 import { AuthContext } from '../../shared/hooks/authContext';
 import type { AuthContextValue } from '../../shared/hooks/authContext';
 import { BookingDraftContext } from '../../shared/hooks/bookingDraftContext';
@@ -126,5 +128,78 @@ describe('Back from the professional-selection flow\'s first step (mobile-nav fi
     expect(draft.categoryId).toBe(3);
     expect(draft.description).toBe('יש נזילה מתחת לכיור במטבח');
     expect(draft.issueId).toBe(42);
+  });
+});
+
+/**
+ * **No professional-search request before there is a valid address.**
+ *
+ * The reported `400 Bad Request` had two independent causes, and this file covers the frontend
+ * one: a booking draft carrying an `EMPTY_ADDRESS` — a perfectly non-null object full of empty
+ * strings — resumed straight onto the professionals step, because the resume guard asked
+ * `!draft.address`. The request that went out was
+ * `GET /api/bookings/professionals?...&city=&street=&houseNumber=`, which the backend refuses.
+ * (The other cause was backend request binding; see `BookingsControllerLocationTest`.)
+ */
+describe('the professional listing is not requested before a valid address exists', () => {
+  beforeEach(() => {
+    vi.spyOn(httpClient, 'get').mockResolvedValue({ issueId: 42, categoryId: 3, professionals: [] });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('resumes onto the address step when the draft carries a blank address', async () => {
+    // `stage: 'PROFESSIONAL_SELECTION'` is the resume path that used to fetch immediately.
+    renderBookingFlow(
+      draftAtBookingAddressStep({ stage: 'PROFESSIONAL_SELECTION', address: EMPTY_ADDRESS }),
+    );
+
+    expect(await screen.findByText('שלב 1 מתוך 4')).toBeInTheDocument();
+    expect(httpClient.get).not.toHaveBeenCalled();
+  });
+
+  it('resumes onto the address step when the draft has a city but no house number', async () => {
+    renderBookingFlow(
+      draftAtBookingAddressStep({
+        stage: 'PROFESSIONAL_SELECTION',
+        address: { ...EMPTY_ADDRESS, city: 'חיפה', street: 'הרצל' },
+      }),
+    );
+
+    expect(await screen.findByText('שלב 1 מתוך 4')).toBeInTheDocument();
+    expect(httpClient.get).not.toHaveBeenCalled();
+  });
+
+  it('refuses a draft whose house number is not digits', async () => {
+    renderBookingFlow(
+      draftAtBookingAddressStep({
+        stage: 'PROFESSIONAL_SELECTION',
+        address: { ...EMPTY_ADDRESS, city: 'חיפה', street: 'הרצל', houseNumber: '12א' },
+      }),
+    );
+
+    expect(await screen.findByText('שלב 1 מתוך 4')).toBeInTheDocument();
+    expect(httpClient.get).not.toHaveBeenCalled();
+  });
+
+  it('does request the listing when the draft address IS complete', async () => {
+    // The other half: the guard has to let real work through, or it would just be an outage with
+    // better manners. A legacy address with no place id counts — the backend grandfathers the
+    // caller's own saved one.
+    renderBookingFlow(
+      draftAtBookingAddressStep({
+        stage: 'PROFESSIONAL_SELECTION',
+        addressMode: 'DEFAULT',
+        address: { ...EMPTY_ADDRESS, city: 'חיפה', street: 'הרצל', houseNumber: '5' },
+      }),
+    );
+
+    await waitFor(() => expect(httpClient.get).toHaveBeenCalled());
+    const path = vi.mocked(httpClient.get).mock.calls[0][0];
+    expect(path).toContain('city=');
+    expect(path).not.toMatch(/city=&/);
+    expect(new URLSearchParams(path.split('?')[1]).get('houseNumber')).toBe('5');
   });
 });

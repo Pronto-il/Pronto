@@ -42,6 +42,19 @@ Implements `docs/architecture/api-contract.md` §2.1–2.3 and §3.1–3.3.
   (Services & Sub-services, 2026-08-19), `GET /api/categories` (public reference data — see
   `professionals/README.md`'s MS11 section and
   `docs/architecture/product-ms11-sub-services-design.md` §3.1).
+- **Guest image upload (2026-08-29)** — this package owns the guest's identity, and
+  `SecurityConfig` permits the three routes that consume it: `POST /api/storage/guest-sessions`,
+  `POST /api/storage/images` and `POST /api/storage/images/presigned-urls`. `permitAll()` here does
+  not mean anonymous, in exactly the sense backend MS9 already established for
+  `GET /api/storage/images/**`: authorization moved to the handler
+  (`security.UploadOwnerResolver#requireIdentified`, `401` unless a valid JWT **or** a valid
+  guest-session token was presented), because "no `Authorization` header" is now a legitimate state
+  rather than a rejection. Every write that commits something — `POST /api/issues`,
+  `POST /api/bookings/orders`, every `/api/sos` route — is untouched and still requires an account.
+  `security.GuestSessionTokenService` and `security.UploadOwnerResolver` are the two new classes;
+  see the Key classes table and `storage/README.md`'s "Guest image upload" section.
+  `corsConfigurationSource()` gained `X-Pronto-Guest-Session` in its allowed-header list, without
+  which the browser's preflight refuses the header and every guest upload fails before it is sent.
 - `config/SecurityConfig` also owns a `corsConfigurationSource()` bean, sourced from
   `pronto.cors.allowed-origins` (env var `CORS_ALLOWED_ORIGINS`, default
   `http://localhost:5173`, now present in `application.yml` under the `pronto:` block).
@@ -95,7 +108,9 @@ Implements `docs/architecture/api-contract.md` §2.1–2.3 and §3.1–3.3.
 | `security.JsonAuthenticationEntryPoint` | 401 envelope for unauthenticated requests to protected endpoints. |
 | `config.SecurityConfig` | `SecurityFilterChain` + `PasswordEncoder` bean. |
 | `security.JwtSecretStartupGuard` | (Milestone 7) Fail-fast startup check for the insecure default `pronto.jwt.secret`. |
-| `security.AuthRateLimitInterceptor` | (Milestone 7) Per-IP fixed-window rate limiter, one instance per registered route. |
+| `security.AuthRateLimitInterceptor` | (Milestone 7) Per-IP fixed-window rate limiter, one instance per registered route. **Guest image upload (2026-08-29) added an opt-in `onlyWhenUnauthenticated` constructor**: a request carrying a verified JWT principal skips the limiter entirely. Used by exactly one registration (`storage`'s `POST /api/storage/images`) — an authenticated upload is already bounded by needing a registered, phone-verified account, and imposing a new limit on existing customers is a behaviour change this feature has no business making; an anonymous upload has no such bound and writes 8 MB objects into the uploads bucket. Every pre-existing registration (`auth`, `issues`, `users`) uses the three-argument constructor and is unaffected. |
+| `security.GuestSessionTokenService` | **New, guest image upload (2026-08-29).** Mints/verifies the guest upload session — the backend-authoritative identity a visitor with no account owns their issue photos under, and the only new credential in the system. Signed with a key **derived** from `pronto.jwt.secret` (`HMAC-SHA256(secret, "pronto.guest-session.v1")`), which gives hard domain separation for free: a guest session can never verify as a user JWT and a user JWT can never verify as one of these, so no claim-inspection discipline has to hold for that to stay true. It also means no new secret to distribute — deliberate, after `STORAGE_LOCAL_HMAC_SECRET` showed what that costs a deployment recipe. Subject is a random UUID (regex-pinned on the way back in, so it can never contain `/` or `..` and be spliced into a storage key); TTL `pronto.auth.guest-session-ttl-seconds`, default 24h, matching the JWT expiry so it outlives one booking journey including registration. **What holding one lets you do, in full**: upload under `guests/{guestId}/...` through the same endpoint with the same validation and limits, re-presign a key you already own there, and — once separately authenticated — promote those keys onto your own account at issue creation. Nothing else; it is not accepted where `Authorization` is expected. Travels in `X-Pronto-Guest-Session` (deliberately not `Authorization`: the two are independently present, since a just-registered customer sends both). |
+| `security.UploadOwnerResolver` | **New, guest image upload (2026-08-29).** "Given a verified JWT principal and/or a guest-session header, whose images are these?" — the single implementation, for the same reason `JwtPrincipalResolver` is the single implementation of its own question. Four routes ask it (`POST /api/storage/images`, `POST /api/storage/images/presigned-urls`, and the two `/api/issues` routes carrying `imageKeys`). `#requireIdentified` is what keeps `POST /api/storage/images` from being an open endpoint now that `SecurityConfig` no longer 401s it at the filter layer — it answers `401` unless the caller proved at least one identity. An unverifiable guest header is treated as *absent*, not as an error: a stale token in a returning visitor's `localStorage` is ordinary, not an attack, and it buys nothing either way. |
 | `config.AuthWebConfig` | (Milestone 7) Registers the three `AuthRateLimitInterceptor` instances on `/api/auth/register`\|`login`\|`verify`. |
 | `email.EmailSender` / `email.LoggingEmailSender` | Verification code "delivery," plus (Milestone 5) `sendOrderStatusEmail` for order-status-change email — see the Responsibilities note above. |
 
@@ -467,3 +482,165 @@ while every startup guard still passes.
 
 Tests: extended `security/AuthRateLimitInterceptorTest` (3 MS5 cases), and
 `common/config/HealthProbeIntegrationTest` for the matcher.
+
+---
+
+## Contact availability (`POST /api/auth/availability`)
+
+`ContactAvailabilityService` answers one question about one value: **would `POST /api/auth/register`
+accept this email address / phone number?** It exists so a registration form can put "already
+registered" under the field the customer is looking at, instead of on the confirmation screen after
+they have chosen a password and reviewed a summary.
+
+### Why an endpoint this package's own rules seem to forbid
+
+Everything else here works to avoid becoming an account-existence oracle: `requestPasswordReset`
+answers identically whether or not the account exists, `verifyPassword` burns a BCrypt hash on the
+unknown-identifier branch so response time does not betray it, `EmailNormalizer.mask` masks what was
+*submitted* rather than what is stored. A "does this email exist" endpoint is the opposite of all of
+that, and its absence was not an oversight.
+
+**What makes it acceptable is that the oracle already exists, one door along.** `POST
+/api/auth/register` answers `409 DUPLICATE_EMAIL` and `409 DUPLICATE_PHONE` as distinct codes — it
+has to, or no form can highlight the right field — so anyone willing to send a registration attempt
+can already ask this exact question and get this exact answer. This endpoint does not create the
+disclosure; it makes it **cheaper**. The whole security question is therefore *how much cheaper*, and
+that is a rate-limit question:
+
+| route | budget per client | cost per probe |
+|---|---|---|
+| `POST /api/auth/register` | 10 / 10 min | BCrypt hash + insert + email |
+| `POST /api/auth/availability` | 20 / 10 min | one indexed lookup |
+
+Twice the bandwidth, and the client key comes from `ClientIpResolver` rather than from a spoofable
+header. 20 guesses per source per 10 minutes is not a viable way to enumerate an email namespace.
+That threshold is a security budget, not headroom — see the table in `config.AuthWebConfig` before
+raising it.
+
+### What it discloses, and what it refuses to
+
+The response is `{field, available}` and nothing else. No account id, role, name, masked value,
+created-at, verified flag or deleted flag — and `available = false` does **not** distinguish an
+active account from one that never finished verifying from one that has been soft deleted, because
+the question asked is exactly `createAccount`'s `existsByEmail`/`existsByPhone` and no more. Two
+consequences, both intended: the answer cannot drift from what registration would actually do, and
+it carries no account state. A test asserts the record has two components, so a third has to be
+argued for.
+
+Nothing logs the submitted value.
+
+### It is advisory, never permission
+
+`AuthAccountWriter.createAccount` is unchanged: it still performs its own pre-insert duplicate
+checks and still relies on `ux_users_email` / `ux_users_phone` to settle the race those cannot. The
+availability answer is true when given and can be false a minute later while the customer picks a
+password, so the frontend still handles `DUPLICATE_EMAIL`/`DUPLICATE_PHONE` at submit — that
+handling is not redundant, it is the race.
+
+### Normalization, and why the rules are borrowed rather than copied
+
+The submitted value is canonicalized by the same two components registration uses, so
+`Taken@Example.COM ` and `050-223-4567` cannot report available and then lose to a unique index.
+Phone shape is decided by `PhoneNumberNormalizer` (libphonenumber), which is also why a landline
+comes back `400 VALIDATION_ERROR` here — the customer learns on the field, on blur, that the number
+cannot receive an SMS. Email shape is checked with
+`validator.validateValue(RegisterRequest.class, "email", …)`, i.e. against `RegisterRequest`'s own
+declared constraint rather than a second copy of it, so the two cannot disagree.
+
+A malformed value is a `400`, not `available: true`: answering "available" for something that is not
+an address would march the customer on to a registration that is already doomed.
+
+Tests: `service/ContactAvailabilityServiceTest` (12 cases).
+
+---
+
+## The OTP master switch (`OTP_VERIFICATION_ENABLED`)
+
+**Current state: OTP verification is OFF, deliberately, including in production.** This is a
+temporary product decision for the feedback/beta phase. The plan is to clear the database and turn
+it back on before real customers are onboarded.
+
+### One variable, gating three
+
+Three flags already existed, each added for a different provider outage and each still the right
+granularity for its own problem:
+
+| property | env | what it governs |
+|---|---|---|
+| `pronto.verification.email-required` | `EMAIL_VERIFICATION_REQUIRED` | registration's email code |
+| `pronto.verification.sms-required` | `SMS_VERIFICATION_REQUIRED` | registration's phone code |
+| `pronto.auth.otp-required` | `AUTH_OTP_REQUIRED` | login's second factor |
+
+What none of them expressed is the product decision "we are not doing OTP at all", which needed
+three variables set correctly and produced a silently half-verified deployment if an operator set
+two. `OtpVerificationPolicy` does not replace them — it **gates** them. Both policy beans resolve
+their answer as `master && ownFlag` at construction, which means every existing consumer reads
+exactly the policy it already read, no call site had to learn about the new class, and turning OTP
+back on restores whatever the sub-flags say.
+
+The sub-flag is still parsed before the master is consulted, so `AUTH_OTP_REQUIRED=flase` refuses
+the boot even while OTP is off — the worst time to discover that typo is the day verification comes
+back on.
+
+### With `OTP_VERIFICATION_ENABLED=false`
+
+`POST /api/auth/register` → validate → create the account → **`AUTHENTICATED` with a session**. No
+`verification_codes` row is written, no code is generated, neither SES nor SNS is called on any auth
+path, `OTP_DELIVERY_FAILED` is unreachable, and no account is left pending. `POST /api/auth/login`
+completes on the password. `ContactVerificationGuard` and `ProfessionalEligibility` stop asking for
+proof nobody was given a chance to provide.
+
+**Nothing is written to the database.** Accounts created in this state keep `email_verified = false`
+and `phone_verified = false`. The columns keep meaning "this channel was proved"; whether an
+unproved channel *blocks* is what the policy decides. Writing `true` into them is the one change in
+this feature that would outlive the flag — it would permanently record unproved addresses as proved,
+and re-enabling would silently grandfather the whole beta cohort instead of asking them to verify.
+
+**Everything else still applies**: email format, phone format and SMS-reachability
+(`PhoneNumberNormalizer` — a landline is still refused), duplicate email, duplicate phone, password
+length, every required field, BCrypt verification, the lockout counter, every per-IP rate limiter,
+JWT issuance/validation, and every role and route guard. This is not anonymous access.
+
+### The two contradictions that had to be fixed
+
+Switching the policy off is not sufficient on its own; two places read the raw columns and would
+have produced states that contradict "the user is fully usable".
+
+1. **Phone login.** `AuthAccountWriter#resolveIdentifier` filtered on `phone_verified`, which no
+   account can ever reach while verification is off — so *every* beta user would have been silently
+   unable to sign in with the number they registered with, and told "invalid credentials" for a
+   correct password. The filter is now conditional on `VerificationPolicy`. The accepted cost is
+   stated in that method's Javadoc: while the policy is off, an unproved number can *name* an
+   account. It is not a way into one — the password is still verified — and the strict rule returns
+   with no migration.
+2. **The phone-capture screen.** `GET /api/users/me` now returns `phoneVerificationRequired`
+   alongside `phoneVerified`, so a client can tell "unproved and being asked" from "unproved and
+   nobody is asking". `phoneVerified` was deliberately *not* made to report `true` under the
+   policy — see `UserMeResponse`. `AuthService#capturePhone` refuses outright while the policy is
+   off rather than dispatching a code nothing will redeem.
+
+Everything else was already policy-conditional and was verified by walking every `isEmailVerified()`
+/ `isPhoneVerified()` call site in `src/main`.
+
+### Production is a supported place to run this
+
+There is deliberately **no** startup guard forbidding `false` in a production-like environment — the
+beta runs with OTP off in production by decision. The state is made loud instead: `WARN` on every
+boot from `OtpVerificationPolicy`, alongside the two existing policy announcements.
+
+One existing guard was relaxed, narrowly. `ProviderModeStartupGuard` refused `SMS_MODE=log` in
+production because undelivered codes leave accounts unreachable; with OTP off, no code is generated,
+so that reasoning is void and the guard would only force an operator to hold real AWS End User
+Messaging credentials for a subsystem that is switched off. Safe because `SmsSender` has exactly one
+consumer, `OtpService`. **`EMAIL_MODE=log` stays refused unconditionally** — `EmailSender` is also
+used by `notifications.scheduler.EmailDispatchJob` for order-status mail, which is not OTP and is
+still expected to be delivered.
+
+### Re-enabling
+
+`OTP_VERIFICATION_ENABLED=true`. Nothing else: no migration, no backfill, no code change. Confirm
+`EMAIL_MODE=ses` / `SMS_MODE=aws` and that delivery actually works first — turning the requirement
+back on while delivery is broken recreates the trap these settings exist to escape.
+
+Tests: `service/OtpVerificationDisabledTest` (16), `config/OtpVerificationPolicyTest` (23), plus the
+two new `ProviderModeStartupGuardTest` cases and three in `users/service/UsersServiceTest`.

@@ -8,6 +8,27 @@
   grid-column: 1 / -1;
 }
 
+/* The confirmation line for the complete address: "we asked Google about city + street + number
+   and this is the building it found". Sits under the three locating fields, before the
+   access-detail ones, because it is the answer to those three and nothing below. */
+.confirmed {
+  margin: 0 0 var(--space-3);
+  color: var(--color-success, var(--color-text-muted));
+  font-size: var(--font-size-sm);
+}
+
+.status {
+  margin: 0 0 var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.error {
+  margin: 0 0 var(--space-3);
+  color: var(--color-danger, var(--color-text));
+  font-size: var(--font-size-sm);
+}
+
 @media (max-width: 640px) {
   .grid {
     grid-template-columns: 1fr;

@@ -38,9 +38,21 @@ export interface BookingDraft {
    *  discarded on load rather than misread (no `slotId`-to-`bookedStart` migration is
    *  possible, since a discarded/expired slot ID carries no timestamp to translate). */
   version: 2;
-  /** The user this draft belongs to — used to auto-discard on logout / different-account
-   *  login, since localStorage is not otherwise user-scoped. See §4.6. */
-  ownerId: number;
+  /**
+   * The user this draft belongs to, or `null` while it is a GUEST draft.
+   *
+   * Deferred authentication made `null` a real, expected state: a visitor builds a complete
+   * booking before they have an account, and the draft is what survives the trip through
+   * login/registration and brings them back to the exact screen they left.
+   *
+   * The discard rule turns on this field and is deliberately asymmetric (see
+   * `BookingDraftProvider`): a draft owned by a DIFFERENT user is discarded, because
+   * localStorage is not user-scoped and one account must never see another's booking. A draft
+   * owned by NOBODY is *adopted* by whoever signs in, because that guest was the person who
+   * built it — discarding it there would throw away the entire journey at the exact moment the
+   * customer did what we asked.
+   */
+  ownerId: number | null;
 
   stage: BookingDraftStage;
   urgencyType: 'STANDARD' | 'SOS';
@@ -86,7 +98,14 @@ export interface BookingDraftContextValue {
 
 export const BookingDraftContext = createContext<BookingDraftContextValue | undefined>(undefined);
 
-/** Resume route for a draft, per §4.4's routing table. */
+/**
+ * Resume route for a draft, per §4.4's routing table.
+ *
+ * <p>The booking routes carry no issue id any more. Deferred authentication moved issue creation
+ * to the booking commit, so during matching and slot selection there IS no issue — for a guest
+ * because they have no account yet, and for a signed-in customer because nothing has been
+ * committed. The draft is the state, and the URL no longer pretends otherwise.
+ */
 export function resolveDraftRoute(draft: BookingDraft): string {
   switch (draft.stage) {
     case 'ISSUE_DESCRIBE':
@@ -94,8 +113,6 @@ export function resolveDraftRoute(draft: BookingDraft): string {
     case 'ISSUE_REVIEW':
       return '/issues/new';
     default:
-      return draft.urgencyType === 'SOS'
-        ? `/issues/${draft.issueId}/sos-booking`
-        : `/issues/${draft.issueId}/booking`;
+      return draft.urgencyType === 'SOS' ? '/sos-booking' : '/booking';
   }
 }

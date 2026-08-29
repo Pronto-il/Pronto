@@ -278,22 +278,30 @@ export default function NewIssuePage() {
     }
   }
 
+  /**
+   * `issue` is `null` when the review was confirmed without persisting anything — the guest case,
+   * where `POST /api/issues` is deferred to the booking commit along with the order.
+   *
+   * Both cases advance identically, because from here on the flow reads the DRAFT, not the issue:
+   * the category and urgency it needs are in the patch below either way. The only difference is
+   * whether `issueId` is known yet.
+   */
   function handleConfirmed(issue: ConfirmedIssue) {
+
     // Issue creation is explicitly NOT a clear-trigger (§4.5.1) — the draft moves forward into
     // the booking flow instead of being discarded.
     updateDraft({
       stage: 'ADDRESS_SELECTION',
-      issueId: issue.id,
+      issueId: issue.id ?? undefined,
       categoryId: issue.categoryId,
       urgencyType: issue.urgencyType,
     });
 
     // Straight to the profession-matching screen — no intermediate "we'll find you someone"
     // step, and no second button between the customer and their results. `replace` so the back
-    // button doesn't return to a review step for an issue that is already created. The
-    // category/urgency ride along so the common path needs no extra fetch; the matching screen
-    // re-derives them from the issue itself on refresh.
-    navigate(`/issues/${issue.id}/matching`, {
+    // button doesn't return to a review step the customer has already answered. The route no
+    // longer carries an issue id, because at this point there may not be an issue.
+    navigate('/matching', {
       replace: true,
       state: { categoryId: issue.categoryId, urgencyType: issue.urgencyType },
     });

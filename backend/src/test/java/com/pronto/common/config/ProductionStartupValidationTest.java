@@ -2,6 +2,7 @@ package com.pronto.common.config;
 
 import com.pronto.ai.config.AiModeStartupGuard;
 import com.pronto.auth.config.CorsOriginStartupGuard;
+import com.pronto.auth.config.OtpPolicies;
 import com.pronto.auth.config.ProductionHardeningStartupGuard;
 import com.pronto.auth.config.ProviderModeStartupGuard;
 import com.pronto.auth.security.JwtSecretStartupGuard;
@@ -80,7 +81,7 @@ class ProductionStartupValidationTest {
         new ProductionHardeningStartupGuard(env, c.otpPepper, c.trustedProxies, c.behindProxy).validate();
         new CorsOriginStartupGuard(env, c.corsAllowedOrigins).validate();
         new AiModeStartupGuard(env, c.aiMode, c.openAiApiKey, c.openAiModel).validate();
-        new ProviderModeStartupGuard(env, c.emailMode, c.emailFrom, c.smsMode, c.smsRegion,
+        new ProviderModeStartupGuard(env, OtpPolicies.enabled(), c.emailMode, c.emailFrom, c.smsMode, c.smsRegion,
                 c.demoDataMode, c.mapsMode, c.mapsApiKey).validate();
         new StorageModeStartupGuard(env, c.storageMode, c.storageBucket, c.storageRegion,
                 c.storageLocalHmacSecret).validate();

@@ -175,8 +175,9 @@ place id only exists because Google returned that place as a suggestion and some
 
 | Flow | Rule | Why |
 |---|---|---|
-| Customer registration | **Required** | A brand-new address has never been confirmed by anyone. |
-| `PUT /api/users/me` (profile address edit) | **Required** | Editing the saved address *is* the moment a legacy row is expected to become validated. |
+| Customer registration | **Not collected** (required *if* sent) | Address-flow redesign: registration no longer asks for one at all, because an address is a property of a job rather than of an account. `customer.defaultAddress` remains an accepted optional field for the seed/demo paths, and a supplied one is held to the full rule. |
+| `PUT /api/users/me` (profile address edit) | **Required when supplied**, optional to supply | Editing the saved address *is* the moment a legacy row is expected to become validated. Omitting it leaves the stored address untouched — necessary now that a customer may have none. |
+| `PUT /api/users/me/default-address` ("הפוך את זה לכתובת הבית") | **Required** | Same act as the profile edit, reached from the booking flow. |
 | Booking / SOS — "another address" | **Required** | New text nobody has confirmed. This is the case the feature exists for. |
 | Booking / SOS — the caller's **own saved default address** | **Grandfathered** | It may predate the feature. Stopping an existing customer mid-booking — or mid-SOS — to re-enter an address that has been working is a self-inflicted outage. |
 
@@ -188,13 +189,64 @@ admits is text already saved on the caller's own row.
 
 | Interaction | Before | After |
 |---|---|---|
-| Customer registration | 1 geocode | **0** — the selection carries coordinates |
+| Customer registration | 1 geocode | **0** — no address is collected at all |
 | Profile address edit | 1 geocode | **0** |
 | Booking to a newly selected address | 1 geocode | **0** |
 | Booking to a grandfathered legacy default | 1 geocode (cached by digest) | unchanged |
 
 The frontend pays for autocomplete instead, on its own browser-restricted key, billed per session
-rather than per keystroke.
+rather than per keystroke. As of the address-flow redesign it pays for a little more of it: the
+address form asks Google three questions rather than one — cities, then streets within the chosen
+city, then a confirmation of the complete city + street + house number — all inside a single
+autocomplete session token, and all on Places API (New). The confirmation step deliberately does
+**not** reach for the Geocoding API: that is on the *backend's* key, and calling it from a browser
+would either fail the key restriction or force that restriction to be widened.
+
+### House numbers are digits only
+
+`HouseNumbers` holds the rule and the places that enforce it. City and street are chosen from
+Google's lists, so a customer cannot invent one; the house number is typed by hand, which makes it
+the only part of an address constrained by a rule rather than by an act of selection — and the part
+that decides which door somebody knocks on.
+
+`12א` and `12/3` are real Israeli spellings and are refused anyway: the numeric part locates the
+building, and everything after it describes which dwelling *inside* it, which is what `apartment`,
+`floor`, `entrance` and the access notes are for. A house number that can hold arbitrary text
+becomes a second address line, and that text flows into the geocoding query.
+
+Enforced on `auth.dto.DefaultAddressRequest`, `users.dto.CustomerAddressRequest`,
+`bookings.dto.CreateOrderRequest` and — by hand, since query params are not `@Valid`-bound —
+`BookingsController`'s professional-listing route. **Not** on `sos.dto.CreateSosRequestRequest`,
+deliberately: refusing to summon help over the spelling of a house number is a worse outcome than
+accepting the spelling. No existing row is rewritten and no read is gated; a stored `12א` is still
+displayed, geocoded and delivered to, it simply cannot be re-submitted unchanged.
+
+### Apartment, floor and entrance are shaped too
+
+`AddressAccessFields` is the same idea applied to the three optional "how do I get in" fields.
+They are typed rather than selected for the same reason the house number is — no geocoder resolves
+"דירה 4, קומה 2" — and left as 20 characters of free text they become a second address line: where
+the `12א` a house number just refused reappears, and where a sentence lands in a field the
+professional's app renders as a two-character chip.
+
+- **apartment** — digits only
+- **floor** — digits only
+- **entrance** — at most two characters, each a letter of any script (`\p{L}`, so `א`/`ב`/`ג`, not
+  just `A`/`B`/`C`) or an ASCII digit; no spaces, no punctuation
+
+All three stay **optional** — every pattern admits the empty string, so omitting them is unaffected.
+
+**A negative floor is deliberately not accepted.** `-1` for a basement is a real spelling, and it is
+refused for the reason `12א` is: nothing here ever intentionally supported it (the column was
+`varchar(20)` with no rule, which took `-1` exactly as it took `"ליד המעלית"`), so there is no
+behaviour to preserve, and digits-only was the rule decided on. A basement is described in
+`addressNotes`, the free-text field that exists for what a structured field cannot hold. Reversing
+that decision is one pattern here plus one sanitizer in `frontend/.../addressTypes.ts`.
+
+Enforced on `auth.dto.DefaultAddressRequest`, `users.dto.CustomerAddressRequest` and
+`bookings.dto.CreateOrderRequest`. **Not** on `sos.dto.CreateSosRequestRequest`, matching
+`HouseNumbers`' omission and for the same reason. No existing row is rewritten and no read is
+gated.
 
 ### Two keys, deliberately
 

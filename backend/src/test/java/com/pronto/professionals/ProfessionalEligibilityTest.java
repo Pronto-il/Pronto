@@ -67,7 +67,7 @@ class ProfessionalEligibilityTest {
 
     @Test
     void standardListingQueryIsBuiltFromTheConstant() {
-        assertThat(queryOf(ProfessionalListingRepository.class, "listByCategory"))
+        assertThat(queryOf(ProfessionalListingRepository.class, "listByCategoryAndServiceCity"))
                 .contains(ProfessionalEligibility.ELIGIBLE_JPQL);
     }
 
@@ -100,7 +100,7 @@ class ProfessionalEligibilityTest {
         // The fragment's sole assumption about its host query. A consumer that aliased
         // Professional as anything else would fail at context startup, but naming the contract
         // here is what makes that failure legible instead of mysterious.
-        assertThat(queryOf(ProfessionalListingRepository.class, "listByCategory"))
+        assertThat(queryOf(ProfessionalListingRepository.class, "listByCategoryAndServiceCity"))
                 .contains("FROM Professional p");
         assertThat(queryOf(SosCandidateRepository.class, "findEligible"))
                 .contains("FROM Professional p");

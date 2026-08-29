@@ -2,13 +2,26 @@ import { useState } from 'react';
 import { CalendarClock, MapPin } from 'lucide-react';
 import { Button, Card } from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
-import { createOrder, ApiError, GENERIC_ERROR_MESSAGE, getCategoryNameHe } from '../../shared/api';
+import type { ClarificationAnswer } from '../../shared/api';
+import { createIssue, createOrder, ApiError, GENERIC_ERROR_MESSAGE, getCategoryNameHe } from '../../shared/api';
+import { useAuth } from '../../shared/hooks';
 import type { OrderResponse, ProfessionalCard as ProfessionalCardData } from '../../shared/api';
 import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
 import styles from './BookingSummary.module.css';
 
 export interface BookingSummaryProps {
-  issueId: number;
+  /** Present only when an issue already exists (a customer returning to one they created on an
+   *  earlier pass). `undefined` on the normal path, where the issue is created here, at the
+   *  commit, together with the order. */
+  issueId?: number;
+  /** The report itself, carried from the draft so the issue can be created at the commit rather
+   *  than before matching. Ignored when `issueId` is already set. */
+  issueDescription: string;
+  issueImageKeys: string[];
+  issueClarificationAnswers: ClarificationAnswer[];
+  /** Called instead of booking when nobody is signed in. The draft is already persisted, so the
+   *  caller only has to route to login/registration. */
+  onAuthRequired: () => void;
   categoryId: number;
   professional: ProfessionalCardData;
   /** The chosen ISO start instant — `bookedEnd` is derived here for display only (never sent
@@ -68,6 +81,10 @@ function isStaleStartError(error: unknown): boolean {
  */
 export function BookingSummary({
   issueId,
+  issueDescription,
+  issueImageKeys,
+  issueClarificationAnswers,
+  onAuthRequired,
   categoryId,
   professional,
   bookedStart,
@@ -76,11 +93,29 @@ export function BookingSummary({
   onConfirmed,
   onTimeUnavailable,
 }: BookingSummaryProps) {
+  const { token } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [bannerError, setBannerError] = useState<string | null>(null);
 
   async function handleConfirm() {
     setBannerError(null);
+
+    // ---- THE AUTHENTICATION BOUNDARY ----
+    //
+    // This is the first and only point in the standard booking journey where an account is
+    // required, and it is required because the very next thing that happens is a write that
+    // dispatches a real professional to a real address.
+    //
+    // Nothing is created before this check: no issue, no order, and no notification. A guest who
+    // gets this far and turns back at the login screen leaves no trace in the database.
+    //
+    // The draft has already been written by the step transitions that led here, so `onAuthRequired`
+    // only has to send them to the login screen -- everything they entered is on disk and is
+    // adopted by whichever account signs in (see BookingDraftProvider's adoption rule).
+    if (!token) {
+      onAuthRequired();
+      return;
+    }
     // Pre-flight: never send a request the server is guaranteed to reject. Catches the common
     // shape of this problem (the customer sat on this screen until the chosen time passed)
     // without a round trip, and without any invented lead-time rule — this mirrors exactly
@@ -91,8 +126,28 @@ export function BookingSummary({
     }
     setIsSubmitting(true);
     try {
+      // The issue is created HERE, not at the review step, and only now that the caller is
+      // authenticated. `POST /api/issues` is a write and the person confirming this booking may
+      // have been a guest thirty seconds ago.
+      //
+      // Two calls rather than one, and deliberately in this order: an issue with no order is a
+      // state the product already has (a customer who reported a fault and did not book), while an
+      // order with no issue is not a state at all. If the second call fails the customer retries
+      // and the first is reused via `issueId`.
+      const resolvedIssueId =
+        issueId ??
+        (
+          await createIssue({
+            categoryId,
+            description: issueDescription,
+            urgencyType: 'STANDARD',
+            imageKeys: issueImageKeys,
+            clarificationAnswers: issueClarificationAnswers,
+          })
+        ).id;
+
       const order = await createOrder({
-        issueId,
+        issueId: resolvedIssueId,
         professionalId: professional.professionalId,
         bookedStart,
         // V55: the selected place travels with the address. Omitted for a grandfathered legacy

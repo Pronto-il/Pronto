@@ -88,6 +88,41 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
   }
 
   rule {
+    id     = "expire-abandoned-guest-uploads"
+    status = "Enabled"
+
+    # Photos a visitor attached before they had an account, under guests/{sessionId}/. This prefix
+    # is the ONE part of the bucket where age alone is a safe signal, and that is why the rule is
+    # scoped to it rather than to .../issues/temp/ generally: a guest object is either promoted onto
+    # a real customer's namespace at the booking commit -- issues.service.IssuesService copies it to
+    # customers/{id}/ and deletes the original after commit -- or it belongs to a journey that was
+    # abandoned. Nothing durable ever points at a guests/ key; issue_images never records one.
+    #
+    # Customer-namespace temp objects look similar and are NOT covered, deliberately: a
+    # customers/{id}/issues/temp/ key is what issue_images stores for the life of the issue, so
+    # expiring one by age would delete a live photo. That pre-existing orphan class (a signed-in
+    # customer who abandons the New Issue flow) is a known, accepted gap recorded in
+    # backend/src/main/java/com/pronto/storage/README.md, unchanged by this rule.
+    #
+    # Two days rather than one: the guest session token itself lives 24h
+    # (pronto.auth.guest-session-ttl-seconds), and expiring objects on exactly that boundary would
+    # race a visitor who returns to a paused draft at hour 23.
+    filter {
+      prefix = "guests/"
+    }
+
+    expiration {
+      days = 2
+    }
+
+    # Versioning is on for this bucket, so the delete above only writes a delete marker. Without
+    # this the "expired" objects stay billable as noncurrent versions for the 90 days below.
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+
+  rule {
     id     = "expire-old-versions"
     status = "Enabled"
 

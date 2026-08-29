@@ -1,5 +1,7 @@
 package com.pronto.auth.service;
 
+import com.pronto.auth.config.OtpPolicies;
+
 import com.pronto.auth.config.AuthOtpPolicy;
 import com.pronto.auth.config.VerificationPolicy;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -213,12 +215,12 @@ class AuthServiceTest {
                 professionalCategoryRepository, professionalServiceCityRepository,
                 professionalWorkingHoursRepository, storageService, passwordEncoder,
                 new PhoneNumberNormalizer("IL"), loginAttemptRecorder, otpService, serviceAddressGeocoder,
-                new com.pronto.maps.service.SelectedPlaceValidator());
+                new com.pronto.maps.service.SelectedPlaceValidator(), new VerificationPolicy(OtpPolicies.enabled(), true, true));
 
         authService = new AuthService(userRepository, accountWriter, otpService, jwtService,
                 passwordEncoder, professionalCoverageService, serviceCoverageValidator,
                 subServiceSelectionValidator,
-                new VerificationPolicy(true, true), new AuthOtpPolicy("true"),
+                new VerificationPolicy(OtpPolicies.enabled(), true, true), new AuthOtpPolicy(OtpPolicies.enabled(), "true"),
                 new com.pronto.maps.service.SelectedPlaceValidator());
 
         when(userRepository.existsByEmail(anyString())).thenReturn(false);
@@ -442,11 +444,69 @@ class AuthServiceTest {
         verify(serviceAddressGeocoder, never()).resolveCustomerDefault(any(User.class), any());
     }
 
+    // ---- registration without an address (address-flow redesign) ----
+
     @Test
-    void register_customer_missingCustomerPayload_rejectedWithFieldError() {
-        assertThatThrownBy(() -> authService.register(customerRequest(null), null, null))
+    void register_customer_withNoAddressAtAll_succeeds() {
+        // The headline change: an address is no longer part of opening an account. `customer` is
+        // null on the wire, which used to be a 400 naming `customer.defaultAddress`.
+        AuthStepResponse response = authService.register(customerRequest(null), null, null);
+
+        assertThat(response.nextStep()).isEqualTo(AuthNextStep.VERIFY_EMAIL);
+        verify(userRepository).save(any(User.class));
+    }
+
+    @Test
+    void register_customer_withNoAddress_leavesEveryDefaultAddressColumnNull() {
+        // users.default_* has always been nullable and GET /api/users/me has always answered
+        // `defaultAddress: null` for a row without one, so "no saved address" is a state the data
+        // model already supported rather than a new one this change introduces.
+        authService.register(customerRequest(null), null, null);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(userCaptor.capture());
+        User saved = userCaptor.getValue();
+        assertThat(saved.getDefaultCity()).isNull();
+        assertThat(saved.getDefaultStreet()).isNull();
+        assertThat(saved.getDefaultHouseNumber()).isNull();
+        assertThat(saved.getPhone()).as("the account itself is complete").isEqualTo(CANONICAL_PHONE);
+    }
+
+    @Test
+    void register_customer_withNoAddress_callsNoMapsProviderAtAll() {
+        authService.register(customerRequest(null), null, null);
+
+        verify(serviceAddressGeocoder, never()).applyCustomerDefaultFromSelectedPlace(
+                any(User.class), any(), any());
+        verify(serviceAddressGeocoder, never()).resolveCustomerDefault(any(User.class), any());
+    }
+
+    @Test
+    void register_customer_withCustomerObjectButNoAddress_alsoSucceeds() {
+        // The other spelling of "no address" — a `customer` object whose only field is absent.
+        // Both have to work, because a client is free to send either.
+        RegisterRequest request = new RegisterRequest(UserRole.CUSTOMER, "Israel Israeli",
+                "customer@example.com", VALID_PHONE, "StrongPassword123!",
+                new CustomerRegistrationData(null), null);
+
+        assertThat(authService.register(request, null, null).nextStep()).isEqualTo(AuthNextStep.VERIFY_EMAIL);
+        verify(userRepository).save(any(User.class));
+    }
+
+    @Test
+    void register_customer_addressStillValidatedWhenSupplied() {
+        // Optional does not mean unchecked: a supplied address is held to exactly the rule it was
+        // before, so the seed/demo paths that do send one cannot smuggle free text through the
+        // door this change opened.
+        DefaultAddressRequest typedButNotSelected = new DefaultAddressRequest(
+                "Tel Aviv", "Nonexistent Street", "9999", null, null, null, null,
+                null, null, null, null);
+
+        assertThatThrownBy(() -> authService.register(customerRequest(typedButNotSelected), null, null))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+
+        verify(userRepository, never()).save(any(User.class));
     }
 
     @Test
@@ -629,7 +689,7 @@ class AuthServiceTest {
                 professionalCategoryRepository, professionalServiceCityRepository,
                 professionalWorkingHoursRepository, failingStorageService, passwordEncoder,
                 new PhoneNumberNormalizer("IL"), loginAttemptRecorder, otpService, Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class),
-                new com.pronto.maps.service.SelectedPlaceValidator());
+                new com.pronto.maps.service.SelectedPlaceValidator(), new VerificationPolicy(OtpPolicies.enabled(), true, true));
         AuthService serviceWithFailingStorage = new AuthService(userRepository, failingWriter, otpService,
                 jwtService, passwordEncoder,
                 new ProfessionalCoverageService(professionalCategoryRepository, professionalServiceCityRepository,
@@ -637,7 +697,7 @@ class AuthServiceTest {
                         new ServiceCoverageValidator(serviceRegionRepository, serviceCityRepository)),
                 new ServiceCoverageValidator(serviceRegionRepository, serviceCityRepository),
                 new SubServiceSelectionValidator(subServiceRepository),
-                new VerificationPolicy(true, true), new AuthOtpPolicy("true"),
+                new VerificationPolicy(OtpPolicies.enabled(), true, true), new AuthOtpPolicy(OtpPolicies.enabled(), "true"),
                 new com.pronto.maps.service.SelectedPlaceValidator());
 
         assertThatThrownBy(() -> serviceWithFailingStorage.register(

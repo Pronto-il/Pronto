@@ -118,6 +118,25 @@ export const router = createBrowserRouter([
       { path: 'verify', element: <AuthChallengePage /> },
       { path: 'password-reset', element: <PasswordResetPage /> },
       { path: 'login', element: <LoginPage /> },
+      // ---- the guest journey: deliberately OUTSIDE every RequireAuth group ----
+      //
+      // Deferred authentication. A visitor describes their problem, gets it classified, picks an
+      // address, sees who could take the job and when they are free, and only meets a login form
+      // when they press the final book/SOS button. Guarding these routes was the single biggest
+      // source of "log in before you can find out whether we can even help you".
+      //
+      // This is NOT the security boundary and never was -- RequireAuth's own Javadoc says so. The
+      // boundary is server-side: POST /api/issues, POST /api/bookings/orders and every /api/sos
+      // write stay behind their RoleRequiredInterceptor, so an unauthenticated caller reaching
+      // these screens can read, and cannot commit anything.
+      //
+      // The two booking routes carry no issue id: there is no issue until the booking is
+      // committed. State lives in the booking draft.
+      { path: 'issues/new', element: <NewIssuePage /> },
+      { path: 'matching', element: <ProfessionMatchPage /> },
+      { path: 'booking', element: <BookingFlowPage /> },
+      { path: 'sos-booking', element: <ProntoSosEntryPage /> },
+      { path: 'professionals/:professionalId', element: <ProfessionalProfilePage /> },
       {
         element: <RequireAuth />,
         children: [
@@ -126,16 +145,13 @@ export const router = createBrowserRouter([
           // gate turns away -- see features/auth/PhoneCapturePage.
           { path: 'verify-phone', element: <PhoneCapturePage /> },
           { path: 'orders/:orderId', element: <OrderTrackingPage /> },
-          { path: 'professionals/:professionalId', element: <ProfessionalProfilePage /> },
         ],
       },
       {
         element: <RequireAuth role="CUSTOMER" />,
         children: [
-          { path: 'issues/new', element: <NewIssuePage /> },
-          { path: 'issues/:issueId/matching', element: <ProfessionMatchPage /> },
-          { path: 'issues/:issueId/booking', element: <BookingFlowPage /> },
-          { path: 'issues/:issueId/sos-booking', element: <ProntoSosEntryPage /> },
+          // `orders`/`favorites`/`review` stay gated: they are a customer's own private records,
+          // not part of the pre-purchase journey.
           { path: 'orders', element: <MyOrdersPage /> },
           { path: 'orders/:orderId/review', element: <CompletionReviewPage /> },
           { path: 'favorites', element: <FavoritesPage /> },

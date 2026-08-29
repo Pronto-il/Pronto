@@ -1,5 +1,7 @@
 package com.pronto.storage;
 
+import com.pronto.common.security.UploadOwner;
+
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -10,6 +12,14 @@ import java.util.regex.Pattern;
  * record it (§3.3). Used by {@code storage} itself (§2.4's retrieval endpoint) and by
  * {@code issues} (§2.1/§2.2's {@code imageKeys} ownership check) — kept here, not
  * duplicated, since the key format is this package's own convention.
+ *
+ * <p><b>Guest uploads add one owner namespace, not a second ownership mechanism.</b>
+ * {@code guests/{guestId}/issues/temp/{uuid}.{ext}} is the same template with a different owner
+ * segment, and {@link #belongsTo(String, UploadOwner)} is the same "does the owner segment
+ * embedded in the key match the caller we verified" question the numeric form already asked. The
+ * guest segment is a UUID rather than a row id purely because a guest has no row — see
+ * {@code auth.security.GuestSessionTokenService}, which is the only thing that mints one and the
+ * only thing that can prove possession of one.
  *
  * <p>Pure/stateless — no Spring dependency, trivially unit-testable.
  */
@@ -36,7 +46,71 @@ public final class ImageKeyUtils {
      * just {@link #isPubliclyReadable}. */
     private static final String PUBLIC_PREFIX = "professionals/";
 
+    /**
+     * Guest-owned issue photos. The owner segment is restricted to a lowercase UUID at the regex
+     * level, not merely by convention: it is the one owner segment that does not come from a
+     * database id, so this pattern is what guarantees no {@code /} or {@code ..} can ever appear
+     * in it and reach {@code LocalDiskStorageClient}'s path resolution or an S3 key.
+     */
+    private static final Pattern GUEST_OWNER_PATTERN =
+            Pattern.compile("^guests/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/.*");
+
+    private static final String GUEST_PREFIX = "guests/";
+
+    /** The shared per-owner namespace an issue photo is uploaded into, before any issue exists. */
+    private static final String ISSUE_TEMP_SEGMENT = "/issues/temp/";
+
     private ImageKeyUtils() {
+    }
+
+    /**
+     * The key prefix a NEW upload from {@code owner} lands under —
+     * {@code customers/{id}/issues/temp/} or {@code guests/{uuid}/issues/temp/}.
+     *
+     * <p>This is the single source of truth for the upload key template, extracted from
+     * {@code StorageService#upload}'s former inline string concatenation so that the guest and
+     * customer paths cannot drift apart. The template itself is byte-for-byte what it always was
+     * for a customer.
+     */
+    public static String issueTempKeyPrefix(UploadOwner owner) {
+        String ownerPrefix = owner.isCustomer() ? "customers/" : GUEST_PREFIX;
+        return ownerPrefix + owner.preferredKeyOwnerSegment() + ISSUE_TEMP_SEGMENT;
+    }
+
+    /** {@code true} iff {@code key} is under the guest namespace at all (well-formed or not). */
+    public static boolean isGuestKey(String key) {
+        return key != null && key.startsWith(GUEST_PREFIX);
+    }
+
+    /** The {@code {guestId}} segment embedded in {@code guests/{guestId}/...}, if well-formed. */
+    public static Optional<String> extractGuestOwnerId(String key) {
+        if (key == null) {
+            return Optional.empty();
+        }
+        Matcher matcher = GUEST_OWNER_PATTERN.matcher(key);
+        return matcher.matches() ? Optional.of(matcher.group(1)) : Optional.empty();
+    }
+
+    /** {@code true} iff {@code key} embeds exactly {@code guestId} as its owner segment. */
+    public static boolean belongsToGuest(String key, String guestId) {
+        return guestId != null && extractGuestOwnerId(key).map(guestId::equals).orElse(false);
+    }
+
+    /**
+     * The one ownership predicate the shared upload/presign flow asks, for either kind of owner.
+     *
+     * <p>An owner holding both identities (a guest who registered mid-flow) matches a key in
+     * either namespace — that, and nothing else, is what stops their own photos disappearing at
+     * the moment they sign in. See {@link UploadOwner} for why that is deliberate rather than
+     * lax: both identities were independently proved on this request, so accepting a key that
+     * matches either is exactly as strict as accepting one that matches the single identity a
+     * caller used to have.
+     */
+    public static boolean belongsTo(String key, UploadOwner owner) {
+        if (owner == null) {
+            return false;
+        }
+        return belongsTo(key, owner.customerId()) || belongsToGuest(key, owner.guestId());
     }
 
     /**

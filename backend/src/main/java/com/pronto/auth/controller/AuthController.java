@@ -1,6 +1,8 @@
 package com.pronto.auth.controller;
 
 import com.pronto.auth.dto.AuthStepResponse;
+import com.pronto.auth.dto.AvailabilityRequest;
+import com.pronto.auth.dto.AvailabilityResponse;
 import com.pronto.auth.dto.CapturePhoneRequest;
 import com.pronto.auth.dto.LoginRequest;
 import com.pronto.auth.dto.OtpChallengeResponse;
@@ -10,6 +12,7 @@ import com.pronto.auth.dto.PasswordResetRequest;
 import com.pronto.auth.dto.RegisterRequest;
 import com.pronto.auth.dto.ResendOtpRequest;
 import com.pronto.auth.service.AuthService;
+import com.pronto.auth.service.ContactAvailabilityService;
 import com.pronto.common.security.AuthenticatedUser;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -31,7 +34,7 @@ import org.springframework.web.multipart.MultipartFile;
  * matched explicitly in {@code auth.config.SecurityConfig} ahead of the {@code permitAll} covering
  * the rest of this prefix.
  *
- * <p><b>Two of these seven endpoints can return a token</b>, and both are OTP redemptions:
+ * <p><b>Two of these endpoints can return a token</b>, and both are OTP redemptions:
  * {@link #verifyPhone} (registration completion) and {@link #loginOtp}. {@link #register} and
  * {@link #login} return a challenge and nothing else. See {@code AuthService} for the flow
  * diagrams and {@code docs/architecture/api-contract.md} §2.1-2.3.
@@ -41,9 +44,12 @@ import org.springframework.web.multipart.MultipartFile;
 public class AuthController {
 
     private final AuthService authService;
+    private final ContactAvailabilityService contactAvailabilityService;
 
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService,
+                           ContactAvailabilityService contactAvailabilityService) {
         this.authService = authService;
+        this.contactAvailabilityService = contactAvailabilityService;
     }
 
     /**
@@ -60,6 +66,27 @@ public class AuthController {
             @RequestPart(value = "profilePhoto", required = false) MultipartFile profilePhoto) {
         AuthStepResponse response = authService.register(request, verificationDocument, profilePhoto);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    /**
+     * Would {@link #register} accept this email address / phone number? Answers
+     * {@code {field, available}} and nothing else.
+     *
+     * <p>Exists so a registration form can report "already registered" under the field the customer
+     * is looking at, rather than at the end of a wizard after they have chosen a password and read
+     * a summary screen. <b>It changes nothing about {@link #register}</b>, which still performs its
+     * own duplicate checks and is still the only authoritative answer — see
+     * {@link ContactAvailabilityService} for why an endpoint the rest of this package's
+     * anti-enumeration work would seem to forbid is nonetheless safe to add, and for the
+     * rate-limit budget that bounds it.
+     *
+     * <p>Public, like every route here except {@link #capturePhone}: it is asked before an account
+     * exists, which is the entire point.
+     */
+    @PostMapping("/availability")
+    public ResponseEntity<AvailabilityResponse> checkAvailability(
+            @Valid @RequestBody AvailabilityRequest request) {
+        return ResponseEntity.ok(contactAvailabilityService.check(request));
     }
 
     @PostMapping("/verify-email")

@@ -37,22 +37,35 @@ export type { DocumentUploadFieldProps } from './DocumentUploadField';
 export { AddressFormFields } from './AddressFormFields';
 export type { AddressFormFieldsProps } from './AddressFormFields';
 
-export { AddressAutocompleteField } from './AddressAutocompleteField';
-export type { AddressAutocompleteFieldProps } from './AddressAutocompleteField';
+export { PlaceSuggestionField } from './PlaceSuggestionField';
+export type { PlaceSuggestionFieldProps } from './PlaceSuggestionField';
 
 export {
   EMPTY_ADDRESS,
   toAddressValue,
   isAddressResolved,
+  isAddressComplete,
+  isValidHouseNumber,
+  sanitizeHouseNumber,
+  isValidApartment,
+  isValidFloor,
+  isValidEntrance,
+  sanitizeApartment,
+  sanitizeFloor,
+  sanitizeEntrance,
   withSelectedPlace,
   withEditedAddressText,
   validateAddress,
   validateAddressTextOnly,
   ADDRESS_NOT_SELECTED_MESSAGE,
+  HOUSE_NUMBER_INVALID_MESSAGE,
+  APARTMENT_INVALID_MESSAGE,
+  FLOOR_INVALID_MESSAGE,
+  ENTRANCE_INVALID_MESSAGE,
 } from './addressTypes';
 export type { ResolvedPlace } from './addressTypes';
-export { googlePlacesProvider } from './googlePlaces';
-export type { AddressSuggestion, AddressSuggestionProvider } from './googlePlaces';
+export { googlePlacesProvider, matchesRequestedAddress } from './googlePlaces';
+export type { AddressSuggestion, AddressSuggestionProvider, AddressParts } from './googlePlaces';
 export type { AddressValue, SavedDefaultAddress } from './addressTypes';
 
 export { WeeklyHoursFields } from './WeeklyHoursFields';

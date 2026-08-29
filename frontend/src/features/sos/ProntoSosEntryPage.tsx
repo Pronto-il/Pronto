@@ -73,8 +73,8 @@ function toUserMessage(error: unknown): string {
  */
 export default function ProntoSosEntryPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const { draft } = useBookingDraft();
+  const { user, token } = useAuth();
+  const { draft, updateDraft } = useBookingDraft();
   const { issueId: issueIdParam } = useParams<{ issueId: string }>();
   const issueId = Number(issueIdParam);
 
@@ -154,6 +154,28 @@ export default function ProntoSosEntryPage() {
    */
   const activate = useCallback(
     async (effectiveAddress: AddressValue) => {
+      // ---- THE SOS AUTHENTICATION BOUNDARY ----
+      //
+      // Earlier than the standard flow's, and deliberately so. `POST /api/sos/requests` does not
+      // merely record an intention: SosService.activate inserts the request, transitions it to
+      // MATCHING and runs the first dispatch wave SYNCHRONOUSLY, writing offers and notifying real
+      // professionals inside the same transaction. There is no later moment to stop at — the
+      // commit and the notification are the same call.
+      //
+      // So the check goes here, before it, and an anonymous visitor can never cause a
+      // professional's phone to ring. Everything up to this line is preparation the guest is
+      // welcome to do: describing the emergency, confirming the address, reading what happens next.
+      if (!token) {
+        updateDraft({
+          stage: 'BOOKING_CONFIRM',
+          urgencyType: 'SOS',
+          address: effectiveAddress,
+          addressMode,
+        });
+        navigate('/login', { state: { from: { pathname: '/sos-booking' } } });
+        return;
+      }
+
       setActivationError(null);
       setIsActivating(true);
       try {
@@ -195,7 +217,7 @@ export default function ProntoSosEntryPage() {
         setIsActivating(false);
       }
     },
-    [issueId],
+    [issueId, token, addressMode, updateDraft, navigate],
   );
 
   /**

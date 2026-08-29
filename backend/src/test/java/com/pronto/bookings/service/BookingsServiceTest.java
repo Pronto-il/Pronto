@@ -94,8 +94,12 @@ class BookingsServiceTest {
     private AvailabilityDerivationService availabilityDerivationService;
     private ProfessionalCoverageService professionalCoverageService;
     private ServiceAddressGeocoder serviceAddressGeocoder;
+    private com.pronto.professionals.repository.CategoryRepository categoryRepository;
     private ProfessionalLocationService professionalLocationService;
     private LocationProperties locationProperties;
+    private static final Long SERVICE_CITY_ID = 4001L;
+    private final com.pronto.locations.service.ServiceCityResolver serviceCityResolver =
+            Mockito.mock(com.pronto.locations.service.ServiceCityResolver.class);
     private BookingsService bookingsService;
 
     @BeforeEach
@@ -112,15 +116,26 @@ class BookingsServiceTest {
         availabilityDerivationService = Mockito.mock(AvailabilityDerivationService.class);
         professionalCoverageService = Mockito.mock(ProfessionalCoverageService.class);
         serviceAddressGeocoder = Mockito.mock(ServiceAddressGeocoder.class);
+        categoryRepository = Mockito.mock(com.pronto.professionals.repository.CategoryRepository.class);
+        // Every category the listing tests name exists, so requireListingCategory's
+        // "unknown category" branch is only reached by the test that asks for it.
+        Mockito.lenient().when(categoryRepository.existsById(Mockito.anyLong())).thenReturn(true);
         professionalLocationService = Mockito.mock(ProfessionalLocationService.class);
         locationProperties = new LocationProperties();
+        // Every pre-existing test in this class describes booking mechanics rather than
+        // geography, so the city resolver answers "resolved" by default and the service-area
+        // tests below override it. A default of "unresolvable" would silently turn every listing
+        // assertion here into an assertion about an empty list.
+        Mockito.lenient().when(serviceCityResolver.resolveId(Mockito.any()))
+                .thenReturn(java.util.Optional.of(SERVICE_CITY_ID));
         bookingsService = new BookingsService(issueRepository, professionalRepository, professionalListingRepository,
-                availabilitySlotRepository, orderRepository, userRepository,
+                serviceCityResolver, availabilitySlotRepository, orderRepository, userRepository,
                 notificationService, distanceEtaStrategy, storageService, availabilityDerivationService,
                 professionalCoverageService, Mockito.mock(ContactVerificationGuard.class),
                 serviceAddressGeocoder, professionalLocationService, locationProperties,
                 new com.pronto.maps.service.ArrivalVerifier(professionalLocationService, locationProperties),
-                new com.pronto.maps.service.SelectedPlaceValidator());
+                new com.pronto.maps.service.SelectedPlaceValidator(),
+                categoryRepository);
         // MS2: geocoding is stubbed to "unresolvable" by default. Every pre-existing test in this
         // class is about booking mechanics, not geography, and a default that quietly produced
         // coordinates would make them silently depend on a provider they never mention. The MS2
@@ -205,6 +220,98 @@ class BookingsServiceTest {
         setField(order, "id", ORDER_ID);
         setField(order, "orderStatus", OrderStatus.CONFIRMED);
         return order;
+    }
+
+
+    // ---- deferred authentication: the guest read paths ----
+    //
+    // Added to this class rather than a sibling so the guest cases run against exactly the same
+    // wiring the authenticated ones do. The point being made is that ONE service answers both --
+    // not that a parallel guest path behaves plausibly on its own fixture.
+    //
+    // Not covered here, deliberately: "a guest cannot create an order". That is decided by
+    // BookingsWebConfig's RoleRequiredInterceptor, which rejects the request before createOrder is
+    // entered, so a service-level assertion would be testing a guard that is not in the picture.
+
+    private static final ServiceLocation GUEST_ADDRESS =
+            new ServiceLocation("תל אביב-יפו", "דיזנגוף", "100", null);
+
+    @Test
+    void guest_listsProfessionalsByCategoryWithNoAccountAndNoIssue() {
+        ProfessionalListingResponse response =
+                bookingsService.listProfessionals(null, null, CATEGORY_ID, GUEST_ADDRESS, null);
+
+        assertThat(response.categoryId()).isEqualTo(CATEGORY_ID);
+        // No issue exists yet -- the guest has committed nothing, so there is nothing to name.
+        assertThat(response.issueId()).isNull();
+        assertThat(response.professionals()).isNotNull();
+    }
+
+    @Test
+    void guest_listingWithNeitherIssueNorCategoryIsRefused() {
+        // Not "show me everything": a malformed request. Answering with an empty list would read
+        // to a customer as "nobody serves you", which is a different and untrue answer.
+        assertThatThrownBy(() -> bookingsService.listProfessionals(null, null, null, GUEST_ADDRESS, null))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(ErrorCode.VALIDATION_ERROR);
+    }
+
+    @Test
+    void guest_unknownCategoryIsRefusedRatherThanReturningAnEmptyListing() {
+        when(categoryRepository.existsById(999L)).thenReturn(false);
+
+        assertThatThrownBy(() -> bookingsService.listProfessionals(null, null, 999L, GUEST_ADDRESS, null))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(ErrorCode.VALIDATION_ERROR);
+    }
+
+    @Test
+    void guest_cannotReadSomebodyElsesIssueByNamingItsId() {
+        // The authorization deferred authentication must NOT have loosened. An issue belongs to a
+        // customer; a null caller is not its owner, it is nobody.
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(openIssue(IssueUrgencyType.STANDARD)));
+
+        assertThatThrownBy(() -> bookingsService.listProfessionals(null, ISSUE_ID, null, GUEST_ADDRESS, null))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(ErrorCode.FORBIDDEN);
+    }
+
+    @Test
+    void guest_readsAvailableWindowsWithNoIssue() {
+        when(professionalRepository.findById(PROFESSIONAL_ID)).thenReturn(Optional.of(activeProfessional()));
+        stubFullyAvailable();
+
+        AvailableWindowsResponse response =
+                bookingsService.listAvailableWindows(null, PROFESSIONAL_ID, null);
+
+        assertThat(response.professionalId()).isEqualTo(PROFESSIONAL_ID);
+        assertThat(response.windows()).isNotNull();
+    }
+
+    @Test
+    void guest_availableWindowsForAnIssueStillRequireOwningIt() {
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(openIssue(IssueUrgencyType.STANDARD)));
+
+        assertThatThrownBy(() -> bookingsService.listAvailableWindows(null, PROFESSIONAL_ID, ISSUE_ID))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(ErrorCode.FORBIDDEN);
+    }
+
+    @Test
+    void signedInCustomerListingByIssueIsUnchanged() {
+        // The pre-existing authenticated path, asserted beside the guest one so the two cannot
+        // quietly merge into each other.
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(openIssue(IssueUrgencyType.STANDARD)));
+
+        ProfessionalListingResponse response =
+                bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, null, GUEST_ADDRESS, null);
+
+        assertThat(response.issueId()).isEqualTo(ISSUE_ID);
+        assertThat(response.categoryId()).isEqualTo(CATEGORY_ID);
     }
 
     // ---- SOS surcharge ----
@@ -636,6 +743,155 @@ class BookingsServiceTest {
         assertThat(saved.get(0).getServiceCity()).isNotEqualTo(saved.get(1).getServiceCity());
     }
 
+    // ---- service-area filtering (the Eilat bug) ----
+    //
+    // A customer in Eilat was being shown professionals from Gush Dan. The listing query filtered
+    // on category, approval, onboarding and phone verification -- and on no geography at all --
+    // so the only thing the customer's address changed was the ETA number printed on each card.
+    //
+    // The rule these pin: eligibility is the professional's own DECLARED COVERAGE
+    // (professional_service_cities), resolved to a canonical service_cities id before the query.
+    // Not their base city, not how far away they happen to be, and not a string comparison.
+
+    private static final Long EILAT_CITY_ID = 3003L;
+
+    @Test
+    void listProfessionals_filtersOnTheCustomersResolvedServiceCity() {
+        // The whole fix in one assertion: the canonical id the address resolved to is what the
+        // query is asked for. A professional serving only Gush Dan is excluded by the database,
+        // not by anything this service or the React app does afterwards.
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(serviceCityResolver.resolveId("Eilat")).thenReturn(Optional.of(EILAT_CITY_ID));
+        when(professionalListingRepository
+                .listByCategoryAndServiceCity(CATEGORY_ID, CUSTOMER_ID, EILAT_CITY_ID))
+                .thenReturn(List.of());
+        when(distanceEtaStrategy.calculateBatch(any(), any(), any())).thenReturn(Map.of());
+
+        ProfessionalListingResponse response = bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID,
+                null, new ServiceLocation("Eilat", "HaArava", "5", null), "RECOMMENDED");
+
+        assertThat(response.professionals()).isEmpty();
+        verify(professionalListingRepository)
+                .listByCategoryAndServiceCity(CATEGORY_ID, CUSTOMER_ID, EILAT_CITY_ID);
+    }
+
+    @Test
+    void listProfessionals_returnsAProfessionalWhoseCoverageIncludesTheCity() {
+        // The other half of the rule, and the one a purely restrictive fix would break: a Tel
+        // Aviv-based professional who lists Eilat among their service cities MUST still appear.
+        // Base city grants nothing and denies nothing; coverage decides.
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(serviceCityResolver.resolveId("Eilat")).thenReturn(Optional.of(EILAT_CITY_ID));
+        ProfessionalCard telAvivBasedServesEilat = new ProfessionalCard(10L, "Covers Eilat", "South",
+                new BigDecimal("50.00"), null, "Tel Aviv", null, null, 0, false, List.of(CATEGORY_ID),
+                null, null, false, null);
+        when(professionalListingRepository
+                .listByCategoryAndServiceCity(CATEGORY_ID, CUSTOMER_ID, EILAT_CITY_ID))
+                .thenReturn(List.of(telAvivBasedServesEilat));
+        when(distanceEtaStrategy.calculateBatch(any(), any(), any())).thenReturn(Map.of());
+
+        ProfessionalListingResponse response = bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID,
+                null, new ServiceLocation("Eilat", "HaArava", "5", null), "RECOMMENDED");
+
+        assertThat(response.professionals()).extracting(ProfessionalCard::professionalId)
+                .containsExactly(10L);
+        // The card still reports Tel Aviv as their base city -- that is display data, and it is
+        // deliberately NOT what made them eligible.
+        assertThat(response.professionals().get(0).city()).isEqualTo("Tel Aviv");
+    }
+
+    @Test
+    void listProfessionals_aCityOutsideTheCatalogueReturnsAnEmptyListing_neverEverybody() {
+        // The failure mode that must never regress. An unresolvable city short-circuits to empty;
+        // it must not fall through to an unfiltered query, which is precisely what "no filter"
+        // looked like before the fix.
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(serviceCityResolver.resolveId("Kfar Vradim")).thenReturn(Optional.empty());
+
+        ProfessionalListingResponse response = bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID,
+                null, new ServiceLocation("Kfar Vradim", "HaRehov", "1", null), "RECOMMENDED");
+
+        assertThat(response.professionals()).isEmpty();
+        assertThat(response.categoryId()).isEqualTo(CATEGORY_ID);
+        verify(professionalListingRepository, never())
+                .listByCategoryAndServiceCity(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void listProfessionals_everySortModeUsesTheSameLocationFilteredCandidateSet() {
+        // RECOMMENDED / CHEAPEST / FASTEST are orderings, not filters. Each must ask for exactly
+        // the same city-scoped candidate set -- a sort mode that widened it would put an
+        // out-of-area professional back on the screen for whoever tapped that tab.
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(serviceCityResolver.resolveId("Eilat")).thenReturn(Optional.of(EILAT_CITY_ID));
+        ProfessionalCard covers = new ProfessionalCard(10L, "Covers Eilat", "South",
+                new BigDecimal("50.00"), null, "Eilat", null, null, 0, false, List.of(CATEGORY_ID),
+                null, null, false, null);
+        when(professionalListingRepository
+                .listByCategoryAndServiceCity(CATEGORY_ID, CUSTOMER_ID, EILAT_CITY_ID))
+                .thenReturn(List.of(covers));
+        when(distanceEtaStrategy.calculateBatch(any(), any(), any())).thenReturn(Map.of());
+        ServiceLocation eilat = new ServiceLocation("Eilat", "HaArava", "5", null);
+
+        for (String sort : List.of("RECOMMENDED", "CHEAPEST", "FASTEST")) {
+            ProfessionalListingResponse response =
+                    bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, null, eilat, sort);
+            assertThat(response.professionals())
+                    .as("sort=%s", sort)
+                    .extracting(ProfessionalCard::professionalId)
+                    .containsExactly(10L);
+        }
+
+        // Three calls, all for the same city id -- no sort mode reached for a wider set.
+        verify(professionalListingRepository, times(3))
+                .listByCategoryAndServiceCity(CATEGORY_ID, CUSTOMER_ID, EILAT_CITY_ID);
+        verify(professionalListingRepository, times(3))
+                .listByCategoryAndServiceCity(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void listProfessionals_categoryAndServiceCityFilterTogether_onTheGuestPath() {
+        // Both dimensions, on the category-keyed guest listing rather than the issue-keyed one:
+        // the query is asked for this category AND this city, never one or the other.
+        when(serviceCityResolver.resolveId("Eilat")).thenReturn(Optional.of(EILAT_CITY_ID));
+        when(professionalListingRepository
+                .listByCategoryAndServiceCity(CATEGORY_ID, null, EILAT_CITY_ID))
+                .thenReturn(List.of());
+        when(distanceEtaStrategy.calculateBatch(any(), any(), any())).thenReturn(Map.of());
+
+        ProfessionalListingResponse response = bookingsService.listProfessionals(null, null, CATEGORY_ID,
+                new ServiceLocation("Eilat", "HaArava", "5", null), "RECOMMENDED");
+
+        assertThat(response.professionals()).isEmpty();
+        verify(professionalListingRepository)
+                .listByCategoryAndServiceCity(CATEGORY_ID, null, EILAT_CITY_ID);
+    }
+
+    @Test
+    void listProfessionals_zeroCoveringProfessionalsIsAnEmptyResult_notAnError() {
+        // A covered city with nobody in it is a legitimate, successful answer -- the issue and
+        // category still come back so the screen can say "nobody serves this trade here yet"
+        // rather than showing an error.
+        Issue issue = openIssue(IssueUrgencyType.STANDARD);
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(serviceCityResolver.resolveId("Eilat")).thenReturn(Optional.of(EILAT_CITY_ID));
+        when(professionalListingRepository
+                .listByCategoryAndServiceCity(CATEGORY_ID, CUSTOMER_ID, EILAT_CITY_ID))
+                .thenReturn(List.of());
+        when(distanceEtaStrategy.calculateBatch(any(), any(), any())).thenReturn(Map.of());
+
+        ProfessionalListingResponse response = bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID,
+                null, new ServiceLocation("Eilat", "HaArava", "5", null), "CHEAPEST");
+
+        assertThat(response.professionals()).isEmpty();
+        assertThat(response.issueId()).isEqualTo(ISSUE_ID);
+        assertThat(response.categoryId()).isEqualTo(CATEGORY_ID);
+    }
+
     // ---- fastest sort ----
 
     @Test
@@ -648,7 +904,7 @@ class BookingsServiceTest {
                 "SlowCity", null, null, 0, false, List.of(CATEGORY_ID), null, null, false, null);
         ProfessionalCard fastCard = new ProfessionalCard(20L, "Fast Pro", "Area", new BigDecimal("80.00"), null,
                 "FastCity", null, null, 0, false, List.of(CATEGORY_ID), null, null, false, null);
-        when(professionalListingRepository.listByCategory(CATEGORY_ID, CUSTOMER_ID))
+        when(professionalListingRepository.listByCategoryAndServiceCity(CATEGORY_ID, CUSTOMER_ID, SERVICE_CITY_ID))
                 .thenReturn(List.of(slowCard, fastCard));
 
         // MS2: real routed durations, keyed by professional id rather than by city string --
@@ -662,7 +918,7 @@ class BookingsServiceTest {
 
         ServiceLocation location = new ServiceLocation("AnyCity", "St", "1", null);
         ProfessionalListingResponse response =
-                bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, location, "FASTEST");
+                bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, null, location, "FASTEST");
 
         assertThat(response.professionals()).extracting(ProfessionalCard::professionalId)
                 .containsExactly(20L, 10L);
@@ -683,14 +939,14 @@ class BookingsServiceTest {
                 "City", null, null, 0, false, List.of(CATEGORY_ID), null, null, false, null);
         ProfessionalCard slow = new ProfessionalCard(20L, "Slow", "Area", new BigDecimal("60.00"), null,
                 "City", null, null, 0, false, List.of(CATEGORY_ID), null, null, false, null);
-        when(professionalListingRepository.listByCategory(CATEGORY_ID, CUSTOMER_ID))
+        when(professionalListingRepository.listByCategoryAndServiceCity(CATEGORY_ID, CUSTOMER_ID, SERVICE_CITY_ID))
                 .thenReturn(List.of(noGps, slow));
         when(distanceEtaStrategy.calculateBatch(any(), any(), any()))
                 .thenReturn(Map.of(
                         10L, EtaResult.unavailable(RouteUnavailableReason.PROFESSIONAL_LOCATION_STALE),
                         20L, EtaResult.available(new BigDecimal("40.0"), 88, true)));
 
-        ProfessionalListingResponse response = bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID,
+        ProfessionalListingResponse response = bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, null,
                 new ServiceLocation("AnyCity", "St", "1", null), "FASTEST");
 
         assertThat(response.professionals()).extracting(ProfessionalCard::professionalId)
@@ -714,10 +970,10 @@ class BookingsServiceTest {
             cards.add(new ProfessionalCard(id, "Pro " + id, "Area", new BigDecimal("50.00"), null,
                     "City", null, null, 0, false, List.of(CATEGORY_ID), null, null, false, null));
         }
-        when(professionalListingRepository.listByCategory(CATEGORY_ID, CUSTOMER_ID)).thenReturn(cards);
+        when(professionalListingRepository.listByCategoryAndServiceCity(CATEGORY_ID, CUSTOMER_ID, SERVICE_CITY_ID)).thenReturn(cards);
         when(distanceEtaStrategy.calculateBatch(any(), any(), any())).thenReturn(Map.of());
 
-        bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID,
+        bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, null,
                 new ServiceLocation("AnyCity", "St", "1", null), "FASTEST");
 
         verify(distanceEtaStrategy, times(1)).calculateBatch(any(), any(), any());
@@ -733,7 +989,7 @@ class BookingsServiceTest {
                 "SlowCity", null, null, 0, false, List.of(CATEGORY_ID), null, null, false, null);
         ProfessionalCard pricyButFast = new ProfessionalCard(20L, "Pricy Pro", "Area", new BigDecimal("80.00"), null,
                 "FastCity", null, null, 0, false, List.of(CATEGORY_ID), null, null, false, null);
-        when(professionalListingRepository.listByCategory(CATEGORY_ID, CUSTOMER_ID))
+        when(professionalListingRepository.listByCategoryAndServiceCity(CATEGORY_ID, CUSTOMER_ID, SERVICE_CITY_ID))
                 .thenReturn(List.of(cheapButSlow, pricyButFast));
         when(distanceEtaStrategy.calculateBatch(any(), any(), any()))
                 .thenReturn(Map.of(
@@ -742,7 +998,7 @@ class BookingsServiceTest {
 
         ServiceLocation location = new ServiceLocation("AnyCity", "St", "1", null);
         ProfessionalListingResponse response =
-                bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, location, null);
+                bookingsService.listProfessionals(CUSTOMER_ID, ISSUE_ID, null, location, null);
 
         // Default/CHEAPEST -- DB (base-price-ascending) order is untouched even though it
         // differs from the ETA-based order.

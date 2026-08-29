@@ -38,10 +38,12 @@ import com.pronto.maps.service.ArrivalVerifier;
 import com.pronto.maps.service.ServiceAddressGeocoder;
 import com.pronto.matching.DistanceEtaStrategy;
 import com.pronto.matching.EtaResult;
+import com.pronto.locations.service.ServiceCityResolver;
 import com.pronto.matching.ServiceLocation;
 import com.pronto.notifications.entity.NotificationMessageType;
 import com.pronto.notifications.service.NotificationService;
 import com.pronto.professionals.entity.Professional;
+import com.pronto.professionals.repository.CategoryRepository;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.professionals.service.ProfessionalLocationService;
@@ -127,6 +129,8 @@ public class BookingsService {
     private final IssueRepository issueRepository;
     private final ProfessionalRepository professionalRepository;
     private final ProfessionalListingRepository professionalListingRepository;
+    /** Customer address text -> canonical service_cities id. See listProfessionals. */
+    private final ServiceCityResolver serviceCityResolver;
     private final AvailabilitySlotRepository availabilitySlotRepository;
     private final OrderRepository orderRepository;
     private final UserRepository userRepository;
@@ -141,10 +145,12 @@ public class BookingsService {
     private final LocationProperties locationProperties;
     private final ArrivalVerifier arrivalVerifier;
     private final SelectedPlaceValidator selectedPlaceValidator;
+    private final CategoryRepository categoryRepository;
 
     public BookingsService(IssueRepository issueRepository,
                             ProfessionalRepository professionalRepository,
                             ProfessionalListingRepository professionalListingRepository,
+                            ServiceCityResolver serviceCityResolver,
                             AvailabilitySlotRepository availabilitySlotRepository,
                             OrderRepository orderRepository,
                             UserRepository userRepository,
@@ -158,15 +164,18 @@ public class BookingsService {
                             ProfessionalLocationService professionalLocationService,
                             LocationProperties locationProperties,
                             ArrivalVerifier arrivalVerifier,
-                            SelectedPlaceValidator selectedPlaceValidator) {
+                            SelectedPlaceValidator selectedPlaceValidator,
+                            CategoryRepository categoryRepository) {
         this.serviceAddressGeocoder = serviceAddressGeocoder;
         this.selectedPlaceValidator = selectedPlaceValidator;
+        this.categoryRepository = categoryRepository;
         this.professionalLocationService = professionalLocationService;
         this.locationProperties = locationProperties;
         this.arrivalVerifier = arrivalVerifier;
         this.issueRepository = issueRepository;
         this.professionalRepository = professionalRepository;
         this.professionalListingRepository = professionalListingRepository;
+        this.serviceCityResolver = serviceCityResolver;
         this.availabilitySlotRepository = availabilitySlotRepository;
         this.orderRepository = orderRepository;
         this.userRepository = userRepository;
@@ -180,22 +189,86 @@ public class BookingsService {
 
     /** §2.2, extended with the service-location/sort matching design. */
     @Transactional(readOnly = true)
-    public ProfessionalListingResponse listProfessionals(Long callerId, Long issueId, ServiceLocation location,
-                                                           String sortParam) {
-        Issue issue = loadIssue(issueId);
-        if (!issue.getCustomerId().equals(callerId)) {
-            throw forbidden();
+    public ProfessionalListingResponse listProfessionals(Long callerId, Long issueId, Long categoryId,
+                                                           ServiceLocation location, String sortParam) {
+        // Two ways to name what the customer needs, and they are not two flows.
+        //
+        //   issueId    an issue already exists (the customer was signed in when they described it,
+        //              or they are revisiting one). Ownership and bookability are checked exactly
+        //              as before -- an issue is somebody's, so reading one requires being them.
+        //
+        //   categoryId no issue exists yet. This is the guest journey, and it is also every
+        //              signed-in customer's journey now that the issue row is written at the
+        //              booking commit rather than before matching. A category is not owned by
+        //              anybody, so there is nothing to authorize: the listing it produces is the
+        //              same public marketplace page either way.
+        //
+        // The issue path takes precedence when both are supplied, because an issue carries a
+        // category of its own and letting the query string disagree with it would make the
+        // authorization check meaningless.
+        Long resolvedCategoryId;
+        Long resolvedIssueId = null;
+
+        if (issueId != null) {
+            Issue issue = loadIssue(issueId);
+            if (callerId == null || !issue.getCustomerId().equals(callerId)) {
+                throw forbidden();
+            }
+            if (issue.getUrgencyType() != IssueUrgencyType.STANDARD) {
+                throw urgencyMismatch(issue.getId());
+            }
+            if (issue.getStatus() != IssueStatus.OPEN) {
+                throw notBookable(issue.getId());
+            }
+            resolvedIssueId = issue.getId();
+            resolvedCategoryId = issue.getCategoryId();
+        } else {
+            resolvedCategoryId = requireListingCategory(categoryId);
         }
-        if (issue.getUrgencyType() != IssueUrgencyType.STANDARD) {
-            throw urgencyMismatch(issue.getId());
+
+        // THE GEOGRAPHIC FILTER. Resolved to a canonical service_cities id before the query, so
+        // eligibility is decided by the professional's own declared coverage
+        // (professional_service_cities) rather than by distance, by base city, or -- as it was
+        // until this line existed -- by nothing at all.
+        //
+        // An unresolvable city short-circuits to an empty listing rather than binding null into
+        // the query. Same observable result, but it is a decision with a log line instead of an
+        // empty result set produced by SQL null semantics, and it keeps "we do not cover this
+        // place" distinguishable in the logs from "nobody in this covered city does this trade".
+        Optional<Long> serviceCityId = serviceCityResolver.resolveId(location == null ? null : location.city());
+        if (serviceCityId.isEmpty()) {
+            log.info("bookings.listing.uncovered categoryId={} city=\"{}\" reason=city-not-in-catalogue",
+                    resolvedCategoryId, location == null ? null : location.city());
+            return new ProfessionalListingResponse(resolvedIssueId, resolvedCategoryId, List.of());
         }
-        if (issue.getStatus() != IssueStatus.OPEN) {
-            throw notBookable(issue.getId());
-        }
-        List<ProfessionalCard> professionals =
-                professionalListingRepository.listByCategory(issue.getCategoryId(), callerId);
+
+        List<ProfessionalCard> professionals = professionalListingRepository
+                .listByCategoryAndServiceCity(resolvedCategoryId, callerId, serviceCityId.get());
+        // Sorting runs on the already-filtered candidate set, so RECOMMENDED/CHEAPEST/FASTEST all
+        // rank the same location-eligible professionals. Ordering can only ever reorder what the
+        // query returned -- there is no path by which a sort mode reintroduces someone the
+        // coverage filter excluded.
         professionals = enrichAndSort(callerId, professionals, location, parseSort(sortParam, ProfessionalSort.CHEAPEST));
-        return new ProfessionalListingResponse(issue.getId(), issue.getCategoryId(), professionals);
+        return new ProfessionalListingResponse(resolvedIssueId, resolvedCategoryId, professionals);
+    }
+
+    /**
+     * The category a guest listing is keyed on, validated against the real catalogue.
+     *
+     * <p>Checked rather than trusted so an unknown id produces a clean {@code VALIDATION_ERROR}
+     * instead of an empty listing that looks like "no professionals serve your area" — the two are
+     * completely different answers and a customer cannot tell them apart.
+     */
+    private Long requireListingCategory(Long categoryId) {
+        if (categoryId == null) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request failed validation.",
+                    List.of(new FieldError("categoryId", "is required when no issueId is supplied")));
+        }
+        if (!categoryRepository.existsById(categoryId)) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request failed validation.",
+                    List.of(new FieldError("categoryId", "must reference an existing category")));
+        }
+        return categoryId;
     }
 
     /**
@@ -209,15 +282,32 @@ public class BookingsService {
      */
     @Transactional(readOnly = true)
     public AvailableWindowsResponse listAvailableWindows(Long callerId, Long professionalId, Long issueId) {
-        Issue issue = loadIssue(issueId);
-        if (!issue.getCustomerId().equals(callerId)) {
-            throw forbidden();
-        }
-        if (issue.getUrgencyType() != IssueUrgencyType.STANDARD) {
-            throw urgencyMismatch(issue.getId());
-        }
-        if (issue.getStatus() != IssueStatus.OPEN) {
-            throw notBookable(issue.getId());
+        // issueId is optional as of deferred authentication. When it is present the checks below
+        // are exactly what they were; when it is absent this answers the only question a guest is
+        // actually asking -- "when is this professional free?" -- which is derived entirely from
+        // the professional's own published working hours and existing bookings.
+        //
+        // What is deliberately NOT skipped for a guest: the professional must still exist and be
+        // bookable. An ineligible professional's schedule is not public information, and answering
+        // for one would leak that they exist at all (see professionalNotBookable's 404 rule).
+        //
+        // The category-serves check is the one thing that genuinely needs an issue, because there
+        // is no category to compare against without one. That is not a hole: the same check runs
+        // again at order creation, where the category is known for certain, so a guest who picks a
+        // professional who does not serve their trade is refused at the commit rather than at the
+        // browse.
+        Issue issue = null;
+        if (issueId != null) {
+            issue = loadIssue(issueId);
+            if (callerId == null || !issue.getCustomerId().equals(callerId)) {
+                throw forbidden();
+            }
+            if (issue.getUrgencyType() != IssueUrgencyType.STANDARD) {
+                throw urgencyMismatch(issue.getId());
+            }
+            if (issue.getStatus() != IssueStatus.OPEN) {
+                throw notBookable(issue.getId());
+            }
         }
         Professional professional = professionalRepository.findById(professionalId)
                 .orElseThrow(() -> professionalNotBookable(professionalId));
@@ -228,7 +318,8 @@ public class BookingsService {
         if (!isProfessionalBookable(professional)) {
             throw professionalNotBookable(professionalId);
         }
-        if (!professionalCoverageService.servesCategory(professional.getId(), issue.getCategoryId())) {
+        if (issue != null
+                && !professionalCoverageService.servesCategory(professional.getId(), issue.getCategoryId())) {
             throw categoryMismatch();
         }
 
@@ -975,7 +1066,10 @@ public class BookingsService {
      * request because a geocoder was unavailable would be a much worse trade.
      */
     private GeoCoordinates resolveListingDestination(Long callerId, ServiceLocation location) {
-        User customer = userRepository.findById(callerId).orElse(null);
+        // A guest has no saved default address to fall back to, so the address they typed is the
+        // only destination there is. Guarded rather than passed through: Spring Data's findById
+        // throws on a null id, so an unguarded call here would turn every guest listing into a 500.
+        User customer = callerId == null ? null : userRepository.findById(callerId).orElse(null);
         PostalAddress requested = location == null ? null : location.toPostalAddress();
 
         if (customer != null) {

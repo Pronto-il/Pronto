@@ -32,7 +32,7 @@ class ProviderModeStartupGuardTest {
     private static ProviderModeStartupGuard guard(String environment, String emailMode, String emailFrom,
                                                     String smsMode, String smsRegion, String demoMode,
                                                     String mapsMode, String mapsApiKey) {
-        return new ProviderModeStartupGuard(new ProntoEnvironment(environment), emailMode, emailFrom,
+        return new ProviderModeStartupGuard(new ProntoEnvironment(environment), OtpPolicies.enabled(), emailMode, emailFrom,
                 smsMode, smsRegion, demoMode, mapsMode, mapsApiKey);
     }
 
@@ -45,6 +45,33 @@ class ProviderModeStartupGuardTest {
     @Test
     void production_withLoggingEmail_refusesToStart() {
         assertThatThrownBy(() -> production("log", "aws").validate())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("pronto.email.mode=log");
+    }
+
+    // ---- SMS_MODE=log is conditional on OTP verification being ON ---------------------------
+
+    @Test
+    void production_withLoggingSms_andOtpVerificationDisabled_startsFine() {
+        // The refusal exists because undelivered codes leave accounts unreachable. With
+        // OTP_VERIFICATION_ENABLED=false no code is generated on any path, so there is nothing
+        // SMS_MODE could fail to deliver -- and keeping the guard would force an operator to hold
+        // real AWS End User Messaging credentials to run a beta that never sends an SMS.
+        assertThatCode(() -> new ProviderModeStartupGuard(new ProntoEnvironment("production"),
+                OtpPolicies.disabled(), "ses", "noreply@pronto.example", "log", "eu-central-1",
+                "off", "google", "a-real-key").validate())
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void production_withLoggingEmail_stillRefuses_evenWithOtpVerificationDisabled() {
+        // The deliberate asymmetry. EmailSender has a second consumer that is not OTP at all --
+        // notifications.scheduler.EmailDispatchJob's order-status mail -- which is still expected
+        // to be delivered while OTP is off. Relaxing this half would silently stop customers being
+        // told their professional is on the way.
+        assertThatThrownBy(() -> new ProviderModeStartupGuard(new ProntoEnvironment("production"),
+                OtpPolicies.disabled(), "log", "noreply@pronto.example", "aws", "eu-central-1",
+                "off", "google", "a-real-key").validate())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("pronto.email.mode=log");
     }

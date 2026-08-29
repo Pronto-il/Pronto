@@ -53,7 +53,8 @@ API described in `docs/architecture/overview.md` §3.2.
   (`{ timestamp, path, error: { code, message, details } }`, verified against
   `backend/.../common/exception/GlobalExceptionHandler.java` and `common/dto/*`) into a
   typed `ApiError` (`code`, `message`, `details`, `status`).
-- `auth.ts` — `registerCustomer`, `registerProfessional`, `verifyEmail`, `login`.
+- `auth.ts` — `registerCustomer`, `registerProfessional`, `checkContactAvailability`,
+  `verifyEmail`, `login`.
   `POST /api/auth/register` is `multipart/form-data` (Backend Milestone 7's registration
   flow separation): both register functions build a `FormData` with a `data` part (a
   `Blob`, `application/json`, matching `RegisterRequest.java`'s nested
@@ -110,6 +111,28 @@ API described in `docs/architecture/overview.md` §3.2.
   `docs/architecture/backend-ms9-presigned-image-urls-design.md` §12.2/§12.5). Shapes verified
   directly against the real backend DTOs (`storage.dto.PresignedImageUrls{Request,Response}`,
   `PresignedImageUrlEntry`).
+  **As of guest image upload (2026-08-29)**: `uploadImage` is `async` and mints a guest upload
+  session first *when and only when* there is no auth token and none is already stored. A signed-in
+  customer's upload is unchanged in every respect — no extra round trip, no extra header. The
+  screens are untouched: `PhotoUploader` still calls `uploadImage(file)`, still enforces the same
+  `maxCount`, and still renders the same errors, because the entire difference is which ownership
+  context the backend resolves.
+- `guestSessionStore.ts` / `guestSession.ts` — the guest upload session. Split in two on purpose:
+  the store is dependency-free so `httpClient` can read the token without importing the module that
+  mints it through `httpClient`. The token is the backend-minted proof that a visitor owns the
+  `guests/{id}/...` storage keys their photos live under (`auth.security.GuestSessionTokenService`),
+  and it is persisted to `localStorage` for exactly the reason the booking draft is: the one thing
+  it has to survive is the full page load through registration at the booking commit. Losing it
+  without losing the draft leaves a draft full of keys the backend will refuse.
+  `clearGuestSession()` has exactly one call site, `BookingDraftProvider.clearDraft` — the session
+  dies with the draft it authorised and **not** on login, because the photos stay in the guest
+  namespace until the booking commit promotes them.
+- `httpClient.ts` attaches `X-Pronto-Guest-Session` on both transports whenever one is stored,
+  *alongside* `Authorization` rather than instead of it. Both travelling together is the whole
+  auth-transition fix: a visitor who uploaded as a guest and then registered is simultaneously an
+  authenticated customer and the owner of guest keys, and the backend accepts a key matching either
+  identity. Dropping the guest header the moment a JWT appears is precisely how a customer's own
+  photos would vanish on the confirmation screen.
 - `issues.ts` — `classifyIssue`, `createIssue` (Milestone 2), plus a Frontend Milestone 3
   addition: `getIssue` (`GET /api/issues/{id}`, either CUSTOMER-owner or PROFESSIONAL-
   with-an-order), returning `IssueDetailResponse` including a `latestOrder` summary.
@@ -197,9 +220,24 @@ API described in `docs/architecture/overview.md` §3.2.
   `reviews.dto.ReviewResponse`, same "read the real backend DTOs" convention `bookings.ts`'s
   own header comment already established. **Frontend Milestone 8** added `ReviewListResponse`
   (`{ professionalId, averageRating, reviewCount, reviews }`) + `getReviews(professionalId)`
-  wrapping `GET /api/reviews?professionalId=` (either role, no route gate, no pagination) —
-  first and only consumer: `features/professionals/ReviewList.tsx`, reached from
-  `ProfessionalProfilePage.tsx`.
+  wrapping `GET /api/reviews?professionalId=` (no pagination) — consumers:
+  `features/professionals/{ProfessionalProfilePage,ProfessionalProfileModal,ProfessionalReviewsModal}.tsx`
+  and `features/sos/SosProfessionalSheet.tsx`, all rendering through `ReviewList.tsx`.
+  **Guest read fix (2026-08-29):** that route used to be described here as "either role, no route
+  gate", which in practice meant *any authenticated caller* — `SecurityConfig`'s blanket
+  `.anyRequest().authenticated()` answered `401` for a guest, so every professional profile a
+  visitor opened during the guest journey showed a review error. The backend now permits `GET` on
+  that exact path, and two things changed on this side:
+  - `getReviews` passes `auth: false`. There is nothing to authenticate and nothing that varies by
+    caller, and omitting the header means a stale token in `localStorage` can never turn a public
+    read into a `401` that fires the global dead-session handler and bounces a browsing guest to
+    the login screen.
+  - `ReviewListResponse.reviews` is now `PublicReviewResponse[]`, not `ReviewResponse[]`. The new,
+    narrower type drops `customerId` (the reviewer's internal user id) and `orderId` (their
+    booking) — fields no screen ever rendered, and ones that must not be readable by an anonymous
+    caller walking `professionalId`. `ReviewResponse` is unchanged and still the body of
+    `createReview`, which `CompletionReviewPage.tsx` calls. No screen needed a code change beyond
+    its state type.
 - `favorites.ts` — **new, Frontend Milestone 8 (2026-08-18).** `favorites` domain
   (`backend/src/main/java/com/pronto/favorites/`), all three endpoints CUSTOMER-only:
   `FavoriteProfessionalSummary`/`FavoritesListResponse` types, `addFavorite(professionalId)`

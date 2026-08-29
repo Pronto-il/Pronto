@@ -1,5 +1,7 @@
 package com.pronto.auth.service;
 
+import com.pronto.auth.config.OtpPolicies;
+
 import com.pronto.auth.config.AuthOtpPolicy;
 import com.pronto.auth.config.VerificationPolicy;
 import com.pronto.auth.dto.AuthNextStep;
@@ -95,7 +97,7 @@ class AuthOtpBypassTest {
                 passwordEncoder, new PhoneNumberNormalizer("IL"),
                 loginAttemptRecorder, otpService,
                 Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class),
-                new com.pronto.maps.service.SelectedPlaceValidator());
+                new com.pronto.maps.service.SelectedPlaceValidator(), new VerificationPolicy(OtpPolicies.enabled(), true, true));
 
         account = new User("Israel Israeli", EMAIL, passwordEncoder.encode(PASSWORD), role);
         InMemoryVerificationCodes.setField(account, "id", 42L);
@@ -116,7 +118,7 @@ class AuthOtpBypassTest {
                 Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
                 Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
-                new VerificationPolicy(true, true), new AuthOtpPolicy(String.valueOf(otpRequired)),
+                new VerificationPolicy(OtpPolicies.enabled(), true, true), new AuthOtpPolicy(OtpPolicies.enabled(), String.valueOf(otpRequired)),
                 new com.pronto.maps.service.SelectedPlaceValidator());
     }
 

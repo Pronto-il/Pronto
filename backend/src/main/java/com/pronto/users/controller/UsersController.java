@@ -1,6 +1,7 @@
 package com.pronto.users.controller;
 
 import com.pronto.common.security.AuthenticatedUser;
+import com.pronto.users.dto.CustomerAddressRequest;
 import com.pronto.users.dto.UpdateUserMeRequest;
 import com.pronto.users.dto.UserMeResponse;
 import com.pronto.users.service.UsersService;
@@ -40,6 +41,23 @@ public class UsersController {
     public ResponseEntity<UserMeResponse> updateMe(@AuthenticationPrincipal AuthenticatedUser principal,
                                                     @Valid @RequestBody UpdateUserMeRequest request) {
         return ResponseEntity.ok(usersService.updateMe(principal, request));
+    }
+
+    /**
+     * {@code PUT /api/users/me/default-address} — the caller's home address on its own,
+     * {@code CUSTOMER}-only (gated at the route level by {@code users.config.UsersWebConfig},
+     * re-checked in the service).
+     *
+     * <p>Added for the booking flow's "הפוך את זה לכתובת הבית". See
+     * {@code UsersService#updateDefaultAddress} for why that flow does not simply call
+     * {@code PUT /api/users/me}. Returns the same {@link UserMeResponse} the rest of this
+     * controller does, so a client can refresh its cached user from the write itself.
+     */
+    @PutMapping("/me/default-address")
+    public ResponseEntity<UserMeResponse> updateMyDefaultAddress(
+            @AuthenticationPrincipal AuthenticatedUser principal,
+            @Valid @RequestBody CustomerAddressRequest request) {
+        return ResponseEntity.ok(usersService.updateDefaultAddress(principal, request));
     }
 
     @DeleteMapping("/me")

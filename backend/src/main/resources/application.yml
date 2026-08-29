@@ -299,7 +299,63 @@ pronto:
     timeout-ms: ${SMS_TIMEOUT_MS:10000}
 
   auth:
+    # How long a guest upload session stays valid (auth.security.GuestSessionTokenService).
+    # It is the namespace a visitor's issue photos are uploaded into before they have an account,
+    # and it must outlive one booking journey -- including the trip through registration -- which is
+    # why it matches pronto.jwt.expiration-seconds rather than being shorter.
+    #
+    # There is deliberately NO separate secret to configure. The signing key is derived from
+    # pronto.jwt.secret (HMAC-SHA256 with a fixed domain-separation label), so a guest session can
+    # never verify as a user JWT or vice versa, and no deployment recipe gains another required
+    # variable -- STORAGE_LOCAL_HMAC_SECRET already showed what that costs.
+    guest-session-ttl-seconds: ${GUEST_SESSION_TTL_SECONDS:86400}
+
+    # ================= THE MASTER SWITCH FOR ONE-TIME PASSWORDS =================
+    #
+    # Does this deployment issue one-time passwords AT ALL?
+    #
+    #   true (the default, and the intended long-term rule)
+    #       The three fine-grained settings below and under `verification:` apply as written.
+    #
+    #   false (TEMPORARY, current feedback/beta phase, INCLUDING PRODUCTION)
+    #       Registration validates its fields, creates the account, and returns a session
+    #       immediately -- the user is signed in and can use the product. Login completes on the
+    #       password. No verification_codes row is written, no code is generated, and neither SES
+    #       nor SNS is called on any auth path. Nothing shows an OTP screen.
+    #
+    # This does not replace the three flags below; it GATES them. Both policy beans report
+    # `master AND own-flag`, so every existing consumer reads exactly the policy it already read,
+    # turning OTP off is ONE variable rather than three, and turning it back on restores whatever
+    # the sub-flags say. See auth.config.OtpVerificationPolicy.
+    #
+    # WHAT false DOES NOT DO. It does not weaken any other validation: email format, phone format
+    # and SMS-reachability (PhoneNumberNormalizer), duplicate email, duplicate phone, password
+    # length and every required field are all still enforced, on registration and on the
+    # POST /api/auth/availability pre-check. Passwords are still BCrypt-verified, the lockout
+    # counter still applies, every per-IP rate limiter is untouched, JWTs are issued and validated
+    # identically, and every role/route guard is unchanged. This is NOT anonymous access.
+    #
+    # IT DELETES NO OTP INFRASTRUCTURE. OtpService, the verification_codes table, both SmsSender
+    # implementations, SesEmailSender, /verify-email, /verify-phone, /login/otp, /otp/resend, the
+    # rate limits and every OTP test remain exactly as they are and resume working on `true`.
+    #
+    # IT WRITES NOTHING TO THE DATABASE. Accounts created while this is false keep
+    # email_verified=false and phone_verified=false. The columns keep meaning "this channel was
+    # proved"; whether an unproved channel BLOCKS is what this decides. Writing true into them
+    # would be the one change here that outlives the flag -- it would permanently mark unproved
+    # addresses as proved, and re-enabling would silently grandfather the whole beta cohort.
+    #
+    # DELIBERATELY USABLE IN PRODUCTION. There is no startup guard forbidding false in a
+    # production-like environment: the current beta runs with OTP off in production by product
+    # decision. The state is instead announced at WARN on every boot.
+    #
+    # Accepts exactly 'true' or 'false'; anything else refuses the boot rather than guessing.
+    # RE-ENABLING is one variable: OTP_VERIFICATION_ENABLED=true (and clear the database first, as
+    # planned, so no beta account carries an unproved address into the verified world).
+    otp-verification-enabled: ${OTP_VERIFICATION_ENABLED:true}
+
     # Must LOGIN present a one-time password in addition to the password itself?
+    # (Ignored while otp-verification-enabled=false, which forces this to false.)
     #
     #   true (the default, and the intended long-term rule)
     #       POST /api/auth/login checks the password and answers LOGIN_OTP with a challenge. The
@@ -334,6 +390,9 @@ pronto:
     otp-required: ${AUTH_OTP_REQUIRED:true}
 
   verification:
+    # Both settings in this block are gated by pronto.auth.otp-verification-enabled above:
+    # OTP_VERIFICATION_ENABLED=false forces both to false regardless of what is written here.
+    #
     # Must an account prove its PHONE NUMBER as well as its email address?
     #
     # true (the default, and the intended long-term rule)

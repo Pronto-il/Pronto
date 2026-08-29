@@ -3,10 +3,13 @@ package com.pronto.auth.security;
 import com.pronto.common.dto.RateLimitDetails;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
+import com.pronto.common.security.AuthenticatedUser;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.time.Duration;
@@ -63,17 +66,43 @@ public class AuthRateLimitInterceptor implements HandlerInterceptor {
     private final int maxRequests;
     private final long windowMillis;
     private final ClientIpResolver clientIpResolver;
+    private final boolean onlyWhenUnauthenticated;
     private final ConcurrentHashMap<String, Window> windowsByClient = new ConcurrentHashMap<>();
     private final AtomicLong nextSweepMillis = new AtomicLong(0);
 
     public AuthRateLimitInterceptor(int maxRequests, Duration window, ClientIpResolver clientIpResolver) {
+        this(maxRequests, window, clientIpResolver, false);
+    }
+
+    /**
+     * <b>Opt-in: limit only callers who have no account behind them.</b> With
+     * {@code onlyWhenUnauthenticated = true}, a request carrying a verified JWT principal skips
+     * this limiter entirely and an anonymous one is counted per source address as usual.
+     *
+     * <p>Added for {@code POST /api/storage/images} when guests gained the ability to attach
+     * photos. An authenticated upload was already bounded by something stronger than an IP counter
+     * — it requires a registered account with a verified phone number — and imposing a new limit on
+     * it would be a behaviour change for existing customers that this feature has no business
+     * making. An anonymous upload has no such bound, and writing 8 MB objects into the uploads
+     * bucket is the one thing a guest can now do that costs real money, so per-source limiting is
+     * what replaces the account requirement.
+     *
+     * <p>Every pre-existing registration ({@code auth}, {@code issues}, {@code users}) uses the
+     * three-argument constructor and is unaffected.
+     */
+    public AuthRateLimitInterceptor(int maxRequests, Duration window, ClientIpResolver clientIpResolver,
+                                     boolean onlyWhenUnauthenticated) {
         this.maxRequests = maxRequests;
         this.windowMillis = window.toMillis();
         this.clientIpResolver = clientIpResolver;
+        this.onlyWhenUnauthenticated = onlyWhenUnauthenticated;
     }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+        if (onlyWhenUnauthenticated && isAuthenticated()) {
+            return true;
+        }
         String client = clientIpResolver.resolve(request);
         long now = System.currentTimeMillis();
 
@@ -94,6 +123,16 @@ public class AuthRateLimitInterceptor implements HandlerInterceptor {
                     new RateLimitDetails(retryAfterSeconds));
         }
         return true;
+    }
+
+    /**
+     * Reads the same principal {@code common.security.RoleRequiredInterceptor} reads, populated
+     * earlier in the filter chain by {@link JwtAuthenticationFilter} — not a parallel notion of
+     * "authenticated".
+     */
+    private static boolean isAuthenticated() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.getPrincipal() instanceof AuthenticatedUser;
     }
 
     /**

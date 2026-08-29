@@ -1,5 +1,7 @@
-import { httpClient } from './httpClient';
+import { httpClient, getAuthToken } from './httpClient';
 import type { UploadOptions } from './httpClient';
+import { ensureGuestSessionToken } from './guestSession';
+import { getGuestSessionToken } from './guestSessionStore';
 
 export interface UploadImageResponse {
   imageKey: string;
@@ -24,7 +26,19 @@ export interface UploadImageResponse {
  * this api layer, and silently re-encoding every image every caller ever passes would be a
  * much wider behavioural change than the one being made here.
  */
-export function uploadImage(file: File, options?: UploadOptions): Promise<UploadImageResponse> {
+export async function uploadImage(file: File, options?: UploadOptions): Promise<UploadImageResponse> {
+  // Deferred authentication reaches the uploader. A guest describing a fault may attach photos
+  // before they have an account, and the backend authorises those uploads against a guest session
+  // token instead of a JWT -- same endpoint, same validation, same limits, same key template, only
+  // a different owner namespace.
+  //
+  // Minted here, lazily, and only when there is no account: a visitor who never attaches a photo
+  // never causes a session to exist, and a signed-in customer's upload is unchanged in every
+  // respect (no extra call, no extra header beyond one they may already be carrying from an
+  // earlier guest leg of this same journey -- see `httpClient`'s GUEST_SESSION_HEADER note).
+  if (!getAuthToken() && !getGuestSessionToken()) {
+    await ensureGuestSessionToken();
+  }
   const formData = new FormData();
   formData.append('file', file);
   return httpClient.upload<UploadImageResponse>('/api/storage/images', formData, options);

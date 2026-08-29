@@ -88,6 +88,11 @@ export interface AuthStepResponse {
 /**
  * Matches `backend/.../auth/dto/DefaultAddressRequest.java` field names exactly.
  * `city`/`street`/`houseNumber` required; the rest optional.
+ *
+ * **No longer sent by {@link registerCustomer}** — registration does not collect an address (see
+ * that function). Retained because the type still describes the endpoint's optional
+ * `customer.defaultAddress` object, which the backend continues to accept from the seed/demo
+ * paths that construct accounts directly.
  */
 export interface RegisterAddressPayload {
   city: string;
@@ -97,8 +102,9 @@ export interface RegisterAddressPayload {
   floor?: string;
   entrance?: string;
   addressNotes?: string;
-  /** The place the customer selected from autocomplete (`V55`). Required at registration — a
-   *  brand-new address has never been confirmed by anybody, so there is nothing to grandfather. */
+  /** The place the customer selected from autocomplete (`V55`). Required by the backend whenever
+   *  this object is present at all — a brand-new address has never been confirmed by anybody, so
+   *  there is nothing to grandfather. */
   placeId?: string;
   formattedAddress?: string;
   latitude?: number;
@@ -111,7 +117,6 @@ export interface RegisterCustomerPayload {
   /** Production MS1: required, and now a top-level identity field rather than customer detail. */
   phone: string;
   password: string;
-  address: RegisterAddressPayload;
 }
 
 export interface RegisterProfessionalPayload {
@@ -173,12 +178,6 @@ interface RegisterRequestData {
   } | null;
 }
 
-/** Empty/whitespace-only optional address fields are omitted rather than sent as `''`. */
-function undefinedIfBlank(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
 function buildRegisterFormData(
   data: RegisterRequestData,
   files: { verificationDocument?: File; profilePhoto?: File | null },
@@ -199,6 +198,12 @@ function buildRegisterFormData(
  *
  * Returns `nextStep: 'VERIFY_EMAIL'` and a challenge — **never a token**. The account exists but is
  * unverified until both the email and the phone code are redeemed.
+ *
+ * **`customer` is now `null`**: an address is no longer part of opening an account. It is asked
+ * for in the booking flow, after AI classification and immediately before it is needed, and saved
+ * to the profile only if the customer asks for that ("הפוך את זה לכתובת הבית") or edits it on the
+ * profile screen. The backend treats `customer.defaultAddress` as optional, so this is a smaller
+ * valid payload rather than a payload with holes in it.
  */
 export function registerCustomer(payload: RegisterCustomerPayload): Promise<AuthStepResponse> {
   const data: RegisterRequestData = {
@@ -207,21 +212,7 @@ export function registerCustomer(payload: RegisterCustomerPayload): Promise<Auth
     email: payload.email,
     phone: payload.phone,
     password: payload.password,
-    customer: {
-      defaultAddress: {
-        city: payload.address.city,
-        street: payload.address.street,
-        houseNumber: payload.address.houseNumber,
-        apartment: undefinedIfBlank(payload.address.apartment),
-        floor: undefinedIfBlank(payload.address.floor),
-        entrance: undefinedIfBlank(payload.address.entrance),
-        addressNotes: undefinedIfBlank(payload.address.addressNotes),
-        placeId: payload.address.placeId,
-        formattedAddress: payload.address.formattedAddress,
-        latitude: payload.address.latitude,
-        longitude: payload.address.longitude,
-      },
-    },
+    customer: null,
     professional: null,
   };
   return httpClient.post<AuthStepResponse>(
@@ -264,6 +255,49 @@ export function registerProfessional(
       verificationDocument: payload.verificationDocument,
       profilePhoto: payload.profilePhoto,
     }),
+    { auth: false },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Contact availability
+// ---------------------------------------------------------------------------
+
+/** The two identities `users` holds unique. Mirrors `backend/.../auth/dto/ContactField.java`. */
+export type ContactField = 'EMAIL' | 'PHONE';
+
+/** Mirrors `backend/.../auth/dto/AvailabilityResponse.java` — one boolean, and the field it is
+ *  about. Deliberately carries no account information of any kind. */
+export interface AvailabilityResponse {
+  field: ContactField;
+  available: boolean;
+}
+
+/**
+ * `POST /api/auth/availability` — would `POST /api/auth/register` accept this email or phone?
+ *
+ * Exists so a registration form can put "already registered" under the field instead of on the
+ * final summary screen. Three things to know before calling it:
+ *
+ * 1. **It is advisory, never permission.** The answer is true when given and can be false a
+ *    moment later; registration performs its own duplicate checks and the unique indexes settle
+ *    the race. A caller must still handle `DUPLICATE_EMAIL`/`DUPLICATE_PHONE` at submit.
+ * 2. **It is rate limited more tightly than anything else on the registration path** (20 per 10
+ *    minutes per client, versus registration's own 10), because it is the cheapest form of the
+ *    account-existence disclosure `register` already makes. Call it on blur, not on keystroke —
+ *    a debounced-per-character caller would burn the budget of a customer who simply types
+ *    slowly, and then the real check would 429.
+ * 3. **A malformed value is a `400 VALIDATION_ERROR`, not `available: false`.** The backend
+ *    applies the same email constraint and the same libphonenumber rule registration applies, so
+ *    this is also how a client learns that `03-1234567` is not a number that can receive an SMS.
+ */
+export function checkContactAvailability(
+  field: ContactField,
+  value: string,
+): Promise<AvailabilityResponse> {
+  return httpClient.post<AvailabilityResponse>(
+    '/api/auth/availability',
+    { field, value },
     { auth: false },
   );
 }

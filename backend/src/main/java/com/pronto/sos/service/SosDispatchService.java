@@ -242,6 +242,11 @@ public class SosDispatchService {
                     + "absence of available professionals.";
             case DESTINATION_UNKNOWN -> "The service address could not be resolved to coordinates, so no "
                     + "candidate's distance could be measured.";
+            // Not a platform failure and not an absence of professionals -- Pronto simply does not
+            // cover this place. Recorded distinctly so the history says so rather than implying
+            // that waiting might help.
+            case SERVICE_AREA_UNCOVERED -> "The service address is in a city outside Pronto's service "
+                    + "area catalogue, so no professional's declared coverage can include it.";
         };
         sosEventService.recordSystem(request.getId(), SosEventType.FAILED, SosRequestStatus.MATCHING,
                 SosRequestStatus.FAILED, detail);

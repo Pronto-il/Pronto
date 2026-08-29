@@ -34,12 +34,42 @@ primitives, etc.) — not feature-specific components, which live under their ow
 - `DocumentUploadField` — generic file upload (PDF or image) showing filename + a
   file-type icon + remove action instead of an image preview (a PDF can't be previewed).
   Deliberately kept separate from `ImageUploadField`.
-- `AddressFormFields` — self-contained address field group (city, street, house number
-  required; apartment/floor/entrance/addressNotes optional) driven by a `value`/`onChange`
-  pair (`AddressValue`, `EMPTY_ADDRESS` in `addressTypes.ts`). Field names match
-  `DefaultAddressRequest.java` exactly. Not coupled to "registration" — built for reuse by
-  a later milestone's per-request service address field; that reuse landed in Frontend
-  Milestone 3 (`features/booking/BookingFlowPage.tsx`'s service-address step).
+- `AddressFormFields` — self-contained address field group, driven by a `value`/`onChange` pair
+  (`AddressValue`, `EMPTY_ADDRESS` in `addressTypes.ts`). Field names match
+  `DefaultAddressRequest.java` exactly. Used by the profile screen, the booking flow's address
+  step and the SOS entry screen.
+
+  **As of the address-flow redesign it collects the address in three ordered steps**, because
+  that is what a validated address actually needs: **city** chosen from Google's locality
+  suggestions; **street** chosen from Google's street suggestions *within that city* (the field
+  is disabled until a city exists, and the provider filters results to ones that name it, so a
+  street can never be paired with a town it does not belong to); **house number** typed, digits
+  only, filtered at the keystroke (`sanitizeHouseNumber`) with `inputMode="numeric"` for a
+  numeric keypad on a phone. Once all three exist the **complete** address goes back to Google
+  for confirmation (`resolveFullAddress`), and only a confirmed result carries a place id and
+  coordinates — so an address Google cannot resolve to a building leaves the form unresolved and
+  `validateAddress` refuses it. Editing any of the three re-opens the question and clears the
+  resolution; apartment/floor/entrance/notes deliberately do not — no geocoder resolves
+  "דירה 4", so editing them must not throw away a good selection.
+
+  **Apartment, floor and entrance are optional and still shaped**, filtered at the keystroke the
+  same way the house number is (`sanitizeApartment`/`sanitizeFloor`/`sanitizeEntrance`) and
+  re-checked by `validateAddressTextOnly` for values no keystroke of this form produced — a saved
+  address or a restored draft. Apartment and floor are digits only with `inputMode="numeric"`;
+  entrance is at most two characters, each a letter of any script (`\p{L}`, because an Israeli
+  entrance is `א`/`ב`/`ג` far more often than `A`/`B`/`C`) or an ASCII digit, no spaces or symbols.
+  **A negative floor is refused** — a decision, not an omission: nothing ever intentionally
+  supported one, and a basement goes in the access-notes field, which stays free text precisely so
+  the other three can have rules. The backend enforces the identical patterns
+  (`maps.AddressAccessFields`) on all three write paths, because `curl` runs none of this.
+
+  This replaced a single free-text autocomplete box, which resolved whatever the customer picked
+  — routinely a street with no number — and then trusted a house number appended to it
+  afterwards.
+- `PlaceSuggestionField` — one "type, then pick from a list" field, generic over which question
+  it asks Google. `AddressFormFields` uses it twice (city, street); it exists as its own
+  component because those two differ only in that question. Replaces
+  `AddressAutocompleteField`, which was the same widget hard-wired to whole addresses.
 - `WeeklyHoursFields` — the 7-row weekday editor for a professional's weekly working hours
   (one row per weekday, Sunday=0 first: an enable/disable `role="switch"` toggle plus start/end
   `type="time"` inputs, hidden while the day is off), driven by a `rows`/`onChange` pair plus

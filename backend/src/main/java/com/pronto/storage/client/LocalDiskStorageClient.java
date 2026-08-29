@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.Instant;
 
@@ -79,6 +80,27 @@ public class LocalDiskStorageClient implements StorageClient {
     @Override
     public boolean exists(String key) {
         return Files.exists(resolvePath(key));
+    }
+
+    @Override
+    public void copy(String sourceKey, String destinationKey) {
+        Path source = resolvePath(sourceKey);
+        Path destination = resolvePath(destinationKey);
+        try {
+            Files.createDirectories(destination.getParent());
+            Files.copy(source, destination, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            throw new StorageException("Failed to copy local file " + sourceKey + " to " + destinationKey, e);
+        }
+    }
+
+    @Override
+    public void delete(String key) {
+        try {
+            Files.deleteIfExists(resolvePath(key));
+        } catch (IOException e) {
+            throw new StorageException("Failed to delete local file for key: " + key, e);
+        }
     }
 
     @Override

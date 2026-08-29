@@ -33,6 +33,15 @@ import type {
   ServiceRegionResponse,
 } from '../../shared/api';
 import { RegistrationWizardShell } from './RegistrationWizardShell';
+import { isBlocking, useContactAvailability } from './useContactAvailability';
+import {
+  mapDuplicateContactError,
+  validateConfirmPassword,
+  validateEmail,
+  validateFullName,
+  validatePassword,
+  validatePhone,
+} from './registrationValidation';
 import styles from './formStyles.module.css';
 
 export interface ProfessionalRegisterFormProps {
@@ -120,6 +129,13 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
   const [verificationDocument, setVerificationDocument] = useState<File | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
   const [bannerError, setBannerError] = useState<string | null>(null);
+  const [isCheckingContacts, setIsCheckingContacts] = useState(false);
+
+  // The same hook, the same endpoint and the same Hebrew copy the customer wizard uses.
+  // Professional and customer registration hit one `POST /api/auth/register` with one
+  // uniqueness rule, so a second availability mechanism could only ever disagree with this one.
+  const emailAvailability = useContactAvailability('EMAIL', email);
+  const phoneAvailability = useContactAvailability('PHONE', phone);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [categories, setCategories] = useState<CategoryWithSubServicesResponse[] | null>(null);
@@ -222,27 +238,81 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
     );
   }
 
+  /**
+   * Stage 1's locally answerable rules — the SAME functions the customer wizard uses
+   * (`registrationValidation.ts`), not a second copy.
+   *
+   * <p>They were a second copy, and the copies had already drifted: this form checked only that
+   * the phone field was non-empty, so `1` was accepted here and rejected in the customer flow.
+   * The registration rules are identical for both roles — same `RegisterRequest`, same
+   * `@Email`, same `PhoneNumberNormalizer`, same 8-character password — so there is nothing for a
+   * separate implementation to express.
+   */
   function validateStage1(): Pick<FormErrors, 'fullName' | 'email' | 'phone' | 'password' | 'confirmPassword'> {
     const next: Pick<FormErrors, 'fullName' | 'email' | 'phone' | 'password' | 'confirmPassword'> = {};
-    if (fullName.trim().length < 2) {
-      next.fullName = 'יש להזין שם מלא (לפחות 2 תווים).';
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      next.email = 'יש להזין כתובת אימייל תקינה.';
-    }
-    // Presence only. Whether a number is a real, reachable Israeli mobile is decided by
-    // libphonenumber on the backend; a second, staler copy of the numbering plan here would
-    // only ever disagree with it.
-    if (!phone.trim()) {
-      next.phone = 'יש להזין מספר טלפון.';
-    }
-    if (password.length < 8) {
-      next.password = 'הסיסמה חייבת להכיל לפחות 8 תווים.';
-    }
-    if (confirmPassword !== password) {
-      next.confirmPassword = 'אימות הסיסמה אינו תואם לסיסמה שהוזנה.';
+    type Stage1Field = 'fullName' | 'email' | 'phone' | 'password' | 'confirmPassword';
+    const rules: Array<[Stage1Field, string | undefined]> = [
+      ['fullName', validateFullName(fullName)],
+      ['email', validateEmail(email)],
+      ['phone', validatePhone(phone)],
+      ['password', validatePassword(password)],
+      ['confirmPassword', validateConfirmPassword(password, confirmPassword)],
+    ];
+    for (const [field, message] of rules) {
+      if (message) {
+        next[field] = message;
+      }
     }
     return next;
+  }
+
+  /**
+   * Validates one field on blur, and — for the two whose rule only the server holds — asks
+   * `POST /api/auth/availability`. Blur-driven rather than debounced-per-keystroke for the reason
+   * `useContactAvailability` documents: that endpoint is deliberately rate limited tightly.
+   */
+  function handleBlur(field: keyof FormErrors, message: string | undefined) {
+    setErrors((prev) => ({ ...prev, [field]: message }));
+    if (message) {
+      return;
+    }
+    if (field === 'email') {
+      void emailAvailability.check(email);
+    } else if (field === 'phone') {
+      void phoneAvailability.check(phone);
+    }
+  }
+
+  /**
+   * Stage 1's Continue. Blocks on a local error, then **waits** for the availability verdict
+   * rather than assuming one — a registrant who fills the last field and presses Continue
+   * immediately would otherwise sail past a check still in flight, which is the "found out five
+   * screens later" failure this exists to end.
+   */
+  async function advanceFromStage1(): Promise<boolean> {
+    const stage1Errors = validateStage1();
+    setErrors((prev) => ({
+      ...prev,
+      fullName: stage1Errors.fullName,
+      email: stage1Errors.email,
+      phone: stage1Errors.phone,
+      password: stage1Errors.password,
+      confirmPassword: stage1Errors.confirmPassword,
+    }));
+    if (Object.keys(stage1Errors).length > 0) {
+      return false;
+    }
+
+    setIsCheckingContacts(true);
+    try {
+      const [emailStatus, phoneStatus] = await Promise.all([
+        emailAvailability.check(email),
+        phoneAvailability.check(phone),
+      ]);
+      return !isBlocking(emailStatus) && !isBlocking(phoneStatus);
+    } finally {
+      setIsCheckingContacts(false);
+    }
   }
 
   function validateStage2(): Pick<FormErrors, 'categoryIds' | 'serviceRegionId' | 'serviceCityIds'> {
@@ -332,19 +402,9 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
     event.preventDefault();
 
     if (currentStage === 1) {
-      const stage1Errors = validateStage1();
-      setErrors((prev) => ({
-        ...prev,
-        fullName: stage1Errors.fullName,
-        email: stage1Errors.email,
-        phone: stage1Errors.phone,
-        password: stage1Errors.password,
-        confirmPassword: stage1Errors.confirmPassword,
-      }));
-      if (Object.keys(stage1Errors).length > 0) {
-        return;
+      if (await advanceFromStage1()) {
+        goToStage(2, 1);
       }
-      goToStage(2, 1);
       return;
     }
 
@@ -426,8 +486,16 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
       });
       onSuccess(response);
     } catch (error) {
-      if (error instanceof ApiError && error.code === 'DUPLICATE_EMAIL') {
-        const nextErrors: FormErrors = { email: 'כתובת האימייל הזו כבר רשומה במערכת.' };
+      // DUPLICATE_EMAIL / DUPLICATE_PHONE are expected validation outcomes, not surprises, and
+      // both must land on their field. DUPLICATE_PHONE previously had no branch at all: it fell
+      // through to `getFieldErrorMessages`, which returns null for anything that is not
+      // VALIDATION_ERROR, and ended up as the generic "משהו השתבש, נסו שוב" banner on the summary
+      // screen — a registrant who had just filled in six stages was told nothing about what was
+      // wrong. `routeFieldErrors` sends them back to stage 1 with every other stage's answers
+      // still in state, so only the offending field needs correcting.
+      const duplicate = mapDuplicateContactError(error);
+      if (duplicate) {
+        const nextErrors: FormErrors = { [duplicate.field]: duplicate.message };
         setErrors((prev) => ({ ...prev, ...nextErrors }));
         routeFieldErrors(nextErrors);
       } else if (error instanceof ApiError && error.code === 'CATEGORY_MISMATCH') {
@@ -463,6 +531,10 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
   }
 
   const primaryLabel = currentStage === TOTAL_STAGES ? 'שליחת הבקשה' : 'המשך';
+  // A local rule always wins over a server answer: showing "this email is taken" under text that
+  // is not an email address would be nonsense.
+  const emailError = errors.email ?? emailAvailability.error;
+  const phoneError = errors.phone ?? phoneAvailability.error;
 
   return (
     <form onSubmit={handleSubmit} noValidate>
@@ -479,7 +551,7 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
         direction={direction}
         onBack={handleBack}
         primaryLabel={primaryLabel}
-        primaryLoading={isSubmitting}
+        primaryLoading={isSubmitting || isCheckingContacts}
       >
         {currentStage === 1 && (
           <>
@@ -487,6 +559,7 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
               label="שם מלא"
               value={fullName}
               onChange={(event) => setFullName(event.target.value)}
+              onBlur={() => handleBlur('fullName', validateFullName(fullName))}
               error={errors.fullName}
               autoComplete="name"
               required
@@ -496,7 +569,9 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              error={errors.email}
+              onBlur={() => handleBlur('email', validateEmail(email))}
+              error={emailError}
+              hint={emailAvailability.status === 'checking' ? 'בודקים את כתובת האימייל…' : undefined}
               autoComplete="email"
               required
             />
@@ -507,9 +582,14 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
               dir="ltr"
               value={phone}
               onChange={(event) => setPhone(event.target.value)}
-              error={errors.phone}
+              onBlur={() => handleBlur('phone', validatePhone(phone))}
+              error={phoneError}
               autoComplete="tel"
-              hint="למשל 050-1234567 — נאמת אותו בהמשך ההרשמה"
+              hint={
+                phoneAvailability.status === 'checking'
+                  ? 'בודקים את מספר הטלפון…'
+                  : 'למשל 050-1234567 — נאמת אותו בהמשך ההרשמה'
+              }
               required
             />
             <Input
@@ -517,6 +597,7 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
+              onBlur={() => handleBlur('password', validatePassword(password))}
               error={errors.password}
               autoComplete="new-password"
               hint="לפחות 8 תווים"
@@ -527,6 +608,9 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
               type="password"
               value={confirmPassword}
               onChange={(event) => setConfirmPassword(event.target.value)}
+              onBlur={() =>
+                handleBlur('confirmPassword', validateConfirmPassword(password, confirmPassword))
+              }
               error={errors.confirmPassword}
               autoComplete="new-password"
               required

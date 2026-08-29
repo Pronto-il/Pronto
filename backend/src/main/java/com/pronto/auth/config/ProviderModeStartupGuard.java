@@ -57,6 +57,7 @@ public class ProviderModeStartupGuard {
     private static final Set<String> SMS_MODES = Set.of(LOG_MODE, "aws");
 
     private final ProntoEnvironment environment;
+    private final boolean otpVerificationEnabled;
     private final String emailMode;
     private final String emailFrom;
     private final String smsMode;
@@ -66,6 +67,7 @@ public class ProviderModeStartupGuard {
     private final String mapsApiKey;
 
     public ProviderModeStartupGuard(ProntoEnvironment environment,
+                                     OtpVerificationPolicy otpVerificationPolicy,
                                      @Value("${pronto.email.mode:log}") String emailMode,
                                      @Value("${pronto.email.from:}") String emailFrom,
                                      @Value("${pronto.sms.mode:log}") String smsMode,
@@ -74,6 +76,7 @@ public class ProviderModeStartupGuard {
                                      @Value("${pronto.maps.mode:fake}") String mapsMode,
                                      @Value("${pronto.maps.api-key:}") String mapsApiKey) {
         this.environment = environment;
+        this.otpVerificationEnabled = otpVerificationPolicy.isOtpVerificationEnabled();
         this.emailMode = emailMode == null ? "" : emailMode.trim();
         this.emailFrom = emailFrom == null ? "" : emailFrom.trim();
         this.smsMode = smsMode == null ? "" : smsMode.trim();
@@ -101,9 +104,23 @@ public class ProviderModeStartupGuard {
                         + "written to the application log instead of delivered, leaving every account "
                         + "unreachable. Set EMAIL_MODE=ses.");
             }
-            if (LOG_MODE.equalsIgnoreCase(smsMode)) {
+            // Conditional on OTP verification being on, and only this one check is.
+            //
+            // The refusal exists because undelivered codes leave every account unreachable. With
+            // OTP_VERIFICATION_ENABLED=false that reasoning is void rather than merely tolerable:
+            // no code is generated on any path, so there is nothing SMS_MODE could fail to deliver.
+            // Keeping the guard unconditional would force an operator to hold real AWS End User
+            // Messaging credentials in order to run a beta that never sends an SMS -- a startup
+            // failure demanding configuration for a subsystem that is switched off.
+            //
+            // Safe to relax precisely because SmsSender has exactly one consumer, OtpService. Note
+            // the deliberate asymmetry with EMAIL_MODE directly above, which stays unconditional:
+            // EmailSender is ALSO used by notifications.scheduler.EmailDispatchJob for order-status
+            // mail, which is not OTP and is still expected to be delivered while OTP is off.
+            if (LOG_MODE.equalsIgnoreCase(smsMode) && otpVerificationEnabled) {
                 failures.add("pronto.sms.mode=log (SMS_MODE). Phone verification and phone login codes "
-                        + "would never be delivered. Set SMS_MODE=aws.");
+                        + "would never be delivered. Set SMS_MODE=aws, or set "
+                        + "OTP_VERIFICATION_ENABLED=false if this deployment is not verifying at all.");
             }
             // Production MS2. The failure this prevents is the one the whole milestone exists to
             // end: the fake provider invents coordinates from a city lookup table and derives

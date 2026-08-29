@@ -86,6 +86,7 @@ class BookingsArrivalTest {
 
         service = new BookingsService(Mockito.mock(IssueRepository.class), professionalRepository,
                 Mockito.mock(ProfessionalListingRepository.class),
+                Mockito.mock(com.pronto.locations.service.ServiceCityResolver.class),
                 Mockito.mock(AvailabilitySlotRepository.class), orderRepository,
                 Mockito.mock(UserRepository.class), notificationService,
                 Mockito.mock(DistanceEtaStrategy.class), Mockito.mock(StorageService.class),
@@ -96,7 +97,8 @@ class BookingsArrivalTest {
                 // The real verifier, not a mock: the geofence rule IS what this class tests, and
                 // stubbing it would leave the tests asserting that a mock was called.
                 new ArrivalVerifier(professionalLocationService, locationProperties),
-                new com.pronto.maps.service.SelectedPlaceValidator());
+                new com.pronto.maps.service.SelectedPlaceValidator(),
+                Mockito.mock(com.pronto.professionals.repository.CategoryRepository.class));
 
         Professional professional = Mockito.mock(Professional.class);
         Mockito.lenient().when(professional.getId()).thenReturn(PROFESSIONAL_ID);
@@ -361,6 +363,7 @@ class BookingsArrivalTest {
                 locationProperties);
         BookingsService withRecording = new BookingsService(Mockito.mock(IssueRepository.class),
                 professionalRepository, Mockito.mock(ProfessionalListingRepository.class),
+                Mockito.mock(com.pronto.locations.service.ServiceCityResolver.class),
                 Mockito.mock(AvailabilitySlotRepository.class), orderRepository,
                 Mockito.mock(UserRepository.class), notificationService,
                 Mockito.mock(DistanceEtaStrategy.class), Mockito.mock(StorageService.class),
@@ -369,7 +372,8 @@ class BookingsArrivalTest {
                 Mockito.mock(ContactVerificationGuard.class),
                 Mockito.mock(ServiceAddressGeocoder.class), recording, locationProperties,
                 new ArrivalVerifier(recording, locationProperties),
-                new com.pronto.maps.service.SelectedPlaceValidator());
+                new com.pronto.maps.service.SelectedPlaceValidator(),
+                Mockito.mock(com.pronto.professionals.repository.CategoryRepository.class));
 
         assertThatThrownBy(() -> withRecording.arrived(PROFESSIONAL_USER_ID, ORDER_ID,
                 fixNorthOfDestination(5000, "15")))

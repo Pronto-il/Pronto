@@ -1,6 +1,9 @@
 package com.pronto.auth.dto;
 
+import com.pronto.maps.AddressAccessFields;
+import com.pronto.maps.HouseNumbers;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
@@ -11,6 +14,11 @@ import java.math.BigDecimal;
  * task §4-6). {@code city}/{@code street}/{@code houseNumber} are required;
  * {@code apartment}/{@code floor}/{@code entrance}/{@code addressNotes} are optional.
  * {@code @Size} caps mirror the {@code users.default_*} column lengths (V20).
+ *
+ * <p><b>Optional does not mean unchecked.</b> {@code apartment} and {@code floor} are digits only
+ * and {@code entrance} is at most two letters-or-digits — see {@code maps.AddressAccessFields} for
+ * the rules and for why a negative floor is not accepted. Each pattern admits the empty string, so
+ * the fields stay genuinely optional.
  *
  * <p><b>The last four fields identify the place the customer actually SELECTED</b> from address
  * autocomplete, rather than the text they typed ({@code V55}). They are required at registration
@@ -33,10 +41,17 @@ import java.math.BigDecimal;
 public record DefaultAddressRequest(
         @NotBlank @Size(max = 100) String city,
         @NotBlank @Size(max = 150) String street,
-        @NotBlank @Size(max = 20) String houseNumber,
-        @Size(max = 20) String apartment,
-        @Size(max = 20) String floor,
-        @Size(max = 20) String entrance,
+        @NotBlank @Size(max = 20)
+        @Pattern(regexp = HouseNumbers.PATTERN, message = HouseNumbers.MESSAGE) String houseNumber,
+        @Size(max = 20)
+        @Pattern(regexp = AddressAccessFields.APARTMENT_PATTERN,
+                message = AddressAccessFields.APARTMENT_MESSAGE) String apartment,
+        @Size(max = 20)
+        @Pattern(regexp = AddressAccessFields.FLOOR_PATTERN,
+                message = AddressAccessFields.FLOOR_MESSAGE) String floor,
+        @Size(max = 20)
+        @Pattern(regexp = AddressAccessFields.ENTRANCE_PATTERN,
+                message = AddressAccessFields.ENTRANCE_MESSAGE) String entrance,
         @Size(max = 500) String addressNotes,
         @Size(max = 255) String placeId,
         @Size(max = 500) String formattedAddress,

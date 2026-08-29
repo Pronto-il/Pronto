@@ -71,11 +71,21 @@ public class VerificationPolicy {
     private final boolean smsVerificationRequired;
     private final boolean emailVerificationRequired;
 
+    /**
+     * Both halves are {@code AND}ed with {@link OtpVerificationPolicy} at construction rather than
+     * at each getter, so the resolved values are what {@link #announce()} prints and what every
+     * consumer reads — there is no state in which the log says one thing and a call site sees
+     * another. {@code OTP_VERIFICATION_ENABLED=false} therefore reports both channels as not
+     * required no matter what the two fine-grained variables say, and turning the master back on
+     * restores exactly whatever they say.
+     */
     public VerificationPolicy(
+            OtpVerificationPolicy otpVerificationPolicy,
             @Value("${pronto.verification.sms-required:true}") boolean smsVerificationRequired,
             @Value("${pronto.verification.email-required:true}") boolean emailVerificationRequired) {
-        this.smsVerificationRequired = smsVerificationRequired;
-        this.emailVerificationRequired = emailVerificationRequired;
+        boolean otpEnabled = otpVerificationPolicy.isOtpVerificationEnabled();
+        this.smsVerificationRequired = otpEnabled && smsVerificationRequired;
+        this.emailVerificationRequired = otpEnabled && emailVerificationRequired;
     }
 
     /**

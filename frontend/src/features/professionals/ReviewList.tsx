@@ -1,11 +1,11 @@
 import { MessageSquare, Star } from 'lucide-react';
 import { EmptyState } from '../../shared/components';
-import type { ReviewResponse } from '../../shared/api';
+import type { PublicReviewResponse } from '../../shared/api';
 import { formatRelativeAgeLabel } from '../../shared/utils/formatDateTime';
 import styles from './ProfessionalProfilePage.module.css';
 
 export interface ReviewListProps {
-  reviews: ReviewResponse[];
+  reviews: PublicReviewResponse[];
   isLoading: boolean;
   /** A failed review fetch doesn't block the rest of the profile page — surfaced inline here only. */
   error: string | null;

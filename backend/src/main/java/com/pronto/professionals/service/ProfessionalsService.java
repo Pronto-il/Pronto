@@ -127,11 +127,15 @@ public class ProfessionalsService {
                         "Professional " + professionalId + " not found."));
         User user = loadUser(professional.getUserId());
 
+        // Deferred authentication: `caller` is null for a guest reading a listing card's profile.
+        // `favorited` stays null in that case -- the same value a PROFESSIONAL caller already got,
+        // and the honest one, since "have you favourited this person" has no answer for somebody
+        // with no account rather than the answer "no".
         Boolean favorited = null;
-        if (UserRole.CUSTOMER.name().equals(caller.role())) {
+        if (caller != null && UserRole.CUSTOMER.name().equals(caller.role())) {
             favorited = favoriteRepository.existsByCustomerIdAndProfessionalId(caller.id(), professionalId);
         }
-        return toResponse(professional, user, favorited, caller.id());
+        return toResponse(professional, user, favorited, caller == null ? null : caller.id());
     }
 
     /**

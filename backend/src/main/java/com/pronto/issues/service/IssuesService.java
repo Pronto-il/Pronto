@@ -10,6 +10,7 @@ import com.pronto.bookings.repository.OrderRepository;
 import com.pronto.common.dto.FieldError;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
+import com.pronto.common.security.UploadOwner;
 import com.pronto.issues.dto.ClarificationAnswerRequest;
 import com.pronto.issues.dto.ClarificationEntryResponse;
 import com.pronto.issues.dto.ClarifyQuestionResponse;
@@ -50,6 +51,8 @@ import com.pronto.users.repository.UserRepository;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -122,14 +125,36 @@ public class IssuesService {
      * guaranteed rather than enforced by throwing.
      */
     public ClassifyResponse classify(Long callerId, ClassifyRequest request) {
-        // Production MS1 (pre-DONE audit): classification is the first step of the marketplace
-        // issue flow and every call spends an OpenAI request. Gating only POST /api/issues left an
-        // unverified account able to drive the model indefinitely. The route is already
-        // authenticated and CUSTOMER-only (SecurityConfig + IssuesWebConfig) -- there is no
-        // anonymous classification flow this can break.
-        contactVerificationGuard.requireVerifiedContactChannels(callerId);
+        return classify(UploadOwner.customer(callerId), request);
+    }
 
-        List<String> imageKeys = validateImageKeys(callerId, request.imageKeys());
+    /**
+     * As above, for a caller who may be a guest, an authenticated customer, or (mid-flow, having
+     * just registered) both. {@code owner} carries whichever identities the request actually
+     * proved; see {@code auth.security.UploadOwnerResolver}.
+     */
+    public ClassifyResponse classify(UploadOwner owner, ClassifyRequest request) {
+        Long callerId = owner.customerId();
+        // Deferred authentication: callerId is null for a guest, and that is now a supported state.
+        //
+        // The MS1 note that used to sit here reasoned that classification spends an OpenAI request
+        // and so must be gated behind a verified account. The spend concern was right and is still
+        // handled -- by a per-IP rate limit in issues.config.IssuesWebConfig, which bounds an
+        // anonymous source the way the verification gate bounded an unverified account. What was
+        // wrong was the placement: requiring a verified account to find out WHICH TRADE you need
+        // put the entire product behind a signup form, and classification writes nothing.
+        //
+        // The verification guard still runs, unchanged, on the two operations that commit: creating
+        // an issue and creating an order.
+        if (callerId != null) {
+            contactVerificationGuard.requireVerifiedContactChannels(callerId);
+        }
+
+        // Guest photos reach the classifier through this exact call, and are then downloaded,
+        // encoded and sent to the model by ai.service.ClassificationService identically to a
+        // customer's -- classification has never known who owned an image, only that the caller was
+        // allowed to attach it. Nothing about the AI path changed for this feature.
+        List<String> imageKeys = validateImageKeys(owner, request.imageKeys());
         List<ClarificationExchange> answers = toExchanges(request.clarificationAnswers());
 
         ClassificationSuggestion suggestion = classificationService.classify(
@@ -157,6 +182,21 @@ public class IssuesService {
      */
     @Transactional
     public IssueResponse create(Long callerId, CreateIssueRequest request) {
+        return create(UploadOwner.customer(callerId), request);
+    }
+
+    /**
+     * As above, and additionally the point at which a guest's photos become this customer's.
+     *
+     * <p>{@code owner.customerId()} is always present here — {@code POST /api/issues} is still
+     * {@code CUSTOMER}-gated and creates a row owned by an account. {@code owner.guestId()} is
+     * present when the person confirming this booking was a guest a moment ago and is still
+     * holding the session token their photos were uploaded under; see {@link #promoteGuestKeys}
+     * for what happens to them.
+     */
+    @Transactional
+    public IssueResponse create(UploadOwner owner, CreateIssueRequest request) {
+        Long callerId = owner.customerId();
         // Production MS1: reporting an issue is the first step towards a professional arriving at
         // this person's address, so it is the first step that requires a reachable phone number.
         contactVerificationGuard.requireVerifiedContactChannels(callerId);
@@ -166,7 +206,7 @@ public class IssuesService {
                     List.of(new FieldError("categoryId", "must reference an existing category")));
         }
 
-        List<String> imageKeys = validateImageKeys(callerId, request.imageKeys());
+        List<String> imageKeys = promoteGuestKeys(owner, validateImageKeys(owner, request.imageKeys()));
 
         Issue issue = new Issue(callerId, request.categoryId(), request.description(), request.urgencyType());
         issue = issueRepository.save(issue);
@@ -368,16 +408,24 @@ public class IssuesService {
     }
 
     /**
-     * §2.1 step 3 / §2.2 step 4 / §3.3: every key must exist in storage and embed the
-     * caller's own id as its owner segment. Fails the whole request on the first bad key —
+     * §2.1 step 3 / §2.2 step 4 / §3.3: every key must exist in storage and embed an owner segment
+     * the caller has actually proved they are. Fails the whole request on the first bad key —
      * no partial processing.
+     *
+     * <p><b>The rule is unchanged; only the set of things a caller can prove grew.</b> A
+     * {@code customers/{id}/...} key still requires an exact match against the JWT's user id. A
+     * {@code guests/{uuid}/...} key requires an exact match against the guest id inside a signed,
+     * unexpired guest-session token presented on this same request. A key naming a namespace the
+     * caller did not prove is {@code IMAGE_KEY_INVALID}, identically to before — which is what
+     * stops guest A attaching guest B's photo, and what stops an authenticated customer attaching
+     * any guest's photo by quoting its key.
      */
-    private List<String> validateImageKeys(Long callerId, List<String> imageKeys) {
+    private List<String> validateImageKeys(UploadOwner owner, List<String> imageKeys) {
         if (imageKeys == null || imageKeys.isEmpty()) {
             return Collections.emptyList();
         }
         for (String key : imageKeys) {
-            if (!ImageKeyUtils.belongsTo(key, callerId)) {
+            if (!ImageKeyUtils.belongsTo(key, owner)) {
                 throw new ApiException(ErrorCode.IMAGE_KEY_INVALID,
                         "One or more imageKeys were not found or do not belong to the caller.");
             }
@@ -393,6 +441,58 @@ public class IssuesService {
             }
         }
         return imageKeys;
+    }
+
+    /**
+     * Moves any guest-owned key onto the confirming customer's own namespace, returning the key
+     * list as it should be persisted. A list with no guest keys — every authenticated customer's
+     * normal path — is returned untouched, and this method does no storage work at all.
+     *
+     * <p><b>Why the object moves rather than a pointer being recorded.</b> The alternative was to
+     * leave {@code guests/{uuid}/...} in {@code issue_images} and teach every read path that some
+     * issue photos have a guest owner. That would put the guest concept into
+     * {@code getPresignedUrl}'s ownership check, into the draft-resume batch lookup and into
+     * {@code GET /api/issues/{id}} permanently, and it would leave rows whose owner segment names a
+     * session that expires within a day and can never be re-proved. Promoting once, here, keeps
+     * every one of those paths reading the single key format they already understand and makes the
+     * guest namespace genuinely temporary.
+     *
+     * <p><b>Ordering.</b> The copy happens inside the transaction and is idempotent (the destination
+     * filename is the source filename), so a commit that fails and is retried lands on the same
+     * key rather than accumulating an orphan per attempt. The guest-namespace original is deleted
+     * only <em>after</em> commit: deleting it inline would mean a rolled-back booking had destroyed
+     * the customer's photos, and their retry — still holding the guest key in their draft — would
+     * fail with {@code IMAGE_KEY_INVALID}. Anything the after-commit hook misses (a crash between
+     * commit and callback) is reclaimed by the {@code guests/} lifecycle rule on the uploads
+     * bucket.
+     */
+    private List<String> promoteGuestKeys(UploadOwner owner, List<String> imageKeys) {
+        if (imageKeys.isEmpty() || imageKeys.stream().noneMatch(ImageKeyUtils::isGuestKey)) {
+            return imageKeys;
+        }
+
+        List<String> promotedOriginals = new ArrayList<>();
+        List<String> resolved = new ArrayList<>();
+        for (String key : imageKeys) {
+            if (!ImageKeyUtils.isGuestKey(key)) {
+                resolved.add(key);
+                continue;
+            }
+            resolved.add(storageService.promoteGuestImage(owner, key, owner.customerId()));
+            promotedOriginals.add(key);
+        }
+
+        // Guarded because this service is also exercised outside a transaction by its unit tests,
+        // where registering a synchronization would throw rather than simply never fire.
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    promotedOriginals.forEach(storageService::discardPromotedGuestImage);
+                }
+            });
+        }
+        return resolved;
     }
 
     private IssueResponse toResponse(Long callerId, Issue issue, List<IssueImage> images) {

@@ -64,6 +64,7 @@ public class RoleRequiredInterceptor implements HandlerInterceptor {
 
     private final String requiredRole;
     private final Set<String> httpMethods;
+    private final boolean allowAnonymous;
 
     /** Applies to every HTTP method on the registered path pattern(s) — original behavior. */
     public RoleRequiredInterceptor(String requiredRole) {
@@ -77,7 +78,33 @@ public class RoleRequiredInterceptor implements HandlerInterceptor {
      * single-arg constructor's "applies to every method" behavior.
      */
     public RoleRequiredInterceptor(String requiredRole, String... httpMethods) {
+        this(requiredRole, false, httpMethods);
+    }
+
+    /**
+     * <b>Opt-in: "if you are a signed-in user you must be {@code requiredRole}; being nobody is
+     * somebody else's question."</b> With {@code allowAnonymous = true} a request carrying no
+     * authenticated principal passes {@code preHandle} untouched, while a request carrying the
+     * wrong role is refused exactly as before.
+     *
+     * <p>Introduced for {@code POST /api/storage/images} once guests could upload issue photos. The
+     * route has two legitimate kinds of caller — a {@code CUSTOMER} JWT, or a signed guest-session
+     * token — and only the first is a role question. The role gate must stay in {@code preHandle}
+     * (that is the whole reason this class exists: it has to beat multipart argument resolution, or
+     * a professional posting no {@code file} part gets {@code 400} instead of {@code 403}), so the
+     * abstention has to be expressible here rather than by dropping the registration.
+     *
+     * <p><b>This does not open anything.</b> An anonymous request that this instance waves through
+     * still has to satisfy {@code auth.security.UploadOwnerResolver#requireIdentified} in the
+     * handler, which refuses a caller who proved no identity at all with {@code 401}. It is the
+     * same "route-level gate abstains, the layer that can actually answer authorizes" split
+     * {@code issues.config.IssuesWebConfig} already uses for its either-role
+     * {@code GET /api/issues/{id}}. Every other registration in this codebase uses the constructors
+     * above and is unchanged.
+     */
+    public RoleRequiredInterceptor(String requiredRole, boolean allowAnonymous, String... httpMethods) {
         this.requiredRole = requiredRole;
+        this.allowAnonymous = allowAnonymous;
         this.httpMethods = Set.of(httpMethods);
     }
 
@@ -91,6 +118,9 @@ public class RoleRequiredInterceptor implements HandlerInterceptor {
                 authentication != null && authentication.getPrincipal() instanceof AuthenticatedUser authenticatedUser
                         ? authenticatedUser
                         : null;
+        if (principal == null && allowAnonymous) {
+            return true;
+        }
         RoleGuard.requireRole(principal, requiredRole);
         return true;
     }

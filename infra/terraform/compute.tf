@@ -428,6 +428,23 @@ resource "aws_ecs_task_definition" "backend" {
       # reversal.
       { name = "EMAIL_VERIFICATION_REQUIRED", value = "false" },
 
+      # THE MASTER SWITCH, set explicitly rather than left to its default (see
+      # auth.config.OtpVerificationPolicy). It does not replace the three flags above, it GATES
+      # them: every policy bean reports `master AND own-flag`, so with this false the platform
+      # issues no one-time password on any path regardless of what the other three say.
+      #
+      # Set here even though the outcome is already "OTP off" via those three, because a reader
+      # answering "does Production verify anybody?" should find one line that says so rather than
+      # having to know that three separate flags happen to all be false and that a fourth,
+      # unset variable defaults to true and ANDs over them. The default is `true`, so leaving it
+      # out means the file's most consequential auth setting is the one it does not mention.
+      #
+      # Reversing the beta is now ONE variable: OTP_VERIFICATION_ENABLED=true restores whatever the
+      # three flags above say, which is what makes deleting them individually safe later.
+      # OtpVerificationPolicy logs the resolved state at WARN on every boot, and accepts only the
+      # exact strings "true"/"false" -- anything else refuses to start rather than guessing.
+      { name = "OTP_VERIFICATION_ENABLED", value = "false" },
+
       { name = "MAPS_MODE", value = "google" },
 
       { name = "STORAGE_MODE", value = "s3" },

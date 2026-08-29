@@ -46,8 +46,22 @@ public class AuthOtpPolicy {
 
     private final boolean otpRequired;
 
-    public AuthOtpPolicy(@Value("${pronto.auth.otp-required:true}") String otpRequired) {
-        this.otpRequired = parse(otpRequired);
+    /**
+     * {@code AND}ed with {@link OtpVerificationPolicy}, the platform-wide master switch, so that
+     * {@code OTP_VERIFICATION_ENABLED=false} removes the login second factor along with
+     * registration's two codes — one variable rather than three, and no deployment in which login
+     * still demands a code nobody can be sent. Resolved here rather than in the getter so
+     * {@link #announce()} reports what callers will actually see.
+     */
+    public AuthOtpPolicy(OtpVerificationPolicy otpVerificationPolicy,
+                          @Value("${pronto.auth.otp-required:true}") String otpRequired) {
+        // Parsed BEFORE the master is consulted, so the strict true/false check below is not
+        // short-circuited away while OTP happens to be off. A deployment carrying
+        // AUTH_OTP_REQUIRED=flase has a broken configuration either way, and the worst time to
+        // discover it is the day the master switch goes back on and the typo silently decides the
+        // second factor.
+        boolean requiredBySetting = parse(otpRequired);
+        this.otpRequired = otpVerificationPolicy.isOtpVerificationEnabled() && requiredBySetting;
     }
 
     /**

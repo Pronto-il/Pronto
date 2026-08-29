@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Clock, MapPin, ShieldCheck, Star } from 'lucide-react';
 import { Button, Modal, Skeleton } from '../../shared/components';
 import { getProfessionalProfile, getReviews } from '../../shared/api';
-import type { ProfessionalProfileResponse, ReviewResponse, SosCandidate } from '../../shared/api';
+import type { ProfessionalProfileResponse, PublicReviewResponse, SosCandidate } from '../../shared/api';
 import { formatReviewCount } from '../../shared/utils/hebrewText';
 import { SosAvatar } from './SosAvatar';
 import styles from './SosProfessionalSheet.module.css';
@@ -75,7 +75,7 @@ export function SosProfessionalSheet({
   onClose,
 }: SosProfessionalSheetProps) {
   const [profile, setProfile] = useState<ProfessionalProfileResponse | null>(null);
-  const [reviews, setReviews] = useState<ReviewResponse[]>([]);
+  const [reviews, setReviews] = useState<PublicReviewResponse[]>([]);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
 
   const professionalId = candidate?.professionalId ?? null;

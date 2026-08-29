@@ -46,6 +46,17 @@ interface GooglePlacesLibrary {
   AutocompleteSuggestion: {
     fetchAutocompleteSuggestions(request: {
       input: string;
+      /**
+       * Restricts the *primary* type of the results. Pronto asks for one of three shapes:
+       * `['(cities)']` for the city field, `['route']` for the street field, and the
+       * building-level types for the final full-address confirmation. This is what makes each
+       * step of the address form ask its own question rather than three copies of "find me
+       * anything matching this text".
+       */
+      includedPrimaryTypes?: string[];
+      /** Circle bias, as a plain literal — no `google.maps.Circle` instance is constructed, so
+       *  nothing here depends on the core library being loaded alongside Places. */
+      locationBias?: { center: { lat: number; lng: number }; radius: number };
       includedRegionCodes?: string[];
       language?: string;
       region?: string;

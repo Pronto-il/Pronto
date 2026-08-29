@@ -24,6 +24,15 @@ import java.time.Duration;
  * abuse:
  * <ul>
  *   <li>{@code POST /register} — 10 / 10 min. Registration is rare and expensive (it sends mail).</li>
+ *   <li>{@code POST /availability} — 20 / 10 min. <b>The one threshold here chosen as a security
+ *       budget rather than as headroom.</b> This route answers "is this email/phone already
+ *       registered", which is the same disclosure {@code /register}'s {@code DUPLICATE_EMAIL} /
+ *       {@code DUPLICATE_PHONE} already makes, at a fraction of the cost — so the only thing
+ *       standing between it and account enumeration is this number. Deliberately set at twice
+ *       {@code /register}'s allowance and no more, which covers a customer filling the form in,
+ *       correcting a typo and trying a second address (two checks per attempt, so ten attempts)
+ *       while leaving an enumerator with 20 guesses per source per 10 minutes. Raise it only with
+ *       that trade in mind; see {@code auth.service.ContactAvailabilityService}.</li>
  *   <li>{@code POST /login} — 30 / 5 min. Generous: a person mistyping a password a few times, on a
  *       shared address, must not be locked out of the product.</li>
  *   <li>{@code POST /login/otp}, {@code /verify-email}, {@code /verify-phone} — 20 / 15 min. The
@@ -49,6 +58,7 @@ public class AuthWebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         limit(registry, 10, Duration.ofMinutes(10), "/api/auth/register");
+        limit(registry, 20, Duration.ofMinutes(10), "/api/auth/availability");
         limit(registry, 30, Duration.ofMinutes(5), "/api/auth/login");
         limit(registry, 20, Duration.ofMinutes(15), "/api/auth/login/otp");
         limit(registry, 20, Duration.ofMinutes(15), "/api/auth/verify-email");

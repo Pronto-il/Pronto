@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Modal } from '../../shared/components';
 import { getReviews, GENERIC_ERROR_MESSAGE } from '../../shared/api';
-import type { ReviewResponse } from '../../shared/api';
+import type { PublicReviewResponse } from '../../shared/api';
 import { ReviewList } from './ReviewList';
 
 export interface ProfessionalReviewsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Whose reviews to show — `GET /api/reviews?professionalId=`, either role, unchanged. */
+  /** Whose reviews to show — `GET /api/reviews?professionalId=`, public (no JWT required). */
   professionalId: number;
 }
 
@@ -21,7 +21,7 @@ export interface ProfessionalReviewsModalProps {
  * to another screen.
  */
 export function ProfessionalReviewsModal({ isOpen, onClose, professionalId }: ProfessionalReviewsModalProps) {
-  const [reviews, setReviews] = useState<ReviewResponse[]>([]);
+  const [reviews, setReviews] = useState<PublicReviewResponse[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 

@@ -19,13 +19,13 @@ class AuthOtpPolicyTest {
     @ParameterizedTest(name = "\"{0}\" enables the OTP requirement")
     @ValueSource(strings = {"true", "TRUE", "True", "  true  "})
     void trueInAnyCasingRequiresOtp(String raw) {
-        assertThat(new AuthOtpPolicy(raw).isOtpRequired()).isTrue();
+        assertThat(new AuthOtpPolicy(OtpPolicies.enabled(), raw).isOtpRequired()).isTrue();
     }
 
     @ParameterizedTest(name = "\"{0}\" disables the OTP requirement")
     @ValueSource(strings = {"false", "FALSE", "False", "  false  "})
     void falseInAnyCasingDisablesOtp(String raw) {
-        assertThat(new AuthOtpPolicy(raw).isOtpRequired()).isFalse();
+        assertThat(new AuthOtpPolicy(OtpPolicies.enabled(), raw).isOtpRequired()).isFalse();
     }
 
     @ParameterizedTest(name = "\"{0}\" refuses to start rather than guessing")
@@ -34,7 +34,7 @@ class AuthOtpPolicyTest {
         // Note that "yes"/"no"/"on"/"off"/"1"/"0" are all accepted by Spring's own relaxed boolean
         // binding and are all rejected here, deliberately: for this property the set of spellings
         // that mean "off" should be exactly one.
-        assertThatThrownBy(() -> new AuthOtpPolicy(raw))
+        assertThatThrownBy(() -> new AuthOtpPolicy(OtpPolicies.enabled(), raw))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("AUTH_OTP_REQUIRED")
                 .hasMessageContaining("Expected exactly 'true' or 'false'");
@@ -42,14 +42,14 @@ class AuthOtpPolicyTest {
 
     @Test
     void nullRefusesToStart() {
-        assertThatThrownBy(() -> new AuthOtpPolicy(null)).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new AuthOtpPolicy(OtpPolicies.enabled(), null)).isInstanceOf(IllegalStateException.class);
     }
 
     @Test
     void announcingDoesNotThrowInEitherMode() {
         // @PostConstruct runs inside bean initialization; an exception here would fail the boot for
         // a reason that has nothing to do with the configuration being wrong.
-        new AuthOtpPolicy("true").announce();
-        new AuthOtpPolicy("false").announce();
+        new AuthOtpPolicy(OtpPolicies.enabled(), "true").announce();
+        new AuthOtpPolicy(OtpPolicies.enabled(), "false").announce();
     }
 }

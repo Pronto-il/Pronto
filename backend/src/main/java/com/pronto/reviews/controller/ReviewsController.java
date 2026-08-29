@@ -28,9 +28,16 @@ import java.util.List;
 /**
  * {@code /api/reviews*}. Route-level role gating ({@code CUSTOMER}-only on {@code POST}/
  * {@code PUT}/{@code DELETE}) is enforced by {@code reviews.config.ReviewsWebConfig}, not in
- * these method bodies. {@code GET} is either-role and has no route-level gate at all —
- * {@code auth.config.SecurityConfig}'s blanket {@code .anyRequest().authenticated()} already
- * guarantees an authenticated caller of either role.
+ * these method bodies.
+ *
+ * <p><b>{@code GET /api/reviews} is public as of 2026-08-29</b> — it was previously described here
+ * as "either-role, no route-level gate, because {@code SecurityConfig}'s blanket
+ * {@code .anyRequest().authenticated()} guarantees an authenticated caller." That blanket rule was
+ * the whole bug: a guest browsing professionals got {@code 401} on the reviews every listing card
+ * invites them to read. {@code auth.config.SecurityConfig} now permits it, scoped to {@code GET}
+ * and to this exact literal path. Nothing else in this controller changed, and the three write
+ * methods below are unaffected by that matcher in both directions — wrong method for {@code POST},
+ * wrong path for {@code PUT}/{@code DELETE}.
  */
 @RestController
 @RequestMapping("/api/reviews")
@@ -49,6 +56,13 @@ public class ReviewsController {
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
+    /**
+     * Public. Takes no {@code @AuthenticationPrincipal} — not as an oversight but because there is
+     * nothing to authorize and nothing that varies by caller: the same list, in the same order,
+     * with the same fields, whoever asks. Adding a principal here later would be the first step
+     * towards a per-caller branch on a public endpoint, which is how "guests see something
+     * different" bugs start.
+     */
     @GetMapping
     public ResponseEntity<ReviewListResponse> list(
             @RequestParam(name = "professionalId", required = false) String professionalIdRaw) {

@@ -59,3 +59,30 @@ Part A, which replaced professionals' free-text service area with controlled val
   will travel to. Forcing the first into this catalogue would reject perfectly real addresses in
   towns the service-area list does not name.
 - **Geocoding, coordinates, distance.** `matching` owns distance/ETA and will keep owning it.
+
+## `service/ServiceCityResolver` — customer address text → canonical city id
+
+The two sides of "does this professional serve this customer's city" are stored in different
+vocabularies. Professional coverage is canonical ids (`professionals.base_city_id`,
+`professional_service_cities.city_id`, both FKs into `service_cities`). A customer's address is free
+text (`users.default_city`, `orders.service_city`, `sos_requests.service_city`) — it has to be,
+because a professional reads it to find the door and Google is what resolves it.
+
+This class is the single, testable translation, and it always translates **into** a canonical id.
+
+**How.** Both sides are reduced to one canonical form — NFC, geresh/gershayim and quotes stripped,
+case-folded, hyphens as spaces, whitespace collapsed (the normalization `V44`'s backfill used).
+Then trailing hyphen components are dropped, longest first: Google answers `תל אביב-יפו` and the
+catalogue row is `תל אביב`.
+
+**Only hyphen components are ever dropped — never space-separated words.** That is what keeps this
+from being a prefix match: `קרית גת` is one component and can never degrade to `קרית`. No fuzzy
+matching, no edit distance, no region fallback.
+
+**Unresolvable is a real answer.** Callers must treat it as "we do not cover this place", never as
+"no filter" — the latter is precisely how a Gush Dan professional reached an Eilat customer.
+
+**Known limitation.** The catalogue holds ~107 localities; Israel has many more. A customer in a
+small moshav will not resolve and will see an empty listing. That is a coverage-data gap, not a
+matching bug — the fix is to seed rows (or add a `service_city_aliases` table keyed on Google place
+ids), never to loosen the resolver.

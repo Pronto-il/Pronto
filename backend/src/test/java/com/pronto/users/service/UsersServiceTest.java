@@ -1,5 +1,7 @@
 package com.pronto.users.service;
 
+import com.pronto.auth.config.OtpPolicies;
+import com.pronto.auth.config.VerificationPolicy;
 import com.pronto.auth.service.PhoneNumberNormalizer;
 import java.util.List;
 import com.pronto.professionals.service.ProfessionalCoverageService;
@@ -10,6 +12,7 @@ import com.pronto.common.security.AuthenticatedUser;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.storage.service.StorageService;
+import com.pronto.users.dto.CustomerAddressRequest;
 import com.pronto.users.dto.UpdateUserMeRequest;
 import com.pronto.users.dto.UserMeResponse;
 import com.pronto.users.entity.User;
@@ -73,7 +76,7 @@ class UsersServiceTest {
         serviceAddressGeocoder = Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class);
         usersService = new UsersService(userRepository, professionalRepository, storageService,
                 professionalCoverageService, new PhoneNumberNormalizer("IL"), serviceAddressGeocoder,
-                new com.pronto.maps.service.SelectedPlaceValidator());
+                new com.pronto.maps.service.SelectedPlaceValidator(), new VerificationPolicy(OtpPolicies.enabled(), true, true));
         // MS4: every pre-existing test in this class describes an ordinary, fully-configured
         // professional, so coverage and categories are stubbed to a sane default here; the tests
         // that care override them per-test. ProfessionalCoverageService's own rules are covered by
@@ -105,8 +108,136 @@ class UsersServiceTest {
         return new UpdateUserMeRequest(
                 "ישראל ישראלי",
                 "050-223-4567",
-                new UpdateUserMeRequest.Address("תל אביב", "אלנבי", "12", "4", "2", "א", "קוד כניסה 1234",
+                new CustomerAddressRequest("תל אביב", "אלנבי", "12", "4", "2", "א", "קוד כניסה 1234",
                         "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"), new BigDecimal("34.7739")));
+    }
+
+    private static CustomerAddressRequest validAddress() {
+        return new CustomerAddressRequest("תל אביב", "אלנבי", "12", "4", "2", "א", "קוד כניסה 1234",
+                "ChIJprontoTestPlaceId", "Test Address, Israel", new BigDecimal("32.0811"),
+                new BigDecimal("34.7739"));
+    }
+
+    /** A customer who already has a saved home address, so "was it overwritten?" is answerable. */
+    private User customerWithSavedAddress() {
+        User user = new User("שם ישן", "customer@example.com", "hash", UserRole.CUSTOMER);
+        setField(user, "id", CALLER_ID);
+        user.setDefaultCity("חיפה");
+        user.setDefaultStreet("הרצל");
+        user.setDefaultHouseNumber("5");
+        when(userRepository.findById(CALLER_ID)).thenReturn(Optional.of(user));
+        return user;
+    }
+
+    // ---- the home address as its own endpoint (address-flow redesign) ----
+
+    @Test
+    void updateDefaultAddress_persistsTheSelectedAddress() {
+        // What "הפוך את זה לכתובת הבית" does: the address the customer just validated in the
+        // booking flow becomes their saved home address, and nothing else about the account moves.
+        User user = customerWithSavedAddress();
+
+        UserMeResponse response = usersService.updateDefaultAddress(customerCaller, validAddress());
+
+        assertThat(user.getDefaultCity()).isEqualTo("תל אביב");
+        assertThat(user.getDefaultStreet()).isEqualTo("אלנבי");
+        assertThat(user.getDefaultHouseNumber()).isEqualTo("12");
+        assertThat(user.getDefaultApartment()).isEqualTo("4");
+        assertThat(response.defaultAddress()).isNotNull();
+        assertThat(response.defaultAddress().city()).isEqualTo("תל אביב");
+        verify(userRepository, times(1)).save(user);
+    }
+
+    @Test
+    void updateDefaultAddress_touchesNeitherNameNorPhone() {
+        // The reason this endpoint exists rather than reusing PUT /api/users/me: saving an address
+        // must not require resending a phone number, because a phone number that comes back
+        // changed costs the customer their verification.
+        User user = customerWithSavedAddress();
+        user.setPhone("+972502234567");
+        user.setPhoneVerified(true);
+
+        usersService.updateDefaultAddress(customerCaller, validAddress());
+
+        assertThat(user.getFullName()).isEqualTo("שם ישן");
+        assertThat(user.getPhone()).isEqualTo("+972502234567");
+        assertThat(user.isPhoneVerified()).isTrue();
+    }
+
+    @Test
+    void updateDefaultAddress_adoptsTheSelectionAfterInvalidatingThePreviousOne() {
+        User user = customerWithSavedAddress();
+
+        usersService.updateDefaultAddress(customerCaller, validAddress());
+
+        ArgumentCaptor<SelectedPlace> captor = ArgumentCaptor.forClass(SelectedPlace.class);
+        InOrder inOrder = Mockito.inOrder(serviceAddressGeocoder);
+        inOrder.verify(serviceAddressGeocoder).invalidateCustomerDefault(user);
+        inOrder.verify(serviceAddressGeocoder).applyCustomerDefaultFromSelectedPlace(eq(user),
+                captor.capture(), any());
+        assertThat(captor.getValue().placeId()).isEqualTo("ChIJprontoTestPlaceId");
+    }
+
+    @Test
+    void updateDefaultAddress_withNoSelectedPlace_isRefusedAndChangesNothing() {
+        User user = customerWithSavedAddress();
+        CustomerAddressRequest freeText = new CustomerAddressRequest("תל אביב", "רחוב שלא קיים",
+                "9999", null, null, null, null, null, null, null, null);
+
+        assertThatThrownBy(() -> usersService.updateDefaultAddress(customerCaller, freeText))
+                .isInstanceOf(ApiException.class)
+                .extracting(ex -> ((ApiException) ex).getCode())
+                .isEqualTo(ErrorCode.VALIDATION_ERROR);
+
+        assertThat(user.getDefaultCity()).isEqualTo("חיפה");
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void updateDefaultAddress_professionalCaller_throwsForbidden() {
+        assertThatThrownBy(() -> usersService.updateDefaultAddress(professionalCaller, validAddress()))
+                .isInstanceOf(ApiException.class)
+                .extracting(ex -> ((ApiException) ex).getCode())
+                .isEqualTo(ErrorCode.FORBIDDEN);
+
+        verify(userRepository, never()).findById(any());
+        verify(userRepository, never()).save(any());
+    }
+
+    // ---- an omitted address leaves the saved one alone ----
+
+    @Test
+    void updateMe_withoutAnAddress_savesNameAndPhoneAndKeepsTheStoredAddress() {
+        // "Not selecting the option does not overwrite the existing home address", from the other
+        // direction: since registration stopped collecting an address, a customer may have none,
+        // and editing a name must not depend on inventing one. Omitting it means "leave it".
+        User user = customerWithSavedAddress();
+
+        UserMeResponse response = usersService.updateMe(customerCaller,
+                new UpdateUserMeRequest("ישראל ישראלי", "050-223-4567", null));
+
+        assertThat(response.fullName()).isEqualTo("ישראל ישראלי");
+        assertThat(user.getDefaultCity()).isEqualTo("חיפה");
+        assertThat(user.getDefaultStreet()).isEqualTo("הרצל");
+        assertThat(user.getDefaultHouseNumber()).isEqualTo("5");
+        verify(serviceAddressGeocoder, never()).invalidateCustomerDefault(any());
+        verify(serviceAddressGeocoder, never()).applyCustomerDefaultFromSelectedPlace(any(), any(), any());
+    }
+
+    @Test
+    void updateMe_withoutAnAddress_onACustomerWhoHasNone_stillSucceeds() {
+        // The registration-without-an-address cohort. There is nothing to keep and nothing to
+        // require; the profile screen must still save.
+        User user = new User("שם ישן", "customer@example.com", "hash", UserRole.CUSTOMER);
+        setField(user, "id", CALLER_ID);
+        when(userRepository.findById(CALLER_ID)).thenReturn(Optional.of(user));
+
+        UserMeResponse response = usersService.updateMe(customerCaller,
+                new UpdateUserMeRequest("ישראל ישראלי", "050-223-4567", null));
+
+        assertThat(response.defaultAddress()).isNull();
+        assertThat(user.getFullName()).isEqualTo("ישראל ישראלי");
+        verify(userRepository, times(1)).save(user);
     }
 
     // ---- address validation (V55) ----
@@ -124,7 +255,7 @@ class UsersServiceTest {
         when(userRepository.findById(CALLER_ID)).thenReturn(Optional.of(user));
 
         UpdateUserMeRequest freeTextOnly = new UpdateUserMeRequest("ישראל ישראלי", "050-223-4567",
-                new UpdateUserMeRequest.Address("תל אביב", "רחוב שלא קיים", "9999",
+                new CustomerAddressRequest("תל אביב", "רחוב שלא קיים", "9999",
                         null, null, null, null, null, null, null, null));
 
         assertThatThrownBy(() -> usersService.updateMe(customerCaller, freeTextOnly))
@@ -212,6 +343,60 @@ class UsersServiceTest {
                 .isEqualTo(ErrorCode.UNAUTHORIZED);
 
         verify(userRepository, never()).save(any());
+    }
+
+    // ---- phoneVerificationRequired: honest columns, separate policy answer -------------------
+
+    private UsersService usersServiceWithPhoneVerification(boolean required) {
+        return new UsersService(userRepository, professionalRepository, storageService,
+                professionalCoverageService, new PhoneNumberNormalizer("IL"), serviceAddressGeocoder,
+                new com.pronto.maps.service.SelectedPlaceValidator(),
+                new VerificationPolicy(OtpPolicies.enabled(), required, true));
+    }
+
+    private User unverifiedCustomer() {
+        User user = new User("ישראל ישראלי", "customer@example.com", "hash", UserRole.CUSTOMER);
+        setField(user, "id", CALLER_ID);
+        when(userRepository.findById(CALLER_ID)).thenReturn(Optional.of(user));
+        return user;
+    }
+
+    @Test
+    void getMe_reportsPhoneVerificationRequired_whenThePolicyAsksForIt() {
+        unverifiedCustomer();
+
+        UserMeResponse response = usersServiceWithPhoneVerification(true).getMe(CALLER_ID);
+
+        assertThat(response.phoneVerified()).isFalse();
+        assertThat(response.phoneVerificationRequired()).isTrue();
+    }
+
+    @Test
+    void getMe_reportsPhoneVerificationNotRequired_whenVerificationIsSwitchedOff() {
+        // The signal that stops the capture screen offering to send a code nothing will redeem.
+        // Note what did NOT change: phoneVerified is still false, honestly, because the number
+        // genuinely was not proved. The two answer different questions and the client needs both.
+        unverifiedCustomer();
+
+        UserMeResponse response = usersServiceWithPhoneVerification(false).getMe(CALLER_ID);
+
+        assertThat(response.phoneVerified()).isFalse();
+        assertThat(response.phoneVerificationRequired()).isFalse();
+    }
+
+    @Test
+    void getMe_neverAdjustsTheVerifiedColumnsToMatchThePolicy() {
+        // The temptation this guards against: making phoneVerified report `true` while
+        // verification is off would silence the client with one less field, and would put a lie in
+        // the record that decides who gets asked to verify when it is turned back on.
+        User user = unverifiedCustomer();
+        user.setEmailVerified(false);
+        user.setPhoneVerified(false);
+
+        UserMeResponse response = usersServiceWithPhoneVerification(false).getMe(CALLER_ID);
+
+        assertThat(response.emailVerified()).isFalse();
+        assertThat(response.phoneVerified()).isFalse();
     }
 
     @Test

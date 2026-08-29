@@ -2,7 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, useReducedMotion } from 'framer-motion';
 import type { TargetAndTransition } from 'framer-motion';
-import { Button, EMPTY_ADDRESS, PageHeader, toAddressValue } from '../../shared/components';
+import {
+  Button,
+  EMPTY_ADDRESS,
+  PageHeader,
+  isAddressComplete,
+  toAddressValue,
+  validateAddress,
+  validateAddressTextOnly,
+} from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
 import { AddressSelectionStep } from '../booking';
 import type { AddressMode } from '../booking';
@@ -106,8 +114,13 @@ export default function ProfessionMatchPage() {
   // The draft IS this journey now, rather than one of several drafts keyed by issue. There is
   // only ever one in localStorage, so "does it match?" reduces to "is there one?".
   const draftMatchesIssue = draft != null;
+  // `draft?.address` alone was the condition here, and it is where the 400 came from: an
+  // `AddressValue` full of empty strings is still an object, so a draft written by the back
+  // button (which persists whatever was on screen, including nothing) resumed straight into the
+  // wheel — and the wheel's whole job is to warm `GET /api/bookings/professionals`, which
+  // requires city/street/houseNumber. `isAddressComplete` asks the question that was meant.
   const [phase, setPhase] = useState<'address' | 'matching'>(
-    draftMatchesIssue && draft?.address ? 'matching' : 'address',
+    draftMatchesIssue && isAddressComplete(draft?.address) ? 'matching' : 'address',
   );
   const [address, setAddress] = useState<AddressValue>(() => {
     if (draftMatchesIssue && draft?.address) {
@@ -147,12 +160,19 @@ export default function ProfessionMatchPage() {
     navigate('/issues/new');
   }
 
-  /** Same required-field check the booking flow's own address step applies. */
+  /**
+   * The same check the booking flow's own address step applies — now by delegation rather than
+   * by a third copy of three `if`s. The copies had already drifted: this one never learned the
+   * "must have been selected from Google" rule, so an address typed here could reach the wheel
+   * (and the listing prefetch behind it) unvalidated, only to be refused one screen later.
+   *
+   * Mode-aware for the same reason every other surface is: the customer's own saved home address
+   * may predate address validation and is grandfathered by the backend, so demanding a
+   * re-selection of it would stop a customer mid-flow over an address that works.
+   */
   function handleAddressContinue() {
-    const errors: Partial<Record<keyof AddressValue, string>> = {};
-    if (!address.city.trim()) errors.city = 'יש להזין עיר.';
-    if (!address.street.trim()) errors.street = 'יש להזין רחוב.';
-    if (!address.houseNumber.trim()) errors.houseNumber = 'יש להזין מספר בית.';
+    const errors =
+      addressMode === 'DEFAULT' ? validateAddressTextOnly(address) : validateAddress(address);
     setAddressErrors(errors);
     if (Object.keys(errors).length > 0) {
       return;
@@ -217,8 +237,13 @@ export default function ProfessionMatchPage() {
     // Skipped for an SOS issue: Pronto SOS dispatches on the customer's behalf and never
     // renders this listing, so warming it would be a wasted request against an endpoint the
     // SOS route does not use.
+    // The address guard is not redundant with `phase === 'matching'`: this effect is what turns
+    // an address into a network request, so it re-states the precondition rather than trusting
+    // that every path into the matching phase has already checked it. Without an address there
+    // is nothing to warm — the wheel still spins and the booking flow's own address step takes
+    // over on the other side.
     if (phase !== 'matching' || !resolved || !isKnownCategory || preloadRef.current
-        || resolved.urgencyType === 'SOS') {
+        || resolved.urgencyType === 'SOS' || !isAddressComplete(address)) {
       setIsListingReady(true);
       return;
     }
@@ -334,6 +359,7 @@ export default function ProfessionMatchPage() {
           onModeChange={setAddressMode}
           errors={addressErrors}
           onContinue={handleAddressContinue}
+          offerSaveAsHome
         />
       </div>
     );

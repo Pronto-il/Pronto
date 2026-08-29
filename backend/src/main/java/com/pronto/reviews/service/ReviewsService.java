@@ -9,6 +9,7 @@ import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
 import com.pronto.professionals.repository.ProfessionalRepository;
 import com.pronto.reviews.dto.CreateReviewRequest;
+import com.pronto.reviews.dto.PublicReviewResponse;
 import com.pronto.reviews.dto.ReviewListResponse;
 import com.pronto.reviews.dto.ReviewResponse;
 import com.pronto.reviews.dto.UpdateReviewRequest;
@@ -84,7 +85,24 @@ public class ReviewsService {
         return toResponse(review, customerName);
     }
 
-    /** Either role. {@code 404} if the professional itself doesn't exist. */
+    /**
+     * <b>Public.</b> No authentication of any kind — a guest choosing between professionals reads
+     * the same ratings and comments a signed-in customer does, and requiring an account to find out
+     * whether someone is any good is the auth wall deferred authentication exists to move.
+     *
+     * <p>Takes no caller: there is nothing here to authorize. A review is published content about a
+     * professional who is themselves publicly listed, and the result does not vary by who is asking
+     * — no per-caller branch, no "your own review" marker, nothing that could differ between an
+     * anonymous and an authenticated read.
+     *
+     * <p>Returns {@link PublicReviewResponse}, which deliberately omits the reviewer's internal
+     * user id and the originating order id — see that record's Javadoc for why that mattered the
+     * moment this endpoint stopped requiring a JWT.
+     *
+     * <p>{@code 404} if the professional itself doesn't exist, unchanged. That discloses nothing
+     * new: {@code GET /api/professionals/{id}} is already {@code permitAll} and answers the same
+     * question directly.
+     */
     @Transactional(readOnly = true)
     public ReviewListResponse getReviewsForProfessional(Long professionalId) {
         if (!professionalRepository.existsById(professionalId)) {
@@ -93,8 +111,8 @@ public class ReviewsService {
         List<Review> reviews = reviewRepository.findByProfessionalIdOrderByCreatedAtDesc(professionalId);
 
         BigDecimal averageRating = reviews.isEmpty() ? null : average(reviews);
-        List<ReviewResponse> responses = reviews.stream()
-                .map(r -> toResponse(r, resolveCustomerName(r.getCustomerId())))
+        List<PublicReviewResponse> responses = reviews.stream()
+                .map(r -> toPublicResponse(r, resolveCustomerName(r.getCustomerId())))
                 .toList();
         return new ReviewListResponse(professionalId, averageRating, reviews.size(), responses);
     }
@@ -154,10 +172,17 @@ public class ReviewsService {
         return avg.isPresent() ? BigDecimal.valueOf(avg.getAsDouble()).setScale(2, RoundingMode.HALF_UP) : null;
     }
 
+    /** The author's own view of their own review — {@code POST}/{@code PUT} only. Unchanged. */
     private ReviewResponse toResponse(Review review, String customerName) {
         return new ReviewResponse(review.getId(), review.getProfessionalId(), review.getCustomerId(), customerName,
                 review.getOrderId(), review.getRating(), review.getComment(), review.getCreatedAt(),
                 review.getUpdatedAt());
+    }
+
+    /** The discovery view, readable by anyone — see {@link PublicReviewResponse}. */
+    private PublicReviewResponse toPublicResponse(Review review, String customerName) {
+        return new PublicReviewResponse(review.getId(), review.getProfessionalId(), customerName,
+                review.getRating(), review.getComment(), review.getCreatedAt(), review.getUpdatedAt());
     }
 
     private ApiException forbidden() {

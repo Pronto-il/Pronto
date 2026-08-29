@@ -713,3 +713,23 @@ reconnect → refetch REST → continue.
 | `SosRealtimeDelivery` | Outbound edge + per-recipient failure isolation. |
 | `SosRealtimeMessage` | The stable wire DTO. Never a JPA entity. |
 | `SosRealtimeEventType` | Wire vocabulary, deliberately distinct from `SosEventType`. |
+
+## SOS had the same service-coverage gap, and it is closed the same way
+
+`SosCandidateRepository.findEligible` filtered on category, live SOS availability, approval and
+onboarding — with no geographic predicate, exactly like the standard listing. A Gush Dan
+professional was a candidate for an Eilat emergency.
+
+The radius filter applied afterwards in `SosMatchingService` *usually* hid it, which is why it went
+unnoticed. That is not a substitute: radius is measured from a live device position that may be
+anywhere at the moment of the query, it degrades to "unavailable" whenever the routing provider is
+down, and "40 km away right now" is a different claim from "I work there".
+
+`findEligible` now also applies `professionals.ProfessionalServiceAreaMatch.SERVES_CITY_JPQL`, from
+the same constant the standard listing uses.
+
+**An uncovered city is a `SERVICE_AREA_UNCOVERED` degradation, not an empty result.** The
+distinction matters more here than anywhere else on the platform: "nobody is available right now"
+invites a customer with an active leak to wait and retry, while "we do not operate where you are"
+tells them to call somebody else. `SosDispatchService.failDegraded` records the distinct history
+detail.

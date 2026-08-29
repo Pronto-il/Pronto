@@ -38,6 +38,7 @@ import com.pronto.maps.service.ArrivalVerifier;
 import com.pronto.maps.service.ServiceAddressGeocoder;
 import com.pronto.matching.DistanceEtaStrategy;
 import com.pronto.matching.EtaResult;
+import com.pronto.locations.service.ServiceCityResolver;
 import com.pronto.matching.ServiceLocation;
 import com.pronto.notifications.entity.NotificationMessageType;
 import com.pronto.notifications.service.NotificationService;
@@ -128,6 +129,8 @@ public class BookingsService {
     private final IssueRepository issueRepository;
     private final ProfessionalRepository professionalRepository;
     private final ProfessionalListingRepository professionalListingRepository;
+    /** Customer address text -> canonical service_cities id. See listProfessionals. */
+    private final ServiceCityResolver serviceCityResolver;
     private final AvailabilitySlotRepository availabilitySlotRepository;
     private final OrderRepository orderRepository;
     private final UserRepository userRepository;
@@ -147,6 +150,7 @@ public class BookingsService {
     public BookingsService(IssueRepository issueRepository,
                             ProfessionalRepository professionalRepository,
                             ProfessionalListingRepository professionalListingRepository,
+                            ServiceCityResolver serviceCityResolver,
                             AvailabilitySlotRepository availabilitySlotRepository,
                             OrderRepository orderRepository,
                             UserRepository userRepository,
@@ -171,6 +175,7 @@ public class BookingsService {
         this.issueRepository = issueRepository;
         this.professionalRepository = professionalRepository;
         this.professionalListingRepository = professionalListingRepository;
+        this.serviceCityResolver = serviceCityResolver;
         this.availabilitySlotRepository = availabilitySlotRepository;
         this.orderRepository = orderRepository;
         this.userRepository = userRepository;
@@ -221,8 +226,28 @@ public class BookingsService {
             resolvedCategoryId = requireListingCategory(categoryId);
         }
 
-        List<ProfessionalCard> professionals =
-                professionalListingRepository.listByCategory(resolvedCategoryId, callerId);
+        // THE GEOGRAPHIC FILTER. Resolved to a canonical service_cities id before the query, so
+        // eligibility is decided by the professional's own declared coverage
+        // (professional_service_cities) rather than by distance, by base city, or -- as it was
+        // until this line existed -- by nothing at all.
+        //
+        // An unresolvable city short-circuits to an empty listing rather than binding null into
+        // the query. Same observable result, but it is a decision with a log line instead of an
+        // empty result set produced by SQL null semantics, and it keeps "we do not cover this
+        // place" distinguishable in the logs from "nobody in this covered city does this trade".
+        Optional<Long> serviceCityId = serviceCityResolver.resolveId(location == null ? null : location.city());
+        if (serviceCityId.isEmpty()) {
+            log.info("bookings.listing.uncovered categoryId={} city=\"{}\" reason=city-not-in-catalogue",
+                    resolvedCategoryId, location == null ? null : location.city());
+            return new ProfessionalListingResponse(resolvedIssueId, resolvedCategoryId, List.of());
+        }
+
+        List<ProfessionalCard> professionals = professionalListingRepository
+                .listByCategoryAndServiceCity(resolvedCategoryId, callerId, serviceCityId.get());
+        // Sorting runs on the already-filtered candidate set, so RECOMMENDED/CHEAPEST/FASTEST all
+        // rank the same location-eligible professionals. Ordering can only ever reorder what the
+        // query returned -- there is no path by which a sort mode reintroduces someone the
+        // coverage filter excluded.
         professionals = enrichAndSort(callerId, professionals, location, parseSort(sortParam, ProfessionalSort.CHEAPEST));
         return new ProfessionalListingResponse(resolvedIssueId, resolvedCategoryId, professionals);
     }

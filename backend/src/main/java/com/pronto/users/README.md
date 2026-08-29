@@ -43,6 +43,22 @@ profile, update own profile — `CUSTOMER` only, delete own account). Implements
   existing/in-flight order. `email` stays read-only on purpose (changing it would need to
   re-trigger email verification, out of scope here). See
   `docs/architecture/product-ms10-profile-redesign-design.md` §3.2/§4.
+  **As of the address-flow redesign**: `defaultAddress` is **optional** on this request, and
+  omitting it leaves the saved address exactly as it was (there is no "clear my address" here,
+  and there never was). It had to become optional because customer registration stopped
+  collecting an address — a customer may legitimately have none, and requiring one here would
+  mean such a customer could not correct a typo in their own name without first inventing a home
+  address. A *supplied* address is unchanged: required in full, and must carry a selected place.
+- `PUT /api/users/me/default-address` — new, address-flow redesign. `CUSTOMER` only, same
+  route-level gate plus service-layer re-check. The home address on its own
+  (`dto.CustomerAddressRequest` as the whole body), with identical rules to the address half of
+  `PUT /api/users/me`. Exists for the booking flow's "הפוך את זה לכתובת הבית", which has an
+  address and nothing else: routing it through `PUT /api/users/me` would mean resending the
+  customer's name and phone from client-side state to save something unrelated to either — and
+  `phone` is not inert, since a value that comes back changed costs the customer their phone
+  verification. Deliberately **not** behind `UsersWebConfig`'s rate limiter; that limiter exists
+  because `PUT /api/users/me` is a `DUPLICATE_PHONE` enumeration oracle, and this endpoint takes
+  no phone number.
 - `DELETE /api/users/me` — soft-delete + PII anonymization (`deleted_at`, `full_name`,
   `email` per the exact rule in `api-contract.md` §2.5). Does **not** touch
   `professionals`/`issues`/`orders` rows — flagged there as a dependency later
@@ -56,10 +72,11 @@ profile, update own profile — `CUSTOMER` only, delete own account). Implements
 | `entity.UserRole` | `CUSTOMER` \| `PROFESSIONAL` \| `ADMIN` enum, `@Enumerated(STRING)`. `ADMIN` is new as of Production Roadmap MS1 — see the MS1 paragraph under Status. |
 | `repository.UserRepository` | `findByEmailIgnoreCase`, `existsByEmailIgnoreCase` (case-insensitive, matches `ux_users_email_lower`). |
 | `dto.UserMeResponse` / `dto.ProfessionalInfo` / `dto.DefaultAddressInfo` | `GET`/`PUT /api/users/me` response shape. `DefaultAddressInfo` is new as of the MS3/MS4 product-corrections pass. `UserMeResponse` gained a top-level `phone` field as of the professional weekly availability calendar design's M2 — no new nested DTO needed (unlike `defaultAddress`, `phone` is a plain scalar, read directly off `User.getPhone()`). `ProfessionalInfo` gained `profileImageUrl` as of MS10. |
-| `dto.UpdateUserMeRequest` | New, MS10. Request DTO for `PUT /api/users/me` — `fullName`/`phone`/`defaultAddress` (nested `Address` record, locally defined, mirrors `auth.dto.DefaultAddressRequest`'s shape without depending on it). |
-| `config.UsersWebConfig` | New, MS10. Registers a `RoleRequiredInterceptor` scoped to `PUT` only on `/api/users/me` (`CUSTOMER`-only) — mirrors `reviews.config.ReviewsWebConfig`'s same-path/different-HTTP-method-gate precedent. `GET`/`DELETE` on the same path stay ungated. |
-| `service.UsersService` | `getMe`/`updateMe`/`deleteMe` business logic. |
-| `controller.UsersController` | `/api/users/me` GET/PUT/DELETE. |
+| `dto.UpdateUserMeRequest` | New, MS10. Request DTO for `PUT /api/users/me` — `fullName`/`phone`/`defaultAddress`. As of the address-flow redesign `defaultAddress` is optional (omitted → the saved address is left alone) and its type was extracted to the top-level `dto.CustomerAddressRequest`, which the new address-only endpoint takes as its whole body. |
+| `dto.CustomerAddressRequest` | New, address-flow redesign. A customer's home address, shared by `PUT /api/users/me` (nested) and `PUT /api/users/me/default-address` (the whole body). Locally defined rather than reusing `auth.dto.DefaultAddressRequest`, avoiding a `users -> auth` dependency edge — the same convention `dto.DefaultAddressInfo` already established. `houseNumber` is digits-only (`maps.HouseNumbers`). |
+| `config.UsersWebConfig` | New, MS10. Registers a `RoleRequiredInterceptor` scoped to `PUT` only on `/api/users/me` and (address-flow redesign) `/api/users/me/default-address` (`CUSTOMER`-only) — mirrors `reviews.config.ReviewsWebConfig`'s same-path/different-HTTP-method-gate precedent. `GET`/`DELETE` on the same path stay ungated. |
+| `service.UsersService` | `getMe`/`updateMe`/`updateDefaultAddress`/`deleteMe` business logic. The two write paths share one private `applyDefaultAddress`, so "invalidate the previous resolution, then adopt the selection" is written once. |
+| `controller.UsersController` | `/api/users/me` GET/PUT/DELETE, `/api/users/me/default-address` PUT. |
 
 All three endpoints require a valid JWT — enforced entirely by `auth`'s `SecurityConfig` +
 `JwtAuthenticationFilter`; this package's controller has no auth logic of its own beyond
@@ -202,3 +219,18 @@ convenience; the rule holds against a direct API call with a perfectly valid JWT
 
 `docs/production-roadmap/reports/prod-MS1-report.md` · `docs/architecture/data-model.md`
 "Production MS1" section · `V46`, `V48`.
+
+## `GET /api/users/me` — `phoneVerificationRequired`
+
+Added with the OTP master switch (`OTP_VERIFICATION_ENABLED`, see the `auth` README).
+`UsersService#getMe` reports it straight from `auth.config.VerificationPolicy`.
+
+It exists because `phoneVerified: false` describes two states a client has to treat differently —
+**unproved and being asked**, and **unproved and nobody is asking** — and the phone-capture screen
+was reading the first meaning into both. With verification switched off it would have offered to send
+a code that `AuthService#capturePhone` now refuses to dispatch.
+
+`emailVerified` and `phoneVerified` still report the stored columns and are never adjusted by policy.
+Making `phoneVerified` report `true` under the relaxed policy would have removed the need for this
+field and corrupted the only record of who still owes a verification — the record that decides who
+gets asked when the requirement is turned back on.

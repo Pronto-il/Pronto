@@ -367,8 +367,22 @@ public class AuthService {
      * account may call this repeatedly, and each call replaces the unverified number. It refuses to
      * touch a number that is already verified — changing a proved identity is a different, more
      * dangerous operation than supplying a missing one, and it deliberately has no endpoint in MS1.
+     *
+     * <p><b>Refused outright while phone verification is not required.</b> This endpoint exists to
+     * send a verification code, and when {@link VerificationPolicy} says no phone needs proving
+     * there is no code to send — dispatching one anyway would call SNS for a challenge nothing will
+     * ever ask the user to redeem, which is exactly what turning verification off is supposed to
+     * stop. It answers rather than silently succeeding because a client that reached here under
+     * this policy is out of date, and "nothing happened" is the least debuggable outcome. The
+     * frontend does not reach it: {@code GET /api/users/me} reports
+     * {@code phoneVerificationRequired: false} and the capture screen redirects away.
      */
     public OtpChallengeResponse capturePhone(Long userId, CapturePhoneRequest request) {
+        if (!verificationPolicy.isSmsVerificationRequired()) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR,
+                    "Phone verification is not required on this deployment.",
+                    List.of(new FieldError("phone", "verification is not required")));
+        }
         User user = accountWriter.attachPhone(userId, request.phone());
         IssuedChallenge challenge = otpService.issue(user, OtpPurpose.PHONE_VERIFICATION, false);
         requireDelivered(challenge);
@@ -479,13 +493,17 @@ public class AuthService {
         }
 
         if (request.role() == UserRole.CUSTOMER) {
-            if (request.customer() == null || request.customer().defaultAddress() == null) {
-                errors.add(new FieldError("customer.defaultAddress", "is required for customer registration"));
-            } else {
-                // Address validation (V55): a registering customer must have picked their address
-                // from autocomplete, not merely typed one. Checked here rather than inside
-                // AuthAccountWriter so it runs before the transaction opens -- a submission that
-                // fails leaves no row behind, which is the rule this whole method exists to keep.
+            // An address is NO LONGER required to register (address-flow redesign). It is a
+            // property of a job, and the booking flow collects it when it is needed; a customer
+            // acquires a saved one by asking for it there or by editing their profile. See
+            // CustomerRegistrationData.
+            //
+            // A supplied one is still held to the full rule: address validation (V55) means a
+            // registering customer who does send an address must have picked it from
+            // autocomplete rather than merely typed it. Checked here rather than inside
+            // AuthAccountWriter so it runs before the transaction opens -- a submission that
+            // fails leaves no row behind, which is the rule this whole method exists to keep.
+            if (request.customer() != null && request.customer().defaultAddress() != null) {
                 DefaultAddressRequest address = request.customer().defaultAddress();
                 selectedPlaceValidator.requireSelected(address.placeId(), address.formattedAddress(),
                         address.latitude(), address.longitude(),

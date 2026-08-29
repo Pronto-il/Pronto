@@ -10,6 +10,7 @@ export {
 export {
   registerCustomer,
   registerProfessional,
+  checkContactAvailability,
   verifyEmail,
   verifyPhone,
   resendOtp,
@@ -26,6 +27,8 @@ export type {
   UserSummary,
   RegisterCustomerPayload,
   RegisterProfessionalPayload,
+  ContactField,
+  AvailabilityResponse,
   LoginPayload,
   AuthNextStep,
   AuthSession,
@@ -38,8 +41,14 @@ export type {
 
 export * from './resourceKeys';
 
-export { getMe, deleteMe, updateMe } from './users';
-export type { ProfessionalInfo, UserMeResponse, UserMeDefaultAddress, UpdateUserMeRequest } from './users';
+export { getMe, deleteMe, updateMe, saveDefaultAddress, toCustomerAddressPayload } from './users';
+export type {
+  ProfessionalInfo,
+  UserMeResponse,
+  UserMeDefaultAddress,
+  UpdateUserMeRequest,
+  CustomerAddressPayload,
+} from './users';
 
 export {
   CATEGORIES,
@@ -62,6 +71,10 @@ export type { ServiceRegionResponse, ServiceCityResponse } from './serviceAreas'
 export { GENERIC_ERROR_MESSAGE, getFieldErrorMessages } from './errorMessages';
 
 export { uploadImage, getPresignedImageUrls } from './storage';
+/** Guest upload session — see `guestSessionStore.ts`. `clearGuestSession` has exactly one caller
+ *  (`BookingDraftProvider.clearDraft`); the token is otherwise attached by `httpClient` and minted
+ *  by `uploadImage`, so no screen ever handles it. */
+export { clearGuestSession, getGuestSessionToken } from './guestSession';
 export type { UploadImageResponse, PresignedImageUrlEntry, PresignedImageUrlsResponse } from './storage';
 
 export { classifyIssue, createIssue, getIssue, updateIssueCategory } from './issues';
@@ -81,6 +94,7 @@ export type {
 } from './issues';
 
 export {
+  IncompleteServiceLocationError,
   getProfessionalsForIssue,
   prefetchProfessionalListing,
   getAvailableWindows,
@@ -143,7 +157,7 @@ export type {
 } from './availability';
 
 export { createReview, getReviews } from './reviews';
-export type { CreateReviewRequest, ReviewResponse, ReviewListResponse } from './reviews';
+export type { CreateReviewRequest, ReviewResponse, PublicReviewResponse, ReviewListResponse } from './reviews';
 
 export { addFavorite, removeFavorite, getFavorites } from './favorites';
 export type { FavoriteProfessionalSummary, FavoritesListResponse } from './favorites';

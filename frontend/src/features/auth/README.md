@@ -25,12 +25,17 @@ Feature components (composed by the pages below):
   `AnimatePresence`/`stepTransition`-animated per-stage viewport, and the back/primary footer
   button row. Does **not** own field state, per-field validation, or the API call — the
   caller wraps it in its own `<form onSubmit=...>` and owns the stage content.
-- `CustomerRegisterForm` — a **3-stage** wizard (design doc §6.2): (1) basic info — full
-  name, email, password, confirm password, **phone** (see "phone" note below); (2) address
-  (`AddressFormFields`, unchanged: city/street/house number required, apartment/floor/
-  entrance/notes optional); (3) read-only confirmation summary + the real submit
-  (`registerCustomer()`, unchanged — still one `POST /api/auth/register`, all fields
-  collected across the 3 UI stages then sent together). A submit-time field error
+- `CustomerRegisterForm` — a **2-stage** wizard (design doc §6.2, address stage removed by the
+  address-flow redesign): (1) account details — full name, email, password, confirm password,
+  **phone** (see "phone" note below); (2) read-only confirmation summary + the real submit
+  (`registerCustomer()` — one `POST /api/auth/register`, now sending `customer: null`).
+  **Registration collects no address.** An address is a property of a job, not of an account:
+  the booking flow asks for it after AI classification, immediately before anything needs it,
+  and a customer saves it to their profile only by ticking "הפוך את זה לכתובת הבית" there or by
+  editing it on `/profile`. Asking at registration bought a mandatory extra screen and — for
+  anybody booking on a parent's behalf — a saved default that was wrong on day one. The backend
+  makes this safe rather than merely convenient: `customer.defaultAddress` is optional on
+  `POST /api/auth/register` and `users.default_*` has always been nullable. A submit-time field error
   (`DUPLICATE_EMAIL`, or a `VALIDATION_ERROR`'s field-level messages) routes the wizard back
   to whichever stage owns the offending field (design doc §6.3) rather than only setting
   local state on stage 3, where the submit button lives.
@@ -213,3 +218,118 @@ still blank until the registrant acts (nothing is pre-filled on their behalf, pe
 stays independently editable afterwards (§12), and the times are the same 24-hour `TimeField` the
 availability dashboard uses (§13).
 
+
+## Registration validation — everything is settled before the confirmation screen
+
+`CustomerRegisterForm`'s stage 2 used to be where a customer discovered that their phone number was
+malformed, or that the address they had just chosen a password for was already registered: the whole
+form filled in, reviewed, submitted, and only then bounced back to stage 1. Nothing is deferred to
+submit any more, and the work splits along one line — **what the browser can know on its own, and
+what only the server can**.
+
+### Locally answerable rules — `registrationValidation.ts`
+
+Name length, email shape, phone shape, password length, confirmation match. Each is a named function
+so the wizard's "may I advance?" question has one answer instead of one inline `if` per field. They
+run **on blur** (so the error attaches to the field the customer just left) **and again on
+Continue** (so a field they never focused cannot slip through).
+
+The phone rule is deliberately **shape only** — `+972…`, `00972…`, `0…` with a plausible digit
+count. Whether a number is a real, assignable, SMS-capable line is a question about a numbering
+plan, `auth.service.PhoneNumberNormalizer` answers it with libphonenumber, and a copy of the Israeli
+mobile-prefix list living in this feature would start silently rejecting legitimate customers the
+day a new prefix is allocated. The precise verdict arrives from the availability check below — still
+on blur, still well before the summary.
+
+### Uniqueness — `useContactAvailability.ts`
+
+No browser can know whether an address is registered, and this hook does not pretend otherwise: it
+asks `POST /api/auth/availability` and puts the answer under the field.
+
+**Blur, not keystroke.** That endpoint is rate limited at 20 requests per 10 minutes per client —
+tightly, on purpose, because it is the cheapest form of an account-existence disclosure (see the
+backend `auth` README). A debounced per-character caller would spend that entire budget on one slow
+typist and then start receiving `429`s on the checks that matter. "The customer finished entering the
+field" is exactly what `blur` means, and it is one request per value. Settled answers are cached per
+trimmed value so tabbing back over an unchanged field re-asks nothing.
+
+**A failed check does not block.** `unknown` — offline, rate limited, 5xx — is explicitly
+non-blocking, and is not cached (it is the absence of an answer, not an answer). Registration
+performs its own duplicate checks and is the authoritative gate; refusing to let somebody register
+because a convenience endpoint was unreachable would trade a UX improvement for an outage.
+
+**Continue awaits both checks** rather than racing them, so pressing it the instant the last field is
+filled waits for the verdict instead of sailing past a request still in flight.
+
+### `DUPLICATE_EMAIL`/`DUPLICATE_PHONE` handling at submit is still there, and is not redundant
+
+The availability answer is true when given and can be false a minute later while the customer picks a
+password. The 409 handling is that race, and it routes back to stage 1 where the field lives.
+
+Tests: `CustomerRegisterForm.test.tsx` (21 cases), covering each blocked-advance path, both
+duplicates reported on blur with no registration attempt, the one-request-per-value budget, the
+unreachable-check case, and the submit-time race.
+
+## Where registration ends is the server's answer, not the page's assumption
+
+`CustomerRegisterPage` and `ProfessionalRegisterPage` both used to `navigate('/verify', {state})`
+unconditionally on success. That was correct while `POST /api/auth/register` always answered
+`VERIFY_EMAIL` with a challenge, and it broke the moment verification could be switched off: with
+`OTP_VERIFICATION_ENABLED=false` the backend creates the account and answers `AUTHENTICATED` with a
+real **session** and `challenge: null`, and `AuthChallengePage` treats a challengeless state as "no
+active flow" — so a successful registration rendered *"התהליך פג / נדרשת התחלה מחדש"* and threw a
+valid token away.
+
+`useRegistrationLanding` is the fix, and it is a shared hook rather than a copy in each page for the
+reason `useSessionLanding`'s own Javadoc gives — two copies is how one of them forgets a case. It
+handles the three answers the endpoint can give, exactly as `AuthChallengePage.advance` already did:
+
+| `nextStep` | what it means | where the user goes |
+|---|---|---|
+| `AUTHENTICATED` + `session` | verification is off, or already satisfied | adopted via `useSessionLanding` → the role's landing screen (or the booking draft) |
+| anything with a `challenge` | the ordinary verified flow | `/verify`, challenge in router state |
+| `LOGIN` | account complete, no session returned | `/login` |
+
+## The phone-capture screen asks two questions, not one
+
+`PhoneCapturePage` used to redirect only on `user.phoneVerified`. With verification switched off that
+flag stays `false` — correctly, because the number genuinely was not proved — so the screen would
+have offered to send a code the backend has switched off (`AuthService#capturePhone` refuses it under
+that policy).
+
+`GET /api/users/me` therefore returns **`phoneVerificationRequired`** alongside `phoneVerified`, and
+the screen redirects when either "already proved" or "nobody is asking" holds. The backend
+deliberately did **not** solve this by making `phoneVerified` report `true` under the policy: that
+would put a lie in the one record that decides who gets asked to verify when verification is turned
+back on.
+
+Tests: `useRegistrationLanding.test.tsx` (7) — all three landing branches plus the regression
+assertion that an `AUTHENTICATED` response never reaches `/verify`, and the three capture-screen
+redirect cases.
+
+## Professional registration validates as early as customer registration
+
+Stage 1 of `ProfessionalRegisterForm` now runs the **same** rules and the **same** availability
+mechanism the customer wizard uses — `registrationValidation.ts` and `useContactAvailability`, not a
+second implementation. Registration rules are identical for both roles (one `RegisterRequest`, one
+`@Email`, one `PhoneNumberNormalizer`, one 8-character password), so there was nothing for a
+separate copy to express — and the copies had already drifted: this form checked only that the phone
+field was non-empty, so `12345` advanced here while the customer flow rejected it.
+
+Local rules and the blur-driven availability check both run before Continue, and Continue awaits any
+in-flight check rather than racing it.
+
+### Why `DUPLICATE_PHONE` used to become "משהו השתבש, נסו שוב"
+
+The catch block had a branch for `DUPLICATE_EMAIL` and none for `DUPLICATE_PHONE`. The unhandled
+code fell through to `getFieldErrorMessages`, which returns `null` for anything that is not
+`VALIDATION_ERROR`, and landed on the generic banner — so a registrant who had just completed six
+stages was told nothing about what was wrong.
+
+`mapDuplicateContactError` (in `registrationValidation.ts`) is now the single mapping both forms
+call, so neither can know about fewer error codes than the other. `VALIDATION_ERROR` still falls
+through to `getFieldErrorMessages` for per-field attribution; the generic banner keeps exactly one
+job — failures there is nothing specific to say about.
+
+A duplicate reported at final submit routes back to stage 1 via `routeFieldErrors` with every other
+stage's answers still in state, so only the offending field needs correcting.

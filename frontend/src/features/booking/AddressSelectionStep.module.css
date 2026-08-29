@@ -26,3 +26,11 @@
   font-weight: 600;
   color: var(--color-text-primary);
 }
+
+/* "הפוך את זה לכתובת הבית" failed to save. Sits between the checkbox and Continue, where the
+   action that failed was taken, rather than in a page-level banner. */
+.saveError {
+  margin: 0;
+  color: var(--color-danger, var(--color-text-primary));
+  font-size: 13px;
+}

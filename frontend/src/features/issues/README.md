@@ -208,3 +208,31 @@ its own address step stays one explicit "back" away for a customer who wants to 
 - **Longer result hold.** `SUCCESS_HOLD_MS` 900ms → 1900ms. At the old length the result
   flashed past before it could be read, which defeats the point of the animation. Still no
   extra click; the screen leaves on its own.
+
+## The unsupported screen shows what Pronto *does* cover
+
+`UnsupportedProfessionStep` says "we don't do that". `SupportedCategoriesList`, rendered directly
+below it, answers the question that leaves open — is Pronto worth coming back to?
+
+**The list comes from `GET /api/categories`**, which projects the seeded `categories` table. That is
+the same table `ai.catalog.ServiceCategoryCatalog` reads to build the classifier's category enum, so
+the trades shown here and the set a classification can resolve to are the same rows **by
+construction**. A category added or removed by a migration changes both at once, with no frontend
+release.
+
+That rules out the tempting shortcut: `shared/api/categories.ts` exports a static `CATEGORIES` array
+with the right Hebrew names in it, but it is a hand-maintained mirror (its own doc comment says to
+replace it with a fetch once an endpoint exists — the endpoint exists). Rendering "what we support"
+from a copy is exactly the drift the one screen whose job is coverage accuracy must not have. A test
+asserts the rendered list matches the server's answer and *not* the static mirror.
+
+**States.** Loading renders nothing — the rejection message is complete on its own and a skeleton
+would push it around the screen. A failed request and an empty catalogue are both treated as "omit
+the section": a customer who has just been told Pronto cannot help them is not helped by an error
+about a second request they never made.
+
+**Informational only, deliberately.** Tapping a tile would have to mean "book a plumber", and this
+customer does not need a plumber — they told us what they need and we said no. Re-entering the flow
+under a category picked to get *past* a rejection is how a locksmith gets dispatched to a gas leak.
+The architecture would allow it (`/matching` already accepts a `categoryId` for the guest journey),
+which is why the restraint is stated rather than left as an oversight.

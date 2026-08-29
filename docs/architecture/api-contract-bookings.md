@@ -582,6 +582,20 @@ Auth required: **yes**. Role: **CUSTOMER**.
 Professional listing for a Standard booking, filtered by the issue's category. Placed
 under `/api/bookings/*` rather than `/api/professionals/*` — see §3.9.
 
+> **Superseded by deferred authentication and the address-flow redesign.** This route is
+> `permitAll` (a guest may browse), and it is keyed on **either** `issueId` **or**
+> `categoryId` — exactly one, with `issueId` taking precedence when both arrive. During
+> matching there is usually no issue at all, because issue creation moved to the booking
+> commit, so `?categoryId=` is now the *normal* case for guests and signed-in customers alike.
+> Both parameters are optional at the binding layer and a malformed one is still a `400`;
+> "at least one" is enforced in `BookingsService` (`categoryId` is required when no `issueId`
+> is supplied). Step 1 and steps 3-6 below apply only to the `issueId` form — a category is
+> owned by nobody, so there is nothing to authorize.
+>
+> The address query params (`city`/`street`/`houseNumber`, + optional `apartment`) are
+> **required**, blank → `400 VALIDATION_ERROR` with one `FieldError` each, and `houseNumber`
+> must be digits only (`maps.HouseNumbers`).
+
 **Behavior:**
 1. Resolve caller; `403 FORBIDDEN` if `role != CUSTOMER`.
 2. `issueId` query param required, must parse as a positive integer → `400
@@ -644,6 +658,12 @@ A specific professional's derived `AVAILABLE` windows (from the weekly working-h
 booking calendar, `professional_weekly_calendar` design §5), each already sized to fit the
 default job duration, for the customer to pick a start time to book against. Discrete
 `availability_slots` rows are no longer read by this endpoint at all.
+
+> **Superseded by deferred authentication.** `issueId` is **optional**: a professional's free
+> windows are derived from their own published working hours and existing bookings, which is the
+> whole question a guest is asking. When it is absent, step 2's ownership/urgency/bookability
+> checks simply do not run and the category-serves check is deferred to order creation, where the
+> category is known for certain. A malformed `issueId` is still a `400`.
 
 **Behavior:**
 1. Resolve caller; `403 FORBIDDEN` if `role != CUSTOMER`.
@@ -710,9 +730,40 @@ Creates the order — the Standard-booking "pick this professional, at this star
   "serviceHouseNumber": "12"
 }
 ```
-(`serviceApartment`/`serviceFloor`/`serviceEntrance`/`serviceAddressNotes` unchanged,
-optional, omitted above for brevity — see the service-address snapshot fields this DTO
-already carried before M2.)
+(`serviceApartment`/`serviceFloor`/`serviceEntrance`/`serviceAddressNotes` are optional and
+omitted above for brevity — see the service-address snapshot fields this DTO already carried
+before M2.)
+
+**Optional does not mean unchecked**, as of the address-validation pass: `serviceApartment` and
+`serviceFloor` are **digits only** and `serviceEntrance` is **at most 2 characters**, each a letter
+of any script or an ASCII digit, with no spaces or symbols (`maps.AddressAccessFields`, the same
+three patterns `auth.dto.DefaultAddressRequest` and `users.dto.CustomerAddressRequest` carry). Each
+pattern admits the empty string, so omitting them is unaffected; a **negative floor is refused**, and
+a basement belongs in `serviceAddressNotes`, which stays free text. This matters more here than on
+the two profile paths: the order's address snapshot is written once, never re-derived, and is what a
+professional reads on the way to the door.
+
+
+### Service-area filtering on `GET /api/bookings/professionals`
+
+**A professional is returned only if their configured service coverage includes the customer's
+city.** The `city` query parameter is resolved to a canonical `service_cities` id
+(`locations.service.ServiceCityResolver`), and the listing query requires a matching
+`professional_service_cities` row (`professionals.ProfessionalServiceAreaMatch`).
+
+- **Base city grants nothing.** A professional based in Tel Aviv who lists Eilat among their service
+  cities is returned for an Eilat address; one who lists only Tel Aviv, Ramat Gan and Givatayim is
+  not.
+- **Distance and ETA are not eligibility.** They are computed after filtering and only ever reorder
+  the candidate set. `sort=RECOMMENDED|CHEAPEST|FASTEST` all operate on the same already-filtered
+  candidates.
+- **A city outside the catalogue returns `200` with an empty `professionals` array**, not an error:
+  the response still carries `issueId`/`categoryId` so the client can render the empty state.
+- **Zero covering professionals in a covered city is also `200` with an empty array.**
+
+The same filter applies to SOS candidate selection (`sos.repository.SosCandidateRepository`), from
+the same JPQL constant. An SOS request whose city is outside the catalogue fails with a distinct
+`SERVICE_AREA_UNCOVERED` history detail rather than being reported as "no professionals available".
 
 **Field validation:**
 

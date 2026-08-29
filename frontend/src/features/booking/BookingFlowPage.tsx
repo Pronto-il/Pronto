@@ -8,6 +8,7 @@ import {
   EMPTY_ADDRESS,
   Button,
   Mascot,
+  isAddressComplete,
   validateAddress,
   validateAddressTextOnly,
 } from '../../shared/components';
@@ -139,6 +140,14 @@ export default function BookingFlowPage() {
 
   const fetchProfessionals = useCallback(
     async (nextSort: ProfessionalSort, currentAddress: AddressValue) => {
+      // Nothing is asked of the server until there is somewhere to send a professional. The
+      // address step is one back-button away and holds every field this is missing, so the
+      // customer is returned to it rather than shown an error about a request they did not make.
+      if (!isAddressComplete(currentAddress)) {
+        setStep({ name: 'address' });
+        setAddressErrors(validateAddressTextOnly(currentAddress));
+        return;
+      }
       setIsLoadingProfessionals(true);
       setProfessionalsError(null);
       try {
@@ -188,7 +197,12 @@ export default function BookingFlowPage() {
       setAddressMode(draft.addressMode);
     }
 
-    if (draft.stage === 'ADDRESS_SELECTION' || !draft.address) {
+    // `!draft.address` was the original guard here, and it was the bug: `EMPTY_ADDRESS` is a
+    // perfectly non-null object, so a draft carrying a blank address resumed straight onto the
+    // professionals step and fired `GET /api/bookings/professionals?...&city=&street=&houseNumber=`,
+    // which the backend answers with 400 VALIDATION_ERROR. The question is not "is there an
+    // address object?" but "is there an address in it?".
+    if (draft.stage === 'ADDRESS_SELECTION' || !isAddressComplete(draft.address)) {
       setStep({ name: 'address' });
       return;
     }
@@ -473,6 +487,7 @@ export default function BookingFlowPage() {
                   onModeChange={setAddressMode}
                   errors={addressErrors}
                   onContinue={handleAddressContinue}
+                  offerSaveAsHome
                 />
               </div>
             )}

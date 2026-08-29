@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { clearGuestSession } from '../api/guestSession';
 import { useAuth } from './useAuth';
 import { BookingDraftContext, type BookingDraft } from './bookingDraftContext';
 
@@ -89,6 +90,13 @@ export function BookingDraftProvider({ children }: { children: ReactNode }) {
   function clearDraft() {
     setDraft(null);
     localStorage.removeItem(DRAFT_STORAGE_KEY);
+    // The guest upload session dies with the draft it authorised, and only with it. By the time
+    // this runs, either the order was created -- in which case the backend has already promoted
+    // every photo onto the customer's own account and the guest namespace holds nothing anyone
+    // needs -- or the customer discarded the draft, keys and all. It is deliberately NOT cleared on
+    // login: a guest who registers mid-flow still owns their photos through this token until the
+    // commit promotes them.
+    clearGuestSession();
   }
 
   return (

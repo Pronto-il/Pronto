@@ -70,6 +70,44 @@ Implements `docs/architecture/api-contract-issues.md` §2.1–2.2 and
   customer and for any issue created before briefs existed. See "Customer report vs Pronto
   analysis" below.
 
+## Guest image keys and the promotion at commit (2026-08-29)
+
+Guests could already classify; they could not attach photos, because `validateImageKeys` resolved
+ownership out of a `customers/{callerId}/...` key and a guest has no caller id. Two things changed
+here, and nothing else did.
+
+**1. `validateImageKeys` asks the same question of a larger set of proved identities.** It now takes
+a `common.security.UploadOwner` — the customer id from the JWT, the guest id from a signed
+`X-Pronto-Guest-Session` token, or (mid-flow, having just registered) both — and accepts a key whose
+owner segment matches either. A key naming a namespace the caller did not prove is still
+`IMAGE_KEY_INVALID`, unchanged. That single rule is what stops guest A attaching guest B's photo and
+what stops an authenticated customer attaching any guest's photo by quoting its key: possession of
+the token that named the namespace is the evidence, never the key itself.
+
+**Images do participate in AI classification, and guest images participate identically.**
+`classify` passes `imageKeys` to `ai.service.ClassificationService`, which downloads and encodes
+each one via `IssueImageResolver#resolveRequired` before the model call. Nothing on that path knows
+or asks who owns an image — only that the caller was allowed to attach it — so this feature changed
+no classification behaviour at all. `service.GuestIssueImagesTest` pins both directions: a guest's
+keys reach the classifier, and an authenticated customer's call forwards exactly what it always did.
+
+**2. `create` promotes guest keys onto the account, once.** `POST /api/issues` is still
+`CUSTOMER`-gated — a guest cannot create an issue — but the person confirming may have been a guest
+thirty seconds ago and still holds the session token their photos were uploaded under. Presenting
+both credentials is the *claim*: each `guests/...` key is server-side copied to
+`customers/{userId}/issues/temp/{sameFilename}` (`storage.service.StorageService#promoteGuestImage`)
+and it is the **promoted** key that `issue_images` records. So every read path downstream —
+`getById`, `toResponse`, the batch presign, a resumed draft — keeps seeing the one key format it
+already understands, and no row ever outlives the session that owns it.
+
+Ordering matters and is deliberate: the copy runs inside the transaction and is idempotent (same
+destination filename, so a retried commit overwrites rather than accumulating orphans), while the
+guest original is deleted in an **after-commit** callback. Deleting inline would mean a rolled-back
+booking had destroyed the customer's photos, and their retry — still holding the guest key in their
+draft — would fail with `IMAGE_KEY_INVALID`. Anything the callback misses is reclaimed by the
+`guests/` lifecycle rule on the uploads bucket. See `storage/README.md`'s "Guest image upload"
+section for the storage-side half.
+
 ## Customer report vs Pronto analysis (issue-classification redesign)
 
 **The customer's own report and Pronto's AI interpretation are separate at every layer, and

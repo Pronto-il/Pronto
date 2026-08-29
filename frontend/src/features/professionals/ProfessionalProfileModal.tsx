@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Modal, Skeleton } from '../../shared/components';
 import { getProfessionalProfile, getReviews, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
-import type { ProfessionalProfileResponse, ReviewResponse } from '../../shared/api';
+import type { ProfessionalProfileResponse, PublicReviewResponse } from '../../shared/api';
 import { ProfessionalProfileDisplay } from './ProfessionalProfileDisplay';
 import { ReviewList } from './ReviewList';
 import styles from './ProfessionalProfileModal.module.css';
@@ -33,7 +33,7 @@ export function ProfessionalProfileModal({ professionalId, isOpen, onClose }: Pr
   const [notFound, setNotFound] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [reviews, setReviews] = useState<ReviewResponse[]>([]);
+  const [reviews, setReviews] = useState<PublicReviewResponse[]>([]);
   const [isLoadingReviews, setIsLoadingReviews] = useState(false);
   const [reviewsError, setReviewsError] = useState<string | null>(null);
 

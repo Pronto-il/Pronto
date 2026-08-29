@@ -20,8 +20,10 @@ Implements `docs/architecture/api-contract-professionals-reviews.md` §4.5-4.8.
   mapped to the identical error code.
 - `GET /api/reviews?professionalId=` — every review for one professional, newest first,
   plus the computed `averageRating` (rounded half-up to 2 decimals, `null` — never `0.00` —
-  when the professional has no reviews) and `reviewCount`. Either role, no ownership check
-  (public data). `404 NOT_FOUND` if the professional itself doesn't exist.
+  when the professional has no reviews) and `reviewCount`. **Public — no authentication of any
+  kind, as of 2026-08-29** (see "Public read" below). `404 NOT_FOUND` if the professional itself
+  doesn't exist. Returns `dto.PublicReviewResponse`, deliberately narrower than
+  `dto.ReviewResponse`.
 - `PUT /api/reviews/{reviewId}` — owner-only edit of `rating`/`comment`. `orderId`/
   `professionalId`/`customerId` are immutable — the update DTO carries no fields for them at
   all. Existence + ownership resolved by a prior read, then an atomic guarded
@@ -31,6 +33,48 @@ Implements `docs/architecture/api-contract-professionals-reviews.md` §4.5-4.8.
 - `DELETE /api/reviews/{reviewId}` — owner-only delete, identical ownership-guard pattern.
   `204 No Content` on success.
 
+## Public read (2026-08-29) — the guest fix, and its blast radius
+
+**The bug.** A guest browsing professionals got `401 UNAUTHORIZED "Missing, invalid, or expired
+authentication token."` from `GET /api/reviews`. Nothing in this package rejected them — this route
+never had a role gate. It was `auth.config.SecurityConfig`'s blanket
+`.anyRequest().authenticated()` catch-all: deferred authentication's permit list named
+`/api/professionals/*` but not the reviews that the profile behind it invites you to read. So a
+visitor could open a professional's profile and see everything except the one thing people
+actually choose on.
+
+**The fix is one line**, in `SecurityConfig`, scoped to `GET` and to the exact literal path:
+`.requestMatchers(HttpMethod.GET, "/api/reviews").permitAll()`. **This package's own config was not
+touched at all** — `ReviewsWebConfig`'s `POST`-scoped registration already declines to run on a
+`GET`, and its `/api/reviews/*` registration covers a path no `GET` uses (there is no get-by-id
+endpoint). A blanket `permitAll` on the controller was rejected outright: it would have taken the
+`POST` gate with it.
+
+**Every write is unchanged.** `POST` still requires an authenticated `CUSTOMER` who owns a
+`COMPLETED` order that has no review yet (the `ux_reviews_order` unique constraint is still the
+race backstop); `PUT`/`DELETE` still require the review's own author. None of those rules were
+read, moved or relaxed.
+
+**`dto.PublicReviewResponse` is new, and it is the reason the response shape changed.**
+`dto.ReviewResponse` — still the body of `POST`/`PUT` — carries `customerId` (the reviewer's
+internal `users` row id) and `orderId` (the booking the review came from). Those were harmless
+while the list required a JWT and became a real leak the moment it did not: an anonymous caller
+walking `professionalId` 1..n could otherwise assemble a map of which customer account hired which
+professional on which order, from a public endpoint, without ever creating an account. Neither
+field was ever rendered — `frontend/src/features/professionals/ReviewList.tsx` shows
+`customerName`, `rating`, `comment` and `createdAt` — so removing them cost nothing. `updatedAt` is
+kept: "this review was edited" is a fact about a public review, not private data.
+
+**Not rate limited**, deliberately and consistently: it is a cheap indexed read, and the two public
+routes it sits beside in the journey (`GET /api/bookings/professionals`,
+`GET /api/professionals/{id}`) carry no limiter either. `POST /api/issues/classify` and the guest
+upload routes are limited because each request has a real per-call cost (an OpenAI call, an S3
+write); this one does not.
+
+Tests: `reviews.PublicReviewReadTest` (route-level permit, no-caller signature, the field
+allow-list on `PublicReviewResponse`, the concrete "no customerId/orderId in the payload" check,
+and the three write gates), plus `auth.config.GuestRouteBoundaryTest`.
+
 ## Key classes
 
 | Class | Role |
@@ -39,9 +83,11 @@ Implements `docs/architecture/api-contract-professionals-reviews.md` §4.5-4.8.
 | `repository.ReviewRepository` | `existsByOrderId` (the create-time pre-check), `findByProfessionalIdOrderByCreatedAtDesc` (the listing query), and the two atomic guarded methods `updateIfOwnedByCustomer`/`deleteIfOwnedByCustomer`. **Deliberately does not** expose the average-rating/review-count aggregate query — that's owned by `professionals.repository.ReviewAggregateRepository`, a narrow read into this package's table from `professionals` (see "Interactions" below). |
 | `service.ReviewsService` | All business logic for the four endpoints above — ownership/state checks, the race-backstop catch, the average-rating computation for the listing response. |
 | `controller.ReviewsController` | `/api/reviews` (`POST`/`GET`), `/api/reviews/{reviewId}` (`PUT`/`DELETE`). Path/query ids parsed manually (same convention as `bookings.controller.BookingsController`) so a malformed value produces this app's standard error envelope rather than Spring's default type-mismatch handling. |
-| `config.ReviewsWebConfig` | Registers two `RoleRequiredInterceptor`s: one scoped to `POST` only (via the new HTTP-method-scoped constructor, `RoleRequiredInterceptor(role, "POST")`) on the literal path `/api/reviews` — needed because `POST`/`GET /api/reviews` share an identical literal path but require different gating (`CUSTOMER`-only vs. either-role); and one covering `PUT`/`DELETE` on `/api/reviews/*`. |
+| `config.ReviewsWebConfig` | Registers two `RoleRequiredInterceptor`s: one scoped to `POST` only (via the HTTP-method-scoped constructor, `RoleRequiredInterceptor(role, "POST")`) on the literal path `/api/reviews` — needed because `POST`/`GET /api/reviews` share an identical literal path but require different gating (`CUSTOMER`-only vs., now, fully public); and one covering `PUT`/`DELETE` on `/api/reviews/*`. **That method scoping is precisely what let `GET` become public on 2026-08-29 without editing this class at all.** Do not widen either pattern. |
 | `dto.CreateReviewRequest` / `dto.UpdateReviewRequest` | Allowlist DTOs — neither carries `professionalId`/`customerId`/`orderId` where they'd be client-settable (`CreateReviewRequest` needs `orderId` to identify *which* order is being reviewed; `UpdateReviewRequest` needs none of the three, since the review already exists). |
-| `dto.ReviewResponse` / `dto.ReviewListResponse` | Wire shapes for a single review and the professional-scoped list (the latter also carrying the `averageRating`/`reviewCount` aggregate). |
+| `dto.ReviewResponse` | The **author's own view of their own review** — the body of `POST`/`PUT` only. Carries `customerId`/`orderId` because the author already knows both. Unchanged by the 2026-08-29 public-read work. |
+| `dto.PublicReviewResponse` | **New, 2026-08-29.** One entry in the public list: `id`, `professionalId`, `customerName`, `rating`, `comment`, `createdAt`, `updatedAt`. Deliberately omits `customerId` and `orderId` — see "Public read" above for why that stopped being safe once the endpoint dropped its JWT requirement. |
+| `dto.ReviewListResponse` | The professional-scoped list, carrying the `averageRating`/`reviewCount` aggregate plus `List<PublicReviewResponse>` (was `List<ReviewResponse>`). |
 
 ## Interactions with other packages
 

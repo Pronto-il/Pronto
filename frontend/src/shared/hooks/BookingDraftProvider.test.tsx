@@ -27,11 +27,14 @@ vi.mock('./useAuth', () => ({ useAuth: () => auth }));
 const DRAFT_STORAGE_KEY = 'pronto_booking_draft';
 
 function Harness() {
-  const { draft, updateDraft } = useBookingDraft();
+  const { draft, updateDraft, clearDraft } = useBookingDraft();
   return (
     <div>
       <button type="button" onClick={() => updateDraft({ description: 'המקרר לא מקרר' })}>
         write
+      </button>
+      <button type="button" onClick={clearDraft}>
+        clear
       </button>
       <output data-testid="owner">{draft ? String(draft.ownerId) : 'no-draft'}</output>
       <output data-testid="description">{draft?.description ?? ''}</output>
@@ -123,6 +126,46 @@ describe('adoption on sign-in', () => {
     expect(storedDraft()?.professionalId).toBe(52);
     expect(storedDraft()?.bookedStart).toBe('2026-09-01T09:00:00Z');
     expect(storedDraft()?.stage).toBe('BOOKING_CONFIRM');
+  });
+});
+
+describe('the guest upload session tracks the draft, not the session', () => {
+  const GUEST_SESSION_KEY = 'pronto_guest_upload_session';
+
+  function seedGuestSession() {
+    localStorage.setItem(
+      GUEST_SESSION_KEY,
+      JSON.stringify({ token: 'guest-token', expiresAt: Date.now() + 86_400_000 }),
+    );
+  }
+
+  it('signing in does NOT drop the guest session', async () => {
+    // The photos are still in the guest namespace until the booking commit promotes them, so the
+    // token that proves they are this person's has to outlive the registration they just completed.
+    // Clearing it here is how a customer's own photos would vanish on the confirmation screen.
+    seedDraft(null);
+    seedGuestSession();
+    auth.user = { id: 42 };
+
+    renderProvider();
+
+    await waitFor(() => expect(storedDraft()?.ownerId).toBe(42));
+    expect(localStorage.getItem(GUEST_SESSION_KEY)).not.toBeNull();
+  });
+
+  it('clearing the draft clears the guest session with it', async () => {
+    // The two call sites of clearDraft are post-order success and an explicit discard. In the first
+    // the images have already been promoted onto the account; in the second the customer threw the
+    // whole report away. Either way the namespace holds nothing anyone needs.
+    const user = userEvent.setup();
+    seedGuestSession();
+    renderProvider();
+
+    await user.click(screen.getByRole('button', { name: 'write' }));
+    await user.click(screen.getByRole('button', { name: 'clear' }));
+
+    expect(storedDraft()).toBeNull();
+    expect(localStorage.getItem(GUEST_SESSION_KEY)).toBeNull();
   });
 });
 

@@ -1,5 +1,7 @@
 package com.pronto.auth.service;
 
+import com.pronto.auth.config.OtpPolicies;
+
 import com.pronto.auth.config.AuthOtpPolicy;
 import com.pronto.auth.config.VerificationPolicy;
 import com.pronto.auth.dto.LoginRequest;
@@ -77,14 +79,14 @@ class AuthTimingTest {
                 Mockito.mock(com.pronto.storage.service.StorageService.class),
                 passwordEncoder, new PhoneNumberNormalizer("IL"),
                 Mockito.mock(LoginAttemptRecorder.class), otpService, Mockito.mock(com.pronto.maps.service.ServiceAddressGeocoder.class),
-                new com.pronto.maps.service.SelectedPlaceValidator());
+                new com.pronto.maps.service.SelectedPlaceValidator(), new VerificationPolicy(OtpPolicies.enabled(), true, true));
 
         authService = new AuthService(userRepository, accountWriter, otpService,
                 Mockito.mock(JwtService.class), passwordEncoder,
                 Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
                 Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
-                new VerificationPolicy(true, true), new AuthOtpPolicy("true"),
+                new VerificationPolicy(OtpPolicies.enabled(), true, true), new AuthOtpPolicy(OtpPolicies.enabled(), "true"),
                 new com.pronto.maps.service.SelectedPlaceValidator());
 
         User account = new User("Israel Israeli", KNOWN_EMAIL, "$2a$10$storedhash", UserRole.CUSTOMER);

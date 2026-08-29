@@ -1,5 +1,6 @@
 package com.pronto.auth.service;
 
+import com.pronto.auth.config.VerificationPolicy;
 import com.pronto.auth.dto.CustomerRegistrationData;
 import com.pronto.auth.dto.DefaultAddressRequest;
 import com.pronto.maps.SelectedPlace;
@@ -94,6 +95,8 @@ public class AuthAccountWriter {
 
     private final ServiceAddressGeocoder serviceAddressGeocoder;
     private final SelectedPlaceValidator selectedPlaceValidator;
+    /** Read by {@link #resolveIdentifier} only — see its Javadoc for why phone login has to know. */
+    private final VerificationPolicy verificationPolicy;
 
     public AuthAccountWriter(UserRepository userRepository,
                               ProfessionalRepository professionalRepository,
@@ -108,7 +111,9 @@ public class AuthAccountWriter {
                               LoginAttemptRecorder loginAttemptRecorder,
                               OtpService otpService,
                               ServiceAddressGeocoder serviceAddressGeocoder,
-                              SelectedPlaceValidator selectedPlaceValidator) {
+                              SelectedPlaceValidator selectedPlaceValidator,
+                              VerificationPolicy verificationPolicy) {
+        this.verificationPolicy = verificationPolicy;
         this.serviceAddressGeocoder = serviceAddressGeocoder;
         this.selectedPlaceValidator = selectedPlaceValidator;
         this.userRepository = userRepository;
@@ -252,6 +257,14 @@ public class AuthAccountWriter {
      * applied for every role in {@link #createAccount}.
      */
     private void applyCustomerRegistrationData(User user, CustomerRegistrationData customer) {
+        if (customer == null || customer.defaultAddress() == null) {
+            // The ordinary case since the address-flow redesign: registration collects no address,
+            // and users.default_* stays null until the customer saves one from the booking flow or
+            // the profile screen. Those columns have always been nullable and every reader already
+            // treats null as "no saved address" (see UsersService#getMe), so there is nothing to
+            // default and nothing to geocode.
+            return;
+        }
         DefaultAddressRequest address = customer.defaultAddress();
         user.setDefaultCity(address.city());
         user.setDefaultStreet(address.street());
@@ -414,16 +427,36 @@ public class AuthAccountWriter {
      * something that is genuinely a valid, assignable mobile number, and no email address parses as
      * one. Anything else is tried as an email.
      *
-     * <p><b>An unverified phone cannot log in.</b> The {@code isPhoneVerified} filter is what stops a
-     * number that was merely typed into a form from becoming a credential — including every legacy
-     * row, whose phone this platform has never confirmed. Those accounts sign in by email.
+     * <p><b>An unverified phone cannot log in — while phone verification is required.</b> The
+     * {@code isPhoneVerified} filter is what stops a number that was merely typed into a form from
+     * becoming a credential, including every legacy row whose phone this platform has never
+     * confirmed. Those accounts sign in by email.
+     *
+     * <p><b>The filter is conditional on {@link VerificationPolicy}, and it has to be.</b> When
+     * phone verification is not required — {@code SMS_VERIFICATION_REQUIRED=false}, or the whole of
+     * {@code OTP_VERIFICATION_ENABLED=false} — no account can ever reach {@code phone_verified =
+     * true}, so an unconditional filter would mean <em>every</em> user of that deployment is quietly
+     * unable to sign in with the phone number they registered with. That is precisely the class of
+     * contradiction disabling verification must not produce: registration accepts the number,
+     * stores it, normalizes it, shows it back on the profile screen, and then it silently is not a
+     * login identifier. It fails as "wrong credentials", which is the most misleading answer
+     * available.
+     *
+     * <p><b>The cost is stated plainly:</b> while the policy is off, a phone number nobody proved
+     * can be used to <em>name</em> an account. It is not a way into one — the password is still
+     * verified against BCrypt, lockout still applies, and rate limiting is untouched — and the same
+     * number already names the account for {@code DUPLICATE_PHONE} purposes. Turning the policy back
+     * on restores the strict rule immediately, with no migration: accounts that never proved their
+     * number go back to signing in by email until they do.
      */
     @Transactional(readOnly = true)
     public ResolvedIdentifier resolveIdentifier(String identifier) {
         Optional<String> phone = phoneNumberNormalizer.tryNormalize(identifier);
         if (phone.isPresent()) {
+            boolean phoneMustBeProved = verificationPolicy.isSmsVerificationRequired();
             return new ResolvedIdentifier(
-                    userRepository.findByPhone(phone.get()).filter(User::isPhoneVerified), true);
+                    userRepository.findByPhone(phone.get())
+                            .filter(u -> !phoneMustBeProved || u.isPhoneVerified()), true);
         }
         return new ResolvedIdentifier(
                 userRepository.findByEmail(EmailNormalizer.normalize(identifier)), false);

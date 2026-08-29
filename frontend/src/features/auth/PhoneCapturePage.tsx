@@ -33,7 +33,14 @@ export default function PhoneCapturePage() {
   if (isLoading) {
     return null;
   }
-  if (user?.phoneVerified) {
+  // Two ways this screen has nothing to do, and they are different states that must not be
+  // conflated. The number is already proved — or nobody is being asked to prove one, because the
+  // deployment is running with phone verification (or all of OTP) switched off. In the second case
+  // `phoneVerified` is still `false` and correctly so: the number genuinely was not proved. What
+  // changed is that no one is asking. Offering the capture form here would send a code through a
+  // channel the backend has switched off — `AuthService#capturePhone` refuses it under this policy
+  // — and leave the user watching for an SMS that is never coming.
+  if (user?.phoneVerified || user?.phoneVerificationRequired === false) {
     return <Navigate to="/" replace />;
   }
 

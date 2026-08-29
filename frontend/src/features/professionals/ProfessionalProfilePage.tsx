@@ -11,7 +11,7 @@ import {
   ApiError,
   GENERIC_ERROR_MESSAGE,
 } from '../../shared/api';
-import type { ProfessionalProfileResponse, ReviewResponse } from '../../shared/api';
+import type { ProfessionalProfileResponse, PublicReviewResponse } from '../../shared/api';
 import { ReviewList } from './ReviewList';
 import { ProfessionalProfileDisplay } from './ProfessionalProfileDisplay';
 import type { ProfessionalDetailLocationState } from './ProfessionalCard';
@@ -53,7 +53,7 @@ export default function ProfessionalProfilePage() {
   const [notFound, setNotFound] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [reviews, setReviews] = useState<ReviewResponse[]>([]);
+  const [reviews, setReviews] = useState<PublicReviewResponse[]>([]);
   const [isLoadingReviews, setIsLoadingReviews] = useState(true);
   const [reviewsError, setReviewsError] = useState<string | null>(null);
 

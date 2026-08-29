@@ -2,6 +2,7 @@ package com.pronto.sos.service;
 
 import com.pronto.maps.GeoCoordinates;
 import com.pronto.maps.RouteUnavailableReason;
+import com.pronto.locations.service.ServiceCityResolver;
 import com.pronto.matching.DistanceEtaStrategy;
 import com.pronto.matching.EtaResult;
 import com.pronto.matching.ServiceLocation;
@@ -25,6 +26,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Optional;
 import java.util.Map;
 import java.util.Set;
 
@@ -114,6 +116,8 @@ public class SosMatchingService {
     private static final Long NO_EXCLUSIONS_SENTINEL = -1L;
 
     private final SosCandidateRepository sosCandidateRepository;
+    /** Request city text -> canonical service_cities id. See findCandidates. */
+    private final ServiceCityResolver serviceCityResolver;
     private final SosOfferRepository sosOfferRepository;
     private final DistanceEtaStrategy distanceEtaStrategy;
     private final SosProperties properties;
@@ -121,7 +125,9 @@ public class SosMatchingService {
     public SosMatchingService(SosCandidateRepository sosCandidateRepository,
                                SosOfferRepository sosOfferRepository,
                                DistanceEtaStrategy distanceEtaStrategy,
+                               ServiceCityResolver serviceCityResolver,
                                SosProperties properties) {
+        this.serviceCityResolver = serviceCityResolver;
         this.sosCandidateRepository = sosCandidateRepository;
         this.sosOfferRepository = sosOfferRepository;
         this.distanceEtaStrategy = distanceEtaStrategy;
@@ -186,10 +192,28 @@ public class SosMatchingService {
                 ? List.of(NO_EXCLUSIONS_SENTINEL)
                 : new ArrayList<>(alreadyOfferedProfessionalIds);
 
-        List<EligibleProfessional> eligible = sosCandidateRepository.findEligible(request.getCategoryId(), excluded);
+        // The service-area filter, resolved to a canonical service_cities id before the query for
+        // the same reason the standard listing does it there: eligibility is the professional's
+        // declared coverage, not their base city and not how far away they happen to be.
+        //
+        // An unresolvable city is reported as a DEGRADED outcome rather than an empty one. The
+        // distinction matters more here than anywhere else on the platform: "nobody is available"
+        // tells a customer with an active leak to wait, while "we do not cover your area" tells
+        // them to call somebody else, and only one of those is true when the address named a place
+        // this platform has never heard of.
+        Optional<Long> serviceCityId = serviceCityResolver.resolveId(request.getServiceCity());
+        if (serviceCityId.isEmpty()) {
+            log.warn("sos.matching.degraded sosRequestId={} reason=city-not-in-catalogue city=\"{}\"",
+                    request.getId(), request.getServiceCity());
+            return MatchingOutcome.degraded(SosMatchingDegradation.SERVICE_AREA_UNCOVERED);
+        }
+
+        List<EligibleProfessional> eligible = sosCandidateRepository.findEligible(
+                request.getCategoryId(), serviceCityId.get(), excluded);
         if (eligible.isEmpty()) {
-            log.info("sos.matching.empty sosRequestId={} categoryId={} reason=no-eligible-professionals",
-                    request.getId(), request.getCategoryId());
+            log.info("sos.matching.empty sosRequestId={} categoryId={} serviceCityId={} "
+                            + "reason=no-eligible-professionals",
+                    request.getId(), request.getCategoryId(), serviceCityId.get());
             return MatchingOutcome.empty();
         }
 
@@ -323,7 +347,18 @@ public class SosMatchingService {
         ROUTING_UNAVAILABLE,
 
         /** The request's service address never resolved to coordinates, so nothing can be measured. */
-        DESTINATION_UNKNOWN
+        DESTINATION_UNKNOWN,
+
+        /**
+         * The request's city is not in this platform's {@code service_cities} catalogue, so no
+         * professional's declared coverage can possibly include it.
+         *
+         * <p>A degradation rather than an empty result, deliberately. "Nobody is available right
+         * now" invites a customer with an active leak to wait and retry; "we do not operate where
+         * you are" tells them to call somebody else. Reporting the first when the second is true
+         * is the most expensive lie this flow can tell.
+         */
+        SERVICE_AREA_UNCOVERED
     }
 
     /**

@@ -9,6 +9,8 @@ import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
@@ -105,6 +107,34 @@ public class S3StorageClient implements StorageClient {
             return false;
         } catch (SdkException e) {
             throw new StorageException("Failed to check existence of S3 object: " + key, e);
+        }
+    }
+
+    /**
+     * {@code CopyObject} — the copy happens entirely inside S3; no object bytes pass through this
+     * process. See {@link StorageClient#copy} for why promotion copies rather than re-uploads.
+     */
+    @Override
+    public void copy(String sourceKey, String destinationKey) {
+        try {
+            s3Client.copyObject(CopyObjectRequest.builder()
+                    .sourceBucket(bucket)
+                    .sourceKey(sourceKey)
+                    .destinationBucket(bucket)
+                    .destinationKey(destinationKey)
+                    .build());
+        } catch (SdkException e) {
+            throw new StorageException("Failed to copy S3 object " + sourceKey + " to " + destinationKey, e);
+        }
+    }
+
+    /** S3's {@code DeleteObject} is already idempotent — deleting a missing key succeeds. */
+    @Override
+    public void delete(String key) {
+        try {
+            s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
+        } catch (SdkException e) {
+            throw new StorageException("Failed to delete S3 object: " + key, e);
         }
     }
 

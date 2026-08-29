@@ -48,6 +48,8 @@ class SosMatchingServiceTest {
     private SosOfferRepository sosOfferRepository;
     private DistanceEtaStrategy distanceEtaStrategy;
     private SosProperties properties;
+    private static final Long SERVICE_CITY_ID = 4001L;
+    private com.pronto.locations.service.ServiceCityResolver serviceCityResolver;
     private SosMatchingService service;
 
     @BeforeEach
@@ -56,7 +58,13 @@ class SosMatchingServiceTest {
         sosOfferRepository = Mockito.mock(SosOfferRepository.class);
         distanceEtaStrategy = Mockito.mock(DistanceEtaStrategy.class);
         properties = new SosProperties();
-        service = new SosMatchingService(sosCandidateRepository, sosOfferRepository, distanceEtaStrategy, properties);
+        serviceCityResolver = Mockito.mock(com.pronto.locations.service.ServiceCityResolver.class);
+        // Resolved by default: these tests are about ranking and pool size, not coverage. The
+        // service-area tests below override it.
+        Mockito.lenient().when(serviceCityResolver.resolveId(any()))
+                .thenReturn(java.util.Optional.of(SERVICE_CITY_ID));
+        service = new SosMatchingService(sosCandidateRepository, sosOfferRepository, distanceEtaStrategy,
+                serviceCityResolver, properties);
 
         when(sosOfferRepository.findProfessionalIdsWithLiveOffers(anyList(), any())).thenReturn(List.of());
         when(sosOfferRepository.findAcceptanceStats(anyList(), any())).thenReturn(List.of());
@@ -114,7 +122,7 @@ class SosMatchingServiceTest {
 
     @Test
     void returnsEmptyWhenNobodyIsEligible() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList())).thenReturn(List.of());
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList())).thenReturn(List.of());
 
         assertThat(service.findCandidates(request(SosUrgency.URGENT), Set.of()).candidates()).isEmpty();
     }
@@ -122,29 +130,29 @@ class SosMatchingServiceTest {
     /** JPQL cannot express {@code NOT IN ()}, so an empty exclusion set must become a sentinel. */
     @Test
     void emptyExclusionSetIsPassedAsANonEmptySentinel() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList())).thenReturn(List.of());
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList())).thenReturn(List.of());
 
         service.findCandidates(request(SosUrgency.URGENT), Set.of());
 
         ArgumentCaptor<List<Long>> captor = ArgumentCaptor.forClass(List.class);
-        Mockito.verify(sosCandidateRepository).findEligible(eq(CATEGORY_ID), captor.capture());
+        Mockito.verify(sosCandidateRepository).findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), captor.capture());
         assertThat(captor.getValue()).isNotEmpty().allMatch(id -> id < 0);
     }
 
     @Test
     void alreadyOfferedProfessionalsAreExcluded() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList())).thenReturn(List.of());
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList())).thenReturn(List.of());
 
         service.findCandidates(request(SosUrgency.URGENT), Set.of(5L, 9L));
 
         ArgumentCaptor<List<Long>> captor = ArgumentCaptor.forClass(List.class);
-        Mockito.verify(sosCandidateRepository).findEligible(eq(CATEGORY_ID), captor.capture());
+        Mockito.verify(sosCandidateRepository).findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), captor.capture());
         assertThat(captor.getValue()).containsExactlyInAnyOrder(5L, 9L);
     }
 
     @Test
     void professionalsAlreadyHoldingLiveOffersAreDroppedFromThePool() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(List.of(professional(1, 5.0, 10, "250"), professional(2, 5.0, 10, "250")));
         when(sosOfferRepository.findProfessionalIdsWithLiveOffers(anyList(), any())).thenReturn(List.of(1L));
 
@@ -160,7 +168,7 @@ class SosMatchingServiceTest {
      */
     @Test
     void allCandidatesBusyFallsBackToDispatchingThemAnyway() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(List.of(professional(1, 5.0, 10, "250")));
         when(sosOfferRepository.findProfessionalIdsWithLiveOffers(anyList(), any())).thenReturn(List.of(1L));
 
@@ -169,7 +177,7 @@ class SosMatchingServiceTest {
 
     @Test
     void candidatesBeyondTheDispatchRadiusAreExcluded() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(List.of(professional(1, 5.0, 10, "250")));
         // 200 real kilometres, well past the 40 km default cap. Before MS2 this filter was inert:
         // the only distances the platform could produce were 8 and 35 km, so a 40 km ceiling
@@ -183,7 +191,7 @@ class SosMatchingServiceTest {
     @Test
     void poolIsCappedAtTheConfiguredSizeForAnUrgentRequest() {
         properties.setCandidatePoolSize(3);
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(IntStream.rangeClosed(1, 20)
                         .mapToObj(i -> professional(i, 5.0, 10, "250"))
                         .toList());
@@ -196,7 +204,7 @@ class SosMatchingServiceTest {
     void emergencyUsesTheWiderPool() {
         properties.setCandidatePoolSize(3);
         properties.setEmergencyCandidatePoolSize(7);
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(IntStream.rangeClosed(1, 20)
                         .mapToObj(i -> professional(i, 5.0, 10, "250"))
                         .toList());
@@ -215,7 +223,7 @@ class SosMatchingServiceTest {
     void anExpansionOnlyDispatchesTheDifferenceBetweenTheOldPoolAndTheNew() {
         properties.setCandidatePoolSize(3);
         properties.setExpansionPoolIncrement(3);
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(IntStream.rangeClosed(4, 20)
                         .mapToObj(i -> professional(i, 5.0, 10, "250"))
                         .toList());
@@ -234,7 +242,7 @@ class SosMatchingServiceTest {
     void anExpansionWhosePoolIsAlreadyFullContactsNobody() {
         properties.setCandidatePoolSize(3);
         properties.setExpansionPoolIncrement(1);
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(IntStream.rangeClosed(10, 20)
                         .mapToObj(i -> professional(i, 5.0, 10, "250"))
                         .toList());
@@ -251,14 +259,14 @@ class SosMatchingServiceTest {
      */
     @Test
     void expandingStillExcludesEveryoneAlreadyOffered() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(List.of(professional(9, 5.0, 10, "250")));
 
         service.findCandidates(request(SosUrgency.URGENT), Set.of(1L, 2L),
                 SosSearchScope.forLevel(2, SosUrgency.URGENT, properties));
 
         ArgumentCaptor<List<Long>> excluded = ArgumentCaptor.forClass(List.class);
-        Mockito.verify(sosCandidateRepository).findEligible(eq(CATEGORY_ID), excluded.capture());
+        Mockito.verify(sosCandidateRepository).findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), excluded.capture());
         assertThat(excluded.getValue()).containsExactlyInAnyOrder(1L, 2L);
     }
 
@@ -267,7 +275,7 @@ class SosMatchingServiceTest {
     void fasterEtaOutranksSlowerWhenAllElseIsEqual() {
         EligibleProfessional slow = professional(1, 5.0, 10, "250");
         EligibleProfessional fast = professional(2, 5.0, 10, "250");
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList())).thenReturn(List.of(slow, fast));
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList())).thenReturn(List.of(slow, fast));
         when(distanceEtaStrategy.calculateBatch(any(), any(), any())).thenReturn(Map.of(
                 1L, EtaResult.available(new BigDecimal("30.0"), 70, true),
                 2L, EtaResult.available(new BigDecimal("5.0"), 10, true)));
@@ -281,7 +289,7 @@ class SosMatchingServiceTest {
     /** With identical ETA, the better-rated professional wins. */
     @Test
     void higherRatingOutranksLowerWhenEtaIsEqual() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(List.of(professional(1, 2.0, 40, "250"), professional(2, 5.0, 40, "250")));
 
         List<RankedCandidate> ranked = service.findCandidates(request(SosUrgency.URGENT), Set.of()).candidates();
@@ -295,7 +303,7 @@ class SosMatchingServiceTest {
      */
     @Test
     void unratedProfessionalScoresAboveABadlyRatedOne() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(List.of(professional(1, 1.0, 30, "250"), professional(2, null, 0, "250")));
 
         List<RankedCandidate> ranked = service.findCandidates(request(SosUrgency.URGENT), Set.of()).candidates();
@@ -305,7 +313,7 @@ class SosMatchingServiceTest {
 
     @Test
     void acceptanceRateRaisesTheScore() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(List.of(professional(1, 5.0, 10, "250"), professional(2, 5.0, 10, "250")));
         // Professional 1 accepted 1 of 10; professional 2 accepted 10 of 10.
         when(sosOfferRepository.findAcceptanceStats(anyList(), any())).thenReturn(List.of(
@@ -319,7 +327,7 @@ class SosMatchingServiceTest {
 
     @Test
     void scoresStayWithinZeroToOneAndComponentsSumToTheTotal() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(List.of(professional(1, 4.2, 17, "250")));
 
         RankedCandidate candidate = service.findCandidates(request(SosUrgency.URGENT), Set.of()).candidates().get(0);
@@ -338,7 +346,7 @@ class SosMatchingServiceTest {
                 professional(3, 5.0, 10, "250"),
                 professional(1, 5.0, 10, "250"),
                 professional(2, 5.0, 10, "250"));
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList())).thenReturn(pool);
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList())).thenReturn(pool);
 
         List<Long> first = service.findCandidates(request(SosUrgency.URGENT), Set.of()).candidates().stream()
                 .map(c -> c.professional().professionalId()).toList();
@@ -352,7 +360,7 @@ class SosMatchingServiceTest {
     void nullReliabilityAndNullBasePriceDoNotBreakScoring() {
         EligibleProfessional incomplete = new EligibleProfessional(1L, 11L, "Pro", "Tel Aviv", "Center",
                 null, null, null, null, 0L);
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList())).thenReturn(List.of(incomplete));
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList())).thenReturn(List.of(incomplete));
 
         List<RankedCandidate> ranked = service.findCandidates(request(SosUrgency.URGENT), Set.of()).candidates();
 
@@ -377,7 +385,7 @@ class SosMatchingServiceTest {
      */
     @Test
     void aProfessionalWithNoUsableCurrentLocationIsExcludedFromSosEntirely() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(List.of(professional(1, 5.0, 10, "250"), professional(2, 5.0, 10, "250")));
         when(distanceEtaStrategy.calculateBatch(any(), any(), any())).thenReturn(Map.of(
                 1L, EtaResult.unavailable(RouteUnavailableReason.PROFESSIONAL_LOCATION_MISSING),
@@ -393,7 +401,7 @@ class SosMatchingServiceTest {
 
     @Test
     void aProfessionalWhoseLocationIsStaleIsExcludedFromSos() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(List.of(professional(1, 5.0, 10, "250")));
         when(distanceEtaStrategy.calculateBatch(any(), any(), any())).thenReturn(Map.of(
                 1L, EtaResult.unavailable(RouteUnavailableReason.PROFESSIONAL_LOCATION_STALE)));
@@ -413,7 +421,7 @@ class SosMatchingServiceTest {
      */
     @Test
     void aTotalProviderFailureIsReportedAsDegradedNotAsAnEmptyPool() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(List.of(professional(1, 5.0, 10, "250"), professional(2, 5.0, 10, "250")));
         when(distanceEtaStrategy.calculateBatch(any(), any(), any())).thenReturn(Map.of(
                 1L, EtaResult.unavailable(RouteUnavailableReason.PROVIDER_UNAVAILABLE),
@@ -435,7 +443,7 @@ class SosMatchingServiceTest {
      */
     @Test
     void oneCandidateFailingToRouteDoesNotDegradeTheWholeEvaluation() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(List.of(professional(1, 5.0, 10, "250"), professional(2, 5.0, 10, "250")));
         when(distanceEtaStrategy.calculateBatch(any(), any(), any())).thenReturn(Map.of(
                 1L, EtaResult.unavailable(RouteUnavailableReason.PROVIDER_UNAVAILABLE),
@@ -461,7 +469,47 @@ class SosMatchingServiceTest {
                 .isEqualTo(SosMatchingService.SosMatchingDegradation.DESTINATION_UNKNOWN);
         // Nothing is even queried -- there is no point ranking people against a place we cannot
         // locate.
-        Mockito.verify(sosCandidateRepository, Mockito.never()).findEligible(any(), anyList());
+        Mockito.verify(sosCandidateRepository, Mockito.never()).findEligible(any(), any(), anyList());
+    }
+
+    // ---- service-area coverage (the Eilat bug, SOS side) ----
+    //
+    // SOS had the same defect as the standard listing: eligibility was category + live SOS
+    // availability + approval + onboarding, with no geographic predicate. The radius filter
+    // applied afterwards USUALLY hid it -- which is exactly why it went unnoticed -- but radius
+    // is measured from a live device position that may be anywhere, and it degrades to
+    // "unavailable" whenever the routing provider is down. Coverage is the rule; radius is a
+    // range concern layered on top of it.
+
+    @Test
+    void theHardFilterIsAskedForTheRequestsResolvedServiceCity() {
+        // The fix in one assertion: the canonical city id reaches the eligibility query, so a
+        // professional who does not serve it is excluded in SQL rather than by distance luck.
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
+                .thenReturn(List.of(professional(1, 5.0, 10, "250")));
+
+        service.findCandidates(request(SosUrgency.URGENT), Set.of());
+
+        Mockito.verify(sosCandidateRepository).findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList());
+    }
+
+    @Test
+    void aCityOutsideTheCatalogueIsDegraded_notReportedAsNobodyAvailable() {
+        // The distinction matters more here than anywhere else on the platform. "Nobody is
+        // available right now" invites a customer with an active leak to wait and retry; "we do
+        // not operate where you are" tells them to call somebody else. Only the second is true
+        // when the address named a place this platform has never heard of.
+        Mockito.when(serviceCityResolver.resolveId(any())).thenReturn(java.util.Optional.empty());
+
+        SosMatchingService.MatchingOutcome outcome = service.findCandidates(request(SosUrgency.URGENT), Set.of());
+
+        assertThat(outcome.isDegraded()).isTrue();
+        assertThat(outcome.degradation())
+                .isEqualTo(SosMatchingService.SosMatchingDegradation.SERVICE_AREA_UNCOVERED);
+        assertThat(outcome.candidates()).isEmpty();
+        // And nothing is queried: there is nobody whose coverage could include a city we cannot
+        // name, so an unfiltered query would be the original bug.
+        Mockito.verify(sosCandidateRepository, Mockito.never()).findEligible(any(), any(), anyList());
     }
 
     /**
@@ -471,7 +519,7 @@ class SosMatchingServiceTest {
      */
     @Test
     void everyCandidateIsRoutedInOneBatchedCall() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(IntStream.rangeClosed(1, 15)
                         .mapToObj(i -> professional(i, 5.0, 10, "250"))
                         .toList());
@@ -489,7 +537,7 @@ class SosMatchingServiceTest {
      */
     @Test
     void expandingTheSearchGenuinelyReachesFurtherOutInRealKilometres() {
-        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), anyList()))
+        when(sosCandidateRepository.findEligible(eq(CATEGORY_ID), eq(SERVICE_CITY_ID), anyList()))
                 .thenReturn(List.of(professional(1, 5.0, 10, "250")));
         when(distanceEtaStrategy.calculateBatch(any(), any(), any()))
                 .thenAnswer(inv -> uniformEta(inv.getArgument(0), new BigDecimal("50.0"), 55));

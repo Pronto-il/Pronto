@@ -52,4 +52,31 @@ public interface StorageClient {
      * {@code docs/architecture/backend-ms9-presigned-image-urls-design.md} §1/§3/§5.
      */
     String presignUrl(String key, Duration expiry);
+
+    /**
+     * Server-side copy of {@code sourceKey} to {@code destinationKey}, overwriting anything at the
+     * destination. Added for guest-upload promotion: when a visitor who attached photos as a guest
+     * finally creates their issue, those objects move from the guest namespace into the now-known
+     * customer's own, so that every downstream read path — {@code getPresignedUrl}'s ownership
+     * check, a resumed draft's batch presign, {@code GET /api/issues/{id}} — keeps seeing the one
+     * key format it already understands, and {@code issue_images} never records a key whose owner
+     * expired.
+     *
+     * <p><b>Server-side, not download-then-upload.</b> The S3 implementation issues
+     * {@code CopyObject}, so the bytes never travel through this backend; the local implementation
+     * copies the file on disk. Re-uploading through the application would double the transfer for
+     * no benefit and would put an 8 MB round trip on the booking-commit path.
+     *
+     * @throws StorageException if the source does not exist, or on a genuine storage I/O failure.
+     */
+    void copy(String sourceKey, String destinationKey);
+
+    /**
+     * Deletes {@code key}. Deleting something that is already gone is a success, not an error —
+     * every caller wants "make sure this is not there", and a retry must not fail because the
+     * first attempt worked.
+     *
+     * @throws StorageException on a genuine storage I/O failure.
+     */
+    void delete(String key);
 }

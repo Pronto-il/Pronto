@@ -2,6 +2,7 @@ package com.pronto.sos.repository;
 
 import com.pronto.professionals.ProfessionalCategoryMatch;
 import com.pronto.professionals.ProfessionalEligibility;
+import com.pronto.professionals.ProfessionalServiceAreaMatch;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.sos.dto.EligibleProfessional;
 import org.springframework.data.repository.Repository;
@@ -58,6 +59,16 @@ public interface SosCandidateRepository extends Repository<Professional, Long> {
      *       cannot actually be scheduled or trusted for. Concatenated from the same constant the
      *       Standard listing and the single-row service guards use, so the SOS hard filter and
      *       the rest of the platform cannot disagree about who is real.</li>
+     *   <li><b>{@link ProfessionalServiceAreaMatch#SERVES_CITY_JPQL}</b> — the professional's own
+     *       declared coverage includes the request's city. Added with the standard listing's
+     *       identical filter, from the same constant, because SOS had the same gap: eligibility
+     *       was category + live availability + approval, and a Gush Dan professional was a
+     *       candidate for an Eilat emergency. The radius filter applied later in
+     *       {@code SosMatchingService} <em>usually</em> caught that, which is exactly why it went
+     *       unnoticed — but radius is measured from a live device position that may be anywhere,
+     *       degrades to "unavailable" when the routing provider is down, and answers a different
+     *       question from "do you work there". Coverage is the rule; distance is a ranking and
+     *       range concern layered on top of it.</li>
      *   <li><b>{@code p.id NOT IN :excludedProfessionalIds}</b> — the caller's exclusion set
      *       (professionals already juggling live offers, and any already offered this same
      *       request on an earlier dispatch wave). Passed in rather than expressed as a
@@ -88,7 +99,9 @@ public interface SosCandidateRepository extends Repository<Professional, Long> {
             + "WHERE s.isAvailable = true AND u.deletedAt IS NULL "
             + "AND " + ProfessionalCategoryMatch.SERVES_CATEGORY_JPQL + " "
             + "AND " + ProfessionalEligibility.ELIGIBLE_JPQL + " "
+            + "AND " + ProfessionalServiceAreaMatch.SERVES_CITY_JPQL + " "
             + "AND p.id NOT IN :excludedProfessionalIds")
     List<EligibleProfessional> findEligible(@Param("categoryId") Long categoryId,
+                                              @Param("serviceCityId") Long serviceCityId,
                                               @Param("excludedProfessionalIds") List<Long> excludedProfessionalIds);
 }

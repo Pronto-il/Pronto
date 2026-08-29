@@ -33,7 +33,7 @@ class ProfessionalCategoryMatchTest {
 
     @Test
     void standardListing_filtersByCategoryMembership_fromTheSharedConstant() {
-        assertThat(queryOf(ProfessionalListingRepository.class, "listByCategory"))
+        assertThat(queryOf(ProfessionalListingRepository.class, "listByCategoryAndServiceCity"))
                 .contains(ProfessionalCategoryMatch.SERVES_CATEGORY_JPQL);
     }
 
@@ -48,7 +48,7 @@ class ProfessionalCategoryMatchTest {
         // professionals.category_id was dropped by V45. A query still naming it would not even
         // start (Hibernate parses every @Query at boot), but the failure would be at startup of
         // whichever environment ran it next -- this says so at build time instead.
-        assertThat(queryOf(ProfessionalListingRepository.class, "listByCategory"))
+        assertThat(queryOf(ProfessionalListingRepository.class, "listByCategoryAndServiceCity"))
                 .doesNotContain("p.categoryId");
         assertThat(queryOf(SosCandidateRepository.class, "findEligible"))
                 .doesNotContain("p.categoryId");
@@ -94,7 +94,7 @@ class ProfessionalCategoryMatchTest {
     void bothQueriesAlsoStillApplyTheFullEligibilityRule() {
         // Category membership is one hard filter among several. Losing the eligibility conjunction
         // while adding the category one would be a very quiet way to un-gate discovery.
-        assertThat(queryOf(ProfessionalListingRepository.class, "listByCategory"))
+        assertThat(queryOf(ProfessionalListingRepository.class, "listByCategoryAndServiceCity"))
                 .contains(ProfessionalEligibility.ELIGIBLE_JPQL);
         assertThat(queryOf(SosCandidateRepository.class, "findEligible"))
                 .contains(ProfessionalEligibility.ELIGIBLE_JPQL);

@@ -4,6 +4,8 @@
  * `fetch` — directly, per FRONTEND_AGENT.md's "no inline fetch in screens" rule.
  */
 
+import { getGuestSessionToken } from './guestSessionStore';
+
 /**
  * Backend `server.port` default is 8080 (see `backend/src/main/resources/application.yml`).
  * Overridable via `VITE_API_BASE_URL` so later environments (staging/prod) don't require
@@ -70,6 +72,27 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Guest upload session header (`auth.security.GuestSessionTokenService.HEADER`).
+ *
+ * Attached to every request that has one stored, alongside — never instead of — `Authorization`.
+ * Both travel together on purpose: a visitor who uploaded photos as a guest and then registered
+ * mid-flow is simultaneously an authenticated customer and the owner of `guests/{id}/...` keys, and
+ * the backend accepts a key matching either identity. Dropping the guest header the moment they
+ * signed in is precisely how their own photos would vanish at the worst possible moment.
+ *
+ * Only the storage and issues routes look at it; everywhere else it is ignored, and sending it is
+ * cheaper than maintaining a list of which calls need it.
+ */
+const GUEST_SESSION_HEADER = 'X-Pronto-Guest-Session';
+
+function applyGuestSessionHeader(headers: Record<string, string>): void {
+  const guestSessionToken = getGuestSessionToken();
+  if (guestSessionToken) {
+    headers[GUEST_SESSION_HEADER] = guestSessionToken;
+  }
+}
+
 type TokenGetter = () => string | null;
 
 let tokenGetter: TokenGetter = () => null;
@@ -81,6 +104,18 @@ let tokenGetter: TokenGetter = () => null;
  */
 export function setAuthTokenGetter(getter: TokenGetter): void {
   tokenGetter = getter;
+}
+
+/**
+ * The token this module would attach right now, or `null`.
+ *
+ * Exposed for the one api-layer decision that turns on "is there an account behind this call":
+ * `storage.ts`'s `uploadImage` mints a guest upload session only when there is not, so a signed-in
+ * customer's upload is byte-for-byte the request it always was. Read-only — the source of truth is
+ * still the auth context that injected the getter.
+ */
+export function getAuthToken(): string | null {
+  return tokenGetter();
 }
 
 type UnauthorizedHandler = () => void;
@@ -158,6 +193,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       sentWithToken = true;
     }
   }
+  applyGuestSessionHeader(headers);
 
   let response: Response;
   try {
@@ -256,6 +292,13 @@ function upload<T>(path: string, formData: FormData, options: UploadOptions = {}
     const sentWithToken = Boolean(token);
     if (token) {
       xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    }
+    // The guest upload session, for exactly the same reason `request` sends it — and this is the
+    // transport that actually needs it, since `POST /api/storage/images` is the route a guest
+    // reaches first.
+    const guestSessionToken = getGuestSessionToken();
+    if (guestSessionToken) {
+      xhr.setRequestHeader(GUEST_SESSION_HEADER, guestSessionToken);
     }
     // No manual Content-Type: the browser has to set the multipart boundary itself, exactly
     // as in `request`.

@@ -1,5 +1,7 @@
 package com.pronto.users.service;
 
+import com.pronto.auth.config.OtpPolicies;
+
 import com.pronto.auth.config.VerificationPolicy;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
@@ -41,12 +43,12 @@ class ContactVerificationGuardTest {
 
     /** The guard wired to a given value of {@code pronto.verification.sms-required}. */
     private ContactVerificationGuard guardWithSmsRequired(boolean smsRequired) {
-        return new ContactVerificationGuard(userRepository, new VerificationPolicy(smsRequired, true));
+        return new ContactVerificationGuard(userRepository, new VerificationPolicy(OtpPolicies.enabled(), smsRequired, true));
     }
 
     /** The guard wired to a given value of {@code pronto.verification.email-required}. */
     private ContactVerificationGuard guardWithEmailRequired(boolean emailRequired) {
-        return new ContactVerificationGuard(userRepository, new VerificationPolicy(true, emailRequired));
+        return new ContactVerificationGuard(userRepository, new VerificationPolicy(OtpPolicies.enabled(), true, emailRequired));
     }
 
     private User account(boolean emailVerified, boolean phoneVerified) {
@@ -177,7 +179,7 @@ class ContactVerificationGuardTest {
     void smsRequired_isTheDefaultWhenThePropertyIsAbsent() {
         // Guards against the relaxation silently becoming permanent: if the property is ever
         // dropped from configuration, the strict rule must be what comes back.
-        assertThat(new VerificationPolicy(true, true).isSmsVerificationRequired()).isTrue();
+        assertThat(new VerificationPolicy(OtpPolicies.enabled(), true, true).isSmsVerificationRequired()).isTrue();
 
         account(true, false);
         assertThatThrownBy(() -> guardWithSmsRequired(true).requireVerifiedContactChannels(USER_ID))
@@ -206,7 +208,7 @@ class ContactVerificationGuardTest {
         account(false, false);
 
         assertThatThrownBy(() -> new ContactVerificationGuard(userRepository,
-                new VerificationPolicy(true, false)).requireVerifiedContactChannels(USER_ID))
+                new VerificationPolicy(OtpPolicies.enabled(), true, false)).requireVerifiedContactChannels(USER_ID))
                 .satisfies(e -> assertThat(((ApiException) e).getCode())
                         .isEqualTo(ErrorCode.PHONE_VERIFICATION_REQUIRED));
     }
@@ -226,7 +228,7 @@ class ContactVerificationGuardTest {
     @Test
     void emailRequired_isTheDefaultWhenThePropertyIsAbsent() {
         // The same guard-against-permanence as the SMS case above.
-        assertThat(new VerificationPolicy(true, true).isEmailVerificationRequired()).isTrue();
+        assertThat(new VerificationPolicy(OtpPolicies.enabled(), true, true).isEmailVerificationRequired()).isTrue();
 
         account(false, true);
         assertThatThrownBy(() -> guardWithEmailRequired(true).requireVerifiedContactChannels(USER_ID))

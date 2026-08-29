@@ -13,8 +13,9 @@ import java.time.Duration;
 /**
  * Route-level gating for {@code /api/users/**}.
  *
- * <p>{@code PUT /api/users/me} is {@code CUSTOMER}-only, and — as of the Production MS1 pre-DONE
- * audit — rate limited.
+ * <p>{@code PUT /api/users/me} and {@code PUT /api/users/me/default-address} are
+ * {@code CUSTOMER}-only. Only the first is rate limited, and the asymmetry is deliberate — see
+ * below.
  *
  * <p><b>Why a rate limit on a profile endpoint.</b> Since MS1, {@code PUT /api/users/me} accepts a
  * phone number, normalizes it, and answers {@code 409 DUPLICATE_PHONE} when it belongs to somebody
@@ -29,6 +30,14 @@ import java.time.Duration;
  * endpoint rather than only to requests that change the phone, because the limiter runs before the
  * body is bound and because a rate that never bites legitimate profile edits costs nothing to apply
  * uniformly.
+ *
+ * <p><b>Why {@code /me/default-address} is not behind that limiter.</b> The limiter exists for one
+ * reason: {@code PUT /api/users/me} takes a phone number and answers {@code 409 DUPLICATE_PHONE},
+ * which makes it an enumeration oracle. The address endpoint takes no phone number, returns no
+ * information about any other account, and writes only to the caller's own row — there is no
+ * oracle to close. It is also called from inside the booking flow, where a limit sized for "a
+ * rare, deliberate act" would be the wrong shape. Adding it "just in case" would trade a real UX
+ * risk for no security gain.
  */
 @Configuration
 public class UsersWebConfig implements WebMvcConfigurer {
@@ -42,7 +51,7 @@ public class UsersWebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new RoleRequiredInterceptor(UserRole.CUSTOMER.name(), "PUT"))
-                .addPathPatterns("/api/users/me");
+                .addPathPatterns("/api/users/me", "/api/users/me/default-address");
         registry.addInterceptor(new AuthRateLimitInterceptor(20, Duration.ofMinutes(15), clientIpResolver))
                 .addPathPatterns("/api/users/me");
     }

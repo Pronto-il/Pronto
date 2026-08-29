@@ -86,6 +86,7 @@ class BookingsArrivalTest {
 
         service = new BookingsService(Mockito.mock(IssueRepository.class), professionalRepository,
                 Mockito.mock(ProfessionalListingRepository.class),
+                Mockito.mock(com.pronto.locations.service.ServiceCityResolver.class),
                 Mockito.mock(AvailabilitySlotRepository.class), orderRepository,
                 Mockito.mock(UserRepository.class), notificationService,
                 Mockito.mock(DistanceEtaStrategy.class), Mockito.mock(StorageService.class),
@@ -362,6 +363,7 @@ class BookingsArrivalTest {
                 locationProperties);
         BookingsService withRecording = new BookingsService(Mockito.mock(IssueRepository.class),
                 professionalRepository, Mockito.mock(ProfessionalListingRepository.class),
+                Mockito.mock(com.pronto.locations.service.ServiceCityResolver.class),
                 Mockito.mock(AvailabilitySlotRepository.class), orderRepository,
                 Mockito.mock(UserRepository.class), notificationService,
                 Mockito.mock(DistanceEtaStrategy.class), Mockito.mock(StorageService.class),

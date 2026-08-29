@@ -192,9 +192,9 @@ to or persisted by the backend.
 | `fullName` | required, 2–150 chars (matches `users.full_name VARCHAR(150)`). |
 | `email` | required, valid email format, ≤255 chars. Uniqueness checked case-insensitively against `ux_users_email_lower`. |
 | `password` | required, **min 8 characters**. Same MVP-default judgment call as before, unchanged. |
-| `customer` / `customer.defaultAddress` | required *iff* `role = CUSTOMER`; absent → `VALIDATION_ERROR` on `customer.defaultAddress`. |
-| `customer.defaultAddress.city` / `.street` / `.houseNumber` | required, non-blank, size-capped (100/150/20 chars, matching `users.default_*` column lengths). |
-| `customer.defaultAddress.apartment` / `.floor` / `.entrance` / `.addressNotes` | optional. |
+| `customer` / `customer.defaultAddress` | **Optional as of the address-flow redesign** (was: required *iff* `role = CUSTOMER`). Registration no longer collects an address — an address is a property of a job, and the booking flow asks for it after AI classification, immediately before it is needed. `customer: null` is a valid `CUSTOMER` registration; `users.default_*` stays null and `GET /api/users/me` answers `defaultAddress: null`, exactly as it always has for a pre-`V20` row. A *supplied* address is still validated in full, including the selected-place requirement. |
+| `customer.defaultAddress.city` / `.street` / `.houseNumber` | required *within a supplied address*, non-blank, size-capped (100/150/20 chars, matching `users.default_*` column lengths). `houseNumber` is **digits only** as of the address-flow redesign (`maps.HouseNumbers`). |
+| `customer.defaultAddress.apartment` / `.floor` / `.entrance` / `.addressNotes` | optional — and, for the first three, shape-checked when present (`maps.AddressAccessFields`): `apartment` and `floor` are **digits only**, `entrance` is **at most 2 characters**, each a letter of any script (so `ב` counts) or an ASCII digit, with no spaces or symbols. Every pattern admits the empty string, so omitting them is unaffected. **A negative floor is refused** — nothing ever intentionally supported one, and a basement is described in `addressNotes`. `addressNotes` stays free text, deliberately: it is the escape hatch the other three rules assume exists. |
 | `customer.phone` | **New, M2.** Required, non-blank, ≤20 chars (matching `users.phone VARCHAR(20)`, `V28`). Read-only after registration — no edit endpoint exists in this API to update it, same as `defaultAddress`. |
 | `professional.categoryId` | required *iff* `role = PROFESSIONAL`; must reference an existing `categories.id` (1–8, per the seeded `V10` list). Absent/invalid → `VALIDATION_ERROR`. |
 | `professional.serviceArea` | required *iff* `role = PROFESSIONAL`; 1–150 chars. |
@@ -538,13 +538,36 @@ doc).
 - `fullName`: `@NotBlank @Size(max = 150)`.
 - `phone`: `@NotBlank @Size(max = 20)` — required on every call (mirrors the existing
   registration-time requirement for a `CUSTOMER`; there is no "leave phone unset" state).
-- `defaultAddress`: `@NotNull @Valid`, always required in full — no partial-address update.
-  `city`/`street`/`houseNumber` are `@NotBlank`; `apartment`/`floor`/`entrance`/
-  `addressNotes` are optional. Same shape/validation as `auth.dto.DefaultAddressRequest`
-  (registration), reused here as an independently-defined nested record
-  (`users.dto.UpdateUserMeRequest.Address`) to avoid a new `users -> auth` package
-  dependency. Also usable by a pre-`V20` customer (`defaultAddress: null` on `GET /me`) to
-  supply a default address for the first time — no separate "add address" endpoint needed.
+- `defaultAddress`: `@Valid`, **optional as of the address-flow redesign** (was `@NotNull`).
+  Omitting it saves `fullName`/`phone` and leaves the stored address exactly as it was — there
+  is no "clear my address" on this endpoint and there never was. It became optional because
+  registration stopped collecting an address: a customer may legitimately have none, and
+  requiring one here would mean such a customer could not correct a typo in their own name
+  without first inventing a home address.
+  When supplied it is still required in full — no partial-address update.
+  `city`/`street`/`houseNumber` are `@NotBlank` (`houseNumber` digits only, `maps.HouseNumbers`);
+  `apartment`/`floor`/`entrance`/`addressNotes` are optional, with the same
+  `maps.AddressAccessFields` shape rules §2.1 lists (digits-only apartment/floor; entrance
+  at most 2 letters-or-digits). Same shape/validation as
+  `auth.dto.DefaultAddressRequest` (registration), defined independently as
+  `users.dto.CustomerAddressRequest` to avoid a new `users -> auth` package dependency. Also
+  usable by a customer with no saved address (`defaultAddress: null` on `GET /me`) to supply one
+  for the first time.
+
+### 2.6b `PUT /api/users/me/default-address`
+
+New with the address-flow redesign. `CUSTOMER` only (route-level gate in
+`users.config.UsersWebConfig` plus a service-layer re-check). Body is
+`users.dto.CustomerAddressRequest` — the address object above, on its own, with identical rules
+(required in full, must carry a selected place). Response is the same `UserMeResponse` as
+`GET`/`PUT /api/users/me`.
+
+Exists for the booking flow's "הפוך את זה לכתובת הבית", where the customer has an address and
+nothing else. Routing that through `PUT /api/users/me` would mean resending their name and phone
+from client-side state to save something unrelated to either — and `phone` is not inert: a value
+that comes back changed drops `phone_verified`. Deliberately not rate limited (that limiter
+exists because `PUT /api/users/me` is a `DUPLICATE_PHONE` enumeration oracle; this endpoint takes
+no phone number).
 
 **Behavior:**
 1. Defense-in-depth `403 FORBIDDEN` if the caller's role isn't `CUSTOMER`.
@@ -827,6 +850,7 @@ a phone number, which is what keeps these flows from becoming an account-existen
 | Method | Path | Auth | Body | Returns |
 |---|---|---|---|---|
 | POST | `/api/auth/register` | public | multipart; `data` gains top-level **`phone`**, required for **both** roles; `customer.phone` removed | `201 AuthStepResponse` (`VERIFY_EMAIL`) |
+| POST | `/api/auth/availability` | public | `{field: "EMAIL"\|"PHONE", value}` | `{field, available}` — see "Contact availability" below |
 | POST | `/api/auth/verify-email` | public | `{challengeId, code}` | `AuthStepResponse` (`VERIFY_PHONE` or `LOGIN`) |
 | POST | `/api/auth/verify-phone` | public | `{challengeId, code}` | `AuthStepResponse` (`AUTHENTICATED`) |
 | POST | `/api/auth/login` | public | `{identifier, password}` | `AuthStepResponse` (`LOGIN_OTP` or `VERIFY_EMAIL`) |
@@ -849,6 +873,14 @@ additionally requires `phone_verified` — an unverified number is contact detai
 `phone` is now returned for **every** role, in canonical E.164 (it used to be blanked for a
 `PROFESSIONAL`). New field `phoneVerified: boolean`.
 
+**`phoneVerificationRequired: boolean`** (added with the OTP master switch) reports whether this
+deployment asks accounts to prove a phone number at all. It exists because `phoneVerified: false` is
+identical in two very different states — "unproved and being asked" and "unproved and nobody is
+asking" — and a client that could not tell them apart showed a capture screen offering to send a code
+nothing would redeem. `phoneVerified` deliberately continues to report the stored column and is never
+adjusted by policy: it answers "was this number proved", and making it lie would corrupt the record
+that decides who gets asked to verify when verification is turned back on.
+
 ### OTP rules
 
 6 digits from `SecureRandom`; SHA-256 at rest, never plaintext; single use; **5 attempts per
@@ -868,7 +900,69 @@ than show a dead end. Professional marketplace eligibility enforces the same req
 it is folded into `ProfessionalEligibility.ELIGIBLE_JPQL`, so an unverified professional is simply
 not discoverable.
 
+### Contact availability (`POST /api/auth/availability`)
+
+Answers **"would `POST /api/auth/register` accept this value?"** — one boolean and the field it is
+about, so a registration form can report "already registered" under the field instead of on its
+confirmation screen.
+
+**Request** `{"field": "EMAIL" | "PHONE", "value": "..."}`. `POST` with a body rather than `GET`
+with a query parameter, deliberately: a query string is copied into the ALB access log, browser
+history, and the `Referer` sent to any third party the page then loads.
+
+**Response `200`** `{"field": "EMAIL", "available": true}` — and nothing else. No account id, role,
+name, masked value, verified flag or deleted flag; `available: false` does not distinguish an
+active account from an unverified or soft-deleted one, because the question asked is exactly
+registration's own `existsByEmail`/`existsByPhone`.
+
+**Status codes**: `200` · `400 VALIDATION_ERROR` (the value is not a well-formed address, or not a
+mobile number that can receive an SMS — the same libphonenumber rule registration applies, which is
+how a landline is refused on the field rather than at submit) · `429 RATE_LIMITED`.
+
+**This does not replace registration's duplicate checks and is not permission.** The answer is true
+when given and can be false a minute later; `POST /api/auth/register` still returns
+`409 DUPLICATE_EMAIL` / `409 DUPLICATE_PHONE`, and a client must still handle them.
+
+**Rate limit: 20 per client per 10 minutes**, against registration's own 10 per 10 minutes. That
+number is a security budget rather than headroom — see "Enumeration" below.
+
+### OTP verification can be switched off entirely (`OTP_VERIFICATION_ENABLED`)
+
+**Currently off, deliberately, including in production** — a temporary product decision for the
+feedback/beta phase. One environment variable gates all three verification settings
+(`EMAIL_VERIFICATION_REQUIRED`, `SMS_VERIFICATION_REQUIRED`, `AUTH_OTP_REQUIRED`); see
+`auth.config.OtpVerificationPolicy` and the `auth` package README.
+
+With it `false`, the contract changes in exactly two observable ways:
+
+- **`POST /api/auth/register`** answers `201` with `nextStep: "AUTHENTICATED"`, a populated
+  `session`, and `challenge: null` — instead of `VERIFY_EMAIL` plus a challenge. `OTP_DELIVERY_FAILED`
+  is unreachable on this route. Clients must branch on `nextStep`, which was always the contract.
+- **`POST /api/auth/login`** answers `AUTHENTICATED` rather than `LOGIN_OTP`, on the same rule
+  `AUTH_OTP_REQUIRED=false` already had.
+
+`POST /api/auth/phone/capture` answers `400 VALIDATION_ERROR` while phone verification is not
+required — there is no code to send, and dispatching one anyway would be an SMS nothing will redeem.
+
+What does **not** change: every field-level validation (email format, phone format and
+SMS-reachability, duplicate email, duplicate phone, password rules, required fields), the
+`DUPLICATE_EMAIL`/`DUPLICATE_PHONE` conflicts, `INVALID_CREDENTIALS`, account lockout, every rate
+limit, and every route guard. `emailVerified`/`phoneVerified` are still reported honestly as `false`
+in both `AuthStepResponse` and `GET /api/users/me` — no account is marked verified for a channel
+nobody proved.
+
+The verify/resend endpoints are unchanged and remain callable; they simply have no challenge to act
+on, because none is issued.
+
 ### Enumeration
+
+`/api/auth/availability` is an account-existence oracle, and is bounded rather than hidden. The
+same disclosure was already reachable through `register`'s distinct `DUPLICATE_EMAIL` /
+`DUPLICATE_PHONE` codes, which exist because no form can highlight the right field without them;
+the new endpoint makes it cheaper, not newly possible. What bounds it is the per-client fixed-window
+limit above — 20 probes per 10 minutes, keyed on `ClientIpResolver`'s resolved address rather than
+on a spoofable header — plus a response that carries no account state. Raising that threshold is a
+security decision; `auth.config.AuthWebConfig` records why it is set where it is.
 
 `password-reset/request` answers identically for accounts that exist and accounts that do not,
 including when rate-limited, and always reports `delivered: true`. An unknown identifier receives a

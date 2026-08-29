@@ -1,5 +1,6 @@
 package com.pronto.auth.config;
 
+import com.pronto.auth.security.GuestSessionTokenService;
 import com.pronto.auth.security.JsonAuthenticationEntryPoint;
 import com.pronto.auth.security.JwtAuthenticationFilter;
 import org.springframework.beans.factory.annotation.Value;
@@ -146,10 +147,62 @@ public class SecurityConfig {
                         // every /api/sos write, and everything under /api/users. Guests read; they
                         // do not write, and they cause no professional to be contacted.
                         .requestMatchers(HttpMethod.POST, "/api/issues/classify").permitAll()
+
+                        // ---- guest image upload ----
+                        //
+                        // A visitor may photograph the leak before they have an account. Requiring
+                        // one to attach a picture put a signup form between a person and the single
+                        // most useful piece of evidence they have, on the screen where they are
+                        // still deciding whether this product is for them.
+                        //
+                        // permitAll here does NOT mean anonymous, in exactly the sense backend MS9
+                        // already established for GET /api/storage/images/**: authorization moved,
+                        // it did not disappear. It moved to the handler, where
+                        // auth.security.UploadOwnerResolver#requireIdentified answers 401 unless the
+                        // caller presented EITHER a valid JWT OR a valid, unexpired guest-session
+                        // token this backend minted itself. The filter chain cannot make that call,
+                        // because "no Authorization header" is now a legitimate state rather than a
+                        // rejection.
+                        //
+                        //   guest-sessions   mints that token. Creates no row, names no user, and
+                        //                    grants nothing except the right to write into and read
+                        //                    back one random namespace. Rate limited per IP in
+                        //                    storage.StorageWebConfig, as is the upload itself for
+                        //                    unauthenticated callers -- the account requirement used
+                        //                    to be what bounded anonymous writes to the bucket.
+                        //   images (POST)    the SAME upload, with the same content-type allow-list,
+                        //                    the same 8 MB cap and the same key template. The
+                        //                    CUSTOMER role gate still applies to anyone who does
+                        //                    present a JWT (StorageWebConfig).
+                        //   presigned-urls   re-resolves keys the caller already owns, so a paused
+                        //                    guest draft can show its photos again on resume.
+                        //
+                        // Still NOT here, and still creating nothing: POST /api/issues. A guest's
+                        // photos become an issue's photos only at the booking commit, once an
+                        // account exists to own them.
+                        .requestMatchers(HttpMethod.POST, "/api/storage/guest-sessions").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/storage/images").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/storage/images/presigned-urls").permitAll()
+
                         .requestMatchers(HttpMethod.GET, "/api/bookings/professionals").permitAll()
                         .requestMatchers(HttpMethod.GET,
                                 "/api/bookings/professionals/*/available-windows").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/professionals/*").permitAll()
+                        //   reviews            the ratings and comments already shown on the
+                        //                      profile behind a listing card. Choosing a tradesman
+                        //                      is choosing based on what other people said about
+                        //                      them, so putting that behind a signup form is the
+                        //                      same wall as the rest of this block, on the screen
+                        //                      where it does the most damage. Published content
+                        //                      about a publicly listed professional; the response
+                        //                      does not vary by who is asking.
+                        //
+                        // Scoped to GET and to the EXACT literal path. `/api/reviews/{id}` (PUT,
+                        // DELETE) does not match this matcher, and POST /api/reviews does not
+                        // match the method -- so all three writes still fall through to the
+                        // authenticated catch-all AND to reviews.ReviewsWebConfig's CUSTOMER role
+                        // gate, which is untouched.
+                        .requestMatchers(HttpMethod.GET, "/api/reviews").permitAll()
 
                         .requestMatchers("/ws/**").permitAll()
                         .anyRequest().authenticated())
@@ -177,7 +230,13 @@ public class SecurityConfig {
         // unreachable from any browser on a different origin for the same reason. The list is the
         // set of verbs this API actually answers, so PATCH belongs in it.
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Content-Type", "Authorization"));
+        // X-Pronto-Guest-Session carries a guest's upload-namespace token (see
+        // auth.security.GuestSessionTokenService). Without it in this list the browser's preflight
+        // refuses the header and every guest upload fails before it is sent -- and it cannot ride
+        // in Authorization, which is reserved for the JWT a guest does not have and a
+        // just-registered customer sends alongside it.
+        configuration.setAllowedHeaders(List.of("Content-Type", "Authorization",
+                GuestSessionTokenService.HEADER));
         // Every authenticated call carries `Authorization`, which makes it a non-simple request,
         // which means the browser preflights it. Without `Access-Control-Max-Age` on the response
         // Chromium caches that preflight decision for only 5 seconds, so a screen polling on any

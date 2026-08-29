@@ -151,7 +151,50 @@ function takePrefetched(path: string): Promise<ProfessionalListingResponse> | nu
  */
 export type ListingSubject = { issueId: number } | { categoryId: number };
 
+/**
+ * Thrown instead of issuing a listing request that the backend is certain to reject.
+ *
+ * Distinct from `ApiError` on purpose: nothing was sent, so there is no status, no code and no
+ * server message to report. A caller that catches this is looking at its own bug — it asked for
+ * professionals before it had somewhere to send them.
+ */
+export class IncompleteServiceLocationError extends Error {
+  /** The required fields that were blank or malformed. */
+  readonly missing: string[];
+
+  constructor(missing: string[]) {
+    super(`Refusing to request professionals without: ${missing.join(', ')}`);
+    this.name = 'IncompleteServiceLocationError';
+    this.missing = missing;
+  }
+}
+
+/**
+ * **The last line of defence against `?city=&street=&houseNumber=`.**
+ *
+ * `city`/`street`/`houseNumber` are required query params (`400 VALIDATION_ERROR`, one
+ * `FieldError` each). The screens above this module gate on a complete address before they get
+ * here — but this is where every listing request in the app is actually assembled, so it is the
+ * one place that can guarantee an empty one never leaves the browser. The observed 400 came from
+ * a screen whose guard was "is there an address object?" rather than "does it have an address
+ * in it"; the object was `EMPTY_ADDRESS`, non-null and entirely blank, and this function did not
+ * exist to notice.
+ *
+ * `houseNumber` is checked for shape, not just presence: the backend refuses a non-numeric one
+ * too (see `BookingsController#parseServiceLocation`).
+ */
+function assertListable(location: ServiceLocation): void {
+  const missing: string[] = [];
+  if (!location.city?.trim()) missing.push('city');
+  if (!location.street?.trim()) missing.push('street');
+  if (!/^\d{1,20}$/.test(location.houseNumber?.trim() ?? '')) missing.push('houseNumber');
+  if (missing.length > 0) {
+    throw new IncompleteServiceLocationError(missing);
+  }
+}
+
 function listingParams(subject: ListingSubject, location: ServiceLocation, sort?: ProfessionalSort) {
+  assertListable(location);
   const params = new URLSearchParams();
   if ('issueId' in subject) {
     params.set('issueId', String(subject.issueId));
@@ -175,7 +218,15 @@ export function prefetchProfessionalListing(
   location: ServiceLocation,
   sort?: ProfessionalSort,
 ): Promise<ProfessionalListingResponse> {
-  const path = listingParams(subject, location, sort);
+  // A rejected promise rather than a synchronous throw: this is called from an effect that
+  // stores the result and attaches its own `.catch`, and a synchronous throw there would take
+  // the screen down instead of degrading into that handler.
+  let path: string;
+  try {
+    path = listingParams(subject, location, sort);
+  } catch (error) {
+    return Promise.reject(error);
+  }
 
   if (prefetchEntry && prefetchEntry.path === path && Date.now() - prefetchEntry.storedAt <= PREFETCH_TTL_MS) {
     return prefetchEntry.promise;
@@ -195,14 +246,20 @@ export function prefetchProfessionalListing(
  * `GET /api/bookings/professionals?issueId=&city=&street=&houseNumber=&apartment=&sort=`
  * `city`/`street`/`houseNumber` are REQUIRED query params as of Milestone 8 (400
  * VALIDATION_ERROR, one FieldError per missing field) — NOT optional despite what
- * api-contract-bookings.md §2.2's original prose implies.
+ * api-contract-bookings.md §2.2's original prose implies. An incomplete `location` rejects with
+ * {@link IncompleteServiceLocationError} **without issuing a request**.
  */
 export function getProfessionalsForIssue(
   subject: ListingSubject,
   location: ServiceLocation,
   sort?: ProfessionalSort,
 ): Promise<ProfessionalListingResponse> {
-  const path = listingParams(subject, location, sort);
+  let path: string;
+  try {
+    path = listingParams(subject, location, sort);
+  } catch (error) {
+    return Promise.reject(error);
+  }
   return takePrefetched(path) ?? httpClient.get<ProfessionalListingResponse>(path);
 }
 

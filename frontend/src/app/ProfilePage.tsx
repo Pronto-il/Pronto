@@ -18,6 +18,7 @@ import {
   getCategoryNamesHe,
   deleteMe,
   updateMe,
+  toCustomerAddressPayload,
   GENERIC_ERROR_MESSAGE,
   getFieldErrorMessages,
   type UserRole,
@@ -65,6 +66,21 @@ function toAddressValue(address: UserMeDefaultAddress | null): AddressValue {
   return {
     ...sharedToAddressValue(address),
   };
+}
+
+/** Nothing has been entered in any of the address fields. Distinct from "invalid": an empty
+ *  address form on a customer who has never saved one is a legitimate state to submit, and
+ *  submitting it must leave the profile's address exactly as it was. */
+function isBlankAddress(address: AddressValue): boolean {
+  return (
+    !address.city.trim() &&
+    !address.street.trim() &&
+    !address.houseNumber.trim() &&
+    !address.apartment.trim() &&
+    !address.floor.trim() &&
+    !address.entrance.trim() &&
+    !address.addressNotes.trim()
+  );
 }
 
 /**
@@ -145,7 +161,14 @@ export default function ProfilePage() {
     // Saving the profile IS "editing the saved address", which is the moment a legacy free-text
     // address is expected to become a validated one. A customer who never opens this screen keeps
     // their old address working; one who edits it must pick a real suggestion.
-    const nextAddressErrors = validateAddress(address);
+    //
+    // An entirely untouched, empty address form is the one exception, and it exists because
+    // registration no longer collects an address: a customer may genuinely have none, and such a
+    // customer must be able to correct a typo in their own name without being made to invent a
+    // home address first. `defaultAddress` is then omitted from the request, which the backend
+    // reads as "leave it alone" rather than "clear it".
+    const isAddressUntouched = address === EMPTY_ADDRESS || isBlankAddress(address);
+    const nextAddressErrors = isAddressUntouched ? {} : validateAddress(address);
     if (Object.keys(nextAddressErrors).length > 0) {
       setAddressErrors(nextAddressErrors);
       setBannerError(nextAddressErrors.placeId ?? 'יש למלא את כל השדות הנדרשים.');
@@ -157,19 +180,7 @@ export default function ProfilePage() {
       await updateMe({
         fullName: fullName.trim(),
         phone: phone.trim(),
-        defaultAddress: {
-          city: address.city.trim(),
-          street: address.street.trim(),
-          houseNumber: address.houseNumber.trim(),
-          apartment: address.apartment.trim() || undefined,
-          floor: address.floor.trim() || undefined,
-          entrance: address.entrance.trim() || undefined,
-          addressNotes: address.addressNotes.trim() || undefined,
-          placeId: address.placeId ?? undefined,
-          formattedAddress: address.formattedAddress ?? undefined,
-          latitude: address.latitude ?? undefined,
-          longitude: address.longitude ?? undefined,
-        },
+        defaultAddress: isAddressUntouched ? undefined : toCustomerAddressPayload(address),
       });
       setSavedAt(Date.now());
       void refreshUser();

@@ -23,6 +23,65 @@ class LocalDiskStorageClientTest {
         return new LocalDiskStorageClient(baseDir.toString(), "http://localhost:8080", urlSigner, DEFAULT_TTL_SECONDS);
     }
 
+    // ---- copy/delete: the primitives guest-upload promotion is built on ----
+
+    @Test
+    void copy_duplicatesTheObjectUnderTheNewKeyAndLeavesTheOriginal() {
+        LocalDiskStorageClient client = client(tempDir);
+        byte[] content = "photo bytes".getBytes(StandardCharsets.UTF_8);
+        String guestKey = "guests/2f1c9d8e-4b7a-4c3d-9e2f-1a2b3c4d5e6f/issues/temp/a.jpg";
+        String customerKey = "customers/42/issues/temp/a.jpg";
+        client.upload(guestKey, content, "image/jpeg");
+
+        client.copy(guestKey, customerKey);
+
+        assertThat(client.download(customerKey)).isEqualTo(content);
+        // The original survives the copy: promotion deletes it only after the booking commits.
+        assertThat(client.exists(guestKey)).isTrue();
+    }
+
+    @Test
+    void copy_overwritesAnExistingDestination() {
+        // Promotion reuses the source filename, so a retried booking commit copies onto a
+        // destination that already exists. That must succeed, not fail.
+        LocalDiskStorageClient client = client(tempDir);
+        client.upload("guests/2f1c9d8e-4b7a-4c3d-9e2f-1a2b3c4d5e6f/issues/temp/a.jpg",
+                "new".getBytes(StandardCharsets.UTF_8), "image/jpeg");
+        client.upload("customers/42/issues/temp/a.jpg", "stale".getBytes(StandardCharsets.UTF_8), "image/jpeg");
+
+        client.copy("guests/2f1c9d8e-4b7a-4c3d-9e2f-1a2b3c4d5e6f/issues/temp/a.jpg",
+                "customers/42/issues/temp/a.jpg");
+
+        assertThat(client.download("customers/42/issues/temp/a.jpg"))
+                .isEqualTo("new".getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void copy_rejectsAPathTraversingKeyOnEitherSide() {
+        LocalDiskStorageClient client = client(tempDir);
+        client.upload("customers/42/issues/temp/a.jpg", "x".getBytes(StandardCharsets.UTF_8), "image/jpeg");
+
+        assertThatThrownBy(() -> client.copy("../escape.jpg", "customers/42/issues/temp/b.jpg"))
+                .isInstanceOf(StorageException.class);
+        assertThatThrownBy(() -> client.copy("customers/42/issues/temp/a.jpg", "../escape.jpg"))
+                .isInstanceOf(StorageException.class);
+    }
+
+    @Test
+    void delete_removesTheObjectAndIsIdempotent() {
+        LocalDiskStorageClient client = client(tempDir);
+        String key = "guests/2f1c9d8e-4b7a-4c3d-9e2f-1a2b3c4d5e6f/issues/temp/a.jpg";
+        client.upload(key, "x".getBytes(StandardCharsets.UTF_8), "image/jpeg");
+
+        client.delete(key);
+        assertThat(client.exists(key)).isFalse();
+
+        // Deleting what is already gone succeeds: a retried cleanup must not fail because the
+        // first attempt worked.
+        client.delete(key);
+        assertThat(client.exists(key)).isFalse();
+    }
+
     @Test
     void upload_thenDownload_roundTripsTheSameBytes() {
         LocalDiskStorageClient client = client(tempDir);

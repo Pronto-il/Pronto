@@ -1,7 +1,10 @@
 package com.pronto.bookings.dto;
 
+import com.pronto.maps.AddressAccessFields;
+import com.pronto.maps.HouseNumbers;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
@@ -18,6 +21,12 @@ import java.time.Instant;
  * <p>{@code serviceCity}/{@code serviceStreet}/{@code serviceHouseNumber} are required
  * (service-address snapshot, §1 classification item 5); {@code serviceApartment}/
  * {@code serviceFloor}/{@code serviceEntrance}/{@code serviceAddressNotes} are optional.
+ *
+ * <p>Optional still means shape-checked: {@code serviceApartment}/{@code serviceFloor} are digits
+ * only and {@code serviceEntrance} is at most two letters-or-digits, per
+ * {@code maps.AddressAccessFields}. Each pattern admits the empty string, so omitting them is
+ * unaffected — this only stops the order's address snapshot carrying a value the address form
+ * would never have produced.
  *
  * <p><b>{@code slotId} is dropped entirely (design §9.2.2)</b> — not kept, even as an
  * optional/ignored field, for backward compatibility (there is no production data and no
@@ -48,10 +57,14 @@ public record CreateOrderRequest(
         @NotNull Instant bookedStart,
         @NotBlank String serviceCity,
         @NotBlank String serviceStreet,
-        @NotBlank String serviceHouseNumber,
-        String serviceApartment,
-        String serviceFloor,
-        String serviceEntrance,
+        @NotBlank @Pattern(regexp = HouseNumbers.PATTERN, message = HouseNumbers.MESSAGE)
+        String serviceHouseNumber,
+        @Pattern(regexp = AddressAccessFields.APARTMENT_PATTERN,
+                message = AddressAccessFields.APARTMENT_MESSAGE) String serviceApartment,
+        @Pattern(regexp = AddressAccessFields.FLOOR_PATTERN,
+                message = AddressAccessFields.FLOOR_MESSAGE) String serviceFloor,
+        @Pattern(regexp = AddressAccessFields.ENTRANCE_PATTERN,
+                message = AddressAccessFields.ENTRANCE_MESSAGE) String serviceEntrance,
         String serviceAddressNotes,
         @Size(max = 255) String servicePlaceId,
         @Size(max = 500) String serviceFormattedAddress,

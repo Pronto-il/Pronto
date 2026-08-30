@@ -147,11 +147,30 @@ describe('visibility (redesign §2)', () => {
   });
 });
 
-describe('hidden during new-issue creation, regardless of state (mobile-nav fix)', () => {
+describe('hidden throughout booking creation, regardless of state', () => {
   const activeOrder = { order: order({ id: 1, orderStatus: 'CONFIRMED' }), state: 'PENDING_CONFIRMED' } as const;
 
-  it.each(['/issues/new', '/issues/42/matching', '/issues/42/booking', '/issues/42/sos-booking'])(
-    'hides the shortcut on %s even though an active order exists',
+  /**
+   * The Production regression, asserted against the routes the router actually serves.
+   *
+   * An active order existing is NOT enough to show the widget — route context decides. This block
+   * previously covered only `/issues/:id/...`, so when deferred authentication flattened those
+   * paths the rule stopped firing and the toolbox reappeared over the whole booking flow while
+   * every test stayed green.
+   */
+  it.each([
+    ['/issues/new', 'issue description + AI classification'],
+    ['/matching', 'profession matching'],
+    ['/booking', 'address / professionals / slot / confirm'],
+    ['/sos-booking', 'SOS address, activation and live scan'],
+  ])('hides the shortcut on %s (%s) even though an active order exists', (path) => {
+    const view = renderToolbox(activeOrder, { path });
+    expect(toolboxIsVisible()).toBe(false);
+    view.unmount();
+  });
+
+  it.each(['/booking/confirm', '/issues/new/review', '/sos-booking/scan'])(
+    'stays hidden on the nested route %s, so moving between steps never reveals it',
     (path) => {
       const view = renderToolbox(activeOrder, { path });
       expect(toolboxIsVisible()).toBe(false);
@@ -159,17 +178,61 @@ describe('hidden during new-issue creation, regardless of state (mobile-nav fix)
     },
   );
 
-  it('hides the REVIEW state too, which the active-order-screen rule alone never suppresses', () => {
-    // REVIEW has no `route`, so only the route-classified new-issue-flow rule can hide it here.
-    renderToolbox({ order: order({ orderStatus: 'COMPLETED' }), state: 'COMPLETED_UNACKNOWLEDGED' }, { path: '/issues/new' });
+  it.each(['/issues/42/matching', '/issues/42/booking', '/issues/42/sos-booking'])(
+    'still hides on the legacy path %s, which stale links elsewhere continue to target',
+    (path) => {
+      const view = renderToolbox(activeOrder, { path });
+      expect(toolboxIsVisible()).toBe(false);
+      view.unmount();
+    },
+  );
+
+  it('hides on a deep link / refresh straight onto a booking route, with no first-paint flash', () => {
+    // `MemoryRouter` with a single initial entry is exactly a cold load on that URL — no prior
+    // navigation, no effect has run. The rule is evaluated during render, so the very first
+    // committed frame already has nothing; there is no state to settle into.
+    renderToolbox(activeOrder, { path: '/sos-booking' });
 
     expect(toolboxIsVisible()).toBe(false);
   });
 
-  it('still shows the shortcut on ordinary customer screens with the same active order', () => {
-    renderToolbox(activeOrder, { path: '/favorites' });
+  it('hides the REVIEW state too, which the active-order-screen rule alone never suppresses', () => {
+    // REVIEW has no `route`, so only the route-classified booking-flow rule can hide it here.
+    renderToolbox({ order: order({ orderStatus: 'COMPLETED' }), state: 'COMPLETED_UNACKNOWLEDGED' }, { path: '/booking' });
 
+    expect(toolboxIsVisible()).toBe(false);
+  });
+});
+
+describe('visible again once the customer leaves booking creation', () => {
+  const activeOrder = { order: order({ id: 1, orderStatus: 'CONFIRMED' }), state: 'PENDING_CONFIRMED' } as const;
+
+  it.each(['/', '/orders', '/favorites', '/profile'])(
+    'shows the shortcut on %s when an active order exists',
+    (path) => {
+      const view = renderToolbox(activeOrder, { path });
+      expect(toolboxIsVisible()).toBe(true);
+      view.unmount();
+    },
+  );
+
+  it('reappears when navigating out of the booking flow with the same order', () => {
+    // The pair that matters: identical state, different route, opposite outcome — which is the
+    // "existence of an active order alone must not decide visibility" rule stated as a test.
+    const inFlow = renderToolbox(activeOrder, { path: '/booking' });
+    expect(toolboxIsVisible()).toBe(false);
+    inFlow.unmount();
+
+    renderToolbox(activeOrder, { path: '/' });
     expect(toolboxIsVisible()).toBe(true);
+  });
+
+  it('a completed, acknowledged order stays hidden on a normal route — unchanged rule', () => {
+    // The existing completion behaviour must survive both fixes: no active order, nothing to show,
+    // regardless of where the customer is.
+    renderToolbox(null, { path: '/' });
+
+    expect(toolboxIsVisible()).toBe(false);
   });
 });
 

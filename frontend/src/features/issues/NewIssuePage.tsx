@@ -77,9 +77,21 @@ export default function NewIssuePage() {
   const initialDraft = useRef(draft).current;
   const canHydrate = initialDraft !== null && ISSUE_DRAFT_STAGES.has(initialDraft.stage);
 
-  // Whether there's an in-progress *booking* draft (already past issue creation, i.e. has an
-  // issueId) that starting a fresh issue here would silently overwrite/destroy (§4.5.1).
-  const [hasConflictingDraft] = useState(() => Boolean(initialDraft && initialDraft.issueId !== undefined));
+  // Whether there's an in-progress *booking* draft that starting a fresh issue here would
+  // silently overwrite/destroy (§4.5.1).
+  //
+  // **Keyed on the stage, not on `issueId`.** It used to ask "does the draft have an issueId?",
+  // which was a proxy for "has this report been confirmed and moved into booking" only while
+  // confirming a classification created the issue. It no longer does — nothing is persisted until
+  // the commit — so that test would now be false for exactly the customer this warning is for: one
+  // who is midway through choosing a professional. (It was already false for every guest, who
+  // never had an id to find; this fixes that too.)
+  //
+  // The stage answers the question directly: `ISSUE_DRAFT_STAGES` are the report itself, and
+  // anything beyond them is a booking in progress.
+  const [hasConflictingDraft] = useState(
+    () => initialDraft !== null && !ISSUE_DRAFT_STAGES.has(initialDraft.stage),
+  );
   const [warningDismissed, setWarningDismissed] = useState(false);
 
   const [description, setDescription] = useState(() => (canHydrate ? initialDraft!.description : ''));
@@ -279,17 +291,26 @@ export default function NewIssuePage() {
   }
 
   /**
-   * `issue` is `null` when the review was confirmed without persisting anything — the guest case,
-   * where `POST /api/issues` is deferred to the booking commit along with the order.
+   * `issue.id` is `null` on **every new report**, guest or signed-in, because confirming a
+   * classification no longer persists anything (see `ReviewStep.handleConfirm`). It is a real id in
+   * exactly one case: the customer walked back into this screen from a flow whose issue already
+   * exists, and that issue was reused or had its category corrected.
    *
    * Both cases advance identically, because from here on the flow reads the DRAFT, not the issue:
    * the category and urgency it needs are in the patch below either way. The only difference is
    * whether `issueId` is known yet.
+   *
+   * **`issueId: undefined` deliberately overwrites.** `updateDraft` shallow-merges, so confirming a
+   * new report clears any id the draft was still carrying — which is correct and is half the
+   * duplicate-issue fix: a re-classified report is a different report, and leaving the old id in
+   * place would make the commit book the new selection against the previous problem's issue.
+   * `reusableIssue` (and therefore `issue.id`) survives precisely when the report did not change.
    */
   function handleConfirmed(issue: ConfirmedIssue) {
 
-    // Issue creation is explicitly NOT a clear-trigger (§4.5.1) — the draft moves forward into
-    // the booking flow instead of being discarded.
+    // Confirming is explicitly NOT a clear-trigger (§4.5.1) — the draft moves forward into the
+    // booking flow instead of being discarded. It is now also not a *write* trigger: the draft is
+    // the only record of this report until the commit creates the issue.
     updateDraft({
       stage: 'ADDRESS_SELECTION',
       issueId: issue.id ?? undefined,
@@ -405,10 +426,7 @@ export default function NewIssuePage() {
               {step.name === 'review' && (
                 <ReviewStep
                   classification={step.classification}
-                  description={description}
-                  photos={photos}
                   urgencyType={urgencyType}
-                  clarificationAnswers={clarificationAnswers}
                   existingIssue={reusableIssue}
                   onConfirmed={handleConfirmed}
                 />

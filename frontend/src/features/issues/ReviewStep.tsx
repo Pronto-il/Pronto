@@ -1,17 +1,14 @@
 import { useState } from 'react';
 import { Button, Card, Select } from '../../shared/components';
-import type { UploadedPhoto } from '../../shared/components';
 import {
   ApiError,
-  createIssue,
   updateIssueCategory,
   GENERIC_ERROR_MESSAGE,
   CATEGORIES,
   getCategoryNameHe,
   getProfessionalNameHe,
 } from '../../shared/api';
-import type { ClarificationAnswer, ClassifyIssueResponse, IssueUrgencyType } from '../../shared/api';
-import { useAuth } from '../../shared/hooks';
+import type { ClassifyIssueResponse, IssueUrgencyType } from '../../shared/api';
 import styles from './ReviewStep.module.css';
 
 /** The subset of `IssueResponse` the flow actually carries forward once an issue exists — see
@@ -25,14 +22,16 @@ export interface ConfirmedIssue {
   urgencyType: IssueUrgencyType;
 }
 
+/**
+ * `description`, `photos` and `clarificationAnswers` used to be props here, passed in purely so
+ * this screen could hand them to `createIssue`. With creation moved to the commit they are no
+ * longer this component's business: they live in the booking draft from the moment they are
+ * entered, and `BookingSummary`/`ProntoSosEntryPage` read them from there. Removed rather than
+ * left unused, so nothing suggests this screen still persists a report.
+ */
 export interface ReviewStepProps {
   classification: ClassifyIssueResponse;
-  description: string;
-  photos: UploadedPhoto[];
   urgencyType: IssueUrgencyType;
-  /** Sent with the issue so the conversation is persisted rather than discarded at this
-   *  boundary — it is what Pronto's brief for the professional is built from. */
-  clarificationAnswers: ClarificationAnswer[];
   /**
    * An issue this exact description/photo set already produced, when the customer came *back*
    * here from the address step to re-check the classification (`ProfessionMatchPage`'s back
@@ -55,22 +54,15 @@ const CATEGORY_OPTIONS = CATEGORIES.map((category) => ({ value: String(category.
  * cross the wire at all (they used to, and were documented as never allowed to be rendered —
  * the field removal replaces that convention with a structural guarantee).
  *
- * The customer keeps the final word here: the category can still be overridden, and whatever
- * they confirm is what `POST /api/issues` persists. Confirming is the call that actually
- * creates the issue (api-contract-issues.md §2.2), now carrying the clarification answers with
- * it so the professional's brief can be built from them.
+ * The customer keeps the final word here: the category can still be overridden, and whatever they
+ * confirm is what the eventual `POST /api/issues` is called with.
+ *
+ * **Confirming does not create the issue, for anyone.** It used to, for signed-in customers — see
+ * `handleConfirm`, which now defers for guests and customers alike so there is one lifecycle
+ * instead of two. The only write this screen can still make is a category correction on an issue
+ * that genuinely already exists (`existingIssue`).
  */
-export function ReviewStep({
-  classification,
-  description,
-  photos,
-  urgencyType,
-  clarificationAnswers,
-  existingIssue,
-  onConfirmed,
-}: ReviewStepProps) {
-  const { token } = useAuth();
-  const isAuthenticated = Boolean(token);
+export function ReviewStep({ classification, urgencyType, existingIssue, onConfirmed }: ReviewStepProps) {
   const [categoryId, setCategoryId] = useState(String(classification.suggestedCategoryId ?? ''));
   const [isChangingCategory, setIsChangingCategory] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -79,45 +71,65 @@ export function ReviewStep({
   async function handleConfirm() {
     const chosenCategoryId = Number(categoryId);
 
-    // Came back to look, changed nothing: the issue that already exists for this exact report is
-    // still the right one, so nothing is written and the flow simply continues with it.
-    if (existingIssue && existingIssue.categoryId === chosenCategoryId) {
-      onConfirmed({ id: existingIssue.id, categoryId: existingIssue.categoryId, urgencyType });
+    // ---- ONE lifecycle, for guests and signed-in customers alike ----
+    //
+    // **Confirming a classification is not a commitment, so it writes nothing.** There is no issue
+    // yet and this screen does not create one, whoever is looking at it. The booking draft carries
+    // the category, description, photos and clarification answers forward, and the FIRST database
+    // row is written at the commit — `features/booking/BookingSummary` for Standard,
+    // `features/sos/ProntoSosEntryPage` for SOS — where an account exists and a professional is
+    // actually about to be engaged.
+    //
+    // This branch used to read `!isAuthenticated && !existingIssue`, so only guests deferred. A
+    // signed-in customer fell through to `createIssue` below and got a row here, at the *review*
+    // step, which is the earliest point in the journey at which anything could be persisted. That
+    // split was the defect:
+    //
+    //   - Abandoning after the classification -- closing the tab, wandering off at the address or
+    //     matching screen -- left an `OPEN` issue nobody ever booked, indistinguishable from a
+    //     genuine unbooked request.
+    //   - Starting a fresh report abandoned the first one for good: `NewIssuePage.handleClassified`
+    //     clears `reusableIssue` on any re-classification, so the next confirm created a SECOND
+    //     issue and stranded the first with the same description, the same photos and the same
+    //     answers.
+    //   - Guests and customers behaved differently through the same screens, so every downstream
+    //     "is there an issue yet?" question had two answers depending on who was asking.
+    //
+    // The comments elsewhere that describe issue creation as happening at the booking commit were
+    // written for this design; they are now true for everyone rather than for half the users.
+    if (!existingIssue) {
+      onConfirmed({ id: null, categoryId: chosenCategoryId, urgencyType });
       return;
     }
 
-    // ---- deferred authentication ----
-    //
-    // Confirming the review no longer creates the issue. `POST /api/issues` is a write, and the
-    // person doing it may not have an account yet -- this screen sits in the middle of the guest
-    // journey now. The issue is created at the booking commit instead, where authentication has
-    // already happened, together with the order.
-    //
-    // A guest therefore leaves this screen with everything captured in the draft and nothing
-    // persisted. A SIGNED-IN customer who has already created an issue on a previous pass still
-    // gets the category correction below, because that issue really does exist and really can go
-    // stale.
-    if (!isAuthenticated && !existingIssue) {
-      onConfirmed({ id: null, categoryId: chosenCategoryId, urgencyType });
+    // Came back to look, changed nothing: the issue that already exists for this exact report is
+    // still the right one, so nothing is written and the flow simply continues with it.
+    if (existingIssue.categoryId === chosenCategoryId) {
+      onConfirmed({ id: existingIssue.id, categoryId: existingIssue.categoryId, urgencyType });
       return;
     }
 
     setBannerError(null);
     setIsSubmitting(true);
     try {
-      // Came back and corrected the category: the issue is *updated*, never re-created. Creating a
-      // second one here is what used to strand the first as an `OPEN` orphan carrying the same
-      // description, photos and answers — one reported fault stays one issue, and all of that
-      // content stays attached to it (the endpoint takes a category and nothing else).
-      const issue = existingIssue
-        ? await updateIssueCategory(existingIssue.id, chosenCategoryId)
-        : await createIssue({
-            categoryId: chosenCategoryId,
-            description,
-            urgencyType,
-            imageKeys: photos.map((photo) => photo.imageKey),
-            clarificationAnswers,
-          });
+      // ---- the ONLY write this screen can still make, and only against a REAL issue ----
+      //
+      // `existingIssue` is not a leftover of the old eager-creation design and is deliberately
+      // kept: it is set only when the draft carries an `issueId` that a commit already persisted
+      // (`NewIssuePage`'s `reusableIssue`), which happens when the customer walks BACK into the
+      // classification from the address/matching screens after an issue exists -- most importantly
+      // after a `createOrder` failure, where `BookingSummary` has written the id to the draft and
+      // the retry must reuse it.
+      //
+      // Correcting the category there edits that issue; it never creates a second one. Creating a
+      // duplicate is precisely what used to strand the first as an `OPEN` orphan carrying the same
+      // content -- one reported fault stays one issue (the endpoint takes a category and nothing
+      // else, so everything already attached to it is preserved).
+      //
+      // In the new deferred flow there is no issue to PATCH, and none is invented in order to have
+      // something to PATCH: the corrected category goes to the draft via `onConfirmed` above and is
+      // what `createIssue` is eventually called with at the commit.
+      const issue = await updateIssueCategory(existingIssue.id, chosenCategoryId);
       onConfirmed(issue);
     } catch (error) {
       // The issue was booked from somewhere else while this screen was open, so the category can

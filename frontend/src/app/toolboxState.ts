@@ -164,26 +164,60 @@ export function celebrationKindFor(state: ToolboxState): CelebrationKind | null 
 }
 
 /**
- * The four routes that make up the new-issue / order-creation flow (`router.tsx`'s
- * `RequireAuth role="CUSTOMER"` group): `/issues/new` (description + AI classification, one
- * route holding its own internal step machine), `/issues/:issueId/matching` (the AI-matching
- * transition screen), `/issues/:issueId/booking` (Standard professional selection / slot /
- * confirm), and `/issues/:issueId/sos-booking` (the Pronto SOS equivalent).
+ * The routes that make up booking creation — **the single source of truth for "is the customer
+ * currently building an order?"**, and the only place that question is answered.
  *
- * Every one of these sits somewhere between "an issue was described" and "an order exists" —
- * exactly the window in which the toolbox's "resume my order" shortcut has nothing useful to
- * resume (it would point at a *different*, already-existing order or draft) and only competes
- * with the task actually in front of the customer (mobile-nav fix, 2026-08-28).
+ * Read straight off `router.tsx`'s guest-journey block:
  *
- * Route-based rather than derived from component state on purpose: the route the customer is on
- * is already known unambiguously (`useLocation()`), so classifying it here keeps the rule one
- * explicit, independently testable function instead of another branch woven into
- * {@link resolveToolboxState} or the component itself.
+ * | Route | What it holds |
+ * |---|---|
+ * | `/issues/new` | describe → clarify → review → unsupported (one route, internal step machine) |
+ * | `/matching` | the AI profession-matching transition screen |
+ * | `/booking` | Standard: address → professionals → slot → confirm |
+ * | `/sos-booking` | Pronto SOS: address → activation → live scan, until a professional is chosen |
+ *
+ * Every one of these sits between "an issue was described" and "an order exists" — exactly the
+ * window in which the toolbox's "resume my order" shortcut has nothing useful to resume (it points
+ * at a *different*, already-existing order or draft) and only competes with the task in front of
+ * the customer.
+ *
+ * <h2>Why this was broken in Production</h2>
+ *
+ * This function used to match `/issues/:issueId/(matching|booking|sos-booking)`. Deferred
+ * authentication flattened those routes to `/matching`, `/booking` and `/sos-booking` — issue
+ * creation moved to the booking commit, so during matching and slot selection there is no issue id
+ * to put in a URL. The routes changed; this matcher did not, so it silently stopped matching and
+ * the toolbox reappeared throughout booking creation. `/issues/new` kept working purely because
+ * that one route kept its path.
+ *
+ * The legacy `/issues/:id/...` forms are still recognised below. Not for the router — those paths
+ * no longer resolve — but because `features/notifications/NotificationBell`,
+ * `features/booking/OrderTrackingPage` and `features/professionals/ProfessionalProfilePage` still
+ * *navigate* to them (a separate stale-route defect, reported not fixed here). If any of those
+ * links is ever repaired by restoring the route, this rule must not need a second edit to keep up.
+ *
+ * <h2>Two deliberate exclusions</h2>
+ *
+ * `/professionals/:id` is **not** here even though it is reachable mid-booking. It is equally a
+ * normal browsing route (it is part of the public guest journey), and the only signal separating
+ * the two is `location.state`, which does not survive a refresh — so including it would make
+ * visibility depend on how the customer arrived and flip after F5. `/orders/:id` is not here
+ * either: that is order *tracking*, not creation, and the existing "don't link to the screen you
+ * are already on" rule in `ActiveIssueToolbox` already covers it.
+ *
+ * Route-based rather than state-derived on purpose: the current path is known unambiguously and
+ * synchronously from `useLocation()`, so this stays one explicit, independently testable function
+ * — and, because `ActiveIssueToolbox` consults it during render rather than in an effect, the
+ * toolbox cannot flash before being hidden on a deep link or a refresh.
  */
-export function isInNewIssueFlow(pathname: string): boolean {
-  return (
-    pathname === '/issues/new' ||
-    pathname.startsWith('/issues/new/') ||
-    /^\/issues\/[^/]+\/(matching|booking|sos-booking)(\/|$)/.test(pathname)
+const BOOKING_FLOW_ROUTES = ['/issues/new', '/matching', '/booking', '/sos-booking'] as const;
+
+export function isInBookingFlow(pathname: string): boolean {
+  // Exact match, or a nested path beneath one of them — never a prefix match on the bare string,
+  // which would wrongly catch a sibling like `/bookings` or `/matching-history`.
+  const isCurrentShape = BOOKING_FLOW_ROUTES.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
   );
+  const isLegacyShape = /^\/issues\/[^/]+\/(matching|booking|sos-booking)(\/|$)/.test(pathname);
+  return isCurrentShape || isLegacyShape;
 }

@@ -46,7 +46,24 @@ export default function ProfessionalProfilePage() {
   const { updateDraft } = useBookingDraft();
 
   const locationState = location.state as ProfessionalDetailLocationState | null;
-  const hasSelectContext = Boolean(locationState?.fromIssueId && locationState?.urgencyType);
+  /**
+   * Whether this view was opened from inside a booking flow, and may therefore offer
+   * "בחירת בעל מקצוע".
+   *
+   * **Keyed on `urgencyType` alone.** It used to additionally require `fromIssueId`, and that
+   * became a dead end: deferred authentication moved issue creation to the booking commit, so
+   * during selection there is normally no issue — `fromIssueId` is `undefined` for every guest and
+   * for every signed-in customer who has not committed yet. The `&&` therefore evaluated false on
+   * the *normal* path, and a customer who tapped a professional's name to read their reviews
+   * arrived at a profile with no way to choose them and no way forward except the back button.
+   *
+   * `urgencyType` is the field that actually answers the question this flag asks — which flow sent
+   * me, and therefore which one to return to. It is present whenever the listing sent the customer
+   * here, and absent on a direct visit, a refresh, or arrival via `/favorites`, which all still
+   * correctly degrade to a view-only page. `fromIssueId` remains on the state for the re-entry case
+   * that still carries one; `handleSelectProfessional` never needed it.
+   */
+  const hasSelectContext = Boolean(locationState?.urgencyType);
 
   const [professional, setProfessional] = useState<ProfessionalProfileResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -126,14 +143,24 @@ export default function ProfessionalProfilePage() {
     }
   }
 
+  /**
+   * Picking this professional mid-booking, from the profile the matching screen opened.
+   *
+   * Navigates to the flattened creation routes, not `/issues/{id}/...`: this is the *creation*
+   * flow, where the draft is the state and an issue may not exist yet. The old paths were left
+   * behind when deferred authentication flattened those routes, and since there is no catch-all
+   * route they sent the customer to a blank screen at the moment they chose someone. The draft is
+   * guaranteed here — the line above just wrote to it, and `locationState` only exists because the
+   * matching screen sent them.
+   */
   function handleSelectProfessional() {
     if (!locationState) return;
     if (locationState.urgencyType === 'STANDARD') {
       updateDraft({ stage: 'SLOT_SELECTION', professionalId });
-      navigate(`/issues/${locationState.fromIssueId}/booking`);
+      navigate('/booking');
     } else {
       updateDraft({ stage: 'BOOKING_CONFIRM', professionalId });
-      navigate(`/issues/${locationState.fromIssueId}/sos-booking`);
+      navigate('/sos-booking');
     }
   }
 

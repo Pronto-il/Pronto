@@ -254,7 +254,12 @@ export default function ProntoSosScreen({ sosRequestId, onRetry, isRetrying, ret
               <Button onClick={onRetry} loading={isRetrying} fullWidth>
                 נסה שוב
               </Button>
-              <Button variant="ghost" onClick={() => navigate(`/issues/${request.issueId}/booking`)} fullWidth>
+              {/* `/booking`, not `/issues/{id}/booking` — deferred authentication flattened the
+                  booking routes, so the old path no longer resolves and this fallback landed the
+                  customer on a blank screen at the exact moment SOS had just failed them. The
+                  draft carries the issue (`ProntoSosEntryPage` persists its id before activating),
+                  which is what `/booking` reads. Same defect as the one fixed in that page. */}
+              <Button variant="ghost" onClick={() => navigate('/booking')} fullWidth>
                 בחירת בעל מקצוע לפי תור רגיל
               </Button>
             </div>

@@ -24,8 +24,28 @@ backend with three concurrent browser sessions (one customer, two professionals)
 "End-to-end verification" below. See "Deliberately not built yet" for what is still out.
 
 ## Responsibilities
-- `/issues/:issueId/sos-booking` — entry from an existing issue, re-attachment to an attempt
+- `/sos-booking` — entry, **issue creation at the SOS commit**, re-attachment to an attempt
   already in flight, activation, and retry.
+
+  > **Route change + Production bug fix (2026-08-29).** This was `/issues/:issueId/sos-booking`
+  > until deferred authentication flattened it — during matching there is no issue yet, so there is
+  > no id for the URL. `ProntoSosEntryPage` was not updated with it and kept reading
+  > `useParams().issueId`, so `Number(undefined)` → `NaN` → `JSON.stringify` → `"issueId": null`,
+  > and every signed-in customer's activation was refused with
+  > `VALIDATION_ERROR / issueId: must not be null`. Guests never reached it, because the auth
+  > boundary redirects them before the body is built — which is why it looked authenticated-only.
+  >
+  > **The backend was correct and did not change.** SOS still requires a real, caller-owned,
+  > `OPEN`, `SOS` issue: `SosService.create` reads its `categoryId` to match on, writes
+  > `sos_requests.issue_id`, and the one-active-attempt invariant
+  > (`ux_sos_requests_active_issue`) is keyed on it. What moved is *when* the issue starts
+  > existing. This page now creates it at the commit — the same place and the same ordering
+  > `features/booking/BookingSummary` uses for the Standard flow — and persists the new id to the
+  > draft before activating, so a retry, a refresh, an `SOS_REQUEST_ALREADY_EXISTS` recovery and
+  > the live screen's "נסה שוב" all reuse one issue instead of describing the problem again.
+  >
+  > Reaching this screen with no issue **and** no draft to build one from is now refused before any
+  > request is made, with a route back to `/issues/new` rather than a retry that cannot pass.
 - One continuous state-driven screen covering every customer-visible SOS state.
 - The live candidate tray, including the selection call and its failure handling.
 - Post-selection tracking through confirm → on the way → arrived → completed.

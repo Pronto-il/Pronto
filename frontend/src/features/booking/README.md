@@ -1,5 +1,30 @@
 # features/booking
 
+> **Routes and the booking commit (2026-08-29).** Two fixes, both consequences of deferred
+> authentication moving issue creation to the commit.
+>
+> **1. `BookingSummary` could create a duplicate Issue on retry.** `handleConfirm` writes twice —
+> `createIssue` then `createOrder` — and this file has always documented the recovery as "if the
+> second call fails the customer retries and the first is reused via `issueId`". That was not true:
+> `issueId` is a prop derived from `draft.issueId`, and nothing wrote the new id back. A failed
+> `createOrder` (a raced slot, an expired token, a dropped connection) therefore had the customer
+> retry into a *second* `createIssue`, stranding the first as an `OPEN` orphan with the same
+> description, photos and clarification answers. Fixed with the `onIssueCreated` prop, called
+> **before** the order is attempted; `BookingFlowPage` persists it to the draft. Children here stay
+> draft-unaware, so it is a callback rather than a `useBookingDraft()` call — see
+> `BookingSummary.test.tsx`, which pins the ordering as well as the outcome.
+>
+> **2. `/issues/:issueId/booking` exists again, for re-entry only.** It was removed when the
+> creation routes were flattened to `/booking`, which silently broke this feature's own "בחירת בעל
+> מקצוע אחר" CTA (below) and three other links — there is no catch-all route, so each landed on a
+> blank screen. It is restored *alongside* `/booking`, not instead of it, because the two are
+> different entries: `/booking` is creation and runs off the draft, while `/issues/:issueId/booking`
+> is a customer coming back to an issue that already exists, from a place with no draft to hand.
+> `BookingFlowPage` prefers the route param when present and falls back to the draft;
+> `listingSubject` becomes `{ issueId }` and the backend derives the category from the issue, so no
+> draft category is needed. `src/app/routeTargets.test.ts` now asserts every navigation target
+> actually resolves, which is the check whose absence let all four dead links ship.
+
 > **SOS status (2026-08-21).** **No SOS code lives in this feature any more.** The legacy
 > browse-and-pick SOS flow — `SosBookingFlowPage`, `SosBookingSummary` and the
 > `getSosProfessionalsForIssue`/`createSosOrder` API calls behind them — was deleted along with its

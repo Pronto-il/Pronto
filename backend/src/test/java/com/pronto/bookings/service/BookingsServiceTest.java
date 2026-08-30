@@ -268,15 +268,51 @@ class BookingsServiceTest {
     }
 
     @Test
-    void guest_cannotReadSomebodyElsesIssueByNamingItsId() {
-        // The authorization deferred authentication must NOT have loosened. An issue belongs to a
-        // customer; a null caller is not its owner, it is nobody.
+    void guest_cannotReadAnIssueByNamingItsId() {
+        // The authorization deferred authentication must NOT have loosened: an unidentified caller
+        // still gets nothing. What changed is WHICH refusal, and it is not cosmetic.
+        //
+        // This route is permitAll, so JwtAuthenticationFilter does not reject an EXPIRED token --
+        // it leaves the context empty and lets the request through, arriving here identically to a
+        // real guest. Answering FORBIDDEN told a customer whose 24h token died in an open tab "you
+        // are not authorized", permanently: the frontend ends a dead session on 401 and only on
+        // 401, so nothing cleared the token and every retry produced the same 403.
+        //
+        // UNAUTHORIZED is also the truthful answer (api-contract.md §1): nobody was authenticated.
         when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(openIssue(IssueUrgencyType.STANDARD)));
 
         assertThatThrownBy(() -> bookingsService.listProfessionals(null, ISSUE_ID, null, GUEST_ADDRESS, null))
                 .isInstanceOf(ApiException.class)
                 .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(ErrorCode.UNAUTHORIZED);
+    }
+
+    @Test
+    void anotherCustomersIssueIsStillForbidden() {
+        // The other half of the split, and the one that must stay 403: this caller IS authenticated
+        // and simply does not own the issue. Collapsing these two back together in either direction
+        // would either strand expired sessions again or report a real authorization failure as an
+        // authentication one.
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(openIssue(IssueUrgencyType.STANDARD)));
+
+        assertThatThrownBy(() ->
+                bookingsService.listProfessionals(CUSTOMER_ID + 1, ISSUE_ID, null, GUEST_ADDRESS, null))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode())
                 .isEqualTo(ErrorCode.FORBIDDEN);
+    }
+
+    @Test
+    void guest_namingAnIssueIsRefusedWithoutRevealingWhetherItExists() {
+        // The unauthenticated check runs BEFORE the issue is loaded, so an anonymous caller walking
+        // ids gets the same answer for a real issue and a nonexistent one -- 404-vs-401 would
+        // otherwise be a membership oracle over the issues table.
+        when(issueRepository.findById(999_999L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> bookingsService.listProfessionals(null, 999_999L, null, GUEST_ADDRESS, null))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(ErrorCode.UNAUTHORIZED);
     }
 
     @Test
@@ -292,10 +328,23 @@ class BookingsServiceTest {
     }
 
     @Test
-    void guest_availableWindowsForAnIssueStillRequireOwningIt() {
+    void guest_availableWindowsForAnIssueStillRequireAnAccount() {
+        // Same split as the listing route above, and it matters just as much here: this is the very
+        // next request the booking flow makes, so an expired session hit it one screen later.
         when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(openIssue(IssueUrgencyType.STANDARD)));
 
         assertThatThrownBy(() -> bookingsService.listAvailableWindows(null, PROFESSIONAL_ID, ISSUE_ID))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(ErrorCode.UNAUTHORIZED);
+    }
+
+    @Test
+    void availableWindowsForAnotherCustomersIssueIsStillForbidden() {
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(openIssue(IssueUrgencyType.STANDARD)));
+
+        assertThatThrownBy(() ->
+                bookingsService.listAvailableWindows(CUSTOMER_ID + 1, PROFESSIONAL_ID, ISSUE_ID))
                 .isInstanceOf(ApiException.class)
                 .extracting(e -> ((ApiException) e).getCode())
                 .isEqualTo(ErrorCode.FORBIDDEN);

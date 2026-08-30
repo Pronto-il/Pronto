@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import type { TargetAndTransition, Transition, Variants } from 'framer-motion';
 import { Info } from 'lucide-react';
@@ -24,7 +24,7 @@ import type {
 import { deriveStartTimeCandidates } from '../../shared/utils/availability';
 import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
 import { ProfessionalList, STANDARD_SORT_OPTIONS } from '../professionals';
-import { useBookingDraft } from '../../shared/hooks';
+import { useAuth, useBookingDraft } from '../../shared/hooks';
 import { stepTransition } from '../../shared/motion/variants';
 import { AddressSelectionStep, type AddressMode } from './AddressSelectionStep';
 import { StartTimePicker } from './StartTimePicker';
@@ -92,18 +92,64 @@ function toDraftSort(sort: ProfessionalSort): 'RECOMMENDED' | 'CHEAPEST' {
  */
 export default function BookingFlowPage() {
   const navigate = useNavigate();
+  const { token } = useAuth();
   const { draft, updateDraft, clearDraft } = useBookingDraft();
-  // No issue id in the route: deferred authentication moved issue creation to the booking
-  // commit, so during selection there is usually no issue. The draft carries what the listing
-  // needs -- the category the review step confirmed -- and `issueId` is present only for a
-  // customer returning to an issue created on an earlier pass.
-  const issueId = draft?.issueId;
-  const listingSubject: ListingSubject | null =
-    issueId !== undefined
-      ? { issueId }
-      : draft?.categoryId !== undefined
-        ? { categoryId: draft.categoryId }
-        : null;
+  /**
+   * Usually absent: deferred authentication moved issue creation to the booking commit, so during
+   * selection there is normally no issue and this page runs entirely off the draft.
+   *
+   * It is present for the one entry that is not creation but **re-entry on an issue that already
+   * exists** — `/issues/:issueId/booking`, which `OrderTrackingPage`'s "choose another
+   * professional" CTA uses after an order is cancelled, rejected or expired. That case has no
+   * draft at all (the draft was cleared when the original order was created), which is exactly why
+   * the id travels in the URL: that CTA is documented as needing a plain link that survives a
+   * refresh, with no router state and no re-created issue.
+   *
+   * The route wins over the draft when both exist, because the URL names the issue the customer
+   * asked for. Everything downstream already copes: `listingSubject` becomes `{ issueId }`, and
+   * the backend derives the category from the issue itself, so no draft category is needed.
+   */
+  const { issueId: issueIdParam } = useParams<{ issueId: string }>();
+  const routeIssueId = Number(issueIdParam);
+  const issueId = Number.isFinite(routeIssueId) && routeIssueId > 0 ? routeIssueId : draft?.issueId;
+
+  /**
+   * Whether this screen may name an issue to the server at all.
+   *
+   * An issue belongs to an account, and every endpoint that takes one authorizes it against the
+   * caller. With no token there is no caller, so naming an issue can only ever be refused — the
+   * category says the same thing about what the customer needs and is owned by nobody, which is
+   * exactly why the guest journey is keyed on it.
+   *
+   * This is the client half of a Production 403. The listing route is `permitAll`, so a request
+   * carrying an EXPIRED token is not rejected by the filter chain — it arrives at the handler as
+   * an anonymous one, and `?issueId=` then failed the ownership check. The server now answers
+   * `401` there (see `BookingsService.unauthenticatedIssueAccess`), which ends the dead session;
+   * this stops the doomed request being sent in the first place, so a customer whose token died
+   * mid-flow degrades to the ordinary guest listing instead of an error.
+   */
+  const canNameIssue = Boolean(token);
+  // Memoized on the two ids it is built from, not rebuilt per render: it is a `useCallback`
+  // dependency below, and a fresh object literal every render would give `fetchProfessionals` a
+  // new identity every render for a value that had not actually changed.
+  const listingSubject: ListingSubject | null = useMemo(
+    () =>
+      issueId !== undefined && canNameIssue
+        ? { issueId }
+        : draft?.categoryId !== undefined
+          ? { categoryId: draft.categoryId }
+          : null,
+    [issueId, canNameIssue, draft?.categoryId],
+  );
+
+  /**
+   * The `issueId` sent to `GET .../available-windows`, which takes it as an OPTIONAL refinement
+   * (it adds an ownership check and a "does this professional serve the issue's category" check;
+   * without it the endpoint still answers the question that actually matters — when is this
+   * professional free). Same `canNameIssue` guard, and for the same reason: omitting it is a
+   * supported state, while naming an issue nobody can be authorized for is a guaranteed refusal.
+   */
+  const windowsIssueId = canNameIssue ? issueId : undefined;
 
   const [address, setAddress] = useState<AddressValue>(EMPTY_ADDRESS);
   const [addressMode, setAddressMode] = useState<AddressMode>('CUSTOM');
@@ -168,7 +214,7 @@ export default function BookingFlowPage() {
         setIsLoadingProfessionals(false);
       }
     },
-    [issueId],
+    [listingSubject],
   );
 
   // Resume-hydration (§4.4's table): only when the draft belongs to this exact issue/flow.
@@ -215,11 +261,15 @@ export default function BookingFlowPage() {
       setIsLoadingProfessionals(true);
       setProfessionalsError(null);
       try {
-        const listing = await getProfessionalsForIssue(
-          draft.issueId !== undefined ? { issueId: draft.issueId } : { categoryId: draft.categoryId! },
-          draft.address!,
-          resumeSort,
-        );
+        // The same subject the live path uses -- deliberately `listingSubject` rather than a
+        // second copy of the "issue if there is one, else category" rule. The copy that used to
+        // be here did not carry the `canNameIssue` guard, so a resumed draft was the one way an
+        // expired session still sent `?issueId=` and collected the 403.
+        if (!listingSubject) {
+          setProfessionalsError(GENERIC_ERROR_MESSAGE);
+          return;
+        }
+        const listing = await getProfessionalsForIssue(listingSubject, draft.address!, resumeSort);
         setProfessionals(listing.professionals);
         setCategoryId(listing.categoryId);
 
@@ -237,7 +287,7 @@ export default function BookingFlowPage() {
         setStep({ name: 'slot', professional });
         setIsLoadingSlots(true);
         setSelectedStart(null);
-        const windowsResult = await getAvailableWindows(professional.professionalId, issueId);
+        const windowsResult = await getAvailableWindows(professional.professionalId, windowsIssueId);
         setWindows(windowsResult.windows);
         setDefaultDurationMinutes(windowsResult.defaultDurationMinutes);
         setIsLoadingSlots(false);
@@ -308,7 +358,7 @@ export default function BookingFlowPage() {
     setSlotsError(null);
     setSelectedStart(null);
     try {
-      const result = await getAvailableWindows(professional.professionalId, issueId);
+      const result = await getAvailableWindows(professional.professionalId, windowsIssueId);
       setWindows(result.windows);
       setDefaultDurationMinutes(result.defaultDurationMinutes);
     } catch {
@@ -425,6 +475,24 @@ export default function BookingFlowPage() {
       });
     }
     navigate('/login', { state: { from: { pathname: '/booking' } } });
+  }
+
+  /**
+   * The commit created the issue. Record it on the draft immediately, before the order call it is
+   * about to be used for.
+   *
+   * <p>This is the whole of the duplicate-Issue fix. `issueId` above is read from
+   * `draft.issueId`, so until this ran, a `createOrder` failure — a slot raced by another
+   * customer, an expired token, a dropped connection — sent the customer back to a confirm button
+   * that created a *second* issue on the next press, stranding the first as an `OPEN` orphan with
+   * the same description, photos and answers. Persisting here makes the retry reuse it, which is
+   * also what `BookingSummary`'s own "the first is reused via `issueId`" comment always claimed.
+   *
+   * <p>Deliberately only `issueId`: `updateDraft` shallow-merges, and the stage/professional/slot
+   * this draft already holds are exactly right for a return to this same screen.
+   */
+  function handleIssueCreated(createdIssueId: number) {
+    updateDraft({ issueId: createdIssueId });
   }
 
   function handleBack() {
@@ -561,6 +629,7 @@ export default function BookingFlowPage() {
                 issueImageKeys={(draft?.photos ?? []).map((photo) => photo.imageKey)}
                 issueClarificationAnswers={draft?.clarificationAnswers ?? []}
                 onAuthRequired={handleAuthRequired}
+                onIssueCreated={handleIssueCreated}
                 categoryId={categoryId}
                 professional={step.professional}
                 bookedStart={step.bookedStart}

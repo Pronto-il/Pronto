@@ -18,6 +18,7 @@ import { useAuth, useBookingDraft } from '../../shared/hooks';
 import {
   ApiError,
   GENERIC_ERROR_MESSAGE,
+  createIssue,
   createSosRequest,
   getCategoryNameHe,
   getIssue,
@@ -29,7 +30,25 @@ import { SOS_ERROR_MESSAGES } from './sosUiState';
 import ProntoSosScreen from './ProntoSosScreen';
 import styles from './ProntoSosEntryPage.module.css';
 
+/**
+ * Reaching the SOS commit with no issue and not enough draft to create one.
+ *
+ * A local sentinel rather than an {@link ApiError}, because no request was made — this is the
+ * client refusing to send something the server would rightly reject. It is the guard that replaces
+ * the old behaviour of posting `"issueId": null`: an invalid lifecycle state now stops here, with
+ * a way forward, instead of becoming a `VALIDATION_ERROR` the customer cannot act on.
+ */
+class MissingIssueDraftError extends Error {
+  constructor() {
+    super('SOS activation reached with no issue and no draft to create one from.');
+    this.name = 'MissingIssueDraftError';
+  }
+}
+
 function toUserMessage(error: unknown): string {
+  if (error instanceof MissingIssueDraftError) {
+    return 'לא מצאנו את פרטי התקלה. צריך לתאר אותה שוב כדי שנוכל לחפש בעל מקצוע.';
+  }
   if (error instanceof ApiError && SOS_ERROR_MESSAGES[error.code]) {
     return SOS_ERROR_MESSAGES[error.code];
   }
@@ -37,8 +56,24 @@ function toUserMessage(error: unknown): string {
 }
 
 /**
- * `/issues/:issueId/sos-booking` — the customer's way into Pronto SOS, **from an issue that
- * already exists**.
+ * `/sos-booking` — the customer's way into Pronto SOS.
+ *
+ * ## The Production bug this page had, and why it only hit signed-in customers
+ *
+ * This page used to read `issueId` from `useParams()`, because its route used to be
+ * `/issues/:issueId/sos-booking`. Deferred authentication flattened it to `/sos-booking` — during
+ * matching there is no issue yet, so there is no id to put in the URL — but this page was not
+ * updated with it. `useParams().issueId` became `undefined`, `Number(undefined)` is `NaN`, and
+ * `JSON.stringify` serialises `NaN` as `null`, so every activation posted `"issueId": null` and
+ * the backend answered exactly:
+ *
+ * ```
+ * VALIDATION_ERROR  issueId: must not be null
+ * ```
+ *
+ * It presented as authenticated-only because a guest is redirected to login by the boundary in
+ * {@link activate} *before* the request is ever built — so only a signed-in customer got far
+ * enough to send the malformed body.
  *
  * ## The one rule this page is built around
  *
@@ -47,12 +82,23 @@ function toUserMessage(error: unknown): string {
  * the photos and the AI analysis, and an SOS request is *an attempt to find someone for it*, not
  * a second copy of it. So there is no path from here back to issue creation, ever.
  *
+ * **That rule is unchanged; what changed is *when* the issue starts existing.** SOS still requires
+ * a real, persisted, caller-owned issue — `SosService.create` loads it, checks ownership, requires
+ * `urgencyType = SOS` and `status = OPEN`, reads its `categoryId` for matching, and the
+ * one-active-attempt-per-issue invariant (`ux_sos_requests_active_issue`) is keyed on its id.
+ * Under deferred authentication that issue is created at the *commit*, which for SOS is this
+ * screen, exactly as `features/booking/BookingSummary` creates it at the Standard commit. So this
+ * page now creates the issue when the draft has not already produced one, immediately before
+ * activating — see {@link resolveIssueId}.
+ *
  * ## What it does
  *
- * 1. Loads the issue for context, and looks for an SOS attempt already in flight on it
- *    (`GET /api/sos/requests/me`). That lookup is what makes a refresh, a returning customer and
- *    a second tab all land back on the live screen instead of trying to activate a second time —
- *    the backend permits only one active attempt per issue, enforced by a unique index.
+ * 1. Resolves the issue for this attempt: an id the draft already carries (a returning customer, a
+ *    retry, or a Standard-flow issue being escalated), otherwise none yet. When it has one it also
+ *    looks for an SOS attempt already in flight on it (`GET /api/sos/requests/me`). That lookup is
+ *    what makes a refresh, a returning customer and a second tab all land back on the live screen
+ *    instead of trying to activate a second time — the backend permits only one active attempt per
+ *    issue, enforced by a unique index.
  * 2. Resolves the service address without asking again where it can: the booking draft the
  *    matching screen already wrote, then the profile's saved default. It only renders the address
  *    step when there is genuinely nothing to use (a direct visit with no default on file).
@@ -75,18 +121,53 @@ export default function ProntoSosEntryPage() {
   const navigate = useNavigate();
   const { user, token } = useAuth();
   const { draft, updateDraft } = useBookingDraft();
+  /**
+   * Still read, and still only a fallback. The current route carries no id, so this is `undefined`
+   * in normal use — it is kept because `NotificationBell` and `OrderTrackingPage` still link to the
+   * legacy `/issues/:issueId/sos-booking` shape, so that an id supplied that way keeps working if
+   * those links are ever repaired. What it must never again do is reach the request body unchecked:
+   * everything below goes through `issueId`, which is `null` rather than `NaN` when absent.
+   */
   const { issueId: issueIdParam } = useParams<{ issueId: string }>();
-  const issueId = Number(issueIdParam);
+  const routeIssueId = Number(issueIdParam);
+
+  /**
+   * The issue this attempt is for, or `null` when it does not exist yet.
+   *
+   * `null`, never `NaN` — that distinction is the whole bug. A number that is not a number
+   * survives every truthiness check and only reveals itself as `null` after `JSON.stringify`, at
+   * the server, as a validation error nobody can trace back to a missing route segment.
+   */
+  const [issueId, setIssueId] = useState<number | null>(() => {
+    if (Number.isFinite(routeIssueId) && routeIssueId > 0) {
+      return routeIssueId;
+    }
+    return draft?.issueId ?? null;
+  });
 
   const [issue, setIssue] = useState<IssueDetailResponse | null>(null);
   const [sosRequestId, setSosRequestId] = useState<number | null>(null);
   const [isResolving, setIsResolving] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activationError, setActivationError] = useState<string | null>(null);
+  /**
+   * Whether the failure was "there is nothing to activate" rather than "activation was refused".
+   * The two need different offers: retrying a missing draft can only fail again in exactly the
+   * same way, so that case gets a route back to describing the problem instead of a dead button.
+   */
+  const [needsIssueDescription, setNeedsIssueDescription] = useState(false);
   const [isActivating, setIsActivating] = useState(false);
 
   const defaultAddress: AddressValue | null = user?.defaultAddress ? toAddressValue(user.defaultAddress) : null;
-  const draftAddress = draft?.issueId === issueId ? (draft.address ?? null) : null;
+  /**
+   * The address the matching screen already wrote. Previously gated on `draft.issueId === issueId`,
+   * which under deferred authentication is `undefined === NaN` — false — for every customer who
+   * came through the normal flow, so the address they had just entered was discarded and the page
+   * fell back to the profile default (or asked again). Now it simply takes the SOS draft's address:
+   * there is exactly one draft, this page only runs for `urgencyType === 'SOS'`, and when the draft
+   * does carry an issue id it is the same one `issueId` was initialised from.
+   */
+  const draftAddress = draft?.urgencyType === 'SOS' ? (draft.address ?? null) : null;
 
   const [address, setAddress] = useState<AddressValue>(() => draftAddress ?? defaultAddress ?? EMPTY_ADDRESS);
   const [addressMode, setAddressMode] = useState<AddressMode>(() =>
@@ -108,15 +189,19 @@ export default function ProntoSosEntryPage() {
    * losing *both* is a real error.
    */
   useEffect(() => {
-    if (!Number.isFinite(issueId)) {
-      setLoadError(GENERIC_ERROR_MESSAGE);
+    // No issue yet — the normal deferred-authentication path. There is nothing to fetch and, by
+    // definition, no attempt in flight for an issue that does not exist. Previously this branch
+    // set a generic load error (because `NaN` is not finite) while the activation effect below
+    // went ahead and posted a null id anyway.
+    if (issueId === null) {
       setIsResolving(false);
       return;
     }
     let cancelled = false;
+    const currentIssueId = issueId;
 
     async function resolve() {
-      const [issueResult, mineResult] = await Promise.allSettled([getIssue(issueId), getMySosRequests()]);
+      const [issueResult, mineResult] = await Promise.allSettled([getIssue(currentIssueId), getMySosRequests()]);
       if (cancelled) {
         return;
       }
@@ -125,7 +210,7 @@ export default function ProntoSosEntryPage() {
       }
       if (mineResult.status === 'fulfilled') {
         const active = mineResult.value.requests.find(
-          (candidate) => candidate.issueId === issueId && !isSosTerminalStatus(candidate.status),
+          (candidate) => candidate.issueId === currentIssueId && !isSosTerminalStatus(candidate.status),
         );
         if (active) {
           setSosRequestId(active.id);
@@ -152,6 +237,65 @@ export default function ProntoSosEntryPage() {
    * about (a second tab, or a double tap that raced the unique index). Attaching to it is a
    * better answer than reporting an error for something the customer wanted anyway.
    */
+  /**
+   * The issue this SOS attempt is for — reused if it already exists, created exactly once if not.
+   *
+   * <b>Idempotency, which is the whole reason this is not inlined.</b> The created id is written to
+   * `issueId` state *and* to the draft before anything else can fail, so the three ways this screen
+   * re-enters activation all reuse it instead of describing the problem a second time:
+   *
+   *  - `SOS_REQUEST_ALREADY_EXISTS` recovery, which re-reads `/api/sos/requests/me`
+   *  - the live screen's "נסה שוב" after a terminal attempt ({@link handleRetry})
+   *  - the error card's "ניסיון נוסף" after a failed activation
+   *
+   * A refresh reuses it too, because the draft survives the reload — which is also what makes the
+   * backend's one-active-attempt-per-issue index do its job rather than being sidestepped by a
+   * fresh issue per retry.
+   *
+   * <b>What it refuses.</b> An SOS commit needs a described problem: a confirmed category and a
+   * description. Without them there is nothing to create and nothing for a professional to answer,
+   * so this throws rather than inventing a placeholder issue or letting a malformed request reach
+   * the server. {@link activate}'s catch turns that into the "start again" card.
+   */
+  /**
+   * Whether this screen has enough to produce an issue — an id it already holds, or a draft
+   * carrying a confirmed category and a description.
+   *
+   * Consulted in two places, and both matter: the auto-activation effect below (so no request is
+   * ever attempted from an invalid lifecycle state) and the render (so the customer is told what is
+   * missing instead of being asked for an address that leads nowhere). {@link resolveIssueId}
+   * enforces the same rule at the commit itself, which is the one that must hold even if a future
+   * caller reaches activation by another path.
+   */
+  const canCommit =
+    issueId !== null || Boolean(draft && draft.categoryId !== undefined && draft.description.trim());
+
+  const resolveIssueId = useCallback(async (): Promise<number> => {
+    if (issueId !== null) {
+      return issueId;
+    }
+    if (!draft || draft.categoryId === undefined || !draft.description.trim()) {
+      throw new MissingIssueDraftError();
+    }
+    const created = await createIssue({
+      categoryId: draft.categoryId,
+      description: draft.description,
+      urgencyType: 'SOS',
+      // Ownership is the server's call, not this screen's: `IssuesService.validateImageKeys`
+      // re-checks every key against the caller's own namespace (and, for a guest who registered
+      // mid-flow, against the guest-session token `httpClient` still attaches), then promotes the
+      // guest-owned ones onto this account. Passing the draft's keys through unmodified is exactly
+      // what the Standard commit does.
+      imageKeys: draft.photos.map((photo) => photo.imageKey),
+      clarificationAnswers: draft.clarificationAnswers ?? [],
+    });
+    setIssueId(created.id);
+    // Persisted before activation is attempted, so a failure anywhere after this point retries
+    // against the same issue. The Standard flow does NOT do this today — see the report.
+    updateDraft({ issueId: created.id });
+    return created.id;
+  }, [issueId, draft, updateDraft]);
+
   const activate = useCallback(
     async (effectiveAddress: AddressValue) => {
       // ---- THE SOS AUTHENTICATION BOUNDARY ----
@@ -177,10 +321,21 @@ export default function ProntoSosEntryPage() {
       }
 
       setActivationError(null);
+      setNeedsIssueDescription(false);
       setIsActivating(true);
+      // Declared out here so the recovery branch below can use the id this attempt actually sent.
+      // Reading `issueId` state there would be wrong on the first activation of a freshly created
+      // issue: `setIssueId` does not update this closure, so the lookup would compare against
+      // `null` and silently fail to re-attach.
+      let attemptedIssueId: number | null = null;
       try {
+        // THE COMMIT. The issue is created here, not on the review screen, and only now that the
+        // caller is authenticated -- the same boundary and the same ordering
+        // `features/booking/BookingSummary` uses for the Standard flow. If this throws we stop:
+        // `createSosRequest` is never reached, so a failed issue creation cannot dispatch anything.
+        attemptedIssueId = await resolveIssueId();
         const created = await createSosRequest({
-          issueId,
+          issueId: attemptedIssueId,
           serviceCity: effectiveAddress.city.trim(),
           serviceStreet: effectiveAddress.street.trim(),
           serviceHouseNumber: effectiveAddress.houseNumber.trim(),
@@ -197,11 +352,11 @@ export default function ProntoSosEntryPage() {
         });
         setSosRequestId(created.id);
       } catch (err) {
-        if (err instanceof ApiError && err.code === 'SOS_REQUEST_ALREADY_EXISTS') {
+        if (err instanceof ApiError && err.code === 'SOS_REQUEST_ALREADY_EXISTS' && attemptedIssueId !== null) {
           try {
             const mine = await getMySosRequests();
             const active = mine.requests.find(
-              (candidate) => candidate.issueId === issueId && !isSosTerminalStatus(candidate.status),
+              (candidate) => candidate.issueId === attemptedIssueId && !isSosTerminalStatus(candidate.status),
             );
             if (active) {
               setSosRequestId(active.id);
@@ -212,12 +367,13 @@ export default function ProntoSosEntryPage() {
             // different problem from the customer's point of view.
           }
         }
+        setNeedsIssueDescription(err instanceof MissingIssueDraftError);
         setActivationError(toUserMessage(err));
       } finally {
         setIsActivating(false);
       }
     },
-    [issueId, token, addressMode, updateDraft, navigate],
+    [resolveIssueId, token, addressMode, updateDraft, navigate],
   );
 
   /**
@@ -277,6 +433,11 @@ export default function ProntoSosEntryPage() {
     if (isResolving || sosRequestId !== null || activationAttemptedRef.current) {
       return;
     }
+    // Nothing to activate: no issue, and no draft to build one from. The render below explains it
+    // and offers the way back. Attempting anyway is what used to post a null issue id.
+    if (!canCommit) {
+      return;
+    }
     // Nothing to send yet (no draft, no saved default) or the customer is mid-edit: the address
     // step is showing and its own continue action will start the search.
     if (!hasUsableAddress || isEditingAddress) {
@@ -286,9 +447,27 @@ export default function ProntoSosEntryPage() {
     if (issue && issue.urgencyType !== 'SOS') {
       return;
     }
+    // ---- a guest is not auto-dispatched, and is not auto-redirected either ----
+    //
+    // `activate` refuses without a token and sends the customer to login, which is the correct
+    // boundary (the SOS commit notifies real professionals synchronously — see `activate`). But
+    // reaching it from *this effect* meant a guest was bounced to `/login` in the first frame of a
+    // screen they never saw: no explanation of what SOS does, no confirmation of the address it
+    // was about to dispatch to, no statement that an account is needed and why. The whole point of
+    // deferring authentication is that a visitor gets to understand the offer before being asked
+    // to sign up, and an automatic redirect on mount is the one shape that cannot do that.
+    //
+    // So the boundary stays exactly where it is — nothing is dispatched, no professional is
+    // contacted — and only the *trigger* moves: the guest gets the pre-dispatch card below with an
+    // explicit button, which calls the very same `activate` and lands on the very same login
+    // screen. The draft is written on the way, so `useSessionLanding` returns them here and the
+    // search starts the moment they are signed in.
+    if (!token) {
+      return;
+    }
     activationAttemptedRef.current = true;
     void activate(address);
-  }, [isResolving, sosRequestId, hasUsableAddress, isEditingAddress, issue, activate, address]);
+  }, [isResolving, sosRequestId, canCommit, hasUsableAddress, isEditingAddress, issue, activate, address, token]);
 
   // ---- render ----
 
@@ -345,9 +524,35 @@ export default function ProntoSosEntryPage() {
           <p className={styles.cardBody}>
             אפשר לבחור בעל מקצוע ומועד שנוח לך בתהליך ההזמנה הרגיל.
           </p>
-          <Button onClick={() => navigate(`/issues/${issueId}/booking`)} fullWidth>
+          {/* `/booking`, not the retired `/issues/{id}/booking` — that path no longer resolves
+              since deferred authentication flattened the booking routes, so the old link sent the
+              customer to a blank screen. The draft carries the issue, as it does everywhere else
+              in this flow. */}
+          <Button onClick={() => navigate('/booking')} fullWidth>
             להזמנה רגילה
           </Button>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!canCommit) {
+    return (
+      <div className="focused-page">
+        <PageHeader title="Pronto SOS" onBack={() => navigate('/')} />
+        <Card className={styles.card}>
+          <span className={styles.mark} aria-hidden="true">
+            <Siren size={26} />
+          </span>
+          <h2 className={styles.cardTitle}>לא הצלחנו להתחיל את החיפוש</h2>
+          <p className={styles.errorText} role="alert">
+            לא מצאנו את פרטי התקלה. צריך לתאר אותה שוב כדי שנוכל לחפש בעל מקצוע.
+          </p>
+          <div className={styles.actions}>
+            <Button onClick={() => navigate('/issues/new')} fullWidth>
+              תיאור התקלה
+            </Button>
+          </div>
         </Card>
       </div>
     );
@@ -378,6 +583,19 @@ export default function ProntoSosEntryPage() {
     .filter(Boolean)
     .join(', ');
 
+  /**
+   * The trade this attempt is for. The issue when one exists, otherwise the category the review
+   * step confirmed and wrote to the draft.
+   *
+   * The draft fallback is not cosmetic. On the normal deferred-authentication path there is no
+   * issue yet — always for a guest, and for a signed-in customer until the commit one line later —
+   * so reading the issue alone rendered a literal "—" where the customer's own confirmed
+   * profession should be, on the last screen before real professionals are called out to their
+   * home. The draft is the source of truth for everything else on this page; it is here too.
+   */
+  const summaryCategoryId = issue?.categoryId ?? draft?.categoryId;
+  const draftCategoryName = summaryCategoryId !== undefined ? getCategoryNameHe(summaryCategoryId) : '—';
+
   // Activation failed. The only screen left with something to say — everything above either
   // resolved into the live screen or into a question. Deliberately not auto-retried: the backend
   // refused for a reason, and retrying in a loop would hide it.
@@ -394,9 +612,19 @@ export default function ProntoSosEntryPage() {
             {activationError}
           </p>
           <div className={styles.actions}>
-            <Button onClick={() => void activate(address)} loading={isActivating} fullWidth>
-              ניסיון נוסף
-            </Button>
+            {/* Nothing to activate: the only honest action is to describe the problem. Retrying
+                would re-run a guard that cannot pass, which is how the previous version of this
+                screen behaved when it posted a null issue id and offered "try again" for a
+                request the server would refuse identically every time. */}
+            {needsIssueDescription ? (
+              <Button onClick={() => navigate('/issues/new')} fullWidth>
+                תיאור התקלה
+              </Button>
+            ) : (
+              <Button onClick={() => void activate(address)} loading={isActivating} fullWidth>
+                ניסיון נוסף
+              </Button>
+            )}
             <Button
               variant="ghost"
               onClick={() => {
@@ -434,7 +662,7 @@ export default function ProntoSosEntryPage() {
         <dl className={styles.summary}>
           <div className={styles.summaryRow}>
             <dt className={styles.summaryLabel}>תחום</dt>
-            <dd className={styles.summaryValue}>{issue ? getCategoryNameHe(issue.categoryId) : '—'}</dd>
+            <dd className={styles.summaryValue}>{draftCategoryName}</dd>
           </div>
           <div className={styles.summaryRow}>
             <dt className={styles.summaryLabel}>כתובת</dt>
@@ -442,7 +670,33 @@ export default function ProntoSosEntryPage() {
           </div>
         </dl>
 
-        <Skeleton variant="rect" className={styles.loading} />
+        {/* The guest boundary, made visible. Everything above this point is the same card a
+            signed-in customer sees for the one frame before the search starts; the difference is
+            that a guest is told an account is needed and why, and presses the button themselves.
+            No request has been sent and no professional has been contacted. */}
+        {token ? (
+          <Skeleton variant="rect" className={styles.loading} />
+        ) : (
+          <div className={styles.actions}>
+            <p className={styles.cardBody}>
+              כדי לשלוח בעלי מקצוע לכתובת הזו צריך חשבון — כך נוכל לעדכן אותך ולתת לבעל המקצוע דרך
+              ליצור איתך קשר. הפרטים שמילאת נשמרים ונמשיך בדיוק מכאן.
+            </p>
+            <Button onClick={() => void activate(address)} fullWidth>
+              התחברות והפעלת SOS
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setAddressErrors({});
+                setIsEditingAddress(true);
+              }}
+              fullWidth
+            >
+              שינוי כתובת
+            </Button>
+          </div>
+        )}
       </Card>
     </div>
   );

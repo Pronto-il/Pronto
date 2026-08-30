@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { celebrationKindFor, isInNewIssueFlow, resolveToolboxState } from './toolboxState';
+import { celebrationKindFor, isInBookingFlow, resolveToolboxState } from './toolboxState';
 import { selectActiveOrder } from '../shared/hooks';
 import type { ActiveOrderSelection } from '../shared/hooks';
 import type { BookingDraft } from '../shared/hooks/bookingDraftContext';
@@ -210,28 +210,65 @@ describe('selectActiveOrder now covers ARRIVED', () => {
   });
 });
 
-describe('isInNewIssueFlow (mobile-nav fix)', () => {
-  it('matches every route in the new-issue / order-creation flow', () => {
-    expect(isInNewIssueFlow('/issues/new')).toBe(true);
-    expect(isInNewIssueFlow('/issues/42/matching')).toBe(true);
-    expect(isInNewIssueFlow('/issues/42/booking')).toBe(true);
-    expect(isInNewIssueFlow('/issues/42/sos-booking')).toBe(true);
+/**
+ * The single source of truth for "is the customer building an order right now?".
+ *
+ * These cases are written against `router.tsx`'s CURRENT paths. That matters more than it sounds:
+ * the previous version of this suite asserted only the `/issues/:id/...` shapes, so when deferred
+ * authentication flattened those routes the matcher stopped matching, the toolbox reappeared
+ * throughout booking creation in Production — and every test still passed, because they were
+ * testing the shape that no longer existed.
+ */
+describe('isInBookingFlow — current (flattened) routes', () => {
+  it.each(['/issues/new', '/matching', '/booking', '/sos-booking'])(
+    'matches %s, a booking-creation route',
+    (pathname) => {
+      expect(isInBookingFlow(pathname)).toBe(true);
+    },
+  );
+
+  it('matches nested paths beneath a flow route', () => {
+    expect(isInBookingFlow('/issues/new/anything')).toBe(true);
+    expect(isInBookingFlow('/booking/confirm')).toBe(true);
+    expect(isInBookingFlow('/sos-booking/scan')).toBe(true);
+  });
+});
+
+describe('isInBookingFlow — legacy /issues/:id shapes still recognised', () => {
+  // Not reachable through the router any more, but `NotificationBell`, `OrderTrackingPage` and
+  // `ProfessionalProfilePage` still navigate to them. If those links are ever repaired by
+  // restoring the routes, this rule must already hold rather than needing a second edit.
+  it.each(['/issues/42/matching', '/issues/42/booking', '/issues/42/sos-booking', '/issues/42/booking/confirm'])(
+    'matches the legacy path %s',
+    (pathname) => {
+      expect(isInBookingFlow(pathname)).toBe(true);
+    },
+  );
+});
+
+describe('isInBookingFlow — normal app routes are untouched', () => {
+  it.each(['/', '/orders', '/orders/42', '/orders/42/review', '/favorites', '/profile'])(
+    'does not match %s',
+    (pathname) => {
+      expect(isInBookingFlow(pathname)).toBe(false);
+    },
+  );
+
+  it('does not match an issue path with no recognised flow suffix', () => {
+    expect(isInBookingFlow('/issues/42')).toBe(false);
+    expect(isInBookingFlow('/issues/42/somethingelse')).toBe(false);
   });
 
-  it('matches nested paths under any of the flow routes', () => {
-    expect(isInNewIssueFlow('/issues/new/anything')).toBe(true);
-    expect(isInNewIssueFlow('/issues/42/booking/confirm')).toBe(true);
+  it('does not match a sibling route that merely shares a prefix', () => {
+    // The reason the check is exact-or-`/`-delimited rather than a bare `startsWith`.
+    expect(isInBookingFlow('/bookings')).toBe(false);
+    expect(isInBookingFlow('/booking-history')).toBe(false);
+    expect(isInBookingFlow('/matching-history')).toBe(false);
   });
 
-  it('does not match unrelated customer routes, including other /orders and /issues paths', () => {
-    expect(isInNewIssueFlow('/')).toBe(false);
-    expect(isInNewIssueFlow('/orders')).toBe(false);
-    expect(isInNewIssueFlow('/orders/42')).toBe(false);
-    expect(isInNewIssueFlow('/orders/42/review')).toBe(false);
-    expect(isInNewIssueFlow('/favorites')).toBe(false);
-    expect(isInNewIssueFlow('/profile')).toBe(false);
-    // A single issue id segment with no recognised flow suffix — not one of the four routes.
-    expect(isInNewIssueFlow('/issues/42')).toBe(false);
-    expect(isInNewIssueFlow('/issues/42/somethingelse')).toBe(false);
+  it('does not match the professional profile route', () => {
+    // Deliberately excluded: equally a normal browsing route, and the only signal that would
+    // separate the two (`location.state`) does not survive a refresh — see the doc comment.
+    expect(isInBookingFlow('/professionals/7')).toBe(false);
   });
 });

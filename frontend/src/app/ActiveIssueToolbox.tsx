@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useActiveOrder, useBookingDraft, useEtaCountdown, useToolboxPosition } from '../shared/hooks';
 import { ToolboxGraphic } from '../shared/components';
 import { ReviewPromptModal } from '../features/booking';
-import { celebrationKindFor, isInNewIssueFlow, resolveToolboxState } from './toolboxState';
+import { celebrationKindFor, isInBookingFlow, resolveToolboxState } from './toolboxState';
 import type { CelebrationKind } from './toolboxState';
 import styles from './ActiveIssueToolbox.module.css';
 
@@ -101,13 +101,21 @@ function markCelebrated(orderId: number, kind: CelebrationKind): void {
  * The `REVIEW` state has no `route` (its tap opens a modal in place, over whatever screen the
  * customer is on), so it is never hidden by this rule.
  *
- * ## Also hidden during new-issue creation (mobile-nav fix, 2026-08-28)
+ * ## Also hidden throughout booking creation (mobile-nav fix, 2026-08-28)
  *
  * A shortcut back to a *different*, already-existing order/draft has nothing to resume while the
  * customer is mid-creation of a new one, and only competes with the task in front of them. This
  * is a second, independent rule from the one above — route-classified via {@link
- * isInNewIssueFlow} rather than state-derived, and it applies regardless of `state.kind`
+ * isInBookingFlow} rather than state-derived, and it applies regardless of `state.kind`
  * (including `REVIEW`, which the rule above never suppresses).
+ *
+ * **The existence of an active order never decides this on its own.** Route context does:
+ * `shouldShow = activeOrderExists && !isInBookingFlow(pathname) && existingVisibilityRules`. That
+ * rule was correct when written and then quietly stopped firing, because deferred authentication
+ * flattened `/issues/:id/booking` to `/booking` and the matcher was not updated with it — see
+ * {@link isInBookingFlow}'s own doc comment. The check is deliberately made *during render*, not
+ * in an effect, so a deep link or a refresh straight onto a booking-flow route never paints the
+ * toolbox for a frame before hiding it.
  */
 export function ActiveIssueToolbox() {
   const navigate = useNavigate();
@@ -179,8 +187,8 @@ export function ActiveIssueToolbox() {
 
   // Mobile-nav fix (2026-08-28): hidden everywhere in the new-issue/order-creation flow,
   // regardless of `state.kind` — including `REVIEW`, which has no `route` and would otherwise
-  // survive the check below. See `isInNewIssueFlow`'s own doc comment for why.
-  if (isInNewIssueFlow(location.pathname)) {
+  // survive the check below. See `isInBookingFlow`'s own doc comment for why.
+  if (isInBookingFlow(location.pathname)) {
     return null;
   }
 

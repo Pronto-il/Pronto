@@ -22,6 +22,23 @@ export interface BookingSummaryProps {
   /** Called instead of booking when nobody is signed in. The draft is already persisted, so the
    *  caller only has to route to login/registration. */
   onAuthRequired: () => void;
+  /**
+   * Reports the issue this commit just created, so the parent can persist it to the draft
+   * **before** the order call is attempted.
+   *
+   * This is what makes a retry idempotent, and its absence was a real duplicate-Issue bug: this
+   * component's own comment below promised "if the second call fails the customer retries and the
+   * first is reused via `issueId`", but `issueId` is a prop derived from `draft.issueId`, and
+   * nothing ever wrote the new id back there. So a failed `createOrder` — a raced slot, an expired
+   * token, a dropped connection — left the customer retrying into a *second* `createIssue`, with
+   * the first issue stranded `OPEN` forever: an orphan carrying the same description, the same
+   * photos and the same clarification answers, indistinguishable from a real unbooked request.
+   *
+   * A callback rather than `useBookingDraft()` here on purpose: `BookingFlowPage` is the only
+   * component in `features/booking` that touches the draft, and its child steps stay draft-unaware
+   * (the same split `features/issues` uses for `NewIssuePage`).
+   */
+  onIssueCreated: (issueId: number) => void;
   categoryId: number;
   professional: ProfessionalCardData;
   /** The chosen ISO start instant — `bookedEnd` is derived here for display only (never sent
@@ -85,6 +102,7 @@ export function BookingSummary({
   issueImageKeys,
   issueClarificationAnswers,
   onAuthRequired,
+  onIssueCreated,
   categoryId,
   professional,
   bookedStart,
@@ -133,18 +151,24 @@ export function BookingSummary({
       // Two calls rather than one, and deliberately in this order: an issue with no order is a
       // state the product already has (a customer who reported a fault and did not book), while an
       // order with no issue is not a state at all. If the second call fails the customer retries
-      // and the first is reused via `issueId`.
-      const resolvedIssueId =
-        issueId ??
-        (
-          await createIssue({
-            categoryId,
-            description: issueDescription,
-            urgencyType: 'STANDARD',
-            imageKeys: issueImageKeys,
-            clarificationAnswers: issueClarificationAnswers,
-          })
-        ).id;
+      // and the first is reused via `issueId` -- which only holds because the new id is reported
+      // to the parent and written to the draft below, BEFORE the order is attempted. See
+      // `onIssueCreated`: this comment described the intended behaviour for a while before
+      // anything actually implemented it.
+      let resolvedIssueId = issueId;
+      if (resolvedIssueId === undefined) {
+        const createdIssue = await createIssue({
+          categoryId,
+          description: issueDescription,
+          urgencyType: 'STANDARD',
+          imageKeys: issueImageKeys,
+          clarificationAnswers: issueClarificationAnswers,
+        });
+        resolvedIssueId = createdIssue.id;
+        // Before `createOrder`, never after: everything from here on can fail, and a retry must
+        // find this id rather than create a second issue.
+        onIssueCreated(createdIssue.id);
+      }
 
       const order = await createOrder({
         issueId: resolvedIssueId,

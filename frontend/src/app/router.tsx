@@ -71,10 +71,26 @@ import type { RouteObject } from 'react-router-dom';
  * dead-code elimination on the statically-replaced `import.meta.env.DEV` literal, from the
  * production bundle) entirely in production builds.
  *
- * **Pronto SOS customer flow, MS1 (2026-08-21)**: `/issues/:issueId/sos-booking` keeps its path
- * and its CUSTOMER-only gate, but now renders `features/sos`'s `ProntoSosEntryPage` — the real
+ * > **Superseded (2026-08-29) — read the route table below, not the history above.** Deferred
+ * > authentication flattened the three creation routes to `/matching`, `/booking` and
+ * > `/sos-booking`: issue creation moved to the booking commit, so during selection there is no
+ * > issue and nothing to put in the URL. Everything above still describing
+ * > `/issues/:issueId/(matching|booking|sos-booking)` as *the* path is history, not current state.
+ * >
+ * > That drift was not free. Two Production bugs came from code still reading the retired shape:
+ * > `ProntoSosEntryPage` read `useParams().issueId`, got `NaN`, and posted `"issueId": null` on
+ * > every authenticated SOS activation; and `toolboxState.isInBookingFlow` matched only the old
+ * > paths, so the "ההזמנה שלי" widget reappeared across the whole booking flow. Both are fixed.
+ * >
+ * > `/issues/:issueId/booking` and `/issues/:issueId/sos-booking` now exist again **alongside**
+ * > the flattened routes, for re-entry on an issue that already exists — see the comment on those
+ * > two entries. They are not the creation path.
+ *
+ * **Pronto SOS customer flow, MS1 (2026-08-21)**: `/issues/:issueId/sos-booking` (see the note
+ * above on how this path has since changed) keeps its CUSTOMER-only gate, but now renders
+ * `features/sos`'s `ProntoSosEntryPage` — the real
  * flow against `/api/sos/**` — instead of `features/booking`'s no-API placeholder of the same
- * name, which is deleted. The path is unchanged deliberately: `features/issues/ProfessionMatchPage`
+ * name, which is deleted. The path was unchanged at the time: `features/issues/ProfessionMatchPage`
  * and `shared/hooks/bookingDraftContext.resolveDraftRoute` are the two places that name it, and
  * neither needed to change. Pronto SOS is one continuous state-driven screen rather than a route
  * per step, so no new routes were added — a refresh re-attaches to the live request by looking it
@@ -136,6 +152,27 @@ export const router = createBrowserRouter([
       { path: 'matching', element: <ProfessionMatchPage /> },
       { path: 'booking', element: <BookingFlowPage /> },
       { path: 'sos-booking', element: <ProntoSosEntryPage /> },
+
+      // ---- re-entry on an issue that ALREADY exists ----
+      //
+      // The same two screens, reached by naming an issue instead of relying on the draft. These
+      // are not creation: the customer is coming back to a problem that was described and
+      // persisted some time ago, from a place that has no draft to hand --
+      //
+      //   OrderTrackingPage  "choose another professional", after an order was cancelled,
+      //                      rejected or expired. Documented there as needing a plain URL that
+      //                      survives a refresh, with no router state and no re-created issue.
+      //   NotificationBell   a customer's SOS notification, keyed by issue rather than by attempt
+      //                      because one problem accumulates many attempts.
+      //
+      // These paths were REMOVED when deferred authentication flattened the creation routes, and
+      // removing them silently broke both links: there is no catch-all route, so each landed on a
+      // blank screen -- the SOS one at the exact moment a search had just failed the customer.
+      // Restored rather than reworked because the id genuinely belongs in the URL here, which is
+      // the difference between this entry and creation. Both pages read the param and fall back to
+      // the draft, so the flattened routes above are unaffected.
+      { path: 'issues/:issueId/booking', element: <BookingFlowPage /> },
+      { path: 'issues/:issueId/sos-booking', element: <ProntoSosEntryPage /> },
       { path: 'professionals/:professionalId', element: <ProfessionalProfilePage /> },
       {
         element: <RequireAuth />,

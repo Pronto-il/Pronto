@@ -476,6 +476,24 @@ REQUEST ──booked──▶ ETA ──ARRIVED──▶ ✨ ──COMPLETED─�
 from `selectActiveOrder`, `useBookingDraft`'s draft, and `useEtaCountdown`'s figure — onto what to
 render, so no lifecycle branching survives in the JSX and no second source of truth is introduced.
 
+> **Booking-flow visibility fix (2026-08-29).** `toolboxState.ts` also owns
+> `isInBookingFlow(pathname)` — the single definition of "is the customer building an order right
+> now?", consulted once, by `ActiveIssueToolbox`, **during render** (not in an effect, so a deep
+> link or refresh onto a booking route never paints the widget for a frame before hiding it).
+>
+> It was `isInNewIssueFlow` and matched `/^\/issues\/[^/]+\/(matching|booking|sos-booking)/`.
+> Deferred authentication flattened those routes to `/matching`, `/booking` and `/sos-booking`, so
+> the matcher silently stopped matching and "ההזמנה שלי" reappeared across the whole booking flow
+> in Production. `/issues/new` kept working only because that one route kept its path — and the
+> tests asserted only the retired shape, so everything stayed green while the product broke.
+>
+> The rule is `activeOrderExists && !isInBookingFlow(pathname) && existingVisibilityRules`; an
+> active order existing never decides visibility on its own. Renamed because it now covers
+> `/booking` and `/sos-booking`, which are not "new issue". `/professionals/:id` is deliberately
+> excluded — it is equally a normal browsing route, and the only signal separating the two
+> (`location.state`) does not survive a refresh, so including it would make visibility depend on
+> how the customer arrived and flip after F5.
+
 **A real gap was closed in `activeOrderContext.ts`.** `ARRIVED` is a genuine `OrderStatus`, but
 `selectActiveOrder` matched none of its three tiers, so an `ARRIVED` order selected `null` — the
 floating indicator **vanished at the exact moment the professional turned up** and only came back

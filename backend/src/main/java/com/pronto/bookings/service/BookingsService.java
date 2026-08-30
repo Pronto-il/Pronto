@@ -210,8 +210,15 @@ public class BookingsService {
         Long resolvedIssueId = null;
 
         if (issueId != null) {
+            // "Nobody is signed in" and "somebody else is signed in" are different answers and get
+            // different statuses -- see unauthenticatedIssueAccess. Checked BEFORE the issue is
+            // loaded, so an anonymous caller probing ids cannot tell an existing issue from a
+            // missing one by the status they get back.
+            if (callerId == null) {
+                throw unauthenticatedIssueAccess();
+            }
             Issue issue = loadIssue(issueId);
-            if (callerId == null || !issue.getCustomerId().equals(callerId)) {
+            if (!issue.getCustomerId().equals(callerId)) {
                 throw forbidden();
             }
             if (issue.getUrgencyType() != IssueUrgencyType.STANDARD) {
@@ -298,8 +305,14 @@ public class BookingsService {
         // browse.
         Issue issue = null;
         if (issueId != null) {
+            // Same split, same reason, as listProfessionals above: an expired token reaches this
+            // permitAll route indistinguishably from a guest, and answering 403 stranded the
+            // customer instead of ending their dead session.
+            if (callerId == null) {
+                throw unauthenticatedIssueAccess();
+            }
             issue = loadIssue(issueId);
-            if (callerId == null || !issue.getCustomerId().equals(callerId)) {
+            if (!issue.getCustomerId().equals(callerId)) {
                 throw forbidden();
             }
             if (issue.getUrgencyType() != IssueUrgencyType.STANDARD) {
@@ -1143,6 +1156,35 @@ public class BookingsService {
 
     private ApiException forbidden() {
         return new ApiException(ErrorCode.FORBIDDEN, "You are not authorized to perform this action.");
+    }
+
+    /**
+     * <b>An {@code issueId} was named by a caller this request could not identify.</b>
+     *
+     * <p>Separate from {@link #forbidden()}, and the separation is the fix for a real Production
+     * defect rather than a taxonomy preference. Deferred authentication made
+     * {@code GET /api/bookings/professionals} and {@code .../available-windows} {@code permitAll},
+     * so {@code auth.security.JwtAuthenticationFilter} no longer rejects a request carrying an
+     * expired or revoked token — it leaves the security context empty and lets the request through,
+     * exactly as it does for a genuine guest. Both then arrive here with {@code callerId == null}.
+     *
+     * <p>Collapsing the two into {@code 403} meant a customer whose 24h token died in an open tab
+     * asked for a listing keyed on their own issue and was told "you are not authorized to perform
+     * this action" — permanently. The frontend's dead-session handler
+     * ({@code httpClient.setUnauthorizedHandler}) fires on {@code 401} and only on {@code 401}, so
+     * nothing cleared the dead token, every retry produced the same {@code 403}, and the customer
+     * could not recover without clearing {@code localStorage} by hand.
+     *
+     * <p>{@code 401} is also simply the truthful answer, per {@code api-contract.md} §1:
+     * {@code 401} is "no or invalid authentication", {@code 403} is "authenticated, but not
+     * permitted". Nobody was authenticated here. A caller who <em>is</em> authenticated and names
+     * somebody else's issue still gets {@link #forbidden()} — that check is unchanged, and this
+     * opens nothing: an anonymous caller learns only that reading an issue needs an account, which
+     * is what the guest journey already tells them.
+     */
+    private ApiException unauthenticatedIssueAccess() {
+        return new ApiException(ErrorCode.UNAUTHORIZED,
+                "Sign in to continue with this request.");
     }
 
     private ApiException notBookable(Long issueId) {

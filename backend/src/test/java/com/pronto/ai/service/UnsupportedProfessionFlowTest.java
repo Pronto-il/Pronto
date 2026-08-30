@@ -1,5 +1,6 @@
 package com.pronto.ai.service;
 
+import com.pronto.ai.TestTaxonomy;
 import com.pronto.ai.TestCategories;
 import com.pronto.ai.catalog.ServiceCategoryCatalog;
 import com.pronto.ai.client.MockAiClassificationClient;
@@ -38,10 +39,11 @@ class UnsupportedProfessionFlowTest {
     void setUp() {
         ServiceCategoryCatalog catalog = new ServiceCategoryCatalog(TestCategories.repository());
         classificationService = new ClassificationService(
-                new MockAiClassificationClient(catalog),
+                new MockAiClassificationClient(catalog, TestTaxonomy.taxonomy()),
                 catalog,
-                new RoutingDecisionPolicy(new RoutingProperties()),
-                new IssueImageResolver(Mockito.mock(StorageClient.class)));
+                new RoutingDecisionPolicy(new RoutingProperties(), TestTaxonomy.taxonomy()),
+                new IssueImageResolver(Mockito.mock(StorageClient.class)),
+                TestTaxonomy.taxonomy());
     }
 
     private ClassificationSuggestion classify(String description) {

@@ -165,7 +165,8 @@ public class IssuesService {
                 .toList();
 
         return new ClassifyResponse(suggestion.status(), suggestion.detectedProfession(),
-                suggestion.categoryId(), suggestion.categoryCode(), questions);
+                suggestion.professionCode(), suggestion.subcategoryCode(), suggestion.intent(),
+                suggestion.urgency(), suggestion.categoryId(), suggestion.categoryCode(), questions);
     }
 
     /**

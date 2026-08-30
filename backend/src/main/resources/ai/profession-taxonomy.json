@@ -1,0 +1,1658 @@
+{
+  "taxonomyVersion": "profession-taxonomy-v1",
+  "sourceWorkbook": "pronto_classification_experiment_5000_v2.xlsx",
+  "generatedBy": "backend/tools/classification_dataset/build_dataset.py",
+  "notes": "CLASSIFICATION label space (professions x subcategories) and, separately, each profession's DISPATCH mapping onto the production categories table. A null dispatchCategoryCode means Pronto classifies the request correctly and cannot currently dispatch it -- the UNSUPPORTED_PROFESSION flow -- and is never a reason to substitute a different profession. Regenerate with the script above; do not hand-edit.",
+  "professions": [
+    {
+      "code": "PLUMBER",
+      "nameHe": "אינסטלטור",
+      "priorityRank": 1,
+      "dispatchCategoryCode": "plumbing",
+      "subcategories": [
+        {
+          "code": "CLOGGED_DRAIN",
+          "nameHe": "פתיחת סתימות",
+          "seedSymptom": "המים לא יורדים בכיור"
+        },
+        {
+          "code": "FAUCET_OR_CONNECTION_LEAK",
+          "nameHe": "נזילה מברז/חיבור",
+          "seedSymptom": "יש טפטוף או נזילה מהברז או מחיבור"
+        },
+        {
+          "code": "TOILET_OR_CISTERN",
+          "nameHe": "ניאגרה ואסלה",
+          "seedSymptom": "הניאגרה לא מפסיקה למלא מים"
+        },
+        {
+          "code": "WATER_PRESSURE_OR_FLOW",
+          "nameHe": "לחץ/זרימת מים",
+          "seedSymptom": "לחץ המים בבית חלש"
+        },
+        {
+          "code": "BURST_PIPE_OR_MAJOR_LEAK",
+          "nameHe": "פיצוץ/נזילה משמעותית בצנרת",
+          "seedSymptom": "התפוצץ צינור ויש הרבה מים"
+        }
+      ]
+    },
+    {
+      "code": "ELECTRICIAN",
+      "nameHe": "חשמלאי",
+      "priorityRank": 2,
+      "dispatchCategoryCode": "electrical",
+      "subcategories": [
+        {
+          "code": "SHORT_CIRCUIT_OR_BREAKER_TRIP",
+          "nameHe": "קצר/קפיצת חשמל",
+          "seedSymptom": "הפחת קופץ כל הזמן"
+        },
+        {
+          "code": "FAULTY_OUTLET_OR_SWITCH",
+          "nameHe": "שקע/מתג תקול",
+          "seedSymptom": "השקע לא עובד"
+        },
+        {
+          "code": "DISTRIBUTION_BOARD",
+          "nameHe": "לוח חשמל",
+          "seedSymptom": "יש תקלה בלוח החשמל"
+        },
+        {
+          "code": "LIGHTING",
+          "nameHe": "תאורה",
+          "seedSymptom": "המנורה מהבהבת"
+        },
+        {
+          "code": "NEW_POINT_OR_INSTALLATION",
+          "nameHe": "נקודת חשמל/התקנה",
+          "seedSymptom": "צריך נקודת חשמל חדשה"
+        }
+      ]
+    },
+    {
+      "code": "AC_TECHNICIAN",
+      "nameHe": "טכנאי מזגנים",
+      "priorityRank": 3,
+      "dispatchCategoryCode": "ac_hvac",
+      "subcategories": [
+        {
+          "code": "NOT_COOLING",
+          "nameHe": "לא מקרר",
+          "seedSymptom": "המזגן עובד אבל לא מקרר"
+        },
+        {
+          "code": "NOT_HEATING",
+          "nameHe": "לא מחמם",
+          "seedSymptom": "המזגן עובד אבל לא מחמם"
+        },
+        {
+          "code": "WATER_LEAK",
+          "nameHe": "נזילת מים",
+          "seedSymptom": "המזגן מטפטף מים"
+        },
+        {
+          "code": "NOISE_OR_VIBRATION",
+          "nameHe": "רעש/רעידות",
+          "seedSymptom": "המזגן עושה רעש חזק"
+        },
+        {
+          "code": "NOT_TURNING_ON_OR_SHUTS_DOWN",
+          "nameHe": "לא נדלק/נכבה",
+          "seedSymptom": "המזגן לא נדלק"
+        }
+      ]
+    },
+    {
+      "code": "BOILER_TECHNICIAN",
+      "nameHe": "טכנאי דודים",
+      "priorityRank": 4,
+      "dispatchCategoryCode": "plumbing",
+      "subcategories": [
+        {
+          "code": "NO_HOT_WATER",
+          "nameHe": "אין מים חמים",
+          "seedSymptom": "אין מים חמים בבית"
+        },
+        {
+          "code": "NOT_TURNING_ON_OR_ELECTRICAL",
+          "nameHe": "דוד לא נדלק/תקלה חשמלית",
+          "seedSymptom": "הדוד לא נדלק או מפיל חשמל"
+        },
+        {
+          "code": "BOILER_LEAK",
+          "nameHe": "נזילה מהדוד",
+          "seedSymptom": "הדוד מטפטף"
+        },
+        {
+          "code": "SOLAR_COLLECTOR",
+          "nameHe": "בעיה בקולט שמש",
+          "seedSymptom": "הקולט לא מחמם"
+        },
+        {
+          "code": "WEAK_HOT_WATER_FLOW",
+          "nameHe": "זרימת מים חמים חלשה",
+          "seedSymptom": "המים החמים יוצאים חלש"
+        }
+      ]
+    },
+    {
+      "code": "LOCKSMITH",
+      "nameHe": "מנעולן",
+      "priorityRank": 5,
+      "dispatchCategoryCode": "locksmith",
+      "subcategories": [
+        {
+          "code": "LOCKED_OUT",
+          "nameHe": "דלת נעולה/לא נפתחת",
+          "seedSymptom": "הדלת נעולה ולא נפתחת"
+        },
+        {
+          "code": "CYLINDER_REPLACEMENT",
+          "nameHe": "החלפת צילינדר",
+          "seedSymptom": "צריך להחליף צילינדר"
+        },
+        {
+          "code": "KEY_STUCK_OR_BROKEN",
+          "nameHe": "מפתח תקוע/שבור",
+          "seedSymptom": "המפתח נתקע או נשבר במנעול"
+        },
+        {
+          "code": "LOCKING_MECHANISM_FAULT",
+          "nameHe": "מנגנון נעילה תקול",
+          "seedSymptom": "המנעול או מנגנון הנעילה לא עובד"
+        },
+        {
+          "code": "EMERGENCY_DOOR_OPENING",
+          "nameHe": "פריצה/פתיחת דלת",
+          "seedSymptom": "צריך לפתוח דלת נעולה"
+        }
+      ]
+    },
+    {
+      "code": "HANDYMAN",
+      "nameHe": "הנדימן",
+      "priorityRank": 6,
+      "dispatchCategoryCode": "general_handyman",
+      "subcategories": [
+        {
+          "code": "HANGING_AND_DRILLING",
+          "nameHe": "תלייה וקידוח",
+          "seedSymptom": "צריך לתלות מדף"
+        },
+        {
+          "code": "FURNITURE_ASSEMBLY",
+          "nameHe": "הרכבת רהיטים",
+          "seedSymptom": "צריך להרכיב ארון"
+        },
+        {
+          "code": "HARDWARE_AND_HANDLES",
+          "nameHe": "תיקוני פרזול/ידיות",
+          "seedSymptom": "ידית או פרזול קטן בבית השתחרר"
+        },
+        {
+          "code": "SILICONE_SEALING",
+          "nameHe": "איטום סיליקון",
+          "seedSymptom": "צריך לחדש סיליקון במקלחת"
+        },
+        {
+          "code": "SMALL_HOME_INSTALLATIONS",
+          "nameHe": "התקנות ביתיות",
+          "seedSymptom": "צריך להתקין וילון"
+        }
+      ]
+    },
+    {
+      "code": "REFRIGERATOR_TECHNICIAN",
+      "nameHe": "טכנאי מקררים",
+      "priorityRank": 7,
+      "dispatchCategoryCode": "appliance_repair",
+      "subcategories": [
+        {
+          "code": "NOT_COOLING",
+          "nameHe": "מקרר לא מקרר",
+          "seedSymptom": "המקרר לא מקרר"
+        },
+        {
+          "code": "FREEZER_NOT_FREEZING",
+          "nameHe": "מקפיא לא מקפיא",
+          "seedSymptom": "המקפיא לא מקפיא"
+        },
+        {
+          "code": "WATER_OR_ICE_LEAK",
+          "nameHe": "נזילת מים/קרח",
+          "seedSymptom": "יש מים מתחת למקרר"
+        },
+        {
+          "code": "ABNORMAL_NOISE",
+          "nameHe": "רעש חריג",
+          "seedSymptom": "המקרר מרעיש מאוד"
+        },
+        {
+          "code": "NOT_TURNING_ON_OR_RUNS_CONSTANTLY",
+          "nameHe": "לא נדלק/עובד רצוף",
+          "seedSymptom": "המקרר לא נדלק"
+        }
+      ]
+    },
+    {
+      "code": "WASHING_MACHINE_TECHNICIAN",
+      "nameHe": "טכנאי מכונות כביסה",
+      "priorityRank": 8,
+      "dispatchCategoryCode": "appliance_repair",
+      "subcategories": [
+        {
+          "code": "NOT_SPINNING",
+          "nameHe": "לא סוחטת/לא מסתובבת",
+          "seedSymptom": "המכונה לא סוחטת"
+        },
+        {
+          "code": "NOT_DRAINING",
+          "nameHe": "לא מרוקנת מים",
+          "seedSymptom": "נשארים מים במכונה"
+        },
+        {
+          "code": "WATER_LEAK",
+          "nameHe": "נזילת מים",
+          "seedSymptom": "מכונת הכביסה נוזלת"
+        },
+        {
+          "code": "NOT_STARTING_OR_CYCLE_STUCK",
+          "nameHe": "לא נדלקת/תוכנית תקועה",
+          "seedSymptom": "המכונה לא נדלקת"
+        },
+        {
+          "code": "NOISE_OR_VIBRATION",
+          "nameHe": "רעש/רעידות",
+          "seedSymptom": "המכונה קופצת בסחיטה"
+        }
+      ]
+    },
+    {
+      "code": "DISHWASHER_TECHNICIAN",
+      "nameHe": "טכנאי מדיחי כלים",
+      "priorityRank": 9,
+      "dispatchCategoryCode": "appliance_repair",
+      "subcategories": [
+        {
+          "code": "NOT_CLEANING",
+          "nameHe": "לא מנקה",
+          "seedSymptom": "המדיח לא מנקה טוב"
+        },
+        {
+          "code": "NOT_DRAINING",
+          "nameHe": "לא מרוקן מים",
+          "seedSymptom": "יש מים בתחתית המדיח"
+        },
+        {
+          "code": "LEAK",
+          "nameHe": "נזילה",
+          "seedSymptom": "המדיח נוזל"
+        },
+        {
+          "code": "NOT_STARTING",
+          "nameHe": "לא נדלק/לא מתחיל",
+          "seedSymptom": "המדיח לא נדלק"
+        },
+        {
+          "code": "NOT_HEATING_OR_DRYING",
+          "nameHe": "לא מחמם/מייבש",
+          "seedSymptom": "המדיח לא מייבש"
+        }
+      ]
+    },
+    {
+      "code": "OVEN_AND_COOKTOP_TECHNICIAN",
+      "nameHe": "טכנאי תנורים וכיריים",
+      "priorityRank": 10,
+      "dispatchCategoryCode": "appliance_repair",
+      "subcategories": [
+        {
+          "code": "OVEN_NOT_HEATING",
+          "nameHe": "תנור לא מחמם",
+          "seedSymptom": "התנור לא מתחמם"
+        },
+        {
+          "code": "UNEVEN_HEATING",
+          "nameHe": "חימום לא אחיד",
+          "seedSymptom": "התנור מחמם לא אחיד"
+        },
+        {
+          "code": "COOKTOP_NOT_IGNITING",
+          "nameHe": "כיריים לא נדלקות",
+          "seedSymptom": "אחד המבערים לא נדלק"
+        },
+        {
+          "code": "IGNITION_OR_SPARK",
+          "nameHe": "הצתה/ניצוץ",
+          "seedSymptom": "ההצתה לא מפסיקה לתקתק"
+        },
+        {
+          "code": "DOOR_KNOBS_OR_DISPLAY",
+          "nameHe": "דלת/כפתורים/תצוגה",
+          "seedSymptom": "דלת התנור לא נסגרת"
+        }
+      ]
+    },
+    {
+      "code": "DRYER_TECHNICIAN",
+      "nameHe": "טכנאי מייבשי כביסה",
+      "priorityRank": 11,
+      "dispatchCategoryCode": "appliance_repair",
+      "subcategories": [
+        {
+          "code": "NOT_DRYING",
+          "nameHe": "לא מייבש",
+          "seedSymptom": "המייבש לא מייבש"
+        },
+        {
+          "code": "NOT_TUMBLING",
+          "nameHe": "לא מסתובב",
+          "seedSymptom": "התוף לא מסתובב"
+        },
+        {
+          "code": "NOT_TURNING_ON_OR_SHUTS_DOWN",
+          "nameHe": "לא נדלק/נכבה",
+          "seedSymptom": "המייבש לא נדלק"
+        },
+        {
+          "code": "NOISE",
+          "nameHe": "רעש",
+          "seedSymptom": "המייבש עושה רעש"
+        },
+        {
+          "code": "DRAINAGE_OR_CONDENSATION",
+          "nameHe": "ניקוז/עיבוי",
+          "seedSymptom": "יש תקלה בניקוז המייבש"
+        }
+      ]
+    },
+    {
+      "code": "RENOVATION_CONTRACTOR",
+      "nameHe": "שיפוצניק",
+      "priorityRank": 12,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "SMALL_ROOM_OR_APARTMENT_RENOVATION",
+          "nameHe": "שיפוץ חדר/דירה קטן",
+          "seedSymptom": "צריך שיפוץ קטן בחדר"
+        },
+        {
+          "code": "WALL_DEMOLITION_OR_BUILD",
+          "nameHe": "שבירת/בניית קיר",
+          "seedSymptom": "צריך לבנות מחיצה"
+        },
+        {
+          "code": "PLASTER_AND_CONCRETE_REPAIR",
+          "nameHe": "תיקוני טיח ובטון",
+          "seedSymptom": "יש טיח מתפורר"
+        },
+        {
+          "code": "BATHROOM_RENOVATION",
+          "nameHe": "שיפוץ אמבטיה",
+          "seedSymptom": "צריך שיפוץ חלקי באמבטיה"
+        },
+        {
+          "code": "FINISHING_WORK",
+          "nameHe": "תיקוני גמר",
+          "seedSymptom": "צריך להשלים תיקוני גמר"
+        }
+      ]
+    },
+    {
+      "code": "PAINTER",
+      "nameHe": "צבעי",
+      "priorityRank": 13,
+      "dispatchCategoryCode": "painting",
+      "subcategories": [
+        {
+          "code": "ROOM_OR_APARTMENT_PAINTING",
+          "nameHe": "צביעת חדר/דירה",
+          "seedSymptom": "צריך לצבוע חדר"
+        },
+        {
+          "code": "WALL_PREP_BEFORE_PAINTING",
+          "nameHe": "תיקוני קיר לפני צבע",
+          "seedSymptom": "יש חורים שצריך לסתום"
+        },
+        {
+          "code": "MOISTURE_STAINS_AFTER_REPAIR",
+          "nameHe": "כתמי רטיבות אחרי תיקון",
+          "seedSymptom": "נשאר כתם רטיבות בקיר"
+        },
+        {
+          "code": "CEILING_PAINTING",
+          "nameHe": "צביעת תקרה",
+          "seedSymptom": "צריך לצבוע תקרה"
+        },
+        {
+          "code": "DOORS_AND_FRAMES",
+          "nameHe": "דלתות/משקופים",
+          "seedSymptom": "צריך לצבוע משקופים"
+        }
+      ]
+    },
+    {
+      "code": "DRYWALL_INSTALLER",
+      "nameHe": "איש גבס",
+      "priorityRank": 14,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "DRYWALL_REPAIR",
+          "nameHe": "תיקון קיר גבס",
+          "seedSymptom": "יש חור בקיר גבס"
+        },
+        {
+          "code": "PARTITION_BUILD",
+          "nameHe": "בניית מחיצה",
+          "seedSymptom": "רוצה מחיצת גבס"
+        },
+        {
+          "code": "DROPPED_CEILING",
+          "nameHe": "הנמכת תקרה",
+          "seedSymptom": "צריך הנמכת גבס"
+        },
+        {
+          "code": "NICHE_OR_SHELVING",
+          "nameHe": "נישה/מדפים",
+          "seedSymptom": "רוצה נישת גבס"
+        },
+        {
+          "code": "WATER_DAMAGE_TO_DRYWALL",
+          "nameHe": "נזקי מים בגבס",
+          "seedSymptom": "הגבס התנפח ממים"
+        }
+      ]
+    },
+    {
+      "code": "TILER",
+      "nameHe": "רצף",
+      "priorityRank": 15,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "BROKEN_TILE_REPLACEMENT",
+          "nameHe": "החלפת אריחים שבורים",
+          "seedSymptom": "יש מרצפת שבורה"
+        },
+        {
+          "code": "FLOOR_TILING",
+          "nameHe": "ריצוף חדר/שטח",
+          "seedSymptom": "צריך לרצף חדר"
+        },
+        {
+          "code": "LOOSE_TILES",
+          "nameHe": "אריחים רופפים",
+          "seedSymptom": "המרצפות זזות"
+        },
+        {
+          "code": "GROUT",
+          "nameHe": "רובה",
+          "seedSymptom": "הרובה מתפוררת"
+        },
+        {
+          "code": "WALL_CLADDING",
+          "nameHe": "חיפוי קיר",
+          "seedSymptom": "צריך חיפוי קרמיקה"
+        }
+      ]
+    },
+    {
+      "code": "WATERPROOFING_CONTRACTOR",
+      "nameHe": "קבלן איטום",
+      "priorityRank": 16,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "ROOF_MOISTURE",
+          "nameHe": "רטיבות מהגג",
+          "seedSymptom": "יש רטיבות מהגג"
+        },
+        {
+          "code": "BALCONY_WATERPROOFING",
+          "nameHe": "איטום מרפסת",
+          "seedSymptom": "מים נכנסים מהמרפסת"
+        },
+        {
+          "code": "EXTERIOR_WALL_WATERPROOFING",
+          "nameHe": "איטום קיר חיצוני",
+          "seedSymptom": "יש רטיבות בקיר חיצוני"
+        },
+        {
+          "code": "WINDOW_OR_OPENING_SEALING",
+          "nameHe": "איטום חלון/פתח",
+          "seedSymptom": "נכנסים מים מסביב לחלון"
+        },
+        {
+          "code": "BATHROOM_WATERPROOFING",
+          "nameHe": "איטום חדר רחצה",
+          "seedSymptom": "יש רטיבות מהמקלחת"
+        }
+      ]
+    },
+    {
+      "code": "ROOFER",
+      "nameHe": "גגן ורעפים",
+      "priorityRank": 17,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "BROKEN_OR_SHIFTED_TILES",
+          "nameHe": "רעפים שבורים/זזים",
+          "seedSymptom": "יש רעף שבור"
+        },
+        {
+          "code": "TILED_ROOF_LEAK",
+          "nameHe": "נזילה מגג רעפים",
+          "seedSymptom": "הגג מטפטף בגשם"
+        },
+        {
+          "code": "ROOF_CLEANING_AND_MAINTENANCE",
+          "nameHe": "ניקוי/תחזוקת גג",
+          "seedSymptom": "המרזב בגג סתום"
+        },
+        {
+          "code": "ROOF_JOINT_SEALING",
+          "nameHe": "איטום חיבורים בגג",
+          "seedSymptom": "יש חדירה ליד הארובה"
+        },
+        {
+          "code": "ROOF_STRUCTURE_REPAIR",
+          "nameHe": "תיקון תשתית גג",
+          "seedSymptom": "יש חלק רופף בגג"
+        }
+      ]
+    },
+    {
+      "code": "GLAZIER",
+      "nameHe": "זגג",
+      "priorityRank": 18,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "BROKEN_GLASS",
+          "nameHe": "זכוכית שבורה",
+          "seedSymptom": "נשברה זכוכית בחלון"
+        },
+        {
+          "code": "MIRROR",
+          "nameHe": "מראה",
+          "seedSymptom": "נשברה המראה"
+        },
+        {
+          "code": "GLASS_DOOR",
+          "nameHe": "דלת זכוכית",
+          "seedSymptom": "דלת הזכוכית לא נסגרת"
+        },
+        {
+          "code": "GLASS_SHELF_OR_PANEL",
+          "nameHe": "מדף/פלטת זכוכית",
+          "seedSymptom": "נשברה פלטת זכוכית"
+        },
+        {
+          "code": "INSULATED_GLAZING",
+          "nameHe": "זכוכית בידודית",
+          "seedSymptom": "יש אדים בין הזכוכיות"
+        }
+      ]
+    },
+    {
+      "code": "ALUMINIUM_INSTALLER",
+      "nameHe": "איש אלומיניום",
+      "priorityRank": 19,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "FAULTY_ALUMINIUM_WINDOW",
+          "nameHe": "חלון אלומיניום תקול",
+          "seedSymptom": "חלון האלומיניום תקוע"
+        },
+        {
+          "code": "ALUMINIUM_DOOR",
+          "nameHe": "דלת אלומיניום",
+          "seedSymptom": "דלת האלומיניום לא נסגרת"
+        },
+        {
+          "code": "WINDOW_SEALING",
+          "nameHe": "אטימה בחלון",
+          "seedSymptom": "נכנס אוויר מהחלון"
+        },
+        {
+          "code": "TRACK_OR_ROLLERS",
+          "nameHe": "מסילה/גלגלים",
+          "seedSymptom": "המסילה של החלון שבורה"
+        },
+        {
+          "code": "WINDOW_OR_ENCLOSURE_INSTALLATION",
+          "nameHe": "התקנת חלון/סגירה",
+          "seedSymptom": "צריך חלון אלומיניום חדש"
+        }
+      ]
+    },
+    {
+      "code": "SHUTTER_TECHNICIAN",
+      "nameHe": "טכנאי תריסים",
+      "priorityRank": 20,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "ELECTRIC_SHUTTER_STUCK",
+          "nameHe": "תריס חשמלי לא עולה/יורד",
+          "seedSymptom": "התריס החשמלי לא עולה"
+        },
+        {
+          "code": "STRAP_OR_MANUAL_MECHANISM",
+          "nameHe": "רצועה/מנגנון ידני",
+          "seedSymptom": "רצועת התריס נקרעה"
+        },
+        {
+          "code": "BROKEN_SLATS",
+          "nameHe": "שלבים שבורים",
+          "seedSymptom": "יש שלבים שבורים בתריס"
+        },
+        {
+          "code": "SHUTTER_MOTOR",
+          "nameHe": "מנוע תריס",
+          "seedSymptom": "המנוע של התריס לא עובד"
+        },
+        {
+          "code": "ALIGNMENT_OR_TRACKS",
+          "nameHe": "כיוון/מסילות",
+          "seedSymptom": "התריס יוצא מהמסילה"
+        }
+      ]
+    },
+    {
+      "code": "INSECT_SCREEN_INSTALLER",
+      "nameHe": "מתקין רשתות נגד יתושים",
+      "priorityRank": 21,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "TORN_SCREEN",
+          "nameHe": "רשת קרועה",
+          "seedSymptom": "הרשת קרועה"
+        },
+        {
+          "code": "SCREEN_OFF_TRACK",
+          "nameHe": "רשת יצאה מהמסילה",
+          "seedSymptom": "הרשת יצאה מהמסילה"
+        },
+        {
+          "code": "NEW_SCREEN_INSTALLATION",
+          "nameHe": "התקנת רשת חדשה",
+          "seedSymptom": "צריך רשת נגד יתושים"
+        },
+        {
+          "code": "DOOR_OR_PATIO_SCREEN",
+          "nameHe": "רשת לדלת/ויטרינה",
+          "seedSymptom": "צריך רשת לדלת מרפסת"
+        },
+        {
+          "code": "PET_RESISTANT_SCREEN",
+          "nameHe": "רשת עמידה לחיות",
+          "seedSymptom": "צריך רשת חזקה לחתול"
+        }
+      ]
+    },
+    {
+      "code": "CARPENTER",
+      "nameHe": "נגר",
+      "priorityRank": 22,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "CABINETS_AND_WOODEN_FURNITURE",
+          "nameHe": "ארונות ורהיטי עץ",
+          "seedSymptom": "יש בעיה בארון או ברהיט עץ"
+        },
+        {
+          "code": "BROKEN_FURNITURE",
+          "nameHe": "רהיט שבור",
+          "seedSymptom": "רהיט עץ נשבר"
+        },
+        {
+          "code": "CUSTOM_CARPENTRY",
+          "nameHe": "נגרות לפי מידה",
+          "seedSymptom": "צריך נגרות לפי מידה"
+        },
+        {
+          "code": "WOOD_REPAIR_OR_RESTORATION",
+          "nameHe": "תיקון/חידוש עץ",
+          "seedSymptom": "צריך לתקן או לחדש עץ"
+        },
+        {
+          "code": "SHELVES_AND_WOOD_SOLUTIONS",
+          "nameHe": "מדפים/פתרונות עץ",
+          "seedSymptom": "צריך מדפים או פתרון עץ"
+        }
+      ]
+    },
+    {
+      "code": "KITCHEN_INSTALLER",
+      "nameHe": "מתקין מטבחים",
+      "priorityRank": 23,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "KITCHEN_DOORS_AND_HINGES",
+          "nameHe": "דלתות מטבח וצירים",
+          "seedSymptom": "דלת מטבח לא נסגרת"
+        },
+        {
+          "code": "KITCHEN_DRAWERS",
+          "nameHe": "מגירות מטבח",
+          "seedSymptom": "מגירת המטבח תקועה"
+        },
+        {
+          "code": "KITCHEN_CABINETS",
+          "nameHe": "ארונות מטבח",
+          "seedSymptom": "יש בעיה בארון המטבח"
+        },
+        {
+          "code": "APPLIANCE_FIT",
+          "nameHe": "התאמה למכשירי חשמל",
+          "seedSymptom": "צריך להתאים מקום למדיח או לתנור"
+        },
+        {
+          "code": "FRONTS_OR_KITCHEN_UPGRADE",
+          "nameHe": "חזיתות/שדרוג מטבח",
+          "seedSymptom": "רוצה להחליף חזיתות במטבח"
+        }
+      ]
+    },
+    {
+      "code": "STONE_AND_COUNTERTOP_FITTER",
+      "nameHe": "איש שיש",
+      "priorityRank": 24,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "CHIP_OR_CRACK",
+          "nameHe": "שבר/סדק בשיש",
+          "seedSymptom": "יש סדק בשיש"
+        },
+        {
+          "code": "RESTORATION_OR_POLISHING",
+          "nameHe": "חידוש/ליטוש",
+          "seedSymptom": "השיש איבד ברק"
+        },
+        {
+          "code": "SINK_OR_COOKTOP_CUTOUT",
+          "nameHe": "חיתוך לכיור/כיריים",
+          "seedSymptom": "צריך להגדיל פתח לכיריים"
+        },
+        {
+          "code": "BONDING_AND_JOINTS",
+          "nameHe": "הדבקה וחיבורים",
+          "seedSymptom": "חיבור השיש נפתח"
+        },
+        {
+          "code": "COUNTERTOP_INSTALLATION",
+          "nameHe": "התקנת/החלפת משטח",
+          "seedSymptom": "צריך שיש חדש"
+        }
+      ]
+    },
+    {
+      "code": "METALWORKER",
+      "nameHe": "מסגר",
+      "priorityRank": 25,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "METAL_GATE_OR_DOOR",
+          "nameHe": "שער/דלת מתכת",
+          "seedSymptom": "שער הברזל לא נסגר"
+        },
+        {
+          "code": "RAILING",
+          "nameHe": "מעקה",
+          "seedSymptom": "המעקה רופף"
+        },
+        {
+          "code": "WINDOW_BARS",
+          "nameHe": "סורגים",
+          "seedSymptom": "סורג השתחרר"
+        },
+        {
+          "code": "WELDING_AND_REPAIR",
+          "nameHe": "ריתוך ותיקון",
+          "seedSymptom": "צריך ריתוך קטן"
+        },
+        {
+          "code": "SMALL_STRUCTURES",
+          "nameHe": "קונסטרוקציה קטנה",
+          "seedSymptom": "צריך מסגרת ברזל"
+        }
+      ]
+    },
+    {
+      "code": "DOOR_TECHNICIAN",
+      "nameHe": "מתקין דלתות",
+      "priorityRank": 26,
+      "dispatchCategoryCode": "general_handyman",
+      "subcategories": [
+        {
+          "code": "DOOR_SCRAPING_OR_MISALIGNED",
+          "nameHe": "דלת משפשפת/לא מיושרת",
+          "seedSymptom": "הדלת משפשפת ברצפה"
+        },
+        {
+          "code": "HINGES",
+          "nameHe": "צירים",
+          "seedSymptom": "ציר בדלת נשבר"
+        },
+        {
+          "code": "HANDLE_OR_HARDWARE",
+          "nameHe": "ידית/פרזול",
+          "seedSymptom": "ידית הדלת נשברה"
+        },
+        {
+          "code": "DOOR_FRAME",
+          "nameHe": "משקוף",
+          "seedSymptom": "המשקוף השתחרר"
+        },
+        {
+          "code": "DOOR_REPLACEMENT_OR_INSTALLATION",
+          "nameHe": "החלפת/התקנת דלת",
+          "seedSymptom": "צריך דלת פנים חדשה"
+        }
+      ]
+    },
+    {
+      "code": "LAMINATE_FLOORING_INSTALLER",
+      "nameHe": "מתקין פרקטים",
+      "priorityRank": 27,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "SWOLLEN_OR_WET_FLOORING",
+          "nameHe": "פרקט נפוח/רטוב",
+          "seedSymptom": "הפרקט התנפח"
+        },
+        {
+          "code": "DAMAGED_PLANKS",
+          "nameHe": "לוחות פגומים",
+          "seedSymptom": "לוח פרקט נשבר"
+        },
+        {
+          "code": "SQUEAKING_OR_SHIFTING",
+          "nameHe": "פרקט חורק/זז",
+          "seedSymptom": "הפרקט חורק"
+        },
+        {
+          "code": "SKIRTING_BOARDS",
+          "nameHe": "פנלים",
+          "seedSymptom": "הפנל נפל"
+        },
+        {
+          "code": "FLOORING_INSTALLATION",
+          "nameHe": "התקנת פרקט",
+          "seedSymptom": "רוצה להתקין פרקט"
+        }
+      ]
+    },
+    {
+      "code": "WALLPAPER_INSTALLER",
+      "nameHe": "מתקין טפטים",
+      "priorityRank": 28,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "PEELING_WALLPAPER",
+          "nameHe": "טפט מתקלף",
+          "seedSymptom": "הטפט מתקלף"
+        },
+        {
+          "code": "BUBBLES_OR_WRINKLES",
+          "nameHe": "בועות/קמטים",
+          "seedSymptom": "יש בועות בטפט"
+        },
+        {
+          "code": "WALLPAPER_REMOVAL",
+          "nameHe": "הסרת טפט",
+          "seedSymptom": "צריך להוריד טפט ישן"
+        },
+        {
+          "code": "WALLPAPER_INSTALLATION",
+          "nameHe": "התקנת טפט",
+          "seedSymptom": "רוצה טפט בקיר"
+        },
+        {
+          "code": "SPOT_REPAIR",
+          "nameHe": "תיקון נקודתי",
+          "seedSymptom": "נקרע חלק מהטפט"
+        }
+      ]
+    },
+    {
+      "code": "HOME_CLEANING",
+      "nameHe": "ניקיון דירות",
+      "priorityRank": 29,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "ONE_TIME_CLEANING",
+          "nameHe": "ניקיון חד פעמי",
+          "seedSymptom": "צריך ניקיון יסודי לדירה"
+        },
+        {
+          "code": "POST_RENOVATION_CLEANING",
+          "nameHe": "ניקיון אחרי שיפוץ",
+          "seedSymptom": "צריך ניקיון אחרי שיפוץ"
+        },
+        {
+          "code": "MOVE_IN_OR_OUT_CLEANING",
+          "nameHe": "ניקיון לפני/אחרי מעבר",
+          "seedSymptom": "צריך לנקות דירה לפני כניסה"
+        },
+        {
+          "code": "DEEP_KITCHEN_OR_BATHROOM",
+          "nameHe": "מטבח/אמבטיה עמוק",
+          "seedSymptom": "צריך ניקוי עמוק למטבח"
+        },
+        {
+          "code": "WINDOW_CLEANING",
+          "nameHe": "ניקוי חלונות",
+          "seedSymptom": "צריך לנקות חלונות"
+        }
+      ]
+    },
+    {
+      "code": "UPHOLSTERY_AND_CARPET_CLEANING",
+      "nameHe": "ניקוי ספות ושטיחים",
+      "priorityRank": 30,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "SOFA_CLEANING",
+          "nameHe": "ניקוי ספה",
+          "seedSymptom": "יש כתמים על הספה"
+        },
+        {
+          "code": "CARPET_CLEANING",
+          "nameHe": "ניקוי שטיח",
+          "seedSymptom": "השטיח מלוכלך"
+        },
+        {
+          "code": "PET_ODOUR",
+          "nameHe": "ריח מחיות",
+          "seedSymptom": "יש ריח של שתן בספה"
+        },
+        {
+          "code": "TOUGH_STAINS",
+          "nameHe": "כתמים קשים",
+          "seedSymptom": "נשפך יין על הספה"
+        },
+        {
+          "code": "MATTRESSES_AND_ARMCHAIRS",
+          "nameHe": "מזרנים/כורסאות",
+          "seedSymptom": "צריך לנקות מזרן"
+        }
+      ]
+    },
+    {
+      "code": "FLOOR_POLISHING",
+      "nameHe": "פוליש וליטוש רצפות",
+      "priorityRank": 31,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "FLOOR_POLISH",
+          "nameHe": "פוליש לרצפה",
+          "seedSymptom": "הרצפה איבדה ברק"
+        },
+        {
+          "code": "STONE_OR_MARBLE_POLISHING",
+          "nameHe": "ליטוש אבן/שיש",
+          "seedSymptom": "צריך ליטוש לרצפת שיש"
+        },
+        {
+          "code": "STAIN_REMOVAL",
+          "nameHe": "הסרת כתמים",
+          "seedSymptom": "יש כתמים קשים ברצפה"
+        },
+        {
+          "code": "CRYSTALLISATION",
+          "nameHe": "קריסטל",
+          "seedSymptom": "רוצה הברקה קריסטלית"
+        },
+        {
+          "code": "DEEP_CLEANING",
+          "nameHe": "ניקוי עמוק",
+          "seedSymptom": "צריך ניקוי עמוק לריצוף"
+        }
+      ]
+    },
+    {
+      "code": "PEST_CONTROL",
+      "nameHe": "מדביר",
+      "priorityRank": 32,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "COCKROACHES",
+          "nameHe": "תיקנים",
+          "seedSymptom": "יש ג'וקים בבית"
+        },
+        {
+          "code": "ANTS",
+          "nameHe": "נמלים",
+          "seedSymptom": "יש שיירה של נמלים"
+        },
+        {
+          "code": "MOSQUITOES_AND_FLIES",
+          "nameHe": "יתושים/זבובים",
+          "seedSymptom": "יש המון יתושים"
+        },
+        {
+          "code": "FLEAS_AND_TICKS",
+          "nameHe": "פרעושים/קרציות",
+          "seedSymptom": "יש פרעושים בבית"
+        },
+        {
+          "code": "RODENTS",
+          "nameHe": "מכרסמים",
+          "seedSymptom": "יש סימנים של עכבר"
+        }
+      ]
+    },
+    {
+      "code": "GARDENER",
+      "nameHe": "גנן",
+      "priorityRank": 33,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "GARDEN_MAINTENANCE",
+          "nameHe": "תחזוקת גינה",
+          "seedSymptom": "הגינה צריכה תחזוקה"
+        },
+        {
+          "code": "IRRIGATION",
+          "nameHe": "השקיה",
+          "seedSymptom": "ההשקיה לא עובדת"
+        },
+        {
+          "code": "PLANTING_AND_SETUP",
+          "nameHe": "שתילה והקמה",
+          "seedSymptom": "רוצה לשתול צמחים"
+        },
+        {
+          "code": "NATURAL_LAWN",
+          "nameHe": "דשא טבעי",
+          "seedSymptom": "הדשא הצהיב"
+        },
+        {
+          "code": "SHRUB_PRUNING",
+          "nameHe": "גיזום שיחים",
+          "seedSymptom": "צריך לגזום גדר חיה"
+        }
+      ]
+    },
+    {
+      "code": "TREE_TRIMMER",
+      "nameHe": "גוזם עצים",
+      "priorityRank": 34,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "TREE_PRUNING",
+          "nameHe": "גיזום עץ",
+          "seedSymptom": "צריך לגזום עץ בחצר"
+        },
+        {
+          "code": "DEAD_BRANCHES",
+          "nameHe": "ענפים יבשים",
+          "seedSymptom": "יש ענפים יבשים"
+        },
+        {
+          "code": "TREE_NEAR_STRUCTURE",
+          "nameHe": "עץ קרוב למבנה",
+          "seedSymptom": "הענפים נוגעים בגג"
+        },
+        {
+          "code": "GREEN_WASTE_REMOVAL",
+          "nameHe": "פינוי גזם/עץ מת",
+          "seedSymptom": "יש עץ מת בחצר"
+        },
+        {
+          "code": "CROWN_REDUCTION",
+          "nameHe": "עיצוב/הקטנת נוף",
+          "seedSymptom": "רוצה להקטין את העץ"
+        }
+      ]
+    },
+    {
+      "code": "ARTIFICIAL_GRASS_INSTALLER",
+      "nameHe": "מתקין דשא סינתטי",
+      "priorityRank": 35,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "GRASS_INSTALLATION",
+          "nameHe": "התקנת דשא",
+          "seedSymptom": "רוצה דשא סינתטי בחצר"
+        },
+        {
+          "code": "LIFTED_OR_SHIFTED_GRASS",
+          "nameHe": "דשא התרומם/זז",
+          "seedSymptom": "הדשא התרומם"
+        },
+        {
+          "code": "SEAMS_AND_JOINTS",
+          "nameHe": "תפרים וחיבורים",
+          "seedSymptom": "החיבור בין היריעות נפתח"
+        },
+        {
+          "code": "DRAINAGE_AND_BASE",
+          "nameHe": "ניקוז ותשתית",
+          "seedSymptom": "יש שלוליות על הדשא"
+        },
+        {
+          "code": "CLEANING_OR_REFRESH",
+          "nameHe": "ניקוי/רענון",
+          "seedSymptom": "הדשא הסינתטי מלוכלך"
+        }
+      ]
+    },
+    {
+      "code": "ELECTRIC_GATE_TECHNICIAN",
+      "nameHe": "טכנאי שערים חשמליים",
+      "priorityRank": 36,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "GATE_NOT_OPENING_OR_CLOSING",
+          "nameHe": "שער לא נפתח/נסגר",
+          "seedSymptom": "השער החשמלי לא נפתח"
+        },
+        {
+          "code": "GATE_MOTOR",
+          "nameHe": "מנוע שער",
+          "seedSymptom": "המנוע של השער לא עובד"
+        },
+        {
+          "code": "REMOTE_OR_RECEIVER",
+          "nameHe": "שלט/מקלט",
+          "seedSymptom": "השלט לא פותח את השער"
+        },
+        {
+          "code": "SENSORS",
+          "nameHe": "חיישנים",
+          "seedSymptom": "השער חוזר אחורה"
+        },
+        {
+          "code": "TRACK_OR_ROLLERS",
+          "nameHe": "מסילה/גלגלים",
+          "seedSymptom": "השער יוצא מהמסילה"
+        }
+      ]
+    },
+    {
+      "code": "INTERCOM_TECHNICIAN",
+      "nameHe": "טכנאי אינטרקום",
+      "priorityRank": 37,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "NO_SOUND_OR_CALL",
+          "nameHe": "אין צליל/שיחה",
+          "seedSymptom": "האינטרקום לא מצלצל"
+        },
+        {
+          "code": "DOOR_RELEASE",
+          "nameHe": "פתיחת דלת",
+          "seedSymptom": "האינטרקום לא פותח את הדלת"
+        },
+        {
+          "code": "SCREEN_OR_VIDEO",
+          "nameHe": "מסך/וידאו",
+          "seedSymptom": "אין תמונה באינטרקום"
+        },
+        {
+          "code": "KEYPAD",
+          "nameHe": "קודן",
+          "seedSymptom": "הקודן לא עובד"
+        },
+        {
+          "code": "INSTALLATION_OR_UPGRADE",
+          "nameHe": "התקנה/שדרוג",
+          "seedSymptom": "צריך אינטרקום חדש"
+        }
+      ]
+    },
+    {
+      "code": "SECURITY_CAMERA_TECHNICIAN",
+      "nameHe": "טכנאי מצלמות אבטחה",
+      "priorityRank": 38,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "CAMERA_NOT_WORKING",
+          "nameHe": "מצלמה לא עובדת",
+          "seedSymptom": "אחת המצלמות לא עובדת"
+        },
+        {
+          "code": "NO_OR_POOR_IMAGE",
+          "nameHe": "אין תמונה/תמונה גרועה",
+          "seedSymptom": "התמונה במצלמה מטושטשת"
+        },
+        {
+          "code": "RECORDING",
+          "nameHe": "הקלטה",
+          "seedSymptom": "המצלמות לא מקליטות"
+        },
+        {
+          "code": "REMOTE_ACCESS",
+          "nameHe": "גישה מהטלפון",
+          "seedSymptom": "לא מצליח לראות מצלמות מהטלפון"
+        },
+        {
+          "code": "CAMERA_INSTALLATION",
+          "nameHe": "התקנת מצלמות",
+          "seedSymptom": "צריך להתקין מצלמות בבית"
+        }
+      ]
+    },
+    {
+      "code": "ALARM_TECHNICIAN",
+      "nameHe": "טכנאי אזעקות",
+      "priorityRank": 39,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "FALSE_ALARMS",
+          "nameHe": "אזעקה מופעלת לשווא",
+          "seedSymptom": "האזעקה מצפצפת בלי סיבה"
+        },
+        {
+          "code": "FAULTY_DETECTOR",
+          "nameHe": "גלאי תקול",
+          "seedSymptom": "גלאי לא עובד"
+        },
+        {
+          "code": "CODE_OR_KEYPAD",
+          "nameHe": "קוד/לוח מקשים",
+          "seedSymptom": "לוח המקשים לא מגיב"
+        },
+        {
+          "code": "BATTERY_OR_SYSTEM_FAULT",
+          "nameHe": "סוללה/תקלה מערכתית",
+          "seedSymptom": "האזעקה מציגה סוללה חלשה"
+        },
+        {
+          "code": "INSTALLATION_OR_EXPANSION",
+          "nameHe": "התקנה/הרחבה",
+          "seedSymptom": "צריך אזעקה לבית"
+        }
+      ]
+    },
+    {
+      "code": "HOME_NETWORK_TECHNICIAN",
+      "nameHe": "טכנאי רשתות ביתיות",
+      "priorityRank": 40,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "NO_INTERNET_AT_POINT",
+          "nameHe": "אין אינטרנט בנקודה",
+          "seedSymptom": "אין אינטרנט בחדר"
+        },
+        {
+          "code": "WEAK_WIFI",
+          "nameHe": "Wi‑Fi חלש",
+          "seedSymptom": "הוויי פיי חלש בחדר"
+        },
+        {
+          "code": "NEW_NETWORK_POINT",
+          "nameHe": "נקודת רשת חדשה",
+          "seedSymptom": "צריך נקודת רשת בחדר"
+        },
+        {
+          "code": "COMMS_CABINET",
+          "nameHe": "ארון תקשורת",
+          "seedSymptom": "צריך לסדר ארון תקשורת"
+        },
+        {
+          "code": "ROUTER_OR_EXTENDER",
+          "nameHe": "ראוטר/מגדיל טווח",
+          "seedSymptom": "צריך להגדיר מגדיל טווח"
+        }
+      ]
+    },
+    {
+      "code": "TV_AND_HOME_CINEMA_INSTALLER",
+      "nameHe": "מתקין טלוויזיות וקולנוע ביתי",
+      "priorityRank": 41,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "TV_MOUNTING",
+          "nameHe": "תליית טלוויזיה",
+          "seedSymptom": "צריך לתלות טלוויזיה"
+        },
+        {
+          "code": "EQUIPMENT_CONNECTION",
+          "nameHe": "חיבור ציוד",
+          "seedSymptom": "צריך לחבר סאונדבר"
+        },
+        {
+          "code": "HOME_CINEMA",
+          "nameHe": "קולנוע ביתי",
+          "seedSymptom": "הרמקולים לא עובדים"
+        },
+        {
+          "code": "CABLE_CONCEALMENT",
+          "nameHe": "הסתרת כבלים",
+          "seedSymptom": "רוצה להסתיר כבלים"
+        },
+        {
+          "code": "REALIGNMENT_OR_REINSTALL",
+          "nameHe": "כיוון/התקנה מחדש",
+          "seedSymptom": "הזרוע של הטלוויזיה רופפת"
+        }
+      ]
+    },
+    {
+      "code": "COMPUTER_TECHNICIAN",
+      "nameHe": "טכנאי מחשבים",
+      "priorityRank": 42,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "COMPUTER_NOT_TURNING_ON",
+          "nameHe": "מחשב לא נדלק",
+          "seedSymptom": "המחשב לא נדלק"
+        },
+        {
+          "code": "SLOW_OR_FREEZING",
+          "nameHe": "מחשב איטי/נתקע",
+          "seedSymptom": "המחשב ממש איטי"
+        },
+        {
+          "code": "INTERNET_OR_NETWORK",
+          "nameHe": "אינטרנט/רשת",
+          "seedSymptom": "המחשב לא מתחבר לאינטרנט"
+        },
+        {
+          "code": "HARDWARE_OR_UPGRADE",
+          "nameHe": "חומרה/שדרוג",
+          "seedSymptom": "צריך להחליף דיסק"
+        },
+        {
+          "code": "OPERATING_SYSTEM",
+          "nameHe": "מערכת הפעלה",
+          "seedSymptom": "המחשב לא עולה לווינדוס"
+        }
+      ]
+    },
+    {
+      "code": "WATER_PUMP_TECHNICIAN",
+      "nameHe": "טכנאי משאבות מים",
+      "priorityRank": 43,
+      "dispatchCategoryCode": "plumbing",
+      "subcategories": [
+        {
+          "code": "PUMP_NOT_WORKING",
+          "nameHe": "משאבה לא עובדת",
+          "seedSymptom": "משאבת המים לא עובדת"
+        },
+        {
+          "code": "LOW_WATER_PRESSURE",
+          "nameHe": "לחץ מים חלש",
+          "seedSymptom": "המשאבה לא בונה לחץ"
+        },
+        {
+          "code": "NOISE_OR_VIBRATION",
+          "nameHe": "רעש/רעידות",
+          "seedSymptom": "המשאבה מרעישה"
+        },
+        {
+          "code": "LEAK",
+          "nameHe": "נזילה",
+          "seedSymptom": "יש נזילה מהמשאבה"
+        },
+        {
+          "code": "RUNS_CONSTANTLY",
+          "nameHe": "עובדת רצוף",
+          "seedSymptom": "המשאבה לא מפסיקה לעבוד"
+        }
+      ]
+    },
+    {
+      "code": "SEWAGE_TANKER",
+      "nameHe": "ביובית",
+      "priorityRank": 44,
+      "dispatchCategoryCode": "plumbing",
+      "subcategories": [
+        {
+          "code": "MAIN_SEWER_BLOCKAGE",
+          "nameHe": "סתימת ביוב ראשי",
+          "seedSymptom": "הביוב הראשי סתום"
+        },
+        {
+          "code": "ROOTS_IN_SEWER",
+          "nameHe": "שורשים בביוב",
+          "seedSymptom": "יש חשד לשורשים בצינור"
+        },
+        {
+          "code": "FLOOD_PUMPING",
+          "nameHe": "שאיבת הצפה",
+          "seedSymptom": "צריך לשאוב הצפה"
+        },
+        {
+          "code": "LINE_JETTING",
+          "nameHe": "שטיפת קו",
+          "seedSymptom": "צריך לשטוף קו ביוב"
+        },
+        {
+          "code": "SEWER_CAMERA_INSPECTION",
+          "nameHe": "צילום קו ביוב",
+          "seedSymptom": "צריך צילום קו ביוב"
+        }
+      ]
+    },
+    {
+      "code": "LEAK_DETECTION",
+      "nameHe": "מאתר נזילות",
+      "priorityRank": 45,
+      "dispatchCategoryCode": "plumbing",
+      "subcategories": [
+        {
+          "code": "WALL_MOISTURE",
+          "nameHe": "רטיבות בקיר",
+          "seedSymptom": "יש כתם רטיבות בקיר"
+        },
+        {
+          "code": "CEILING_MOISTURE",
+          "nameHe": "רטיבות בתקרה",
+          "seedSymptom": "יש רטיבות בתקרה"
+        },
+        {
+          "code": "ABNORMAL_WATER_BILL",
+          "nameHe": "חשבון מים חריג",
+          "seedSymptom": "חשבון המים קפץ"
+        },
+        {
+          "code": "UNDER_FLOOR_LEAK",
+          "nameHe": "נזילה מתחת לרצפה",
+          "seedSymptom": "חושד בנזילה מתחת לריצוף"
+        },
+        {
+          "code": "INGRESS_SOURCE_TRACING",
+          "nameHe": "איתור מקור חדירה",
+          "seedSymptom": "לא ברור מאיפה המים מגיעים"
+        }
+      ]
+    },
+    {
+      "code": "WATER_BAR_TECHNICIAN",
+      "nameHe": "טכנאי ברי מים",
+      "priorityRank": 46,
+      "dispatchCategoryCode": "appliance_repair",
+      "subcategories": [
+        {
+          "code": "NO_WATER_OR_WEAK_FLOW",
+          "nameHe": "אין מים/זרימה חלשה",
+          "seedSymptom": "בר המים לא מוציא מים"
+        },
+        {
+          "code": "WATER_NOT_COLD",
+          "nameHe": "מים לא קרים",
+          "seedSymptom": "המים לא קרים"
+        },
+        {
+          "code": "WATER_NOT_HOT",
+          "nameHe": "מים לא חמים",
+          "seedSymptom": "המים החמים לא מתחממים"
+        },
+        {
+          "code": "LEAK",
+          "nameHe": "נזילה",
+          "seedSymptom": "בר המים נוזל"
+        },
+        {
+          "code": "FILTER_TASTE_OR_ALERT",
+          "nameHe": "פילטר/טעם/התראה",
+          "seedSymptom": "יש טעם מוזר במים"
+        }
+      ]
+    },
+    {
+      "code": "GARBAGE_DISPOSAL_TECHNICIAN",
+      "nameHe": "טכנאי טוחני אשפה",
+      "priorityRank": 47,
+      "dispatchCategoryCode": "appliance_repair",
+      "subcategories": [
+        {
+          "code": "NOT_TURNING_ON",
+          "nameHe": "לא נדלק",
+          "seedSymptom": "טוחן האשפה לא נדלק"
+        },
+        {
+          "code": "JAMMED",
+          "nameHe": "תקוע",
+          "seedSymptom": "הטוחן תקוע"
+        },
+        {
+          "code": "LEAK",
+          "nameHe": "נזילה",
+          "seedSymptom": "יש נזילה מתחת לטוחן"
+        },
+        {
+          "code": "ABNORMAL_NOISE",
+          "nameHe": "רעש חריג",
+          "seedSymptom": "הטוחן עושה רעש מתכתי"
+        },
+        {
+          "code": "INSTALLATION_OR_REPLACEMENT",
+          "nameHe": "התקנה/החלפה",
+          "seedSymptom": "צריך להתקין טוחן אשפה"
+        }
+      ]
+    },
+    {
+      "code": "GAS_TECHNICIAN",
+      "nameHe": "טכנאי גז",
+      "priorityRank": 48,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "GAS_COOKTOP_NOT_IGNITING",
+          "nameHe": "כיריים גז לא נדלקות",
+          "seedSymptom": "כיריים הגז לא נדלקות"
+        },
+        {
+          "code": "SUSPECTED_GAS_LEAK",
+          "nameHe": "ריח/חשד לדליפת גז",
+          "seedSymptom": "יש ריח גז או חשד לדליפה"
+        },
+        {
+          "code": "COOKTOP_INSTALLATION",
+          "nameHe": "התקנת כיריים",
+          "seedSymptom": "צריך להתקין כיריים גז"
+        },
+        {
+          "code": "GAS_POINT",
+          "nameHe": "נקודת גז",
+          "seedSymptom": "צריך להוסיף או להזיז נקודת גז"
+        },
+        {
+          "code": "REGULATOR_OR_GAS_FLOW",
+          "nameHe": "וסת/זרימת גז",
+          "seedSymptom": "זרימת הגז חלשה או לא תקינה"
+        }
+      ]
+    },
+    {
+      "code": "AWNING_AND_PERGOLA_INSTALLER",
+      "nameHe": "מתקין סוככים ופרגולות",
+      "priorityRank": 49,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "AWNING_STUCK",
+          "nameHe": "סוכך לא נפתח/נסגר",
+          "seedSymptom": "הסוכך לא נפתח"
+        },
+        {
+          "code": "TORN_OR_WORN_FABRIC",
+          "nameHe": "בד קרוע/בלוי",
+          "seedSymptom": "הבד של הסוכך קרוע"
+        },
+        {
+          "code": "MOTOR_OR_REMOTE",
+          "nameHe": "מנוע/שלט",
+          "seedSymptom": "המנוע של הסוכך לא עובד"
+        },
+        {
+          "code": "FAULTY_PERGOLA",
+          "nameHe": "פרגולה תקולה",
+          "seedSymptom": "יש חלק רופף בפרגולה"
+        },
+        {
+          "code": "INSTALLATION_OR_UPGRADE",
+          "nameHe": "התקנה/שדרוג",
+          "seedSymptom": "רוצה סוכך במרפסת"
+        }
+      ]
+    },
+    {
+      "code": "SHOWER_ENCLOSURE_INSTALLER",
+      "nameHe": "מתקין מקלחונים",
+      "priorityRank": 50,
+      "dispatchCategoryCode": null,
+      "subcategories": [
+        {
+          "code": "DOOR_NOT_CLOSING",
+          "nameHe": "דלת לא נסגרת",
+          "seedSymptom": "דלת המקלחון לא נסגרת"
+        },
+        {
+          "code": "LEAK",
+          "nameHe": "נזילה",
+          "seedSymptom": "מים יוצאים מהמקלחון"
+        },
+        {
+          "code": "HINGES_OR_ROLLERS",
+          "nameHe": "צירים/גלגלים",
+          "seedSymptom": "ציר במקלחון נשבר"
+        },
+        {
+          "code": "GLASS_OR_SEALS",
+          "nameHe": "זכוכית/אטמים",
+          "seedSymptom": "הגומיות במקלחון התייבשו"
+        },
+        {
+          "code": "INSTALLATION",
+          "nameHe": "התקנה",
+          "seedSymptom": "צריך להתקין מקלחון"
+        }
+      ]
+    }
+  ]
+}

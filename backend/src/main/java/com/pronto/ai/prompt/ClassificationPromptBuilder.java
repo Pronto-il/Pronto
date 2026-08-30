@@ -4,6 +4,9 @@ import com.pronto.ai.catalog.CategoryRoutingProfile;
 import com.pronto.ai.catalog.ServiceCategory;
 import com.pronto.ai.dto.ClarificationExchange;
 import com.pronto.ai.dto.ClassificationRequest;
+import com.pronto.ai.taxonomy.Profession;
+import com.pronto.ai.taxonomy.ProfessionSubcategory;
+import com.pronto.ai.taxonomy.ProfessionTaxonomy;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -51,27 +54,142 @@ public class ClassificationPromptBuilder {
      *       DOES NOT COVER section; the category list no longer reads as a menu that must be
      *       chosen from. <b>Not comparable with v4 numbers on out-of-catalogue cases</b> — under
      *       v4 those were scored against whichever Pronto category they were forced into.</li>
+     *   <li>{@code classification-v6} — structured classification. v5's free-text profession
+     *       becomes a controlled {@code professionCode} from
+     *       {@code taxonomy.ProfessionTaxonomy}'s 50-profession label space, gains a
+     *       {@code subcategoryCode}, and adds {@code intent} and {@code urgency}. <b>This is the
+     *       measurable baseline</b>, and it is the first version whose classification accuracy
+     *       can be scored independently of whether Pronto dispatches the answer — under v5 an
+     *       out-of-catalogue trade produced a free-text label that nothing could count.
+     *       <b>Not comparable with v5 on any figure</b>: the label space went from 7 categories
+     *       to 50 professions × 250 subcategories, so even an unchanged decision is being
+     *       scored against a different question.</li>
      * </ul>
      */
-    public static final String PROMPT_VERSION = "classification-v5";
+    public static final String PROMPT_VERSION = "classification-v6";
 
     /**
      * @param categories       the live category rows, in display order
      * @param remainingBudget  how many clarification questions may still be asked; {@code 0}
      *                         switches the prompt into its commit-now mode
      */
+    private final ProfessionTaxonomy taxonomy;
+
+    public ClassificationPromptBuilder(ProfessionTaxonomy taxonomy) {
+        this.taxonomy = taxonomy;
+    }
+
     public String buildSystemPrompt(List<ServiceCategory> categories, int remainingBudget) {
         return String.join("\n\n",
                 taskDefinition(),
-                "AVAILABLE CATEGORIES\n" + categoryList(categories),
+                "PROFESSION TAXONOMY (the classification label space)\n" + professionTaxonomy(),
+                "AVAILABLE CATEGORIES (the dispatch layer)\n" + categoryList(categories),
                 "PROFESSIONS PRONTO DOES NOT COVER\n" + unsupportedProfessionRules(),
                 "ROUTING PRINCIPLES\n" + routingPrinciples(),
                 "CATEGORY BOUNDARIES\n" + categoryBoundaries(categories),
+                "PROFESSION BOUNDARIES\n" + professionBoundaries(),
+                "INTENT AND URGENCY\n" + intentAndUrgencyRules(),
                 "AMBIGUITY\n" + ambiguityRules(),
                 "CLARIFICATION QUESTIONS\n" + clarificationRules(remainingBudget),
                 "WORKED EXAMPLES\n" + FewShotExamples.render(),
                 "UNTRUSTED INPUT\n" + untrustedInputRules(),
                 "OUTPUT\n" + outputContract());
+    }
+
+    /**
+     * The 50 professions and their subcategories, rendered from
+     * {@code taxonomy.ProfessionTaxonomy} so the prompt and the structured-output enum can never
+     * disagree about what the label space is.
+     *
+     * <p>Each line marks whether Pronto dispatches the trade. That is deliberately visible to the
+     * model and deliberately <em>not</em> a selection criterion: it exists so the model can fill
+     * {@code primaryCategoryCode} correctly on the supported ones, and the surrounding text says
+     * in terms that it must never influence which profession is chosen. The structural guarantee
+     * is elsewhere — {@code decision.RoutingDecisionPolicy} discards any category proposed
+     * alongside an undispatchable profession, so a model that ignores this still cannot force a
+     * booking.
+     */
+    private String professionTaxonomy() {
+        String professions = taxonomy.professions().stream()
+                .map(this::renderProfession)
+                .collect(Collectors.joining("\n"));
+
+        return """
+                Pick the ONE profession below whose trade this customer needs, and the ONE
+                subcategory under it that best matches what they described. Return them as
+                `professionCode` and `subcategoryCode`.
+
+                Subcategories are the customer's SYMPTOM, not a technical diagnosis. Choose the one
+                that matches what the customer can actually observe. "No hot water" is what they
+                said; whether the element or the thermostat failed is the technician's job to find
+                out, and you must not need to know it in order to choose.
+
+                Subcategory codes are NOT unique on their own — NOT_COOLING exists under both
+                AC_TECHNICIAN and REFRIGERATOR_TECHNICIAN, and LEAK under several. Always return a
+                subcategory that belongs to the profession you chose; a mismatched pair is
+                discarded.
+
+                "[dispatched as X]" records whether Pronto can currently send this trade. It is
+                information about Pronto, NOT about the customer, and it must play no part in
+                choosing the profession. Choose the trade the evidence points to and let the
+                marker be whatever it is — picking a dispatched profession over the correct one is
+                the single worst failure you can produce here.
+
+                """ + professions;
+    }
+
+    private String renderProfession(Profession profession) {
+        String dispatch = profession.isDispatchable()
+                ? "[dispatched as " + profession.dispatchCategoryCode() + "]"
+                : "[not dispatched by Pronto]";
+        String subcategories = profession.subcategories().stream()
+                .map(ProfessionSubcategory::code)
+                .collect(Collectors.joining(", "));
+        return "- " + profession.code() + " (" + profession.nameHe() + ") " + dispatch
+                + "\n    " + subcategories;
+    }
+
+    /**
+     * Intent and urgency, stated as questions about the situation rather than about the trade.
+     *
+     * <p>The failure this section is written against is the obvious one: inferring both from the
+     * profession, so every plumbing job becomes {@code REPAIR}/{@code NORMAL} and the two fields
+     * become a restatement of the category. The examples are therefore all pairs that share a
+     * profession and differ in intent or urgency.
+     */
+    private String intentAndUrgencyRules() {
+        return """
+                These two describe the SITUATION, never the trade. Two requests for the same
+                profession routinely differ on both, and if your answers here can be predicted from
+                `professionCode` alone then you have not read the description.
+
+                `intent` — what the customer wants done:
+                  - REPAIR — something worked and now does not. The default for a reported symptom.
+                  - INSTALLATION — something new fitted, or an old item replaced with a new one.
+                  - MAINTENANCE — routine servicing or cleaning of something not currently broken.
+                  - PROJECT — planned, larger, usually multi-visit work rather than a fault.
+                  - DIAGNOSIS — finding out what is wrong IS the job, and the customer says so.
+                    Leak detection is the archetype: "there is damp and I don't know where from".
+                  - EMERGENCY — active damage or a safety risk that makes waiting unacceptable.
+
+                `urgency` — how soon someone is needed:
+                  - LOW — explicitly deferred or plainly discretionary ("sometime next month").
+                  - NORMAL — a real fault, no active damage. THIS IS THE COMMON CASE.
+                  - HIGH — meaningful loss of use, or damage that worsens if left.
+                  - CRITICAL — danger to people or property right now.
+
+                DO NOT OVERUSE THE TOP OF EITHER SCALE. The word "דחוף" ("urgent") is typed by
+                customers as a matter of habit and is NOT on its own evidence of HIGH, let alone
+                CRITICAL. Raise the level for what is described — water actively spreading, a gas
+                smell, someone locked out, exposed live wiring — not for how insistently it is
+                described. A blocked toilet described as urgent is still REPAIR / NORMAL.
+
+                Worked pairs, same profession, different answers:
+                  - "I'd like a new tap fitted next month"        -> INSTALLATION / LOW
+                  - "the toilet is blocked"                        -> REPAIR / NORMAL
+                  - "a pipe burst and the flat is flooding"        -> EMERGENCY / CRITICAL
+                  - "there's damp on the wall, no idea where from" -> DIAGNOSIS / NORMAL
+                  - "annual boiler service please"                 -> MAINTENANCE / LOW""";
     }
 
     /**
@@ -158,20 +276,31 @@ public class ClassificationPromptBuilder {
         return """
                 You route home-service requests for Pronto, an on-demand home-services marketplace in Israel.
 
-                Answer TWO questions, strictly in this order:
+                Answer TWO questions, strictly in this order. They are separate questions and the
+                second must never be allowed to influence the first.
 
-                  1. WHICH PROFESSION does this customer actually need? Answer honestly, from the evidence
-                     alone, WITHOUT considering what Pronto happens to offer. Put it in
-                     `detectedProfession`, in Hebrew, as the trade would normally be named in Israel
-                     ("אינסטלטור", "חשמלאי", "טכנאי מזגנים", "טכנאי גז", "מדביר", "זגג").
+                  1. CLASSIFICATION — what does this customer actually need? Decide from the evidence
+                     alone, WITHOUT considering what Pronto happens to offer. Produce four things:
+                       - `professionCode`   — from the PROFESSION TAXONOMY below
+                       - `subcategoryCode`  — the symptom, from that profession's own list
+                       - `intent`, `urgency` — see INTENT AND URGENCY
+                     Also name the trade in `detectedProfession`, in Hebrew, as it would normally be
+                     called in Israel ("אינסטלטור", "טכנאי גז", "מדביר", "זגג") — this is the
+                     customer-facing wording of the same answer.
 
-                  2. ONLY THEN, does that profession match one of Pronto's categories below? If it does,
-                     put that category code in `primaryCategoryCode`. If it does not, leave
-                     `primaryCategoryCode` null.
+                  2. DISPATCH — can Pronto serve that profession today? If the taxonomy line for the
+                     profession you chose names a dispatch category, put that category's code in
+                     `primaryCategoryCode` and fill `candidates`. If it says "not dispatched by
+                     Pronto", leave `primaryCategoryCode` null and return an EMPTY `candidates` array.
 
-                Getting question 1 right matters more than producing a Pronto category. A correct
-                profession with no category is a useful, correct answer. A wrong profession that happens
-                to be on Pronto's list is a wrong answer that sends the wrong person to someone's home.
+                GETTING QUESTION 1 RIGHT IS THE JOB. A correct classification Pronto cannot dispatch
+                is a SUCCESS — it is recorded as such, and it is how Pronto learns which trade to add
+                next. A wrong profession that happens to be dispatchable is a failure that sends the
+                wrong person to someone's home, and no amount of confidence redeems it.
+
+                So: never let step 2 reach back into step 1. If the honest answer is a refrigerator
+                technician, say so whether or not that trade is dispatched. Do not "round" a
+                classification towards a profession Pronto covers.
 
                 This is a routing problem, not a technical diagnosis problem. You are not deciding which
                 technical field a symptom belongs to in the abstract; you are deciding which trade should
@@ -198,8 +327,10 @@ public class ClassificationPromptBuilder {
                 Pronto's category list is the list of trades Pronto can currently DISPATCH. It is not a
                 list of the trades that exist, and it is not a menu you must pick from.
 
-                When the profession the customer needs is not on that list:
-                  - name it truthfully in `detectedProfession`;
+                When the profession the customer needs is marked "not dispatched by Pronto":
+                  - classify it correctly anyway — `professionCode`, `subcategoryCode`, `intent` and
+                    `urgency` are filled exactly as they would be for a dispatched trade, and
+                    `detectedProfession` names it truthfully in Hebrew;
                   - set `primaryCategoryCode` to null;
                   - return an EMPTY `candidates` array — do not list the "closest" Pronto category as a
                     candidate to appear helpful. An empty list is how you say "none of these fit";
@@ -249,6 +380,78 @@ public class ClassificationPromptBuilder {
                 4. Route to the trade that resolves the customer's actual problem, not the trade that cleans
                    up afterwards.
                 5. If the request genuinely spans several trades, route to the one that must go first.""";
+    }
+
+    /**
+     * The handful of profession pairs that actually get confused, each stated as the one fact
+     * that separates them.
+     *
+     * <p>Only the contested boundaries are here. Forty-eight professions that nobody mistakes for
+     * each other need no rule, and writing one for each would bury the ten that matter. Every
+     * entry below names a decision procedure ("decide on which part the customer names") rather
+     * than a list of phrasings — the lesson of the v3 locksmith/handyman rule, where naming one
+     * wording taught the model that wording instead of the idea.
+     *
+     * <p>The moisture family is deliberately the longest. It is the one place where committing
+     * confidently is actively harmful: sending a painter to a wall that is still wet produces a
+     * job that has to be done twice, and the customer pays for both.
+     */
+    private String professionBoundaries() {
+        return """
+                ## Moisture, damp and stains — the highest-risk family
+                Route to the trade that FIXES THE CAUSE, never the one that tidies up afterwards.
+                  - Water at a fixture, pipe, tap or under a sink -> PLUMBER.
+                  - Damp or a stain whose SOURCE IS UNKNOWN, and finding it is the job ->
+                    LEAK_DETECTION (intent DIAGNOSIS).
+                  - Damp that appears ONLY during or after rain -> WATERPROOFING_CONTRACTOR, or
+                    ROOFER when the customer points at a tiled roof.
+                  - PAINTER ONLY when the customer states the leak is ALREADY FIXED and they want the
+                    damage made good. "There is a fresh damp patch on my wall" is NEVER the painter.
+                    A wet wall cannot be painted, and offering to paint it is a wasted visit.
+                  - "There is damp on the ceiling", with nothing about rain, about a flat above, or
+                    about a repair already done, does not identify any of these. ASK.
+
+                ## LOCKSMITH vs DOOR_TECHNICIAN
+                Decide on WHICH PART the customer names, not on how the problem sounds.
+                  - Lock side — key, cylinder, bolt, latch, the lock body, the locking mechanism ->
+                    LOCKSMITH. "The key turns but the door won't open" is the lock.
+                  - Door side — the leaf, hinges, the frame, alignment, rubbing, sagging ->
+                    DOOR_TECHNICIAN. "The door drags on the floor" is the door.
+                  - Names NO part and reports only an outcome ("the door won't close") -> ASK. A
+                    seized lock and a dropped leaf produce the identical sentence.
+
+                ## HANDYMAN is a scope, not a shortcut
+                HANDYMAN covers hanging and drilling, flat-pack assembly, handles and small
+                fittings, silicone sealing, and small installations that need no licensed trade.
+                It is NOT the answer for a job that belongs to a specialist merely because the
+                description is short or the customer called it small. "The tap is dripping" is
+                PLUMBER, not HANDYMAN. A leak, an electrical fault, a lock failure or an AC fault
+                stays with its own trade however casually it is described.
+
+                ## CARPENTER vs KITCHEN_INSTALLER
+                Kitchen context is the deciding signal. Kitchen cabinet doors, kitchen drawers,
+                kitchen cabinets, fronts and fitting appliances into a kitchen -> KITCHEN_INSTALLER.
+                Free-standing wooden furniture, custom joinery, wood repair and restoration, and
+                shelving that is not part of a fitted kitchen -> CARPENTER.
+
+                ## Appliance specialists
+                Each appliance has its own profession — REFRIGERATOR_TECHNICIAN,
+                WASHING_MACHINE_TECHNICIAN, DISHWASHER_TECHNICIAN, OVEN_AND_COOKTOP_TECHNICIAN,
+                DRYER_TECHNICIAN. Name the specific one; do not collapse them into each other.
+                A fault INSIDE the machine is the appliance's technician. The socket or circuit it
+                is plugged into is ELECTRICIAN. The wall tap or waste connection behind it is
+                PLUMBER.
+
+                ## GAS_TECHNICIAN and safety
+                Gas work — a cooktop that will not light, a gas point, a regulator, a suspected leak
+                — is GAS_TECHNICIAN. Never a plumber and never a handyman: neither may legally touch
+                a gas line, so sending one is not a partial answer, it is a wasted visit.
+                A suspected gas leak or gas smell is intent EMERGENCY and urgency CRITICAL. Report it
+                as such and stop. Do NOT write troubleshooting steps, reassurance, or any instruction
+                about what the customer should do with the appliance — you are classifying a request,
+                and safety advice is not yours to give.
+                The one genuine ambiguity: a gas smell NEAR A GAS WATER HEATER could be the supply
+                (GAS_TECHNICIAN) or the heater itself (BOILER_TECHNICIAN). That one asks.""";
     }
 
     private String categoryBoundaries(List<ServiceCategory> categories) {
@@ -349,11 +552,17 @@ public class ClassificationPromptBuilder {
     private String outputContract() {
         return """
                 Return the structured object only.
-                  - detectedProfession: the trade the customer actually needs, in HEBREW, always filled,
-                    whether or not Pronto covers it. Free text — this is the one field not restricted to
-                    Pronto's list. Name the profession, not the fault: "טכנאי מזגנים", not "המזגן מטפטף".
-                  - primaryCategoryCode: the listed code that profession maps to; null when Pronto covers
-                    no such trade, or when you cannot commit at all.
+                  - professionCode: the taxonomy code for the trade the customer needs. Always filled,
+                    whether or not Pronto dispatches it. Null ONLY if no profession in the taxonomy
+                    fits at all — which is rare, and is a statement about the taxonomy, not a way to
+                    avoid committing.
+                  - subcategoryCode: the symptom, from that profession's own subcategory list.
+                  - intent, urgency: see INTENT AND URGENCY. Judge the situation, not the trade.
+                  - detectedProfession: the same trade in HEBREW, always filled, whether or not Pronto
+                    covers it. Free text — the customer-facing wording. Name the profession, not the
+                    fault: "טכנאי מזגנים", not "המזגן מטפטף".
+                  - primaryCategoryCode: the dispatch category for that profession; null when Pronto
+                    does not dispatch the trade, or when you cannot commit at all.
                   - confidence: 0..1 for primaryCategoryCode.
                   - needsClarification: true only under the rules above, and only if you also supply
                     nextQuestion.

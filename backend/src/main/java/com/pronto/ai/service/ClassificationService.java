@@ -12,6 +12,8 @@ import com.pronto.ai.dto.ClassificationResponse;
 import com.pronto.ai.dto.ClassificationStatus;
 import com.pronto.ai.dto.ClassificationSuggestion;
 import com.pronto.ai.dto.ImageAttachment;
+import com.pronto.ai.prompt.ClassificationPromptBuilder;
+import com.pronto.ai.taxonomy.ProfessionTaxonomy;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import org.slf4j.Logger;
@@ -50,15 +52,18 @@ public class ClassificationService {
     private final ServiceCategoryCatalog catalog;
     private final RoutingDecisionPolicy routingDecisionPolicy;
     private final IssueImageResolver imageResolver;
+    private final ProfessionTaxonomy taxonomy;
 
     public ClassificationService(AiClassificationClient aiClassificationClient,
                                   ServiceCategoryCatalog catalog,
                                   RoutingDecisionPolicy routingDecisionPolicy,
-                                  IssueImageResolver imageResolver) {
+                                  IssueImageResolver imageResolver,
+                                  ProfessionTaxonomy taxonomy) {
         this.aiClassificationClient = aiClassificationClient;
         this.catalog = catalog;
         this.routingDecisionPolicy = routingDecisionPolicy;
         this.imageResolver = imageResolver;
+        this.taxonomy = taxonomy;
     }
 
     /**
@@ -117,14 +122,26 @@ public class ClassificationService {
         // bodies are never logged; one capped line of the customer's own problem statement on the
         // unsupported path is the smallest thing that makes "which professions are people asking
         // for" answerable later, and it is deliberately not logged on any other outcome.
-        log.info("ai.classification.decided outcome={} profession=\"{}\" category={} confidence={} "
-                        + "candidates=[{}] round={}{}",
+        // Logged as two labelled halves, not one blurred line. `classification=` is what the
+        // customer needs; `dispatch=` is what Pronto can do about it. Reading a log where the
+        // only category-shaped token was the routed one made "we sent the wrong trade" and "we
+        // correctly identified a trade we don't sell" look identical after the fact, and they
+        // need completely different responses.
+        log.info("ai.classification.decided outcome={} classification={}/{} intent={} urgency={} "
+                        + "profession=\"{}\" dispatch={} confidence={} candidates=[{}] round={} "
+                        + "prompt={} taxonomy={}{}",
                 decision.outcome(),
+                decision.professionCode() == null ? "none" : decision.professionCode(),
+                decision.subcategoryCode() == null ? "none" : decision.subcategoryCode(),
+                decision.intent() == null ? "none" : decision.intent(),
+                decision.urgency() == null ? "none" : decision.urgency(),
                 decision.detectedProfession() == null ? "" : decision.detectedProfession(),
                 decision.category() == null ? "none" : decision.category().code(),
                 decision.confidence(),
                 renderCandidates(decision.candidates()),
                 priorExchanges.size(),
+                ClassificationPromptBuilder.PROMPT_VERSION,
+                taxonomy.taxonomyVersion(),
                 decision.isUnsupportedProfession() ? " request=\"" + truncate(description) + "\"" : "");
 
         return toSuggestion(decision);
@@ -141,8 +158,9 @@ public class ClassificationService {
     private ClassificationSuggestion toSuggestion(RoutingDecision decision) {
         if (decision.outcome() == RoutingDecision.Outcome.ASK_CLARIFICATION) {
             return new ClassificationSuggestion(ClassificationStatus.QUESTIONS, decision.detectedProfession(),
-                    null, null, decision.confidence(), false, false, decision.ambiguityReason(),
-                    decision.candidates(), List.of(decision.question()));
+                    decision.professionCode(), decision.subcategoryCode(), decision.intent(),
+                    decision.urgency(), null, null, decision.confidence(), false, false,
+                    decision.ambiguityReason(), decision.candidates(), List.of(decision.question()));
         }
 
         if (decision.outcome() == RoutingDecision.Outcome.UNSUPPORTED_PROFESSION) {
@@ -152,7 +170,8 @@ public class ClassificationService {
             // cases being quietly diverted to general_handyman — count out-of-catalogue trades too,
             // and the two need to move independently to mean anything.
             return new ClassificationSuggestion(ClassificationStatus.UNSUPPORTED_PROFESSION,
-                    decision.detectedProfession(), null, null, decision.confidence(), false, false,
+                    decision.detectedProfession(), decision.professionCode(), decision.subcategoryCode(),
+                    decision.intent(), decision.urgency(), null, null, decision.confidence(), false, false,
                     decision.ambiguityReason(), decision.candidates(), List.of());
         }
 
@@ -160,6 +179,7 @@ public class ClassificationService {
         boolean lowConfidence = unresolved || decision.outcome() == RoutingDecision.Outcome.FINAL_LOW_CONFIDENCE;
 
         return new ClassificationSuggestion(ClassificationStatus.CLASSIFIED, decision.detectedProfession(),
+                decision.professionCode(), decision.subcategoryCode(), decision.intent(), decision.urgency(),
                 decision.category().id(), decision.category().code(), decision.confidence(), lowConfidence,
                 unresolved, decision.ambiguityReason(), decision.candidates(), List.of());
     }

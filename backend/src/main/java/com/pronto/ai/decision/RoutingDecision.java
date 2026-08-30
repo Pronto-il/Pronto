@@ -3,6 +3,8 @@ package com.pronto.ai.decision;
 import com.pronto.ai.catalog.ServiceCategory;
 import com.pronto.ai.dto.CategoryCandidate;
 import com.pronto.ai.dto.ClarificationQuestion;
+import com.pronto.ai.taxonomy.Intent;
+import com.pronto.ai.taxonomy.Urgency;
 
 import java.util.List;
 
@@ -15,6 +17,15 @@ import java.util.List;
  *                       it — carried through on every outcome, not only the unsupported one, so
  *                       telemetry can compare "what the model said this was" against where it
  *                       was routed. May be {@code null} when the model supplied no label.
+ * @param professionCode the same trade as a controlled {@code taxonomy.ProfessionTaxonomy} code.
+ *                       <b>Carried on every outcome, including the ones with no category.</b>
+ *                       This is the classification result; {@code category} below is the dispatch
+ *                       result, and the whole point of keeping both is that one can be right
+ *                       while the other is absent.
+ * @param subcategoryCode the concrete problem under that profession, already validated as
+ *                       belonging to it
+ * @param intent         what the customer wants done, or {@code null}
+ * @param urgency        how soon, judged from the situation, or {@code null}
  * @param category       the routing target; {@code null} for {@link Outcome#ASK_CLARIFICATION}
  *                       and for {@link Outcome#UNSUPPORTED_PROFESSION}, where there is
  *                       deliberately no Pronto category to name
@@ -33,6 +44,10 @@ import java.util.List;
 public record RoutingDecision(
         Outcome outcome,
         String detectedProfession,
+        String professionCode,
+        String subcategoryCode,
+        Intent intent,
+        Urgency urgency,
         ServiceCategory category,
         Double confidence,
         List<CategoryCandidate> candidates,
@@ -87,6 +102,19 @@ public record RoutingDecision(
 
     public RoutingDecision {
         candidates = candidates == null ? List.of() : List.copyOf(candidates);
+    }
+
+    /**
+     * The pre-taxonomy shape, with the four classification-layer fields left {@code null}.
+     * Retained so the existing routing-policy tests — which assert the dispatch branch, and
+     * are genuinely independent of the classification labels — keep reading as assertions
+     * about routing rather than about four nulls.
+     */
+    public RoutingDecision(Outcome outcome, String detectedProfession, ServiceCategory category,
+                            Double confidence, List<CategoryCandidate> candidates, String ambiguityReason,
+                            ClarificationQuestion question) {
+        this(outcome, detectedProfession, null, null, null, null, category, confidence, candidates,
+                ambiguityReason, question);
     }
 
     public boolean isFinal() {

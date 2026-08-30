@@ -1,5 +1,8 @@
 package com.pronto.ai.dto;
 
+import com.pronto.ai.taxonomy.Intent;
+import com.pronto.ai.taxonomy.Urgency;
+
 import java.util.List;
 
 /**
@@ -41,6 +44,10 @@ import java.util.List;
 public record ClassificationSuggestion(
         ClassificationStatus status,
         String detectedProfession,
+        String professionCode,
+        String subcategoryCode,
+        Intent intent,
+        Urgency urgency,
         Long categoryId,
         String categoryCode,
         Double confidence,
@@ -54,5 +61,31 @@ public record ClassificationSuggestion(
     public ClassificationSuggestion {
         candidates = candidates == null ? List.of() : List.copyOf(candidates);
         questions = questions == null ? List.of() : List.copyOf(questions);
+    }
+
+    /**
+     * The pre-taxonomy shape, with the four classification-layer fields left {@code null}.
+     * See {@code ClassificationResponse}'s equivalent constructor for why this exists.
+     */
+    public ClassificationSuggestion(ClassificationStatus status, String detectedProfession, Long categoryId,
+                                     String categoryCode, Double confidence, boolean lowConfidence,
+                                     boolean unresolved, String ambiguityReason,
+                                     List<CategoryCandidate> candidates,
+                                     List<ClarificationQuestion> questions) {
+        this(status, detectedProfession, null, null, null, null, categoryId, categoryCode, confidence,
+                lowConfidence, unresolved, ambiguityReason, candidates, questions);
+    }
+
+    /**
+     * Whether Pronto can currently dispatch the profession that was identified — the
+     * <b>dispatch</b> question, kept deliberately separate from whether classification
+     * succeeded.
+     *
+     * <p>{@code false} together with a populated {@code professionCode} is the defining shape of
+     * a correct classification Pronto cannot serve. It says nothing about classification
+     * quality, and the evaluation harness scores the two independently for exactly that reason.
+     */
+    public boolean isDispatchable() {
+        return status != ClassificationStatus.UNSUPPORTED_PROFESSION && categoryCode != null;
     }
 }

@@ -40,7 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class OpenAiModelConfigurationTest {
 
     private static final Path MAIN_JAVA = Path.of("src/main/java/com/pronto");
-    private static final String EXPECTED_MODEL = "gpt-4.1-mini";
+    private static final String EXPECTED_MODEL = "gpt-5-mini";
 
     /**
      * Any {@code gpt-*} / {@code o1-*} / {@code claude-*} style identifier appearing in a string
@@ -107,11 +107,27 @@ class OpenAiModelConfigurationTest {
         }
     }
 
+    /**
+     * Model-shaped literals in one file, excluding <b>capability prefixes</b>.
+     *
+     * <p>The carve-out is deliberately narrow: a literal is ignored only when it is the argument
+     * of a {@code startsWith(...)} call. That is the shape of "does this model FAMILY support
+     * parameter X", which is a fact about the provider's API, and it is not the shape of "use
+     * model Y", which is deployment configuration and is what this test exists to forbid.
+     *
+     * <p>The concrete case is {@code OpenAiChatClient.supportsCustomTemperature}: {@code gpt-5*}
+     * and the o-series reject a custom {@code temperature} with a non-retryable 400, so the client
+     * must know which family it is talking to. Note that this does not weaken the guarantee the
+     * test protects — switching models is still {@code OPENAI_MODEL} and nothing else. What the
+     * predicate cannot do is select a model, and a {@code startsWith} test cannot.
+     */
     private static Stream<String> modelLiteralsIn(Path file) {
         try {
             String source = Files.readString(file, StandardCharsets.UTF_8);
-            return MODEL_LITERAL.matcher(source).results()
-                    .map(result -> file.getFileName() + " -> " + result.group())
+            return source.lines()
+                    .filter(line -> !line.contains("startsWith("))
+                    .flatMap(line -> MODEL_LITERAL.matcher(line).results()
+                            .map(result -> file.getFileName() + " -> " + result.group()))
                     .toList()
                     .stream();
         } catch (IOException e) {

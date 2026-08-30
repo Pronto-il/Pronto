@@ -1,5 +1,6 @@
 package com.pronto.ai.client;
 
+import com.pronto.ai.TestTaxonomy;
 import com.pronto.ai.TestCategories;
 import com.pronto.ai.catalog.ServiceCategoryCatalog;
 import com.pronto.ai.dto.CategoryCandidate;
@@ -27,7 +28,8 @@ class MockAiClassificationClientTest {
 
     @BeforeEach
     void setUp() {
-        client = new MockAiClassificationClient(new ServiceCategoryCatalog(TestCategories.repository()));
+        client = new MockAiClassificationClient(new ServiceCategoryCatalog(TestCategories.repository()),
+                TestTaxonomy.taxonomy());
     }
 
     private ClassificationRequest request(String description, int budget, ClarificationExchange... exchanges) {

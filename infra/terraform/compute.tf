@@ -368,7 +368,11 @@ resource "aws_ecs_task_definition" "backend" {
       #   PRONTO_AI_EVAL=true OPENAI_API_KEY=sk-… OPENAI_MODEL=gpt-4.1-mini \
       #     mvn test -Dtest=OpenAiClassificationEvaluationRunnerTest
       # Reverting is this line; nothing else in the codebase names a model.
-      { name = "OPENAI_MODEL", value = "gpt-4.1-mini" },
+      # gpt-5-mini since the classification-v6 taxonomy baseline. It rejects a custom
+      # `temperature` with a non-retryable 400, so OpenAiChatClient omits that parameter for the
+      # reasoning families; and it reasons before answering, which is why OPENAI_TIMEOUT_MS below
+      # is 30s rather than 10s. Changing this value back must be done together with those two.
+      { name = "OPENAI_MODEL", value = "gpt-5-mini" },
 
       { name = "EMAIL_MODE", value = "ses" },
       { name = "EMAIL_FROM", value = local.email_from },

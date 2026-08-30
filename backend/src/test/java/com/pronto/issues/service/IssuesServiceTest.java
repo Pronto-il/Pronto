@@ -181,14 +181,25 @@ class IssuesServiceTest {
         // The wire shape itself is the guarantee: candidates, confidence, ambiguity reason and
         // distinguishesBetween have no field to travel in.
         //
-        // `detectedProfession` is the one deliberate addition, and it is not a diagnostic: it is
-        // the Hebrew trade name the unsupported-profession screen renders, without which "we do
-        // not cover that" names nothing. Asserted exactly, so a future field cannot be added to
-        // this response without someone deciding to.
+        // `detectedProfession` is the one deliberate diagnostic-shaped exception, and it is not a
+        // diagnostic: it is the Hebrew trade name the unsupported-profession screen renders,
+        // without which "we do not cover that" names nothing.
+        //
+        // classification-v6 added the four structured classification fields. They are the same
+        // answer `detectedProfession` already carried, in codes a client can branch on instead of
+        // string-matching Hebrew -- not new information about the model's reasoning. Asserted
+        // exactly, so the next field cannot arrive without someone deciding to add it here.
         assertThat(ClassifyResponse.class.getRecordComponents())
                 .extracting(java.lang.reflect.RecordComponent::getName)
-                .containsExactly("status", "detectedProfession", "suggestedCategoryId",
-                        "suggestedCategoryCode", "questions");
+                .containsExactly("status", "detectedProfession", "professionCode", "subcategoryCode",
+                        "intent", "urgency", "suggestedCategoryId", "suggestedCategoryCode", "questions");
+
+        // Stated as its own assertion rather than left implicit in the list above: these four are
+        // the ones that must never appear, and naming them means a future widening of the response
+        // fails on the rule it broke instead of on an ordering mismatch.
+        assertThat(ClassifyResponse.class.getRecordComponents())
+                .extracting(java.lang.reflect.RecordComponent::getName)
+                .doesNotContain("confidence", "candidates", "ambiguityReason", "explanation");
     }
 
     // -- create ------------------------------------------------------------------------------

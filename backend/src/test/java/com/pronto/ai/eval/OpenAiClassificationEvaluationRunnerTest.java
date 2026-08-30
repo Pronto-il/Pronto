@@ -1,5 +1,6 @@
 package com.pronto.ai.eval;
 
+import com.pronto.ai.TestTaxonomy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pronto.ai.TestCategories;
 import com.pronto.ai.catalog.ServiceCategoryCatalog;
@@ -65,16 +66,17 @@ class OpenAiClassificationEvaluationRunnerTest {
         OpenAiClassificationClient client = new OpenAiClassificationClient(
                 new OpenAiChatClient(apiKey, model, timeoutMs, new ObjectMapper()),
                 catalog,
-                new ClassificationPromptBuilder(),
-                new ClassificationSchema(),
+                new ClassificationPromptBuilder(TestTaxonomy.taxonomy()),
+                new ClassificationSchema(TestTaxonomy.taxonomy()),
                 new ProfessionalBriefPromptBuilder(),
                 new ProfessionalBriefSchema());
 
         ClassificationService classificationService = new ClassificationService(client, catalog,
-                new RoutingDecisionPolicy(properties),
+                new RoutingDecisionPolicy(properties, TestTaxonomy.taxonomy()),
                 // No image cases in the dataset yet, so storage is never touched. When image
                 // cases are added, this is the one dependency that needs a real fixture.
-                new IssueImageResolver(Mockito.mock(StorageClient.class)));
+                new IssueImageResolver(Mockito.mock(StorageClient.class)),
+                TestTaxonomy.taxonomy());
 
         EvaluationCases.Dataset dataset = EvaluationCases.dataset();
 

@@ -1,5 +1,6 @@
 package com.pronto.ai.eval;
 
+import com.pronto.ai.TestTaxonomy;
 import com.pronto.ai.TestCategories;
 import com.pronto.ai.catalog.ServiceCategoryCatalog;
 import com.pronto.ai.client.MockAiClassificationClient;
@@ -43,10 +44,11 @@ class ClassificationEvaluationHarnessTest {
         properties = new RoutingProperties();
         ServiceCategoryCatalog catalog = new ServiceCategoryCatalog(TestCategories.repository());
         ClassificationService classificationService = new ClassificationService(
-                new MockAiClassificationClient(catalog),
+                new MockAiClassificationClient(catalog, TestTaxonomy.taxonomy()),
                 catalog,
-                new RoutingDecisionPolicy(properties),
-                new IssueImageResolver(Mockito.mock(StorageClient.class)));
+                new RoutingDecisionPolicy(properties, TestTaxonomy.taxonomy()),
+                new IssueImageResolver(Mockito.mock(StorageClient.class)),
+                TestTaxonomy.taxonomy());
 
         evaluator = new ClassificationEvaluator(classificationService, properties.getMaxClarificationQuestions());
     }

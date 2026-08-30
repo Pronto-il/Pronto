@@ -6,6 +6,9 @@ import com.pronto.ai.dto.CategoryCandidate;
 import com.pronto.ai.dto.ClarificationExchange;
 import com.pronto.ai.dto.ClarificationQuestion;
 import com.pronto.ai.dto.ClassificationResponse;
+import com.pronto.ai.taxonomy.Profession;
+import com.pronto.ai.taxonomy.ProfessionSubcategory;
+import com.pronto.ai.taxonomy.ProfessionTaxonomy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -90,9 +93,11 @@ public class RoutingDecisionPolicy {
     private static final Logger log = LoggerFactory.getLogger(RoutingDecisionPolicy.class);
 
     private final RoutingProperties properties;
+    private final ProfessionTaxonomy taxonomy;
 
-    public RoutingDecisionPolicy(RoutingProperties properties) {
+    public RoutingDecisionPolicy(RoutingProperties properties, ProfessionTaxonomy taxonomy) {
         this.properties = properties;
+        this.taxonomy = taxonomy;
     }
 
     public int maxClarificationQuestions() {
@@ -117,7 +122,79 @@ public class RoutingDecisionPolicy {
         List<CategoryCandidate> candidates = validCandidates(response, categories);
         ServiceCategory primary = resolvePrimary(response, categories, candidates);
         Double topConfidence = topConfidence(response, candidates, primary);
+        // Reassigned below when the taxonomy's dispatch mapping recovers a category the model
+        // failed to name; everything after that point reads the recovered values.
         String profession = normalizeProfession(response.detectedProfession());
+
+        // ---- the CLASSIFICATION layer, validated against the versioned taxonomy ----
+        //
+        // Independent of everything below it. These four values describe what the customer needs
+        // and are carried on EVERY outcome, including the ones that route nowhere -- which is
+        // what lets the evaluation harness score classification accuracy without reference to
+        // whether Pronto happens to sell the answer.
+        Profession classified = taxonomy.find(response.professionCode()).orElse(null);
+        String professionCode = classified == null ? null : classified.code();
+        if (response.professionCode() != null && classified == null) {
+            log.warn("ai.classification.profession_unknown code='{}' — not in {}; dropping it.",
+                    response.professionCode(), taxonomy.taxonomyVersion());
+        }
+        // Validated as a PAIR. Subcategory codes repeat across professions by design, so an
+        // individually-valid code can still be meaningless here (PLUMBER + NOT_COOLING); the
+        // schema cannot express that and this is the only place that can.
+        String subcategoryCode = taxonomy.findSubcategory(professionCode, response.subcategoryCode())
+                .map(ProfessionSubcategory::code)
+                .orElse(null);
+        if (response.subcategoryCode() != null && subcategoryCode == null) {
+            log.warn("ai.classification.subcategory_mismatch profession={} subcategory='{}' — not a "
+                    + "subcategory of that profession; dropping it.", professionCode, response.subcategoryCode());
+        }
+
+        // ---- the DISPATCH layer ----
+        //
+        // A profession the taxonomy knows and Pronto does not dispatch is UNSUPPORTED, whatever
+        // categories the model went on to propose. This is the guard that makes the two layers
+        // genuinely independent rather than nominally so: without it a model that names
+        // GAS_TECHNICIAN and then helpfully offers `plumbing` as a candidate would produce a
+        // booked plumbing visit for a gas fault, which is the exact forcing the profession-first
+        // prompt exists to end -- and it would look like a successful classification in every
+        // metric.
+        //
+        // NOT applied when the model is asking a question. Genuine ambiguity between an outside
+        // trade and a Pronto one -- a gas smell near a gas water heater is the standing example --
+        // is resolved by asking, not by dead-ending on the outside trade before the customer has
+        // been given the chance to rule it out.
+        if (classified != null && !classified.isDispatchable() && !response.needsClarification()) {
+            if (!candidates.isEmpty()) {
+                log.info("ai.classification.dispatch_declined profession={} proposed=[{}] — Pronto does "
+                                + "not dispatch this trade; the proposed categories are discarded rather "
+                                + "than substituted.",
+                        professionCode, renderCandidates(candidates));
+            }
+            return new RoutingDecision(RoutingDecision.Outcome.UNSUPPORTED_PROFESSION, profession,
+                    professionCode, subcategoryCode, response.intent(), response.urgency(), null,
+                    clamp(response.confidence()), List.of(), response.ambiguityReason(), null);
+        }
+
+        // The mapping works in this direction too. When the profession IS dispatchable but nothing
+        // the model proposed resolved -- it invented a code, or returned none at all -- the
+        // taxonomy already knows which category serves that trade, so use it.
+        //
+        // Without this, a fumbled category code on a trade Pronto plainly sells falls through to
+        // the branch below and is reported as an UNSUPPORTED_PROFESSION: the customer is told
+        // Pronto cannot help with a blocked drain because the model mistyped "plumbing". The
+        // profession was classified correctly and the dispatch answer is not in doubt, so
+        // deriving it is recovery, not guessing.
+        if (primary == null && classified != null && classified.isDispatchable()) {
+            ServiceCategory mapped = ServiceCategoryCatalog
+                    .findByCode(categories, classified.dispatchCategoryCode()).orElse(null);
+            if (mapped != null) {
+                log.warn("routing.recovered profession={} proposed={} mapped={} — no proposed category "
+                                + "resolved; using the taxonomy's dispatch mapping.",
+                        professionCode, response.primaryCategoryCode(), mapped.code());
+                primary = mapped;
+                topConfidence = clamp(response.confidence());
+            }
+        }
 
         // ---- Does Pronto cover this trade at all? Asked FIRST, and answered HERE. ----
         //
@@ -143,7 +220,8 @@ public class RoutingDecisionPolicy {
         if (primary == null && profession != null) {
             log.info("ai.classification.unsupported profession=\"{}\" confidence={} needsClarification={}",
                     profession, response.confidence(), response.needsClarification());
-            return new RoutingDecision(RoutingDecision.Outcome.UNSUPPORTED_PROFESSION, profession, null,
+            return new RoutingDecision(RoutingDecision.Outcome.UNSUPPORTED_PROFESSION, profession,
+                    professionCode, subcategoryCode, response.intent(), response.urgency(), null,
                     clamp(response.confidence()), candidates, response.ambiguityReason(), null);
         }
 
@@ -152,7 +230,8 @@ public class RoutingDecisionPolicy {
         ClarificationQuestion question = usableQuestion(response, categories, priorExchanges);
 
         if (ambiguous && budget > 0 && question != null) {
-            return new RoutingDecision(RoutingDecision.Outcome.ASK_CLARIFICATION, profession, null,
+            return new RoutingDecision(RoutingDecision.Outcome.ASK_CLARIFICATION, profession,
+                    professionCode, subcategoryCode, response.intent(), response.urgency(), null,
                     topConfidence, candidates, response.ambiguityReason(), question);
         }
 
@@ -163,22 +242,24 @@ public class RoutingDecisionPolicy {
             // trade, so it keeps the existing controlled fallback.
             log.warn("routing.unresolved reason=no-valid-candidate candidates={} profession=absent",
                     candidates.size());
-            return unresolved(categories, candidates, response.ambiguityReason(), profession);
+            return unresolved(categories, candidates, response, profession, professionCode, subcategoryCode);
         }
 
         if (!ambiguous) {
-            return new RoutingDecision(RoutingDecision.Outcome.FINAL, profession, primary, topConfidence,
+            return new RoutingDecision(RoutingDecision.Outcome.FINAL, profession, professionCode,
+                    subcategoryCode, response.intent(), response.urgency(), primary, topConfidence,
                     candidates, response.ambiguityReason(), null);
         }
 
         if (isDominant(response, candidates)) {
-            return new RoutingDecision(RoutingDecision.Outcome.FINAL_LOW_CONFIDENCE, profession, primary,
+            return new RoutingDecision(RoutingDecision.Outcome.FINAL_LOW_CONFIDENCE, profession,
+                    professionCode, subcategoryCode, response.intent(), response.urgency(), primary,
                     topConfidence, candidates, response.ambiguityReason(), null);
         }
 
         log.warn("routing.unresolved reason=competing-categories candidates=[{}] budget={}",
                 renderCandidates(candidates), budget);
-        return unresolved(categories, candidates, response.ambiguityReason(), profession);
+        return unresolved(categories, candidates, response, profession, professionCode, subcategoryCode);
     }
 
     /**
@@ -245,14 +326,20 @@ public class RoutingDecisionPolicy {
      * fallback fired stays inspectable.
      */
     private RoutingDecision unresolved(List<ServiceCategory> categories, List<CategoryCandidate> candidates,
-                                        String ambiguityReason, String detectedProfession) {
+                                        ClassificationResponse response, String detectedProfession,
+                                        String professionCode, String subcategoryCode) {
         ServiceCategory fallback = ServiceCategoryCatalog.findByCode(
                         categories, ServiceCategoryCatalog.FALLBACK_CATEGORY_CODE)
                 .orElseThrow(() -> new IllegalStateException("Seeded category '"
                         + ServiceCategoryCatalog.FALLBACK_CATEGORY_CODE
                         + "' is missing from the categories table."));
-        return new RoutingDecision(RoutingDecision.Outcome.FINAL_UNRESOLVED, detectedProfession, fallback,
-                null, candidates, ambiguityReason, null);
+        // The classification labels survive the fallback deliberately. Routing gave up here;
+        // the model may still have named the trade and the problem correctly, and discarding
+        // that would make the fallback look like a classification failure in the evaluation
+        // output when it is a dispatch one.
+        return new RoutingDecision(RoutingDecision.Outcome.FINAL_UNRESOLVED, detectedProfession,
+                professionCode, subcategoryCode, response.intent(), response.urgency(), fallback,
+                null, candidates, response.ambiguityReason(), null);
     }
 
     private String renderCandidates(List<CategoryCandidate> candidates) {

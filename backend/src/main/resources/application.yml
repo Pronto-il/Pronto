@@ -238,11 +238,24 @@ pronto:
     # Never committed — env-var-sourced only, same treatment as JWT_SECRET. Required only
     # when pronto.ai.mode=openai, and startup-checked there since Production MS4.
     api-key: ${OPENAI_API_KEY:}
-    # Raised from gpt-4o-mini alongside the profession-first classification prompt
-    # (classification-v5), which asks the model to name the trade a customer needs BEFORE
-    # consulting Pronto's catalogue and to return no category when Pronto covers no such trade —
-    # a negative, multi-step instruction that a weaker model tends to answer helpfully instead of
-    # correctly.
+    # gpt-4o-mini -> gpt-4.1-mini alongside the profession-first prompt (classification-v5), which
+    # asks the model to name the trade a customer needs BEFORE consulting Pronto's catalogue and to
+    # return no category when Pronto covers no such trade — a negative, multi-step instruction that
+    # a weaker model tends to answer helpfully instead of correctly.
+    #
+    # gpt-4.1-mini -> gpt-5-mini for the classification-v6 taxonomy baseline. TWO THINGS CHANGED
+    # WITH IT, both forced by the model rather than chosen:
+    #
+    #   1. `temperature` is no longer sent. gpt-5-mini rejects any non-default value with a
+    #      NON-RETRYABLE 400, so sending it would fail every classification outright. The parameter
+    #      is omitted only for models that reject it — see
+    #      ai.client.OpenAiChatClient.supportsCustomTemperature. The cost is real: run-to-run
+    #      variance returns, because a reasoning model cannot be pinned to greedy decoding. `seed`
+    #      is still accepted and still sent, and is now the only determinism lever there is.
+    #
+    #   2. The timeout below had to rise. gpt-5-mini spends reasoning tokens before it answers —
+    #      measured at 9.1s for a 2.3k-token prompt, against a classification prompt that is ~11k
+    #      tokens — so the previous 10s ceiling would have turned ordinary latency into timeouts.
     #
     # THE DEFAULT IS CHANGED TOO, not only Production's env var, and deliberately: with a default
     # here the variable is never actually absent, so an evaluation run that does not set
@@ -252,8 +265,12 @@ pronto:
     #
     # Still the only place any model name appears outside infra/terraform. Nothing in Java names a
     # model; changing it is this line plus compute.tf.
-    model: ${OPENAI_MODEL:gpt-4.1-mini}
-    timeout-ms: ${OPENAI_TIMEOUT_MS:10000}
+    model: ${OPENAI_MODEL:gpt-5-mini}
+    # Raised from 10000 for gpt-5-mini's reasoning latency (see above). This is a per-attempt
+    # socket timeout and the retry policy allows 3 attempts, so the worst case a customer can wait
+    # grew with it — that is a deliberate trade against timing out requests that would have
+    # succeeded, and it is the number to revisit first if the classify endpoint feels slow.
+    timeout-ms: ${OPENAI_TIMEOUT_MS:30000}
 
   email:
     # log | ses. LIVE configuration as of Production MS1 -- this property used to exist and be read

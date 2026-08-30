@@ -79,13 +79,79 @@ public class OpenAiChatClient {
      */
     private static final double TEMPERATURE = 0.0;
 
+    /**
+     * Whether {@code model} accepts a custom {@code temperature} at all.
+     *
+     * <p><b>The reasoning families do not.</b> {@code gpt-5*} and the {@code o1}/{@code o3}/
+     * {@code o4} series reject any value other than the default with a 400:
+     *
+     * <pre>
+     *   "Unsupported value: 'temperature' does not support 0.0 with this model.
+     *    Only the default (1) value is supported."
+     * </pre>
+     *
+     * <p>That is a <em>permanent</em> 4xx, so {@link #isRetryable} correctly declines to retry it
+     * and every single classification would fail immediately. Sending {@code temperature} to these
+     * models is not a degraded mode; it is a total outage of the AI path.
+     *
+     * <p><b>Why a capability check rather than deleting the parameter.</b> Temperature 0 is load-
+     * bearing for every model that accepts it: leaving it unset measurably produced 98.4% and
+     * 95.2% on consecutive runs of identical code, with a different set of cases failing each
+     * time. Removing it outright would silently reintroduce that noise on {@code gpt-4.1-mini},
+     * which is a supported configuration and the one every number before {@code gpt-5-mini} was
+     * measured on. So the parameter is omitted exactly where it is rejected and kept everywhere
+     * else.
+     *
+     * <p><b>What is lost on a reasoning model.</b> Run-to-run variance comes back — these models
+     * sample at temperature 1 and there is no way to ask them not to. {@code seed} is still
+     * accepted and still sent, which is the only remaining lever, and OpenAI documents it as
+     * best-effort rather than a guarantee. An evaluation figure from {@code gpt-5-mini} is
+     * therefore a sample, not a reproducible constant, and two runs of it can legitimately differ.
+     * That is a property of the model, not a defect in this client, and it belongs in any report
+     * that quotes such a number.
+     */
+    public static boolean supportsCustomTemperature(String model) {
+        if (model == null) {
+            return true;
+        }
+        String normalized = model.trim().toLowerCase(java.util.Locale.ROOT);
+        return !(normalized.startsWith("gpt-5")
+                || normalized.startsWith("o1")
+                || normalized.startsWith("o3")
+                || normalized.startsWith("o4"));
+    }
+
     /** Fixed so that two runs of the same evaluation set are comparable. Not a guarantee. */
     private static final int SEED = 20260825;
+
+    /**
+     * Per-call cost and latency, for the evaluation harness.
+     *
+     * <p>Exists because "94% accurate" is half an answer — the other half is what it cost and how
+     * long a customer waited, and on a reasoning model those are no longer incidental: most of
+     * {@code completionTokens} can be reasoning the customer never sees but does pay for.
+     *
+     * <p><b>Opt-in, and free when unused.</b> Production wires {@link #NONE} and the client then
+     * never even parses the usage block, so this adds no work to the request path it instruments.
+     */
+    @FunctionalInterface
+    public interface UsageListener {
+
+        /**
+         * @param attempts   how many HTTP attempts this call took — 1 unless a retry happened
+         * @param succeeded  false when every attempt failed; the token counts are then 0
+         */
+        void onCall(String schemaName, long latencyMillis, int attempts, int promptTokens,
+                     int completionTokens, int reasoningTokens, boolean succeeded);
+
+        UsageListener NONE = (schema, latency, attempts, prompt, completion, reasoning, ok) -> { };
+    }
 
     private final RestClient restClient;
     private final String model;
     private final ObjectMapper objectMapper;
     private final Sleeper sleeper;
+    private final UsageListener usageListener;
 
     // @Autowired is REQUIRED here, not decorative. Spring uses a sole constructor implicitly, but
     // this class has two -- the test seam below is the second -- and with more than one it will not
@@ -98,9 +164,19 @@ public class OpenAiChatClient {
                              @Value("${pronto.openai.model}") String model,
                              @Value("${pronto.openai.timeout-ms}") long timeoutMs,
                              ObjectMapper objectMapper) {
+        this(apiKey, model, timeoutMs, objectMapper, UsageListener.NONE);
+    }
+
+    /**
+     * As above, reporting per-call cost and latency to {@code usageListener}. Used by the
+     * evaluation harness; production uses the constructor above and pays nothing for this.
+     */
+    public OpenAiChatClient(String apiKey, String model, long timeoutMs, ObjectMapper objectMapper,
+                             UsageListener usageListener) {
         this.model = model;
         this.objectMapper = objectMapper;
         this.sleeper = REAL_SLEEP;
+        this.usageListener = usageListener;
 
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout((int) timeoutMs);
@@ -125,6 +201,7 @@ public class OpenAiChatClient {
         this.model = model;
         this.objectMapper = objectMapper;
         this.sleeper = sleeper;
+        this.usageListener = UsageListener.NONE;
     }
 
     /**
@@ -140,6 +217,7 @@ public class OpenAiChatClient {
         Map<String, Object> requestBody = buildRequestBody(systemPrompt, evidencePrompt, images, schemaName, schema);
         Exception lastError = null;
         int attemptsMade = 0;
+        long startedAtNanos = System.nanoTime();
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             attemptsMade = attempt;
@@ -150,7 +228,9 @@ public class OpenAiChatClient {
                         .retrieve()
                         .body(String.class);
 
-                return extractPayload(rawResponse);
+                JsonNode payload = extractPayload(rawResponse);
+                reportUsage(schemaName, rawResponse, startedAtNanos, attempt, true);
+                return payload;
             } catch (Exception e) {
                 lastError = e;
                 log.warn("openai.request.failed schema={} attempt={}/{} reason={}",
@@ -188,8 +268,46 @@ public class OpenAiChatClient {
         }
 
         log.error("openai.request.exhausted schema={} attempts={}", schemaName, attemptsMade, lastError);
+        reportUsage(schemaName, null, startedAtNanos, attemptsMade, false);
         throw new ApiException(ErrorCode.AI_SERVICE_ERROR,
                 "OpenAI request failed after " + attemptsMade + " attempt(s).");
+    }
+
+    /**
+     * Hands one call's cost and latency to the listener.
+     *
+     * <p>Skipped entirely for {@link UsageListener#NONE}, so production never parses the usage
+     * block. Any failure to read it is swallowed: telemetry that could break a classification
+     * would be worse than no telemetry.
+     */
+    private void reportUsage(String schemaName, String rawResponse, long startedAtNanos,
+                              int attempts, boolean succeeded) {
+        if (usageListener == UsageListener.NONE) {
+            return;
+        }
+        long latencyMillis = (System.nanoTime() - startedAtNanos) / 1_000_000L;
+        int prompt = 0;
+        int completion = 0;
+        int reasoning = 0;
+        if (rawResponse != null) {
+            try {
+                JsonNode usage = objectMapper.readTree(rawResponse).path("usage");
+                prompt = usage.path("prompt_tokens").asInt(0);
+                completion = usage.path("completion_tokens").asInt(0);
+                // Reasoning tokens are a subset of completion_tokens, billed as output but never
+                // returned to the caller. On gpt-5-mini they are the majority of them, which is
+                // why they are surfaced separately rather than folded into the total.
+                reasoning = usage.path("completion_tokens_details").path("reasoning_tokens").asInt(0);
+            } catch (Exception ignored) {
+                // Reported as zeros rather than propagated.
+            }
+        }
+        try {
+            usageListener.onCall(schemaName, latencyMillis, attempts, prompt, completion, reasoning,
+                    succeeded);
+        } catch (Exception e) {
+            log.warn("openai.usage.listener_failed schema={} reason={}", schemaName, e.getMessage());
+        }
     }
 
     // ==============================================================================================
@@ -314,7 +432,13 @@ public class OpenAiChatClient {
         // scoring 98.4% and 95.2% on consecutive runs of identical code, with a completely
         // different set of cases failing each time. That is not a system anyone can tune,
         // because no change can be told apart from the noise.
-        body.put("temperature", TEMPERATURE);
+        //
+        // Omitted only for the reasoning families, which reject it outright with a non-retryable
+        // 400 — see supportsCustomTemperature for what that costs and why it is not simply
+        // deleted for everyone.
+        if (supportsCustomTemperature(model)) {
+            body.put("temperature", TEMPERATURE);
+        }
         // Best-effort reproducibility on top of temperature 0. OpenAI documents `seed` as a
         // hint rather than a guarantee (system_fingerprint can still change under them), so it
         // is a way to make repeat runs comparable, never something correctness depends on.

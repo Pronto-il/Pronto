@@ -1,8 +1,12 @@
 package com.pronto.ai.prompt;
 
+import com.pronto.ai.taxonomy.Intent;
+import com.pronto.ai.taxonomy.ProfessionTaxonomy;
+import com.pronto.ai.taxonomy.Urgency;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +33,18 @@ public class ClassificationSchema {
 
     public static final String SCHEMA_NAME = "pronto_issue_routing";
 
+    private final ProfessionTaxonomy taxonomy;
+
+    public ClassificationSchema(ProfessionTaxonomy taxonomy) {
+        this.taxonomy = taxonomy;
+    }
+
+    /**
+     * @param categoryCodes the live {@code categories.code} values — the DISPATCH enum, seven
+     *                      values. The classification enums come from the injected taxonomy and
+     *                      are deliberately not passed in: they are a fixed, versioned label
+     *                      space rather than a snapshot of a database table.
+     */
     public Map<String, Object> build(List<String> categoryCodes) {
         Map<String, Object> properties = new LinkedHashMap<>();
         // Free text, and that is the entire point: it is the one field in this schema not bounded
@@ -37,7 +53,19 @@ public class ClassificationSchema {
         // forcing this field exists to remove. It is a label for the customer and for telemetry;
         // it is never matched against anything and can never become a routing target.
         properties.put("detectedProfession", Map.of("type", "string"));
-        properties.put("primaryCategoryCode", nullableCategoryCode(categoryCodes));
+        // ---- the CLASSIFICATION layer: constrained to the versioned profession taxonomy ----
+        //
+        // Nullable, and that nullability is load-bearing in the opposite direction to
+        // primaryCategoryCode's. A null category means "Pronto cannot dispatch this", which is a
+        // routine and correct answer. A null professionCode means "I could not place this request
+        // in the taxonomy at all", which is rare and is a signal the taxonomy has a gap. Forcing
+        // the model to pick the least-wrong profession would hide exactly that signal.
+        properties.put("professionCode", nullableEnum(taxonomy.professionCodes()));
+        properties.put("subcategoryCode", nullableEnum(taxonomy.allSubcategoryCodes()));
+        properties.put("intent", nullableEnum(names(Intent.values())));
+        properties.put("urgency", nullableEnum(names(Urgency.values())));
+        // ---- the DISPATCH layer: constrained to the live categories table ----
+        properties.put("primaryCategoryCode", nullableEnum(categoryCodes));
         properties.put("confidence", Map.of("type", "number"));
         properties.put("needsClarification", Map.of("type", "boolean"));
         properties.put("ambiguityReason", Map.of("type", List.of("string", "null")));
@@ -70,10 +98,22 @@ public class ClassificationSchema {
         return schema;
     }
 
-    private Map<String, Object> nullableCategoryCode(List<String> categoryCodes) {
-        List<Object> withNull = new ArrayList<>(categoryCodes);
+    /**
+     * A string constrained to {@code values}, or {@code null}.
+     *
+     * <p>{@code null} is added to the enum as well as to the type union: under {@code strict}
+     * every property stays {@code required}, so "may be absent" has to be expressed as "may be
+     * null", and an enum that omitted {@code null} would contradict the type union it sits
+     * beside.
+     */
+    private Map<String, Object> nullableEnum(List<String> values) {
+        List<Object> withNull = new ArrayList<>(values);
         withNull.add(null);
         return Map.of("type", List.of("string", "null"), "enum", withNull);
+    }
+
+    private static List<String> names(Enum<?>[] values) {
+        return Arrays.stream(values).map(Enum::name).toList();
     }
 
     private Map<String, Object> object(Map<String, Object> properties) {

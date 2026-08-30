@@ -11,6 +11,10 @@ import com.pronto.ai.dto.ClassificationResponse;
 import com.pronto.ai.dto.LikelyIssue;
 import com.pronto.ai.dto.ProfessionalBriefRequest;
 import com.pronto.ai.dto.ProfessionalBriefResponse;
+import com.pronto.ai.taxonomy.Intent;
+import com.pronto.ai.taxonomy.ProfessionSubcategory;
+import com.pronto.ai.taxonomy.ProfessionTaxonomy;
+import com.pronto.ai.taxonomy.Urgency;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -100,28 +104,64 @@ public class MockAiClassificationClient implements AiClassificationClient {
      * fixtures, not a model. Note the absence of "מקרר" and "כביסה" — those ARE supported, via
      * appliance_repair, and putting them here would encode the exact mistake the real prompt's
      * worked examples exist to prevent.
+     *
+     * <p>{@code professionCode} is the taxonomy code where one exists. Two entries deliberately
+     * leave it {@code null} — a mover and an antenna technician are trades customers ask for and
+     * the 50-profession taxonomy does not contain, so they exercise the "classified as nothing"
+     * path that the {@code professionCode}-aware branches must also survive.
      */
-    private record UnsupportedProfession(String nameHe, List<String> keywords) {
+    private record UnsupportedProfession(String nameHe, String professionCode, List<String> keywords) {
     }
 
     private static final List<UnsupportedProfession> UNSUPPORTED_PROFESSIONS = List.of(
-            new UnsupportedProfession("טכנאי גז",
+            new UnsupportedProfession("טכנאי גז", "GAS_TECHNICIAN",
                     List.of("ריח גז", "ריח של גז", "בלון גז", "צינור גז", "טכנאי גז")),
-            new UnsupportedProfession("מדביר",
+            new UnsupportedProfession("מדביר", "PEST_CONTROL",
                     List.of("ג׳וק", "גוק", "ג'וק", "מקק", "עכבר", "חולדה", "נמלים", "הדברה", "מזיקים")),
-            new UnsupportedProfession("זגג",
+            new UnsupportedProfession("זגג", "GLAZIER",
                     // "חלון" on its own, not only "חלון נשבר": a customer writes "נשבר לי חלון",
                     // and a fixture set that only matches one word order is testing the fixture
                     // rather than the flow.
                     List.of("זכוכית", "חלון", "שמשה", "זגג")),
-            new UnsupportedProfession("גנן",
+            new UnsupportedProfession("גנן", "GARDENER",
                     List.of("גינה", "גיזום", "לגזום", "עץ בחצר", "דשא", "גנן")),
-            new UnsupportedProfession("מוביל",
+            new UnsupportedProfession("מוביל", null,
                     List.of("הובלה", "מוביל", "הובלת דירה", "מנוף")),
-            new UnsupportedProfession("איטום גגות",
+            new UnsupportedProfession("איטום גגות", "WATERPROOFING_CONTRACTOR",
                     List.of("גג דולף", "רעפים", "איטום גג")),
-            new UnsupportedProfession("טכנאי אנטנות",
+            new UnsupportedProfession("טכנאי אנטנות", null,
                     List.of("אנטנה", "צלחת לוויין", "ממיר")));
+
+    /**
+     * Category to taxonomy profession, for the supported path. One-to-one is a fixture
+     * simplification and not a claim about the taxonomy: {@code appliance_repair} really serves
+     * six appliance professions, and the mock picks the most common rather than trying to tell a
+     * fridge from a dishwasher by keyword.
+     */
+    private static String professionCodeFor(String categoryCode) {
+        return switch (categoryCode) {
+            case CategoryRoutingProfiles.CODE_PLUMBING -> "PLUMBER";
+            case CategoryRoutingProfiles.CODE_ELECTRICAL -> "ELECTRICIAN";
+            case CategoryRoutingProfiles.CODE_AC_HVAC -> "AC_TECHNICIAN";
+            case CategoryRoutingProfiles.CODE_APPLIANCE_REPAIR -> "WASHING_MACHINE_TECHNICIAN";
+            case CategoryRoutingProfiles.CODE_LOCKSMITH -> "LOCKSMITH";
+            case CategoryRoutingProfiles.CODE_PAINTING -> "PAINTER";
+            default -> "HANDYMAN";
+        };
+    }
+
+    /**
+     * Hebrew that indicates a genuine emergency, as opposed to a customer writing "דחוף".
+     *
+     * <p>The omission of "דחוף" is the point: it is the single most common word in the dataset's
+     * urgent-sounding descriptions and the least informative, and a mock that promoted on it would
+     * bake the exact over-escalation the real prompt is written to prevent.
+     */
+    private static final List<String> EMERGENCY_KEYWORDS =
+            List.of("הצפה", "מציף", "התפוצץ", "פיצוץ", "ריח גז", "ריח של גז", "ננעלתי", "שריפה", "עשן");
+
+    private static final List<String> INSTALLATION_KEYWORDS =
+            List.of("להתקין", "התקנה", "התקנת", "חדש", "להחליף", "החלפת");
 
     /**
      * Canned Hebrew questions for the overlaps that actually matter, keyed by the competing
@@ -158,9 +198,11 @@ public class MockAiClassificationClient implements AiClassificationClient {
     );
 
     private final ServiceCategoryCatalog catalog;
+    private final ProfessionTaxonomy taxonomy;
 
-    public MockAiClassificationClient(ServiceCategoryCatalog catalog) {
+    public MockAiClassificationClient(ServiceCategoryCatalog catalog, ProfessionTaxonomy taxonomy) {
         this.catalog = catalog;
+        this.taxonomy = taxonomy;
     }
 
     @Override
@@ -171,9 +213,11 @@ public class MockAiClassificationClient implements AiClassificationClient {
         // Profession first, exactly as the real prompt instructs: an out-of-catalogue trade is
         // recognised before any Pronto category is scored, and returns no category and no
         // candidates -- which is what RoutingDecisionPolicy reads as unsupported.
-        String unsupported = detectUnsupportedProfession(text);
+        UnsupportedProfession unsupported = detectUnsupportedProfession(text);
         if (unsupported != null) {
-            return new ClassificationResponse(unsupported, null, 0.92, false,
+            return new ClassificationResponse(MOCK_PREFIX + unsupported.nameHe(),
+                    unsupported.professionCode(), firstSubcategoryOf(unsupported.professionCode()),
+                    intentFor(text), urgencyFor(text), null, 0.92, false,
                     "Mock heuristic matched an out-of-catalogue profession.", List.of(), null);
         }
 
@@ -199,8 +243,37 @@ public class MockAiClassificationClient implements AiClassificationClient {
                         + " almost equally."
                 : null;
 
-        return new ClassificationResponse(professionFor(top.categoryCode()), top.categoryCode(),
-                top.confidence(), question != null, ambiguityReason, candidates, question);
+        String professionCode = professionCodeFor(top.categoryCode());
+        return new ClassificationResponse(professionFor(top.categoryCode()), professionCode,
+                firstSubcategoryOf(professionCode), intentFor(text), urgencyFor(text),
+                top.categoryCode(), top.confidence(), question != null, ambiguityReason,
+                candidates, question);
+    }
+
+    /**
+     * The profession's first subcategory — a deterministic placeholder, not a prediction.
+     *
+     * <p>The mock has no way to tell a blocked drain from a burst pipe, and pretending otherwise
+     * with a second keyword table would produce a fixture that looks like a classifier and is
+     * measured like one. What this does guarantee is a structurally valid (profession,
+     * subcategory) pair, which is what the pipeline downstream actually needs to exercise.
+     */
+    private String firstSubcategoryOf(String professionCode) {
+        return taxonomy.find(professionCode)
+                .flatMap(profession -> profession.subcategories().stream().findFirst())
+                .map(ProfessionSubcategory::code)
+                .orElse(null);
+    }
+
+    private static Intent intentFor(String text) {
+        if (EMERGENCY_KEYWORDS.stream().anyMatch(text::contains)) {
+            return Intent.EMERGENCY;
+        }
+        return INSTALLATION_KEYWORDS.stream().anyMatch(text::contains) ? Intent.INSTALLATION : Intent.REPAIR;
+    }
+
+    private static Urgency urgencyFor(String text) {
+        return EMERGENCY_KEYWORDS.stream().anyMatch(text::contains) ? Urgency.CRITICAL : Urgency.NORMAL;
     }
 
     /**
@@ -211,13 +284,13 @@ public class MockAiClassificationClient implements AiClassificationClient {
      * sets do not overlap, and a mock that tried to arbitrate between "ריח גז" and "ג׳וק" would be
      * modelling a problem the real model handles.
      */
-    private static String detectUnsupportedProfession(String text) {
+    private static UnsupportedProfession detectUnsupportedProfession(String text) {
         if (text == null || text.isBlank()) {
             return null;
         }
         for (UnsupportedProfession profession : UNSUPPORTED_PROFESSIONS) {
             if (profession.keywords().stream().anyMatch(text::contains)) {
-                return MOCK_PREFIX + profession.nameHe();
+                return profession;
             }
         }
         return null;

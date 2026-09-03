@@ -235,6 +235,43 @@ public class RoutingDecisionPolicy {
                     topConfidence, candidates, response.ambiguityReason(), question);
         }
 
+        // ---- The undispatchable invariant, re-asserted now that no question will be asked. ----
+        //
+        // The check above this method's clarification block declines dispatch for an
+        // undispatchable trade only when the model did NOT request clarification. That exemption
+        // is correct in itself -- a model torn between an outside trade and a Pronto one must be
+        // allowed to ask rather than dead-end -- but it was load-bearing on an assumption that
+        // does not hold: that requesting clarification means a question is actually asked.
+        //
+        // It is not. `ambiguous && budget > 0 && question != null` is a conjunction of three
+        // conditions and the model controls only the first. A question with one option, a
+        // question that repeats one already answered, or a request made with the budget spent all
+        // land here with needsClarification = true and no question asked -- and before this
+        // block, control continued into the dispatch branches below, where a proposed category
+        // resolved into a real booking or, failing that, the general_handyman fallback.
+        //
+        // Measured, not theorised: one case in a 3,500-case evaluation run classified TILER (a
+        // trade Pronto does not dispatch), asked for clarification, produced an unusable
+        // question, and was routed to general_handyman at confidence 0.20.
+        //
+        // So the invariant is restated where it can no longer be skipped: once it is settled that
+        // no question will be asked, an undispatchable profession is UNSUPPORTED, whatever the
+        // model proposed alongside it. Reaching a dispatch decision below now requires either a
+        // dispatchable profession or no recognised profession at all.
+        if (classified != null && !classified.isDispatchable()) {
+            if (!candidates.isEmpty()) {
+                log.info("ai.classification.dispatch_declined profession={} proposed=[{}] "
+                                + "needsClarification={} question={} — clarification was requested but "
+                                + "none could be asked; the proposed categories are discarded rather "
+                                + "than substituted.",
+                        professionCode, renderCandidates(candidates), response.needsClarification(),
+                        question == null ? "unusable" : "budget-exhausted");
+            }
+            return new RoutingDecision(RoutingDecision.Outcome.UNSUPPORTED_PROFESSION, profession,
+                    professionCode, subcategoryCode, response.intent(), response.urgency(), null,
+                    clamp(response.confidence()), List.of(), response.ambiguityReason(), null);
+        }
+
         // No further question will be asked. Where to route is now a separate decision.
         if (primary == null) {
             // Nothing resolved AND no profession was named — the model gave us neither a Pronto

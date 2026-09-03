@@ -101,6 +101,7 @@ class BookingsServiceTest {
     private final com.pronto.locations.service.ServiceCityResolver serviceCityResolver =
             Mockito.mock(com.pronto.locations.service.ServiceCityResolver.class);
     private BookingsService bookingsService;
+    private com.pronto.bookings.config.BookingProperties bookingProperties;
 
     @BeforeEach
     void setUp() {
@@ -128,6 +129,9 @@ class BookingsServiceTest {
         // assertion here into an assertion about an empty list.
         Mockito.lenient().when(serviceCityResolver.resolveId(Mockito.any()))
                 .thenReturn(java.util.Optional.of(SERVICE_CITY_ID));
+        // The real properties object, not a mock: the 150-minute lead time is a production
+        // rule these tests must be subject to, and a mock returning 0 would quietly exempt them.
+        bookingProperties = new com.pronto.bookings.config.BookingProperties();
         bookingsService = new BookingsService(issueRepository, professionalRepository, professionalListingRepository,
                 serviceCityResolver, availabilitySlotRepository, orderRepository, userRepository,
                 notificationService, distanceEtaStrategy, storageService, availabilityDerivationService,
@@ -135,7 +139,7 @@ class BookingsServiceTest {
                 serviceAddressGeocoder, professionalLocationService, locationProperties,
                 new com.pronto.maps.service.ArrivalVerifier(professionalLocationService, locationProperties),
                 new com.pronto.maps.service.SelectedPlaceValidator(),
-                categoryRepository);
+                categoryRepository, bookingProperties);
         // MS2: geocoding is stubbed to "unresolvable" by default. Every pre-existing test in this
         // class is about booking mechanics, not geography, and a default that quietly produced
         // coordinates would make them silently depend on a provider they never mention. The MS2

@@ -9,6 +9,23 @@ export interface StartTimePickerProps {
   windows: AvailableWindow[];
   /** Echoed from `GET .../available-windows`'s response — never hardcoded client-side. */
   defaultDurationMinutes: number;
+  /**
+   * The first start time a standard booking may take, from the same response. Chips before it are
+   * rendered **disabled rather than hidden** — the professional genuinely is free then, and the
+   * screen must not imply otherwise; see `earliestBookableAt` in `shared/api/bookings.ts`.
+   *
+   * Optional so the component still renders if a caller has not fetched it yet; when absent, no chip
+   * is restricted and the backend remains the only gate (which it is regardless).
+   */
+  earliestBookableAt?: string | null;
+  /** The rule, in minutes, for the explanatory line. Also from the server. */
+  minLeadMinutes?: number;
+  /**
+   * Enters the existing SOS flow. Rendered as "צריך מישהו מוקדם יותר?" beside the disabled chips —
+   * the honest alternative for a customer who needs somebody sooner than a standard booking allows.
+   * Omitted, the explanation is still shown without a call to action.
+   */
+  onTrySos?: () => void;
   selectedStart: string | null;
   onSelect: (bookedStart: string) => void;
   isLoading?: boolean;
@@ -56,6 +73,9 @@ const PERIODS: { key: string; label: string; fromHour: number; toHour: number }[
 export function StartTimePicker({
   windows,
   defaultDurationMinutes,
+  earliestBookableAt,
+  minLeadMinutes,
+  onTrySos,
   selectedStart,
   onSelect,
   isLoading,
@@ -71,6 +91,20 @@ export function StartTimePicker({
     () => deriveStartTimeCandidates(windows, defaultDurationMinutes, { notBeforeMs: nowMs }),
     [windows, defaultDurationMinutes, nowMs],
   );
+
+  // The lead-time boundary, as epoch ms. Parsed once rather than inside the render loop, and
+  // deliberately NOT advanced by the local clock tick above: the server computed it from its own
+  // clock when the windows were fetched, and it is the server that will re-check it at the commit.
+  // Sliding it forward here would grey out chips the backend would still accept.
+  const earliestBookableMs = useMemo(
+    () => (earliestBookableAt ? new Date(earliestBookableAt).getTime() : null),
+    [earliestBookableAt],
+  );
+
+  /** A chip inside the lead-time window: visible, explained, and not clickable. */
+  function isTooSoon(candidate: string): boolean {
+    return earliestBookableMs !== null && new Date(candidate).getTime() < earliestBookableMs;
+  }
 
   // Report an expired selection once per value — `onSelectedExpired` is typically an inline
   // arrow in the parent (new identity every render), so without this ref the effect would
@@ -123,6 +157,25 @@ export function StartTimePicker({
     })).filter((period) => period.starts.length > 0);
   }, [activeGroup]);
 
+  // Only explain the rule when it is actually restricting something the customer can see. On a
+  // calendar whose first opening is tomorrow, the notice would be answering a question nobody asked.
+  const hasTooSoonChips = candidates.some(isTooSoon);
+
+  /** "שעתיים וחצי" for the default 150; a plain minute count for any other configured value. */
+  const leadNoticeLabel = (() => {
+    if (minLeadMinutes === undefined || minLeadMinutes === null) {
+      return 'זמן מה';
+    }
+    if (minLeadMinutes === 150) {
+      return 'שעתיים וחצי';
+    }
+    if (minLeadMinutes % 60 === 0) {
+      const hours = minLeadMinutes / 60;
+      return hours === 1 ? 'שעה' : hours === 2 ? 'שעתיים' : `${hours} שעות`;
+    }
+    return `${minLeadMinutes} דקות`;
+  })();
+
   if (isLoading) {
     return <Skeleton variant="rect" className={styles.skeleton} />;
   }
@@ -142,6 +195,26 @@ export function StartTimePicker({
         <h2 className={styles.question}>מתי נוח לך?</h2>
         <p className={styles.durationNote}>משך הביקור המשוער: {defaultDurationMinutes} דקות</p>
       </div>
+
+      {hasTooSoonChips && (
+        // The wording is load-bearing. It says the SLOT is not open for a standard booking, never
+        // that the professional is busy -- they are not, and their calendar on this very screen
+        // says so. Claiming otherwise would be a lie the customer can see through.
+        <div className={styles.leadNotice}>
+          <p className={styles.leadNoticeBody}>
+            הזמנה רגילה נסגרת {leadNoticeLabel} מראש, כדי שלבעל המקצוע יהיה זמן להגיע אליך.
+            המועדים המוקדמים יותר מוצגים באפור.
+          </p>
+          {onTrySos && (
+            <div className={styles.leadNoticeCta}>
+              <span className={styles.leadNoticeCtaText}>צריך מישהו מוקדם יותר?</span>
+              <button type="button" className={styles.sosLink} onClick={onTrySos}>
+                נסו SOS
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className={styles.dateRow} role="tablist" aria-label="בחירת יום">
         {groups.map((group) => (
@@ -163,17 +236,30 @@ export function StartTimePicker({
           <div key={period.key} className={styles.period}>
             <p className={styles.periodLabel}>{period.label}</p>
             <div className={styles.timeGrid}>
-              {period.starts.map((start) => (
-                <button
-                  key={start}
-                  type="button"
-                  aria-pressed={selectedStart === start}
-                  className={`${styles.timeChip} ${selectedStart === start ? styles.timeChipSelected : ''}`}
-                  onClick={() => onSelect(start)}
-                >
-                  {formatTimeLabel(start)}
-                </button>
-              ))}
+              {period.starts.map((start) => {
+                const tooSoon = isTooSoon(start);
+                return (
+                  <button
+                    key={start}
+                    type="button"
+                    disabled={tooSoon}
+                    aria-pressed={!tooSoon && selectedStart === start}
+                    // Spelled out for a screen reader, which cannot see the muted styling and
+                    // otherwise hears only a disabled button with no reason.
+                    aria-label={tooSoon ? `${formatTimeLabel(start)} — לא זמין להזמנה רגילה` : undefined}
+                    className={[
+                      styles.timeChip,
+                      tooSoon ? styles.timeChipTooSoon : '',
+                      !tooSoon && selectedStart === start ? styles.timeChipSelected : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    onClick={() => onSelect(start)}
+                  >
+                    {formatTimeLabel(start)}
+                  </button>
+                );
+              })}
             </div>
           </div>
         ))}

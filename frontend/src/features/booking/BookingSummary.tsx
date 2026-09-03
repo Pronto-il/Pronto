@@ -59,6 +59,11 @@ export interface BookingSummaryProps {
 
 const ORDER_ERROR_MESSAGES: Record<string, string> = {
   BOOKING_TIME_UNAVAILABLE: 'הזמן הזה כבר לא פנוי. אפשר לבחור זמן אחר.',
+  /* Distinct from BOOKING_TIME_UNAVAILABLE on purpose: the professional may well be free then.
+     Reachable despite the disabled chips whenever time passes while the customer is on the confirm
+     step -- the server re-checks the rule against its own clock at the commit, which is the point. */
+  BOOKING_LEAD_TIME_NOT_MET:
+    'הזמן שבחרת קרוב מדי להזמנה רגילה. אפשר לבחור מועד מאוחר יותר, או להפעיל SOS למי שצריך מישהו עכשיו.',
   ISSUE_NOT_BOOKABLE: 'הבקשה הזו כבר בטיפול. אפשר לעקוב אחריה בדף ההזמנות שלך.',
 };
 
@@ -190,7 +195,11 @@ export function BookingSummary({
       });
       onConfirmed(order);
     } catch (error) {
-      if (error instanceof ApiError && error.code === 'BOOKING_TIME_UNAVAILABLE') {
+      if (error instanceof ApiError && error.code === 'BOOKING_LEAD_TIME_NOT_MET') {
+        // Back to the picker, same as the other two "that time will not work" cases -- the chips
+        // are re-derived against a freshly-fetched boundary there.
+        onTimeUnavailable(ORDER_ERROR_MESSAGES.BOOKING_LEAD_TIME_NOT_MET);
+      } else if (error instanceof ApiError && error.code === 'BOOKING_TIME_UNAVAILABLE') {
         // Not `setBannerError` here — this component is about to unmount as `onTimeUnavailable`
         // sends the customer back to the `slot` step, so a banner set on local state would
         // never paint. The parent renders the message instead.

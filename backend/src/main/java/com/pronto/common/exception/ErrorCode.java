@@ -111,6 +111,24 @@ public enum ErrorCode {
     // path once no caller can supply a slotId anymore.
     BOOKING_TIME_UNAVAILABLE(HttpStatus.CONFLICT),
 
+    /**
+     * The requested {@code bookedStart} is sooner than {@code pronto.bookings
+     * .regular-booking-min-lead-minutes} from now — see {@code bookings.config.BookingProperties}.
+     *
+     * <p><b>Its own code rather than {@link #BOOKING_TIME_UNAVAILABLE}</b>, which it superficially
+     * resembles, because the two say opposite things about the professional and lead to opposite
+     * recoveries. {@code BOOKING_TIME_UNAVAILABLE} means "this person is not free then" — pick
+     * another time or another professional. This one means "this person may well be free then, but
+     * a Standard booking cannot be made at that notice" — and the recovery is SOS, which the
+     * frontend offers precisely on this code. Collapsing them would make the client unable to tell
+     * a booked calendar from a policy rule, and would have it advertise SOS as the remedy for
+     * somebody else's existing appointment.
+     *
+     * <p>{@code 400}, not {@code 409}: the submitted value is invalid against a rule that was
+     * knowable when the request was built, not a state that changed underneath it.
+     */
+    BOOKING_LEAD_TIME_NOT_MET(HttpStatus.BAD_REQUEST),
+
     // Pronto SOS (broadcast-and-choose urgent dispatch) — the only SOS flow. See the sos README.
     /**
      * An SOS attempt is <b>already in progress</b> for this issue

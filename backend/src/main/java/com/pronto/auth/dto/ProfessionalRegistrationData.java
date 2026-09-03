@@ -1,6 +1,7 @@
 package com.pronto.auth.dto;
 
 import com.pronto.availability.dto.WorkingHoursItemRequest;
+import com.pronto.professionals.dto.SubServicePriceSelection;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -40,7 +41,15 @@ import java.util.List;
  * @param categoryIds   at least one, every one an existing {@code categories} row
  * @param subServiceIds at least one, every one belonging to one of {@link #categoryIds} —
  *                      enforced by {@code professionals.service.SubServiceSelectionValidator},
- *                      the same component the later edit endpoint uses
+ *                      the same component the later edit endpoint uses. <b>The id-only form</b>,
+ *                      kept working; supply {@link #subServices} instead to price them at
+ *                      registration. Exactly one of the two is required, and {@link #subServices}
+ *                      wins if both are sent — same rule, and the same reasoning, as
+ *                      {@code professionals.dto.UpdateSubServicesRequest}
+ * @param subServices   the priced form: each selected sub-service with what the professional
+ *                      charges for it. The price is optional per entry (a professional may finish
+ *                      registration and price their services later from the profile screen), but
+ *                      when given it must be non-negative with at most two decimals
  * @param serviceCityIds at least one, every one inside {@link #serviceRegionId}
  * @param baseCityId    must be one of {@link #serviceCityIds}
  * @param workingHours  the full week, exactly 7 entries as
@@ -55,6 +64,24 @@ public record ProfessionalRegistrationData(
         Long baseCityId,
         BigDecimal basePrice,
         List<Long> subServiceIds,
+        List<SubServicePriceSelection> subServices,
         List<WorkingHoursItemRequest> workingHours
 ) {
+
+    /**
+     * The selection normalised to the priced form, whichever shape the registrant sent — the single
+     * accessor every consumer here uses, so validation and persistence cannot disagree about which
+     * field was authoritative.
+     */
+    public List<SubServicePriceSelection> subServiceSelections() {
+        if (subServices != null) {
+            return subServices;
+        }
+        if (subServiceIds != null) {
+            return subServiceIds.stream()
+                    .map(id -> new SubServicePriceSelection(id, null))
+                    .toList();
+        }
+        return List.of();
+    }
 }

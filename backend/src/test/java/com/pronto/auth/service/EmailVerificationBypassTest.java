@@ -132,6 +132,7 @@ class EmailVerificationBypassTest {
                 Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
                 Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
+                new com.pronto.professionals.service.SubServicePriceValidator(),
                 new VerificationPolicy(OtpPolicies.enabled(), true, emailRequired),
                 new AuthOtpPolicy(OtpPolicies.enabled(), String.valueOf(otpRequired)),
                 new com.pronto.maps.service.SelectedPlaceValidator());

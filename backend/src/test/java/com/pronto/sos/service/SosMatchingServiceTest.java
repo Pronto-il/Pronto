@@ -51,6 +51,7 @@ class SosMatchingServiceTest {
     private static final Long SERVICE_CITY_ID = 4001L;
     private com.pronto.locations.service.ServiceCityResolver serviceCityResolver;
     private SosMatchingService service;
+    private com.pronto.demo.DemoBehaviorPolicy demoBehaviorPolicy;
 
     @BeforeEach
     void setUp() {
@@ -63,8 +64,13 @@ class SosMatchingServiceTest {
         // service-area tests below override it.
         Mockito.lenient().when(serviceCityResolver.resolveId(any()))
                 .thenReturn(java.util.Optional.of(SERVICE_CITY_ID));
+        // Demo behaviour OFF for this suite: every test here asserts the PRODUCTION matching
+        // rules, and a policy that answered true would silently exempt a presenter row from
+        // them. The demo path has its own suite (SosDemoPresenterTest).
+        demoBehaviorPolicy = new com.pronto.demo.DemoBehaviorPolicy(
+                new com.pronto.common.config.ProntoEnvironment("production"));
         service = new SosMatchingService(sosCandidateRepository, sosOfferRepository, distanceEtaStrategy,
-                serviceCityResolver, properties);
+                serviceCityResolver, properties, demoBehaviorPolicy);
 
         when(sosOfferRepository.findProfessionalIdsWithLiveOffers(anyList(), any())).thenReturn(List.of());
         when(sosOfferRepository.findAcceptanceStats(anyList(), any())).thenReturn(List.of());

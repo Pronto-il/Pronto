@@ -3,7 +3,6 @@ import type { FormEvent } from 'react';
 import {
   Input,
   Select,
-  Checkbox,
   MultiSelectField,
   ImageUploadField,
   DocumentUploadField,
@@ -16,6 +15,7 @@ import {
   validateWeeklyHoursRows,
   hasEnabledWeekday,
   toWeeklyHoursRequest,
+  SubServicePriceRow,
 } from '../../shared/components';
 import type { MultiSelectOption, SelectOption, WeeklyHoursRow } from '../../shared/components';
 import {
@@ -42,6 +42,11 @@ import {
   validatePassword,
   validatePhone,
 } from './registrationValidation';
+import {
+  firstSubServicePriceError,
+  toPriceSelections,
+  validateSubServicePrice,
+} from '../../shared/utils/subServicePrices';
 import styles from './formStyles.module.css';
 
 export interface ProfessionalRegisterFormProps {
@@ -144,6 +149,11 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
   const [categoriesError, setCategoriesError] = useState<string | null>(null);
   const [catalogReloadKey, setCatalogReloadKey] = useState(0);
   const [selectedSubServiceIds, setSelectedSubServiceIds] = useState<number[]>([]);
+  /* Prices as typed, keyed by sub-service id. Strings, not numbers: a half-typed "4" and an emptied
+     field both have to survive a re-render, and a numeric state would turn the second into 0 --
+     which is a real, different price. Entries are kept when a row is unticked, so a mis-tap does not
+     silently discard a price the registrant already entered. */
+  const [subServicePrices, setSubServicePrices] = useState<Record<number, string>>({});
 
   // Blank week — 7 rows, every day off, no times. The registrant chooses.
   const [workingHoursRows, setWorkingHoursRows] = useState<WeeklyHoursRow[]>(() => buildWeeklyHoursRows([]));
@@ -338,6 +348,13 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
     if (selectedSubServiceIds.length === 0) {
       return { subServiceIds: 'יש לבחור לפחות תחום אחד שבו אתה נותן שירות.' };
     }
+    // A malformed price blocks the step; a MISSING one does not. Pricing is optional by design --
+    // a registrant may finish signing up and price their services from their profile later -- and
+    // the backend enforces exactly the same distinction.
+    const priceError = firstSubServicePriceError(selectedSubServiceIds, subServicePrices);
+    if (priceError) {
+      return { subServiceIds: priceError };
+    }
     return {};
   }
 
@@ -479,7 +496,10 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
         // "main" city on top of choosing them would be a question with no obvious right answer.
         baseCityId: serviceCityIds[0],
         basePrice: Number(basePrice),
-        subServiceIds: selectedSubServiceIds,
+        // The priced form. The ids-only field is deliberately not sent alongside it: the server
+        // treats `subServices` as authoritative when both are present, so sending both would only
+        // create a second source of truth for the same list.
+        subServices: toPriceSelections(selectedSubServiceIds, subServicePrices),
         workingHours: toWeeklyHoursRequest(workingHoursRows),
         verificationDocument,
         profilePhoto: photo,
@@ -505,6 +525,7 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
           subServiceIds: 'חלק מהתחומים שנבחרו אינם שייכים לתחומי השירות שנבחרו. יש לבחור אותם מחדש.',
         };
         setSelectedSubServiceIds([]);
+        setSubServicePrices({});
         setErrors((prev) => ({ ...prev, ...nextErrors }));
         routeFieldErrors(nextErrors);
       } else {
@@ -723,11 +744,20 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
                     <p className={styles.subServiceGroupTitle}>{category.nameHe}</p>
                     <div className={styles.subServicesList}>
                       {category.subServices.map((subService) => (
-                        <Checkbox
+                        <SubServicePriceRow
                           key={subService.id}
                           label={subService.nameHe}
                           checked={selectedSubServiceIds.includes(subService.id)}
-                          onChange={() => toggleSubService(subService.id)}
+                          onToggle={() => toggleSubService(subService.id)}
+                          price={subServicePrices[subService.id] ?? ''}
+                          onPriceChange={(value) =>
+                            setSubServicePrices((prev) => ({ ...prev, [subService.id]: value }))
+                          }
+                          error={
+                            selectedSubServiceIds.includes(subService.id)
+                              ? validateSubServicePrice(subServicePrices[subService.id] ?? '')
+                              : null
+                          }
                         />
                       ))}
                     </div>

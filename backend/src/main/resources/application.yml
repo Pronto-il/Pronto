@@ -616,6 +616,24 @@ pronto:
     # empty TRUSTED_PROXIES.
     behind-proxy: ${BEHIND_PROXY:true}
 
+  bookings:
+    # Standard (non-SOS) booking. See bookings.config.BookingProperties.
+    #
+    # THE MINIMUM NOTICE A STANDARD BOOKING MUST GIVE, in minutes. A customer may not choose a
+    # start time earlier than now + this, even when the professional's calendar is genuinely free
+    # then -- the screen says so explicitly rather than implying the professional is busy.
+    #
+    # Two reasons: an open calendar slot is not a promise that somebody can be at your door in ten
+    # minutes, and SOS is meant to remain the fast-response product (a Standard booking usable for
+    # "now" would compete with it while offering no dispatch guarantee, no committed ETA and no
+    # surcharge for dropping everything).
+    #
+    # Bounds the Standard flow ONLY. SOS does not read this and must never acquire a lead time;
+    # BookingsServiceLeadTimeTest pins that.
+    #
+    # 0 disables the rule and restores "any future time is bookable". Negative refuses the boot.
+    regular-booking-min-lead-minutes: ${REGULAR_BOOKING_MIN_LEAD_MINUTES:150}
+
   sos:
     # Pronto SOS (broadcast-and-choose urgent dispatch). Every value below is read only at the
     # moment an offer is created, then snapshotted onto the sos_offers row — so changing one

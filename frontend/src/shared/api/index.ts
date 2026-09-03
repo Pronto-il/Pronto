@@ -180,6 +180,8 @@ export type {
   SubServiceResponse,
   CategoryWithSubServicesResponse,
   MySubServicesResponse,
+  MySubServiceItem,
+  SubServicePriceSelection,
   UpdateProfessionalLocationRequest,
   ProfessionalLocationStatusResponse,
 } from './professionals';
@@ -217,6 +219,7 @@ export type {
   CreateSosRequestPayload,
   SosRequestResponse,
   SosCandidate,
+  SosCandidateState,
   SosCandidatesResponse,
   SosOfferResponse,
   SosOffersListResponse,

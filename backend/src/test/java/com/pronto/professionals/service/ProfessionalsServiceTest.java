@@ -96,7 +96,7 @@ class ProfessionalsServiceTest {
         professionalsService = new ProfessionalsService(professionalRepository, userRepository,
                 reviewAggregateRepository, favoriteRepository, storageService,
                 new SubServiceSelectionValidator(subServiceRepository), professionalSubServiceRepository,
-                professionalCoverageService);
+                professionalCoverageService, new SubServicePriceValidator(), subServiceRepository);
         // MS4: every pre-existing test in this class describes an ordinary, fully-configured
         // professional, so coverage and categories are stubbed to a sane default here; the tests
         // that care override them per-test. ProfessionalCoverageService's own rules are covered by
@@ -219,6 +219,10 @@ class ProfessionalsServiceTest {
     void getMySubServices_returnsSelectedIds() {
         when(professionalSubServiceRepository.findByProfessionalId(PROFESSIONAL_ID))
                 .thenReturn(List.of(existingRow(PROFESSIONAL_ID, 101L), existingRow(PROFESSIONAL_ID, 102L)));
+        // The response now carries each selection's catalogue label alongside its id, so the
+        // sub_services rows it describes have to be readable.
+        when(subServiceRepository.findAllById(any()))
+                .thenReturn(List.of(realSubService(101L, CATEGORY_ID), realSubService(102L, CATEGORY_ID)));
 
         MySubServicesResponse response = professionalsService.getMySubServices(professionalCaller);
 
@@ -230,7 +234,7 @@ class ProfessionalsServiceTest {
         when(subServiceRepository.findAllById(any())).thenReturn(List.of());
         when(professionalSubServiceRepository.findByProfessionalId(PROFESSIONAL_ID)).thenReturn(List.of());
 
-        UpdateSubServicesRequest request = new UpdateSubServicesRequest(List.of(999L));
+        UpdateSubServicesRequest request = new UpdateSubServicesRequest(List.of(999L), null);
 
         assertThatThrownBy(() -> professionalsService.updateMySubServices(professionalCaller, request))
                 .isInstanceOf(ApiException.class)
@@ -246,7 +250,7 @@ class ProfessionalsServiceTest {
         when(subServiceRepository.findAllById(any())).thenReturn(List.of(wrongCategorySubService));
         when(professionalSubServiceRepository.findByProfessionalId(PROFESSIONAL_ID)).thenReturn(List.of());
 
-        UpdateSubServicesRequest request = new UpdateSubServicesRequest(List.of(201L));
+        UpdateSubServicesRequest request = new UpdateSubServicesRequest(List.of(201L), null);
 
         assertThatThrownBy(() -> professionalsService.updateMySubServices(professionalCaller, request))
                 .isInstanceOf(ApiException.class)
@@ -268,7 +272,7 @@ class ProfessionalsServiceTest {
                 .thenReturn(List.of(existingRow(PROFESSIONAL_ID, 101L), existingRow(PROFESSIONAL_ID, 102L)))
                 .thenReturn(List.of(existingRow(PROFESSIONAL_ID, 101L), existingRow(PROFESSIONAL_ID, 103L)));
 
-        UpdateSubServicesRequest request = new UpdateSubServicesRequest(List.of(101L, 103L));
+        UpdateSubServicesRequest request = new UpdateSubServicesRequest(List.of(101L, 103L), null);
         MySubServicesResponse response = professionalsService.updateMySubServices(professionalCaller, request);
 
         assertThat(response.subServiceIds()).containsExactlyInAnyOrder(101L, 103L);
@@ -288,7 +292,7 @@ class ProfessionalsServiceTest {
                 .thenReturn(List.of(existingRow(PROFESSIONAL_ID, 101L)))
                 .thenReturn(List.of());
 
-        UpdateSubServicesRequest request = new UpdateSubServicesRequest(List.of());
+        UpdateSubServicesRequest request = new UpdateSubServicesRequest(List.of(), null);
         MySubServicesResponse response = professionalsService.updateMySubServices(professionalCaller, request);
 
         assertThat(response.subServiceIds()).isEmpty();
@@ -459,7 +463,7 @@ class ProfessionalsServiceTest {
         when(professionalSubServiceRepository.findByProfessionalId(PROFESSIONAL_ID)).thenReturn(List.of());
 
         assertThatCode(() -> professionalsService.updateMySubServices(professionalCaller,
-                new UpdateSubServicesRequest(List.of(101L))))
+                new UpdateSubServicesRequest(List.of(101L), null)))
                 .doesNotThrowAnyException();
     }
 
@@ -470,7 +474,7 @@ class ProfessionalsServiceTest {
         when(subServiceRepository.findAllById(any())).thenReturn(List.of(realSubService(101L, OTHER_CATEGORY_ID)));
 
         assertThatThrownBy(() -> professionalsService.updateMySubServices(professionalCaller,
-                new UpdateSubServicesRequest(List.of(101L))))
+                new UpdateSubServicesRequest(List.of(101L), null)))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.CATEGORY_MISMATCH));
     }

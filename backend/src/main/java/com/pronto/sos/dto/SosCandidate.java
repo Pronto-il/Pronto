@@ -21,14 +21,30 @@ import java.time.Instant;
  * figure is auditable rather than implicit, and because the same DTO shape backs the
  * professional's own view of what they will net.
  *
- * @param estimatedArrivalMinutes the professional's own committed ETA, given when they accepted
+ * @param estimatedArrivalMinutes the professional's own committed ETA, given when they accepted.
+ *                                <b>Always {@code null} while {@link #state} is
+ *                                {@link SosCandidateState#REQUESTED}</b> — not by a rule applied
+ *                                here, but structurally: {@code sos_offers.estimated_arrival_minutes}
+ *                                is written by the acceptance statement and by nothing else, so
+ *                                there is no path by which an unanswered offer carries a time. The
+ *                                screen must not invent, estimate or borrow one.
  * @param offerId                 what the customer posts back to select this candidate — the
  *                                offer, not the professional, because the offer is what carries
  *                                the agreed price and ETA
+ * @param state                   whether this professional has merely been asked or has actually
+ *                                answered. See {@link SosCandidateState}; only
+ *                                {@link SosCandidateState#ACCEPTED} may be selected, enforced
+ *                                server-side in {@code SosService#selectProfessional} against the
+ *                                offer's real status rather than against this field.
+ * @param respondedAt             when they answered, or {@code null} for a
+ *                                {@link SosCandidateState#REQUESTED} candidate — who by definition
+ *                                has not. Was non-null on every candidate before REQUESTED
+ *                                candidates became visible.
  */
 public record SosCandidate(
         Long offerId,
         Long professionalId,
+        SosCandidateState state,
         String fullName,
         String profileImageUrl,
         String city,

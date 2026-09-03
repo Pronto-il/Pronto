@@ -8,8 +8,8 @@ import {
   Textarea,
   Button,
   ProfilePhoto,
-  Checkbox,
   MultiSelectField,
+  SubServicePriceRow,
 } from '../../shared/components';
 import type { MultiSelectOption, SelectOption } from '../../shared/components';
 import { useAuth } from '../../shared/hooks';
@@ -28,10 +28,16 @@ import {
 import type {
   ProfessionalProfileResponse,
   CategoryWithSubServicesResponse,
+  MySubServicesResponse,
   ServiceRegionResponse,
 } from '../../shared/api';
 import { ProfessionalProfileDisplay, ProfessionalReviewsModal } from '../professionals';
 import type { ProfessionalProfileDisplayProps } from '../professionals';
+import {
+  firstSubServicePriceError,
+  toPriceSelections,
+  validateSubServicePrice,
+} from '../../shared/utils/subServicePrices';
 import styles from './ProfileEditorPage.module.css';
 
 /**
@@ -83,6 +89,19 @@ import styles from './ProfileEditorPage.module.css';
  * `position: sticky`; below `900px` the preview stacks below the form (no sticky) — the
  * lead-approved recommended option (design doc §7.2).
  */
+/**
+ * The server's stored prices as editable strings, keyed by id. An unpriced service maps to `''`
+ * (an empty input) rather than `'0'` — the professional has not named a price, and pre-filling a
+ * zero would put a number in their mouth that they would then have to notice and delete.
+ */
+function pricesFromResponse(response: MySubServicesResponse): Record<number, string> {
+  const prices: Record<number, string> = {};
+  for (const item of response.subServices ?? []) {
+    prices[item.subServiceId] = item.price === null ? '' : String(item.price);
+  }
+  return prices;
+}
+
 export default function ProfileEditorPage() {
   const { refreshUser } = useAuth();
 
@@ -121,6 +140,9 @@ export default function ProfileEditorPage() {
    */
   const [droppedCityNames, setDroppedCityNames] = useState<string[]>([]);
   const [selectedSubServiceIds, setSelectedSubServiceIds] = useState<Set<number>>(new Set());
+  /* Prices as typed, keyed by sub-service id. Strings for the same reason registration keeps them
+     as strings: an emptied field means "no price", and a numeric state would turn that into 0. */
+  const [subServicePrices, setSubServicePrices] = useState<Record<number, string>>({});
   const [isLoadingSubServices, setIsLoadingSubServices] = useState(true);
   const [subServicesLoadError, setSubServicesLoadError] = useState<string | null>(null);
   const [isSavingSubServices, setIsSavingSubServices] = useState(false);
@@ -163,6 +185,7 @@ export default function ProfileEditorPage() {
         if (cancelled) return;
         setCategories(categoriesResult);
         setSelectedSubServiceIds(new Set(mineResult.subServiceIds));
+        setSubServicePrices(pricesFromResponse(mineResult));
         setRegions(regionsResult);
       })
       .catch(() => {
@@ -249,12 +272,30 @@ export default function ProfileEditorPage() {
   }
 
   async function handleSaveSubServices() {
+    // Malformed prices are refused here so the professional gets a per-field message instead of a
+    // generic failure banner. A MISSING price is fine and saves as "not stated" -- the same
+    // distinction the backend draws.
+    const priceError = firstSubServicePriceError(
+      Array.from(selectedSubServiceIds),
+      subServicePrices,
+    );
+    if (priceError) {
+      setSubServicesSaveError(priceError);
+      setSubServicesSavedAt(null);
+      return;
+    }
     setSubServicesSaveError(null);
     setSubServicesSavedAt(null);
     setIsSavingSubServices(true);
     try {
-      const result = await updateMySubServices(Array.from(selectedSubServiceIds));
+      const result = await updateMySubServices(
+        toPriceSelections(Array.from(selectedSubServiceIds), subServicePrices),
+      );
       setSelectedSubServiceIds(new Set(result.subServiceIds));
+      // Re-seed from the server's answer rather than keeping the typed strings: it is what was
+      // actually stored, normalised (420 saved comes back 420.00), so the form stops showing a
+      // value that differs from the record.
+      setSubServicePrices(pricesFromResponse(result));
       setSubServicesSavedAt(Date.now());
     } catch {
       setSubServicesSaveError(GENERIC_ERROR_MESSAGE);
@@ -498,11 +539,20 @@ export default function ProfileEditorPage() {
                           <p className={styles.subServiceGroupTitle}>{category.nameHe}</p>
                           <div className={styles.subServicesList}>
                             {category.subServices.map((subService) => (
-                              <Checkbox
+                              <SubServicePriceRow
                                 key={subService.id}
                                 label={subService.nameHe}
                                 checked={selectedSubServiceIds.has(subService.id)}
-                                onChange={() => toggleSubService(subService.id)}
+                                onToggle={() => toggleSubService(subService.id)}
+                                price={subServicePrices[subService.id] ?? ''}
+                                onPriceChange={(value) =>
+                                  setSubServicePrices((prev) => ({ ...prev, [subService.id]: value }))
+                                }
+                                error={
+                                  selectedSubServiceIds.has(subService.id)
+                                    ? validateSubServicePrice(subServicePrices[subService.id] ?? '')
+                                    : null
+                                }
                               />
                             ))}
                           </div>

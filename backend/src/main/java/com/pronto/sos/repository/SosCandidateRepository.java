@@ -104,4 +104,63 @@ public interface SosCandidateRepository extends Repository<Professional, Long> {
     List<EligibleProfessional> findEligible(@Param("categoryId") Long categoryId,
                                               @Param("serviceCityId") Long serviceCityId,
                                               @Param("excludedProfessionalIds") List<Long> excludedProfessionalIds);
+
+    /**
+     * <b>The demo SOS presenter, if one exists.</b> A deliberately separate query from
+     * {@link #findEligible} above, and the separation is the safety property — not a stylistic
+     * choice.
+     *
+     * <p>The alternative was an {@code OR} branch inside {@code findEligible}. That would have put
+     * a demo concept inside the single statement that decides who may be dispatched to in
+     * Production, where a mistake in the parenthesisation of one {@code OR} silently widens the
+     * production filter. Here, the production query is byte-for-byte what it was, this one is
+     * called only after {@code demo.DemoBehaviorPolicy#isAllowed()} has returned {@code true}, and
+     * the two results are merged in Java where the merge is visible and testable.
+     *
+     * <h2>What is relaxed, and what is emphatically not</h2>
+     *
+     * Relaxed — the four <em>matching</em> filters that decide who gets asked:
+     * <ul>
+     *   <li><b>category</b> — so one presenter can demonstrate SOS for any trade, per the demo
+     *       requirement, without being given eight trades in {@code professional_categories} (which
+     *       would make them a universal professional in ordinary browse-and-book listings too;
+     *       those read {@code ProfessionalListingRepository}, which this query is not part of and
+     *       does not affect);</li>
+     *   <li><b>declared service city</b> — a demonstration is not always run against an address in
+     *       the presenter's real coverage;</li>
+     *   <li><b>the live SOS availability toggle</b> — no {@code sos_availability} join at all, so a
+     *       presenter who left the toggle off still receives the request. This is what makes "I do
+     *       not have to touch the database before a demo" true;</li>
+     *   <li>and, in {@code SosMatchingService}, the dispatch radius and the requirement for a fresh
+     *       routable device position.</li>
+     * </ul>
+     *
+     * <b>Not</b> relaxed — everything that makes a professional real:
+     * {@link ProfessionalEligibility#ELIGIBLE_JPQL} in full (approval, verification document,
+     * enabled working hours, a sub-service under one of their own categories, phone verification)
+     * and {@code u.deletedAt IS NULL}. A presenter is an ordinary, fully-onboarded professional who
+     * is asked more often — not an account that skipped onboarding.
+     *
+     * <p>Returns a list rather than an {@code Optional} only so the caller can merge it without a
+     * special case; {@code ux_professionals_demo_sos_presenter} ({@code V56}) makes it at most one
+     * row.
+     *
+     * @param excludedProfessionalIds same contract as {@link #findEligible} — never empty, and it
+     *                                is what stops the presenter being sent a second offer on a
+     *                                request they already hold one for (they are in
+     *                                {@code alreadyOffered} from the first wave onward)
+     */
+    @Query("SELECT new com.pronto.sos.dto.EligibleProfessional(p.id, p.userId, u.fullName, sc.nameHe, "
+            + "sr.nameHe, p.basePrice, p.reliabilityScore, p.profileImageKey, "
+            + "(SELECT AVG(r.rating) FROM com.pronto.reviews.entity.Review r WHERE r.professionalId = p.id), "
+            + "(SELECT COUNT(r) FROM com.pronto.reviews.entity.Review r WHERE r.professionalId = p.id)) "
+            + "FROM Professional p "
+            + "JOIN com.pronto.users.entity.User u ON u.id = p.userId "
+            + "LEFT JOIN com.pronto.locations.entity.ServiceRegion sr ON sr.id = p.serviceRegionId "
+            + "LEFT JOIN com.pronto.locations.entity.ServiceCity sc ON sc.id = p.baseCityId "
+            + "WHERE p.demoSosPresenter = true AND u.deletedAt IS NULL "
+            + "AND " + ProfessionalEligibility.ELIGIBLE_JPQL + " "
+            + "AND p.id NOT IN :excludedProfessionalIds")
+    List<EligibleProfessional> findDemoSosPresenters(
+            @Param("excludedProfessionalIds") List<Long> excludedProfessionalIds);
 }

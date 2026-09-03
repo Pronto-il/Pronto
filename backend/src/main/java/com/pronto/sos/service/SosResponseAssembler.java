@@ -7,6 +7,7 @@ import com.pronto.professionals.service.ProfessionalCoverageService;
 import com.pronto.professionals.repository.ReviewAggregateRepository;
 import com.pronto.sos.config.SosProperties;
 import com.pronto.sos.dto.SosCandidate;
+import com.pronto.sos.dto.SosCandidateState;
 import com.pronto.sos.dto.SosEventResponse;
 import com.pronto.sos.dto.SosOfferResponse;
 import com.pronto.sos.dto.SosRequestResponse;
@@ -151,6 +152,15 @@ public class SosResponseAssembler {
      * never stored resolved — backend MS9's rule, and the reason
      * {@code getPresignedUrlAssumingCallerAuthorized} is the right call: the caller's right to
      * see these professionals was already established by the request-ownership check upstream.
+     *
+     * <p><b>Serves both candidate states.</b> A {@link SosCandidateState#REQUESTED} offer produces
+     * the same shape as an {@code ACCEPTED} one, with {@code estimatedArrivalMinutes} and
+     * {@code respondedAt} simply absent — which they are on the row itself, so nothing here has to
+     * remember to blank them. The price breakdown <em>is</em> populated for a REQUESTED candidate,
+     * and that is correct rather than an oversight: the fees were snapshotted onto the offer at
+     * dispatch (see {@code SosDispatchService#priceOffer}), so they are what this professional
+     * would cost if they answered. What the customer must not be shown before an acceptance is a
+     * time of arrival, because that is the only figure a human has to promise.
      */
     public SosCandidate toCandidate(SosOffer offer) {
         Professional professional = professionalRepository.findById(offer.getProfessionalId()).orElse(null);
@@ -176,10 +186,38 @@ public class SosResponseAssembler {
         BigDecimal visitFee = offer.getVisitFee();
         BigDecimal totalVisitCost = (visitFee == null ? BigDecimal.ZERO : visitFee).add(offer.getSosFee());
 
-        return new SosCandidate(offer.getId(), offer.getProfessionalId(), fullName, imageUrl, city, serviceRegion,
+        return new SosCandidate(offer.getId(), offer.getProfessionalId(),
+                SosCandidateState.fromOfferStatus(offer.getStatus()),
+                fullName, imageUrl, city, serviceRegion,
                 average == null ? null : BigDecimal.valueOf(average).setScale(2, RoundingMode.HALF_UP),
-                reviewCount, offer.getEstimatedArrivalMinutes(), offer.getDistanceKm(), visitFee,
+                reviewCount, committedEtaMinutes(offer), offer.getDistanceKm(), visitFee,
                 offer.getSosFee(), totalVisitCost, offer.getPlatformCommission(), offer.getRespondedAt());
+    }
+
+    /**
+     * <b>The ETA a human actually promised, or nothing at all.</b>
+     *
+     * <p>This is not the same field as {@code sos_offers.estimated_arrival_minutes}, and reading
+     * that one here would be a real defect now that unanswered offers are visible to the customer.
+     * That column is populated <em>at dispatch</em> with the platform's own routing estimate and is
+     * only replaced by the professional's figure when they accept — so a {@code REQUESTED}
+     * candidate has a number in it, and showing it would put an arrival time on a card belonging to
+     * somebody who has not answered the phone. The customer cannot tell a computed guess from a
+     * commitment, which makes it worse than showing nothing.
+     *
+     * <p>{@code promised_eta_minutes} ({@code V41}) is write-once by the acceptance statement and
+     * by nothing else, so it is {@code null} exactly when nobody has committed — which is the
+     * question this method is asking. The fallback below covers offers accepted before {@code V41}
+     * existed, whose promise was recorded only in the live column; for those, an {@code ACCEPTED}
+     * status is itself the evidence that the figure came from the professional.
+     */
+    private static Short committedEtaMinutes(SosOffer offer) {
+        if (offer.getPromisedEtaMinutes() != null) {
+            return offer.getPromisedEtaMinutes();
+        }
+        return offer.getStatus() == SosOfferStatus.ACCEPTED || offer.getStatus() == SosOfferStatus.SELECTED
+                ? offer.getEstimatedArrivalMinutes()
+                : null;
     }
 
     /**

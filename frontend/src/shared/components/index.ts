@@ -124,3 +124,6 @@ export { ToastViewport } from './ToastViewport';
 
 export { ToolboxGraphic } from './ToolboxGraphic';
 export type { ToolboxGraphicProps } from './ToolboxGraphic';
+
+export { SubServicePriceRow } from './SubServicePriceRow';
+export type { SubServicePriceRowProps } from './SubServicePriceRow';

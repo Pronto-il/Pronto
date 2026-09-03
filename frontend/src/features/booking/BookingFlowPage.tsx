@@ -163,6 +163,11 @@ export default function BookingFlowPage() {
 
   const [windows, setWindows] = useState<AvailableWindow[]>([]);
   const [defaultDurationMinutes, setDefaultDurationMinutes] = useState(60);
+  /* The standard-booking lead time, as the server computed it when the windows were fetched.
+     Presentation only -- the backend re-derives and re-enforces it at order creation, so a stale
+     value here can never let a booking through. See `earliestBookableAt` in shared/api/bookings.ts. */
+  const [earliestBookableAt, setEarliestBookableAt] = useState<string | null>(null);
+  const [minLeadMinutes, setMinLeadMinutes] = useState<number | undefined>(undefined);
   const [selectedStart, setSelectedStart] = useState<string | null>(null);
   const [isLoadingSlots, setIsLoadingSlots] = useState(false);
   const [slotsError, setSlotsError] = useState<string | null>(null);
@@ -290,6 +295,8 @@ export default function BookingFlowPage() {
         const windowsResult = await getAvailableWindows(professional.professionalId, windowsIssueId);
         setWindows(windowsResult.windows);
         setDefaultDurationMinutes(windowsResult.defaultDurationMinutes);
+        setEarliestBookableAt(windowsResult.earliestBookableAt ?? null);
+        setMinLeadMinutes(windowsResult.minLeadMinutes);
         setIsLoadingSlots(false);
 
         if (draft.stage === 'BOOKING_CONFIRM' && draft.bookedStart !== undefined) {
@@ -361,6 +368,8 @@ export default function BookingFlowPage() {
       const result = await getAvailableWindows(professional.professionalId, windowsIssueId);
       setWindows(result.windows);
       setDefaultDurationMinutes(result.defaultDurationMinutes);
+      setEarliestBookableAt(result.earliestBookableAt ?? null);
+      setMinLeadMinutes(result.minLeadMinutes);
     } catch {
       setSlotsError(GENERIC_ERROR_MESSAGE);
     } finally {
@@ -417,6 +426,21 @@ export default function BookingFlowPage() {
     setTimeUnavailableError(message);
     void fetchWindows(professional);
     updateDraft({ stage: 'SLOT_SELECTION', bookedStart: undefined });
+  }
+
+  /**
+   * "נסו SOS" from the lead-time notice on the slot step.
+   *
+   * <p>Enters the SAME SOS flow every other entry point uses (`/sos-booking`, which is
+   * `ProntoSosEntryPage`) rather than a parallel one — the customer is not doing anything special
+   * by arriving here, they simply need somebody sooner than a standard booking allows.
+   *
+   * <p>The draft's stage is left alone deliberately. The SOS entry page owns its own activation
+   * flow (address, urgency, scan), and pre-setting a booking stage here would hand it a
+   * half-finished standard booking to reconcile.
+   */
+  function handleTrySos() {
+    navigate('/sos-booking');
   }
 
   function handleConfirmed(order: OrderResponse) {
@@ -604,6 +628,9 @@ export default function BookingFlowPage() {
                     <StartTimePicker
                       windows={windows}
                       defaultDurationMinutes={defaultDurationMinutes}
+                      earliestBookableAt={earliestBookableAt}
+                      minLeadMinutes={minLeadMinutes}
+                      onTrySos={handleTrySos}
                       selectedStart={selectedStart}
                       onSelect={(value) => {
                         setSelectedStart(value);

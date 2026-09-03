@@ -1,5 +1,6 @@
 package com.pronto.sos.service;
 
+import com.pronto.demo.DemoBehaviorPolicy;
 import com.pronto.maps.GeoCoordinates;
 import com.pronto.maps.RouteUnavailableReason;
 import com.pronto.locations.service.ServiceCityResolver;
@@ -121,12 +122,16 @@ public class SosMatchingService {
     private final SosOfferRepository sosOfferRepository;
     private final DistanceEtaStrategy distanceEtaStrategy;
     private final SosProperties properties;
+    /** The environment half of the demo-presenter guard. See {@link #demoPresenterIds}. */
+    private final DemoBehaviorPolicy demoBehaviorPolicy;
 
     public SosMatchingService(SosCandidateRepository sosCandidateRepository,
                                SosOfferRepository sosOfferRepository,
                                DistanceEtaStrategy distanceEtaStrategy,
                                ServiceCityResolver serviceCityResolver,
-                               SosProperties properties) {
+                               SosProperties properties,
+                               DemoBehaviorPolicy demoBehaviorPolicy) {
+        this.demoBehaviorPolicy = demoBehaviorPolicy;
         this.serviceCityResolver = serviceCityResolver;
         this.sosCandidateRepository = sosCandidateRepository;
         this.sosOfferRepository = sosOfferRepository;
@@ -208,8 +213,15 @@ public class SosMatchingService {
             return MatchingOutcome.degraded(SosMatchingDegradation.SERVICE_AREA_UNCOVERED);
         }
 
-        List<EligibleProfessional> eligible = sosCandidateRepository.findEligible(
-                request.getCategoryId(), serviceCityId.get(), excluded);
+        List<EligibleProfessional> eligible = new ArrayList<>(sosCandidateRepository.findEligible(
+                request.getCategoryId(), serviceCityId.get(), excluded));
+
+        // THE DEMO PRESENTER, merged in here and nowhere else. Gated on the environment FIRST, so
+        // in Production the repository call below is never even made and the demo_sos_presenter
+        // column is never read -- the flag alone grants nothing (see DemoBehaviorPolicy for the
+        // two-key rule and V56 for why a stray presenter row in Production is inert).
+        Set<Long> presenterIds = demoPresenterIds(eligible, excluded, request);
+
         if (eligible.isEmpty()) {
             log.info("sos.matching.empty sosRequestId={} categoryId={} serviceCityId={} "
                             + "reason=no-eligible-professionals",
@@ -256,6 +268,7 @@ public class SosMatchingService {
 
         for (EligibleProfessional professional : available) {
             EtaResult eta = etaByProfessional.get(professional.professionalId());
+            boolean presenter = presenterIds.contains(professional.professionalId());
 
             // ---- MS2's stricter SOS rule ----
             //
@@ -271,6 +284,17 @@ public class SosMatchingService {
             // them anyway is how a customer with a burst pipe ends up waiting for a plumber who
             // was never nearby.
             if (eta == null || !eta.available()) {
+                // The presenter is exempt, and this exemption is the one that actually makes a
+                // demonstration work: the rule above needs a fresh device position, which means a
+                // browser that has granted geolocation and a professional account that has been
+                // reporting one. Requiring that five minutes before a presentation is exactly the
+                // "manually fix the database first" problem this feature exists to remove. They are
+                // dispatched with no distance and no platform estimate -- both nullable on
+                // sos_offers -- and still have to state a real ETA when they accept.
+                if (presenter) {
+                    ranked.add(scoreUnroutablePresenter(professional));
+                    continue;
+                }
                 RouteUnavailableReason reason = eta == null
                         ? RouteUnavailableReason.PROVIDER_UNAVAILABLE
                         : eta.unavailableReason();
@@ -287,7 +311,9 @@ public class SosMatchingService {
             // pre-MS2 implementation returned 8 km same-city / 35 km otherwise against a 40 km
             // ceiling, so widening the ceiling changed nothing observable. The lifecycle around it
             // is untouched -- only the number being compared is now true.
-            if (maxRadius != null && eta.distanceKm().compareTo(maxRadius) > 0) {
+            // Presenter exempt for the same reason: a demonstration is often run against an address
+            // nowhere near wherever the presenter's laptop happens to be.
+            if (!presenter && maxRadius != null && eta.distanceKm().compareTo(maxRadius) > 0) {
                 excludedOutsideRadius++;
                 continue;
             }
@@ -327,6 +353,80 @@ public class SosMatchingService {
                         - excludedProviderFailure, ranked.size(), pool.size(), scope.poolSize(),
                 remainingPoolSlots, excludedNoLocation, excludedProviderFailure, excludedOutsideRadius);
         return MatchingOutcome.of(pool);
+    }
+
+    /**
+     * Adds the demo SOS presenter to {@code eligible} (in place) and returns the ids that are
+     * exempt from the geographic rules below.
+     *
+     * <p><b>Returns an empty set, having made no query at all, in every production-like
+     * environment.</b> That ordering is the safety property rather than an optimisation: the
+     * environment is checked before {@code demo_sos_presenter} is read, so a presenter row that
+     * reaches Production — restored from a dump, created by a mistaken script — activates nothing.
+     * Both keys are required and this is where the first one is turned.
+     *
+     * <p>The presenter is normally <em>not</em> in {@code eligible} already, because the whole point
+     * is that they are asked for categories and cities they have not declared. When they do also
+     * qualify normally, they are deduplicated rather than added twice: a second row would mean a
+     * second offer, and {@code ux_sos_offers_request_professional} would refuse it at the insert
+     * anyway. Either way their id is returned, so the exemption applies however they got in.
+     *
+     * <p>Note what this does <b>not</b> touch: {@code ProfessionalListingRepository}, which backs
+     * ordinary browse-and-book discovery. A presenter appears in a Standard listing only for the
+     * trades and cities they have genuinely declared, exactly like any other professional —
+     * demo SOS eligibility and regular-booking eligibility are separate queries and stay that way.
+     */
+    private Set<Long> demoPresenterIds(List<EligibleProfessional> eligible, List<Long> excluded,
+                                        SosRequest request) {
+        if (!demoBehaviorPolicy.isAllowed()) {
+            return Set.of();
+        }
+        List<EligibleProfessional> presenters = sosCandidateRepository.findDemoSosPresenters(excluded);
+        if (presenters.isEmpty()) {
+            return Set.of();
+        }
+        Set<Long> alreadyListed = eligible.stream()
+                .map(EligibleProfessional::professionalId)
+                .collect(java.util.stream.Collectors.toSet());
+        for (EligibleProfessional presenter : presenters) {
+            if (alreadyListed.add(presenter.professionalId())) {
+                eligible.add(presenter);
+            }
+        }
+        Set<Long> presenterIds = presenters.stream()
+                .map(EligibleProfessional::professionalId)
+                .collect(java.util.stream.Collectors.toSet());
+        log.warn("sos.matching.demo-presenter-included sosRequestId={} categoryId={} presenterIds={} "
+                        + "environment={} — demo-only SOS eligibility is active in this environment",
+                request.getId(), request.getCategoryId(), presenterIds,
+                demoBehaviorPolicy.environmentName());
+        return presenterIds;
+    }
+
+    /**
+     * The demo presenter, scored without a route because there is none to score.
+     *
+     * <p>Every component that needs a distance or an ETA is given the neutral {@code 0.5} the
+     * scorer already uses for "unknown, not bad" ({@link #UNRATED_RATING_SCORE}'s reasoning), so the
+     * presenter lands mid-pack rather than at either extreme. Deliberately not scored {@code 1.0}:
+     * ranking only decides dispatch order within a pool that is capped anyway, and a presenter
+     * pinned to the top of every demonstration would hide the real ranking behaviour the rest of the
+     * demo dataset exists to show.
+     */
+    private RankedCandidate scoreUnroutablePresenter(EligibleProfessional professional) {
+        Map<String, Double> components = new LinkedHashMap<>();
+        components.put("eta", 0.5 * WEIGHT_ETA);
+        components.put("rating", (professional.averageRating() == null
+                ? UNRATED_RATING_SCORE
+                : clamp((professional.averageRating() - 1.0) / 4.0)) * WEIGHT_RATING);
+        components.put("acceptance", UNKNOWN_ACCEPTANCE_SCORE * WEIGHT_ACCEPTANCE);
+        components.put("distance", 0.5 * WEIGHT_DISTANCE);
+        components.put("reliability", (professional.reliabilityScore() == null
+                ? 0.5
+                : clamp(professional.reliabilityScore().doubleValue())) * WEIGHT_RELIABILITY);
+        double total = components.values().stream().mapToDouble(Double::doubleValue).sum();
+        return new RankedCandidate(professional, BigDecimal.valueOf(total).setScale(3, RoundingMode.HALF_UP),
+                null, null, components);
     }
 
     /** Exposed for the dispatcher, which needs the same address shape to price offers. */

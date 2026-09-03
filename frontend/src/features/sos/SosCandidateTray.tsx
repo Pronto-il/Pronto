@@ -55,13 +55,21 @@ export function SosCandidateTray({
   errorMessage,
 }: SosCandidateTrayProps) {
   const isEmpty = candidates.length === 0;
+  // The backend already returns them accepted-first; recomputed here only to label the two groups,
+  // never to reorder. If these ever disagreed the server's order is the correct one.
+  const acceptedCount = candidates.filter((candidate) => candidate.state === 'ACCEPTED').length;
+  const requestedCount = candidates.length - acceptedCount;
 
   return (
-    <section className={styles.tray} aria-label="בעלי מקצוע שאישרו זמינות">
+    <section className={styles.tray} aria-label="בעלי מקצוע בקריאה">
       <div className={styles.header}>
+        {/* The heading counts only the professionals who ANSWERED. The contacted ones are visible
+            below, but a headline number that included them would overstate what the customer has --
+            "3 בעלי מקצוע" when two of them have said nothing is the exact misreading this screen
+            exists to prevent. */}
         <h2 className={styles.title}>
           בעלי מקצוע שאישרו זמינות
-          {!isEmpty && <span className={styles.count}>{candidates.length}</span>}
+          {acceptedCount > 0 && <span className={styles.count}>{acceptedCount}</span>}
         </h2>
 
       </div>
@@ -87,12 +95,17 @@ export function SosCandidateTray({
       ) : (
         <>
           <p className={styles.hint}>
-            {selectionOpen
-              ? stillSearching
-                ? 'אפשר לבחור בכל רגע — הבחירה נשארת פתוחה, וממשיכים לחפש עוד אפשרויות בינתיים.'
-                : 'סיימנו לחפש. הבחירה נשארת פתוחה — אפשר לבחור מתי שנוח.'
-              : // The shared fallback, also used by the details sheet — one rule, one wording.
-                SOS_SELECTION_PENDING_HINT}
+            {acceptedCount === 0
+              ? // Everybody on screen has been contacted and nobody has answered yet. Say exactly
+                // that, rather than the selection hints below, which promise a choice that does not
+                // exist yet.
+                `פנינו ל־${requestedCount} בעלי מקצוע. הם מופיעים למטה, ומי שיאשר שהוא פנוי יעלה לראש הרשימה.`
+              : selectionOpen
+                ? stillSearching
+                  ? 'אפשר לבחור בכל רגע — הבחירה נשארת פתוחה, וממשיכים לחפש עוד אפשרויות בינתיים.'
+                  : 'סיימנו לחפש. הבחירה נשארת פתוחה — אפשר לבחור מתי שנוח.'
+                : // The shared fallback, also used by the details sheet — one rule, one wording.
+                  SOS_SELECTION_PENDING_HINT}
           </p>
 
           <ul className={styles.list}>

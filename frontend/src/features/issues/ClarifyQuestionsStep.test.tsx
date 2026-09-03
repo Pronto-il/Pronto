@@ -36,6 +36,10 @@ function classified(): ClassifyIssueResponse {
   return {
     status: 'CLASSIFIED',
     detectedProfession: 'אינסטלטור',
+    professionCode: 'PLUMBER',
+    subcategoryCode: 'FAUCET_OR_CONNECTION_LEAK',
+    intent: 'REPAIR',
+    urgency: 'NORMAL',
     suggestedCategoryId: 1,
     suggestedCategoryCode: 'plumbing',
     questions: [],
@@ -46,6 +50,10 @@ function asking(next: ClassifyQuestion): ClassifyIssueResponse {
   return {
     status: 'QUESTIONS',
     detectedProfession: null,
+    professionCode: null,
+    subcategoryCode: null,
+    intent: null,
+    urgency: null,
     suggestedCategoryId: null,
     suggestedCategoryCode: null,
     questions: [next],

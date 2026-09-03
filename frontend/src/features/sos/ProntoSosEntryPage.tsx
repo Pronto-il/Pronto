@@ -8,6 +8,7 @@ import {
   PageHeader,
   Skeleton,
   toAddressValue,
+  toServicePlaceFields,
   validateAddress,
   validateAddressTextOnly,
 } from '../../shared/components';
@@ -343,12 +344,12 @@ export default function ProntoSosEntryPage() {
           serviceFloor: effectiveAddress.floor.trim() || undefined,
           serviceEntrance: effectiveAddress.entrance.trim() || undefined,
           serviceAddressNotes: effectiveAddress.addressNotes.trim() || undefined,
-          // V55. Omitted for a grandfathered legacy default address -- which SOS relies on more
-          // than any other flow, since it activates against the saved address without asking.
-          servicePlaceId: effectiveAddress.placeId ?? undefined,
-          serviceFormattedAddress: effectiveAddress.formattedAddress ?? undefined,
-          serviceLatitude: effectiveAddress.latitude ?? undefined,
-          serviceLongitude: effectiveAddress.longitude ?? undefined,
+          // V55. All four place fields or none of them -- see `toServicePlaceFields`. Omitted for
+          // any saved default address, legacy or not: `/me` does not return that address's
+          // coordinates, so the client cannot make a complete claim about it and the server
+          // resolves it from the `users` row instead. SOS relies on this more than any other flow,
+          // since it activates against the saved address without asking.
+          ...toServicePlaceFields(effectiveAddress),
         });
         setSosRequestId(created.id);
       } catch (err) {

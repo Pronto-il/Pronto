@@ -17,6 +17,7 @@ import {
   isValidHouseNumber,
   sanitizeHouseNumber,
   toAddressValue,
+  toServicePlaceFields,
   validateAddress,
   validateAddressTextOnly,
   withEditedAddressText,
@@ -377,5 +378,76 @@ describe('isAddressComplete tracks what the listing endpoint actually rejects', 
     // creation. Gating a listing on a field the listing never sees would be a rule with no
     // referent.
     expect(isAddressComplete({ ...base, floor: '-1', entrance: 'כניסה א' })).toBe(true);
+  });
+});
+
+describe('toServicePlaceFields sends a whole place claim or none of one', () => {
+  const picked: AddressValue = {
+    ...EMPTY_ADDRESS,
+    city: 'תל אביב-יפו',
+    street: 'דיזנגוף',
+    houseNumber: '100',
+    placeId: 'ChIJdizengoff',
+    formattedAddress: 'דיזנגוף 100, תל אביב-יפו',
+    latitude: 32.0785,
+    longitude: 34.7741,
+  };
+
+  it('sends the place id together with the coordinates for a picked address', () => {
+    expect(toServicePlaceFields(picked)).toEqual({
+      servicePlaceId: 'ChIJdizengoff',
+      serviceFormattedAddress: 'דיזנגוף 100, תל אביב-יפו',
+      serviceLatitude: 32.0785,
+      serviceLongitude: 34.7741,
+    });
+  });
+
+  it('sends nothing at all for a saved default address, which has a place id and no coordinates', () => {
+    // The reported SOS regression, at its source. `GET /api/users/me` deliberately withholds the
+    // saved address's coordinates, so `toAddressValue` yields exactly this shape -- and spreading
+    // its `placeId` into a request body without them is what `SelectedPlaceValidator` rejects with
+    // "latitude and longitude are both required when a placeId is supplied".
+    const saved = toAddressValue({
+      city: 'תל אביב-יפו',
+      street: 'דיזנגוף',
+      houseNumber: '100',
+      placeId: 'ChIJdizengoff',
+      formattedAddress: 'דיזנגוף 100, תל אביב-יפו',
+    });
+
+    expect(saved.placeId).toBe('ChIJdizengoff');
+    expect(saved.latitude).toBeNull();
+    expect(toServicePlaceFields(saved)).toEqual({});
+  });
+
+  it('never emits a key at all, so no `undefined` is serialised into the body', () => {
+    // `JSON.stringify` drops `undefined` values, but an explicit `servicePlaceId: undefined` is
+    // still a property the object carries -- and a caller building a payload by spread would see
+    // it shadow a value set earlier. Returning {} keeps the omission total.
+    const saved = { ...picked, latitude: null, longitude: null };
+    expect(Object.keys(toServicePlaceFields(saved))).toEqual([]);
+  });
+
+  it('agrees with isAddressResolved, so the two can never drift apart', () => {
+    const partials: AddressValue[] = [
+      { ...picked, placeId: null },
+      { ...picked, latitude: null },
+      { ...picked, longitude: null },
+    ];
+    for (const partial of partials) {
+      expect(isAddressResolved(partial)).toBe(false);
+      expect(toServicePlaceFields(partial)).toEqual({});
+    }
+    expect(isAddressResolved(picked)).toBe(true);
+    expect(toServicePlaceFields(picked)).not.toEqual({});
+  });
+
+  it('omits only the formatted address when the selection had none', () => {
+    expect(toServicePlaceFields({ ...picked, formattedAddress: null })).toEqual({
+      servicePlaceId: 'ChIJdizengoff',
+      serviceFormattedAddress: undefined,
+      serviceLatitude: 32.0785,
+      serviceLongitude: 34.7741,
+    });
   });
 });

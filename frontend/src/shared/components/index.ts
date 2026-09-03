@@ -44,6 +44,7 @@ export {
   EMPTY_ADDRESS,
   toAddressValue,
   isAddressResolved,
+  toServicePlaceFields,
   isAddressComplete,
   isValidHouseNumber,
   sanitizeHouseNumber,

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { CalendarClock, MapPin } from 'lucide-react';
-import { Button, Card } from '../../shared/components';
+import { Button, Card, toServicePlaceFields } from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
 import type { ClarificationAnswer } from '../../shared/api';
 import { createIssue, createOrder, ApiError, GENERIC_ERROR_MESSAGE, getCategoryNameHe } from '../../shared/api';
@@ -179,12 +179,11 @@ export function BookingSummary({
         issueId: resolvedIssueId,
         professionalId: professional.professionalId,
         bookedStart,
-        // V55: the selected place travels with the address. Omitted for a grandfathered legacy
-        // default address, which the backend accepts by recognising it as the caller's own.
-        servicePlaceId: address.placeId ?? undefined,
-        serviceFormattedAddress: address.formattedAddress ?? undefined,
-        serviceLatitude: address.latitude ?? undefined,
-        serviceLongitude: address.longitude ?? undefined,
+        // V55: the selected place travels with the address, all four fields or none -- see
+        // `toServicePlaceFields`. Omitted for any saved default address, whose coordinates `/me`
+        // does not return; the backend accepts that by recognising the caller's own address and
+        // resolving it server-side.
+        ...toServicePlaceFields(address),
         serviceCity: address.city,
         serviceStreet: address.street,
         serviceHouseNumber: address.houseNumber,

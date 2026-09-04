@@ -127,7 +127,30 @@ beforeEach(() => {
   getProfessionalsForIssue.mockReset().mockResolvedValue({
     issueId: null,
     categoryId: 1,
-    professionals: [{ professionalId: 7, fullName: 'אבי כהן', basePrice: 250 }],
+    // A COMPLETE card, not the three fields these assertions happen to read. `ProfessionalCard`
+    // renders every professional the listing returns, and it dereferences `categoryIds` while
+    // doing so — a partial fixture threw `undefined.filter` mid-render, which vitest reports as an
+    // unhandled error rather than a failing test. The tests still passed locally and the suite
+    // still exited non-zero in CI, which is the worst combination to debug from.
+    professionals: [
+      {
+        professionalId: 7,
+        fullName: 'אבי כהן',
+        serviceRegion: 'גוש דן',
+        basePrice: 250,
+        reliabilityScore: null,
+        city: 'תל אביב-יפו',
+        profileImageUrl: null,
+        averageRating: null,
+        reviewCount: 0,
+        favorited: false,
+        categoryIds: [1],
+        distanceKm: null,
+        etaMinutes: null,
+        etaTrafficAware: false,
+        etaUnavailableReason: 'PROFESSIONAL_LOCATION_STALE',
+      },
+    ],
   });
   getAvailableWindows.mockReset().mockResolvedValue({
     professionalId: 7,

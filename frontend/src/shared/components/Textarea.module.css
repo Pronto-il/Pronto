@@ -15,6 +15,15 @@
   color: var(--color-error);
 }
 
+/* Sits between the label and the box, so it carries the label's bottom margin instead of
+   adding one of its own. */
+.helperText {
+  margin: calc(-1 * var(--space-1)) 0 var(--space-2);
+  font-size: var(--font-size-small);
+  line-height: 18px;
+  color: var(--color-text-muted);
+}
+
 .textarea {
   min-height: 120px;
   border: 1px solid var(--color-border-strong);
@@ -54,14 +63,32 @@
   box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
 }
 
-.errorMessage {
+/* Error/hint on one side, character counter on the other — the counter is added without pushing
+   anything down, and the row collapses to exactly what the field used to render when there is no
+   counter. */
+.footer {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
   margin-block-start: var(--space-2);
+}
+
+.errorMessage {
   font-size: var(--font-size-small);
   color: var(--color-error);
 }
 
 .hint {
-  margin-block-start: var(--space-2);
   font-size: var(--font-size-small);
   color: var(--color-text-muted);
+}
+
+/* Subtle by design: it is a reference, not an instruction. `tabular-nums` stops the row twitching
+   as the count changes width. */
+.counter {
+  flex-shrink: 0;
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
 }

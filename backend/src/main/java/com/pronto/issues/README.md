@@ -328,3 +328,26 @@ access is genuinely rejected. Full design record:
 `docs/architecture/backend-ms9-presigned-image-urls-design.md`. Not yet committed at the
 time this doc was written — branch `frontend/MS9-gap-fixes`, pending the user's own git
 operations.
+
+
+## Free-text length limits (2026-09-04)
+
+`IssueText` holds the description's bounds — **10–300 characters** — and both request bodies that
+carry a description (`ClassifyRequest`, `CreateIssueRequest`) read them from it rather than
+repeating literals. They have to agree: the customer types the description once and it travels
+through classification *and* the commit, so a bound on one and not the other would refuse at
+booking time something already classified.
+
+The maximum was 2000. It is now 300, which is a deliberate product decision, not a schema one —
+`issues.description` is a `TEXT` column, so this annotation is the only bound there is. It also
+means the classifier sees a focused description rather than an essay.
+
+`ClarificationAnswerRequest` was **entirely unbounded** and now caps `answer` at 200 (the
+free-text answer limit) and `question` at 500 (a wire-level sanity bound on text this service
+generated itself and only receives back). Over-long values are rejected in the standard
+`VALIDATION_ERROR` envelope with the field named — never trimmed to fit.
+
+The frontend mirrors these numbers in `shared/api/fieldLimits.ts`, stops the caret at them and
+shows a counter; that is a courtesy to the person typing. `common.validation.FreeTextLengthLimitsTest`
+covers both edges of each bound, against the request objects directly — i.e. with the client out
+of the picture.

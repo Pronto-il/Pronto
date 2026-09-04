@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { resolveDraftRoute, useAuth, useBookingDraft } from '../../shared/hooks';
+import { resolveDraftRoute, useAuth, useAuthGate, useBookingDraft } from '../../shared/hooks';
 import type { AuthSession } from '../../shared/api';
 
 /**
@@ -20,6 +20,7 @@ export function useSessionLanding() {
   const navigate = useNavigate();
   const { establishSession } = useAuth();
   const { draft } = useBookingDraft();
+  const { completeInPlace, close: closeAuthGate } = useAuthGate();
 
   return useCallback(
     async (session: AuthSession) => {
@@ -27,6 +28,21 @@ export function useSessionLanding() {
       // screen, so it must come from the server's answer rather than from anything the login
       // response happened to carry.
       const me = await establishSession(session);
+
+      // The deferred-authentication gate (`AuthGateProvider`) is open: the customer never left the
+      // screen that needed the account — the login form is over it — so there is nothing to
+      // navigate back to. Consuming the gate closes it and resumes the action they were refused,
+      // with every piece of what they had entered still on screen behind it. Checked before the
+      // draft route below, because that route would send them to a fresh copy of the screen they
+      // are already looking at.
+      // A non-CUSTOMER who signs in through the gate is a real (if odd) case — a professional
+      // using a household member's phone — and resuming a customer booking for them would only
+      // produce a 403 from the role-gated write. They get their own dashboard, and the gate is
+      // closed on the way so no modal is left over a screen they are leaving.
+      if (me.role === 'CUSTOMER' && completeInPlace()) {
+        return;
+      }
+      closeAuthGate();
 
       // Deferred authentication: a customer who was sent here by the book button is mid-booking,
       // and landing them on Home would throw away the journey at the exact moment they did what
@@ -43,7 +59,7 @@ export function useSessionLanding() {
       }
       navigate(landingFor(me.role), { replace: true });
     },
-    [establishSession, navigate, draft],
+    [establishSession, navigate, draft, completeInPlace, closeAuthGate],
   );
 }
 

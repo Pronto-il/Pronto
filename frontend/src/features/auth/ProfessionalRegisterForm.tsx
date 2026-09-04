@@ -26,6 +26,9 @@ import {
   getCategoriesWithSubServices,
   getServiceAreas,
   citiesForRegion,
+  FULL_NAME_MAX_LENGTH,
+  EMAIL_MAX_LENGTH,
+  PHONE_INPUT_MAX_LENGTH,
 } from '../../shared/api';
 import type {
   AuthStepResponse,
@@ -582,6 +585,7 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
               onChange={(event) => setFullName(event.target.value)}
               onBlur={() => handleBlur('fullName', validateFullName(fullName))}
               error={errors.fullName}
+              maxLength={FULL_NAME_MAX_LENGTH}
               autoComplete="name"
               required
             />
@@ -592,6 +596,7 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
               onChange={(event) => setEmail(event.target.value)}
               onBlur={() => handleBlur('email', validateEmail(email))}
               error={emailError}
+              maxLength={EMAIL_MAX_LENGTH}
               hint={emailAvailability.status === 'checking' ? 'בודקים את כתובת האימייל…' : undefined}
               autoComplete="email"
               required
@@ -605,6 +610,7 @@ export function ProfessionalRegisterForm({ onSuccess, onExit }: ProfessionalRegi
               onChange={(event) => setPhone(event.target.value)}
               onBlur={() => handleBlur('phone', validatePhone(phone))}
               error={phoneError}
+              maxLength={PHONE_INPUT_MAX_LENGTH}
               autoComplete="tel"
               hint={
                 phoneAvailability.status === 'checking'

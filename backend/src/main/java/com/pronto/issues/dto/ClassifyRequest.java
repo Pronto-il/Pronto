@@ -28,7 +28,8 @@ import java.util.List;
  * budget simply leaves no budget remaining, which forces a final decision.
  */
 public record ClassifyRequest(
-        @NotBlank @Size(min = 10, max = 2000) String description,
+        @NotBlank @Size(min = IssueText.DESCRIPTION_MIN_LENGTH, max = IssueText.DESCRIPTION_MAX_LENGTH)
+        String description,
         @Size(max = 6) List<@NotBlank String> imageKeys,
         Long selectedCategoryId,
         @Valid @Size(max = 3) List<ClarificationAnswerRequest> clarificationAnswers

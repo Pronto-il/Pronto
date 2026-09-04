@@ -346,6 +346,29 @@ resource "aws_ecs_task_definition" "backend" {
       # "an unrecognised value is treated as production" -- correct, but not something to depend on.
       { name = "PRONTO_ENVIRONMENT", value = "production" },
 
+      # Demo-only SOS behaviour, ON in Production deliberately, for live presentations.
+      #
+      # This is the ONE guard that is intentionally not left at its environment-derived default.
+      # It affects exactly one account -- the single professional carrying
+      # professionals.demo_sos_presenter (V56's unique index allows no more than one) -- and makes
+      # that account an eligible recipient of every SOS request: any region, city, category and
+      # distance. It is the narrow alternative to moving PRONTO_ENVIRONMENT off "production" for a
+      # demo, which would also switch the OTP transports to logging, disable the AI mode guard,
+      # widen the CORS allow-list and relax the database guards.
+      #
+      # It changes NOTHING for any real professional, nothing about Regular (non-SOS) booking, and
+      # grants no permission: an un-onboarded presenter is offered every request and still refused
+      # at selection by the ordinary eligibility check. See demo.DemoBehaviorPolicy and V58.
+      #
+      # Two consequences worth knowing before leaving this on:
+      #   1. The presenter receives REAL customers' emergencies, carrying their service addresses.
+      #   2. An SOS in a city outside the service catalogue now dispatches to the presenter instead
+      #      of answering SERVICE_AREA_UNCOVERED, because "every SOS request" includes those.
+      # Remove this line to restore the default (demo behaviour off in production-like
+      # environments); nothing else needs to change. DemoBehaviorPolicy logs the active state at
+      # WARN on every startup.
+      { name = "DEMO_BEHAVIOR_ENABLED", value = "true" },
+
       { name = "DB_HOST", value = aws_db_instance.main.address },
       { name = "DB_PORT", value = tostring(aws_db_instance.main.port) },
       { name = "DB_NAME", value = var.db_name },

@@ -416,3 +416,63 @@ live in `docs/architecture/frontend-request-efficiency.md`; what changed *here*:
 - **`AuthProvider`** guards its `GET /api/users/me` bootstrap with a ref, so `StrictMode`'s
   double-invoked mount effect no longer issues it twice, and calls `clearPollingStore()` on logout
   and on the 401 session-end path.
+
+## `useHeaderBackAction` / `HeaderBackProvider` (2026-09-04)
+
+Lets a routed screen render its back control inside `AppLayout`'s header bar instead of as a row
+below it. `HeaderBackProvider` holds a single `{ label, onBack }` slot (mounted above the router in
+`App.tsx`); `useHeaderBackAction(onBack, label = 'חזרה')` fills it for as long as the screen is
+mounted and clears it on unmount.
+
+Two deliberate details. **`HeaderBackContext` is defaulted rather than `undefined`-and-throw**,
+unlike `useAuth`/`useToast` whose absence is a real bug: a header slot is decoration, and a page
+rendered outside the shell — which is what every component test does — must still render, just
+without the hoisted button. And **`onBack` is invoked through a stable wrapper over a ref**, so a
+handler that closes over live state (`NewIssuePage`'s reads the current step) stays current without
+the registration effect re-running on every keystroke.
+
+`useHeaderBackAction(null)` empties the slot rather than registering a dead button — for a screen
+where back is conditional (`BookingFlowPage`'s success step, `ProfessionMatchPage`'s matching phase)
+rather than absent. It keeps those callers from having to make the hook call itself conditional.
+
+
+## Guest draft freshness (2026-09-04) — `sanitizeRestoredDraft`
+
+`updatedAt` was written on every `updateDraft` and read by nobody. It is now the input to one
+policy, applied at the single point a draft re-enters the app (`BookingDraftProvider`'s load)
+rather than re-asked by each screen's resume effect.
+
+**The bug.** A guest starts a booking, closes the app, comes back the next day, and every screen
+decided where to resume from data with no age attached to it: `BookingFlowPage` skips its address
+step whenever `stage` is past it and the address fields are non-empty; `ProfessionMatchPage` opens
+straight into the matching wheel whenever `isAddressComplete(address)`; `ProntoSosEntryPage` goes
+further and *auto-activates a dispatch* against a usable address. Yesterday's address, professional
+and time silently became today's booking.
+
+**The threshold is 12 hours**, and guest drafts only (`ownerId === null` — a signed-in customer has
+an account to come back to and nothing about their resume was reported wrong). Everything inside one
+visit — a refresh, a commute, a phone that slept — resumes exactly as before. The upper bound it
+sits under is the backend's 24h guest upload session: past that, a guest's photos are unreachable
+with the token that uploaded them anyway.
+
+**Kept** (the customer's account of their problem, which does not go stale): description, category,
+photo keys, clarification answers, urgency — so Regular stays Regular and SOS stays SOS — any issue
+id, and the address itself. **Dropped** (positions in a flow, not facts): stage → `ADDRESS_SELECTION`,
+professional, start time, sort, address mode.
+
+The address is kept as *prefill* and flagged `addressUnconfirmed`, because "do we have an address?"
+and "has this customer confirmed it is still where they want somebody sent?" are different
+questions, and `isAddressComplete` was standing in for the second one. The flag is what the three
+screens above now consult; whichever address step the customer confirms clears it.
+
+## The deferred-authentication gate (2026-09-04) — `AuthGateProvider` / `useAuthGate`
+
+A screen can ask for a session **without leaving itself**: `open(onAuthenticated)` records the action
+the customer was refused, `AuthGateModal` (features/auth) renders the existing login/register/OTP
+components over the screen, and `useSessionLanding` consumes the gate (`completeInPlace`) instead of
+navigating. One landing implementation still, which is the point — the gate is a branch inside it,
+not a second copy of it.
+
+Defaulted context rather than throw-on-missing, like `headerBackContext`: a screen rendered outside
+the provider (every component test) keeps working, and without a gate the honest fallback is the old
+behaviour.

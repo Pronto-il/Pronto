@@ -1,7 +1,14 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Input } from '../../shared/components';
-import { registerCustomer, getFieldErrorMessages, GENERIC_ERROR_MESSAGE } from '../../shared/api';
+import {
+  registerCustomer,
+  getFieldErrorMessages,
+  GENERIC_ERROR_MESSAGE,
+  FULL_NAME_MAX_LENGTH,
+  EMAIL_MAX_LENGTH,
+  PHONE_INPUT_MAX_LENGTH,
+} from '../../shared/api';
 import type { AuthStepResponse } from '../../shared/api';
 import { RegistrationWizardShell } from './RegistrationWizardShell';
 import { isBlocking, useContactAvailability } from './useContactAvailability';
@@ -266,6 +273,7 @@ export function CustomerRegisterForm({ onSuccess, onExit }: CustomerRegisterForm
               onChange={(event) => setFullName(event.target.value)}
               onBlur={() => handleBlur('fullName', validateFullName(fullName))}
               error={errors.fullName}
+              maxLength={FULL_NAME_MAX_LENGTH}
               autoComplete="name"
               required
             />
@@ -276,6 +284,7 @@ export function CustomerRegisterForm({ onSuccess, onExit }: CustomerRegisterForm
               onChange={(event) => setEmail(event.target.value)}
               onBlur={() => handleBlur('email', validateEmail(email))}
               error={emailError}
+              maxLength={EMAIL_MAX_LENGTH}
               hint={emailAvailability.status === 'checking' ? 'בודקים את כתובת האימייל…' : undefined}
               autoComplete="email"
               required
@@ -287,6 +296,7 @@ export function CustomerRegisterForm({ onSuccess, onExit }: CustomerRegisterForm
               onChange={(event) => setPhone(event.target.value)}
               onBlur={() => handleBlur('phone', validatePhone(phone))}
               error={phoneError}
+              maxLength={PHONE_INPUT_MAX_LENGTH}
               hint={
                 phoneAvailability.status === 'checking'
                   ? 'בודקים את מספר הטלפון…'

@@ -155,3 +155,13 @@ this package implements. Unit-tested (`reviews.service.ReviewsServiceTest`).
 **Active Booking Floating Indicator feature (2026-08-17)**: no backend changes to this
 package. `POST /api/reviews` gained its first real frontend consumer — see "Interactions
 with other packages" above.
+
+
+## Comment length (2026-09-04)
+
+`ReviewText.COMMENT_MAX_LENGTH` is **500**, shared by `CreateReviewRequest` and
+`UpdateReviewRequest` so writing a review and editing one can never disagree about what fits.
+Narrowed from 2000, which nothing on the client ever told the customer about and which no review
+had a use for. The comment stays optional. Mirrored on the client by
+`shared/api/fieldLimits.ts`'s `REVIEW_COMMENT_MAX_LENGTH`, which caps the field and shows a
+counter; covered on this side by `common.validation.FreeTextLengthLimitsTest`.

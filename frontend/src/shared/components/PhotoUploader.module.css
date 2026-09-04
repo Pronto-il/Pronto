@@ -4,23 +4,31 @@
   margin-block-end: var(--space-4);
 }
 
+.labelRow {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-block-end: var(--space-2);
+}
+
 .label {
   font-size: 14px;
   font-weight: 600;
-  margin-block-end: var(--space-2);
   color: var(--color-text-primary);
 }
 
 .grid {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-2);
 }
 
 .thumbWrapper {
   position: relative;
-  width: 88px;
-  height: 88px;
+  width: 72px;
+  height: 72px;
   flex-shrink: 0;
 }
 
@@ -53,7 +61,7 @@
 }
 
 /* Determinate upload progress, shown in place of `.spinner` once bytes are actually moving.
-   Sized to fit inside the 88px thumbnail without crowding the remove button. */
+   Sized to fit inside the thumbnail without crowding the remove button. */
 .progress {
   display: flex;
   flex-direction: column;
@@ -124,17 +132,23 @@
   border-color: var(--color-error);
 }
 
+/* A compact trigger rather than a drop-zone-sized square: photos are optional here, so the
+   control should read as one more small affordance, and only the thumbnails the customer
+   actually adds are allowed to claim real vertical space. */
 .addButton {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 88px;
-  height: 88px;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding-inline: var(--space-4);
   flex-shrink: 0;
   border: 1px dashed var(--color-border-strong);
   border-radius: var(--radius-md);
   background: var(--color-surface-secondary);
   color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
 }
 
@@ -153,7 +167,6 @@
 }
 
 .hint {
-  margin-block-start: var(--space-2);
-  font-size: 14px;
+  font-size: 13px;
   color: var(--color-text-muted);
 }

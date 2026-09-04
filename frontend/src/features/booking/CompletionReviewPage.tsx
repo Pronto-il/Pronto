@@ -2,8 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PageHeader, Card, Button, Textarea, Skeleton, Mascot } from '../../shared/components';
 import { StarRatingInput } from './StarRatingInput';
-import { useActiveOrder } from '../../shared/hooks';
-import { getOrder, createReview, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
+import { useActiveOrder, useHeaderBackAction } from '../../shared/hooks';
+import {
+  getOrder,
+  createReview,
+  ApiError,
+  GENERIC_ERROR_MESSAGE,
+  REVIEW_COMMENT_MAX_LENGTH,
+} from '../../shared/api';
 import type { OrderDetailResponse } from '../../shared/api';
 import { formatDateLabel } from '../../shared/utils/formatDateTime';
 import styles from './CompletionReviewPage.module.css';
@@ -106,12 +112,15 @@ export default function CompletionReviewPage() {
     navigate('/orders');
   }
 
+  // Back in the app header (`AppLayout`), like the rest of the customer flow.
+  useHeaderBackAction(() => navigate('/orders'));
+
   const showForm = !isLoading && order && order.orderStatus === 'COMPLETED' && !submitted && !alreadyReviewed;
   const showDone = !isLoading && order && order.orderStatus === 'COMPLETED' && (submitted || alreadyReviewed);
 
   return (
     <div className="focused-page">
-      <PageHeader title="השאירו ביקורת" onBack={() => navigate('/orders')} />
+      <PageHeader title="השאירו ביקורת" />
 
       {isLoading && (
         <div className={styles.wrapper}>
@@ -166,6 +175,7 @@ export default function CompletionReviewPage() {
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             placeholder="ספרו לנו עוד על החוויה שלכם…"
+            maxLength={REVIEW_COMMENT_MAX_LENGTH}
           />
 
           {submitError && (

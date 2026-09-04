@@ -527,3 +527,23 @@ its own — `ImageUploadField`'s registration and profile-photo flows also reach
 and silently re-encoding every image every caller ever passes would be a far wider behavioural
 change than the one being made. Compression is the caller's decision;
 `shared/components/PhotoUploader` makes it via `shared/lib/imageCompression.ts`.
+
+
+## `fieldLimits.ts` — free-text character limits (2026-09-04)
+
+One file holding the character cap for every user-editable free-text field, each entry naming the
+backend `@Size` annotation it mirrors. Kept together rather than scattered per feature because the
+rule is only useful if the two ends agree: the client stops the caret at the same number the server
+refuses past, so nothing is typed that will be thrown away and no validation error appears for a
+limit nothing announced. A drift between them shows up in one diff.
+
+The client limit is a courtesy; the server's is the rule. Neither truncates — input is *stopped*,
+never silently cut, and an over-long payload from a non-browser caller is rejected with the
+existing `VALIDATION_ERROR` envelope.
+
+Counted in UTF-16 code units, which is what the DOM's `maxLength` and Java's `String.length()`
+both count, so the number on screen is the number the server measures.
+
+Two limits changed rather than merely being written down: the issue description **2000 → 300** and
+the review comment **2000 → 500**. `ClarificationAnswerRequest` and three of `CreateOrderRequest`'s
+address strings had no server-side bound at all and now do.

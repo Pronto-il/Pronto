@@ -119,7 +119,7 @@ public interface SosCandidateRepository extends Repository<Professional, Long> {
      *
      * <h2>What is relaxed, and what is emphatically not</h2>
      *
-     * Relaxed — the four <em>matching</em> filters that decide who gets asked:
+     * Relaxed — every filter that could keep the presenter out of a dispatch:
      * <ul>
      *   <li><b>category</b> — so one presenter can demonstrate SOS for any trade, per the demo
      *       requirement, without being given eight trades in {@code professional_categories} (which
@@ -131,15 +131,35 @@ public interface SosCandidateRepository extends Repository<Professional, Long> {
      *   <li><b>the live SOS availability toggle</b> — no {@code sos_availability} join at all, so a
      *       presenter who left the toggle off still receives the request. This is what makes "I do
      *       not have to touch the database before a demo" true;</li>
-     *   <li>and, in {@code SosMatchingService}, the dispatch radius and the requirement for a fresh
-     *       routable device position.</li>
+     *   <li><b>onboarding eligibility</b> — {@link ProfessionalEligibility#ELIGIBLE_JPQL} is
+     *       deliberately <em>not</em> applied here. It used to be, on the reasoning that a presenter
+     *       should be "an ordinary professional who is asked more often". That reasoning conflicts
+     *       with the guarantee this query now has to make: approval status, a verification
+     *       document, enabled working hours, a sub-service row and phone verification are five
+     *       independent ways for the presenter to silently stop receiving requests between
+     *       presentations, and diagnosing which one fired is exactly the pre-demo database
+     *       archaeology the flag exists to abolish;</li>
+     *   <li>and, in {@code SosMatchingService}, the dispatch radius, the requirement for a fresh
+     *       routable device position, the busy-professional filter, the pool cap, an unresolvable
+     *       service city and an ungeocodable address.</li>
      * </ul>
      *
-     * <b>Not</b> relaxed — everything that makes a professional real:
-     * {@link ProfessionalEligibility#ELIGIBLE_JPQL} in full (approval, verification document,
-     * enabled working hours, a sub-service under one of their own categories, phone verification)
-     * and {@code u.deletedAt IS NULL}. A presenter is an ordinary, fully-onboarded professional who
-     * is asked more often — not an account that skipped onboarding.
+     * <b>Not</b> relaxed — two things, both about the row existing at all rather than about
+     * matching: {@code p.demoSosPresenter = true} itself, and {@code u.deletedAt IS NULL}. A
+     * soft-deleted account is not a professional who is hard to match, it is one who is gone, and
+     * dispatching a real customer's emergency to a deleted account is not a demo behaviour anybody
+     * asked for.
+     *
+     * <p><b>This query grants no permissions.</b> Being dispatched an offer is not the same as
+     * being given work. {@code SosService}'s selection path re-checks
+     * {@link ProfessionalEligibility} through {@code ProfessionalRepository#existsEligibleById} at
+     * the last moment before an order exists, and that check is untouched by anything here. So an
+     * un-onboarded presenter is <em>offered</em> every SOS request, may <em>accept</em> the offer
+     * ({@code SosOfferService#accept} is ungated by design), and is then refused with
+     * {@code SOS_CANDIDATE_NOT_AVAILABLE} if the customer actually selects them — no order, no
+     * priced commitment. A presenter who is expected to complete a booking on stage therefore
+     * still needs to be properly onboarded; what this relaxation buys is that the <em>request
+     * always arrives</em>, which is the part a demonstration depends on.
      *
      * <p>Returns a list rather than an {@code Optional} only so the caller can merge it without a
      * special case; {@code ux_professionals_demo_sos_presenter} ({@code V56}) makes it at most one
@@ -159,7 +179,6 @@ public interface SosCandidateRepository extends Repository<Professional, Long> {
             + "LEFT JOIN com.pronto.locations.entity.ServiceRegion sr ON sr.id = p.serviceRegionId "
             + "LEFT JOIN com.pronto.locations.entity.ServiceCity sc ON sc.id = p.baseCityId "
             + "WHERE p.demoSosPresenter = true AND u.deletedAt IS NULL "
-            + "AND " + ProfessionalEligibility.ELIGIBLE_JPQL + " "
             + "AND p.id NOT IN :excludedProfessionalIds")
     List<EligibleProfessional> findDemoSosPresenters(
             @Param("excludedProfessionalIds") List<Long> excludedProfessionalIds);

@@ -100,6 +100,30 @@ pronto:
   # docs/production-roadmap/reports/prod-MS4-report.md.
   environment: ${PRONTO_ENVIRONMENT:local}
 
+  demo:
+    # May demo-only behaviour run here? See demo.DemoBehaviorPolicy.
+    #
+    # DELIBERATELY EMPTY BY DEFAULT, and empty is not the same as false. Unset means "derive it
+    # from pronto.environment", which is the historical rule: on in local/test/demo, off in every
+    # production-like environment. Every existing deployment and CI job is therefore unaffected by
+    # this key existing.
+    #
+    # Setting it to true turns demo behaviour on ANYWHERE, Production included. That is a supported
+    # configuration, not an accident: presentations are run against the real system, and the
+    # alternative -- moving PRONTO_ENVIRONMENT off `production` for a demo -- would simultaneously
+    # switch the OTP transports to logging, disable the AI mode guard, widen the CORS allow-list
+    # and relax the database guards. This key is the narrow version of that.
+    #
+    # What it does, and only for the single professional carrying professionals.demo_sos_presenter
+    # (V56's unique index allows at most one): that account becomes an eligible recipient of EVERY
+    # SOS request -- every city, every category, every distance -- bypassing the matching filters.
+    # It changes nothing for any other professional, nothing about Regular (non-SOS) booking, and
+    # grants no permissions: see SosCandidateRepository#findDemoSosPresenters.
+    #
+    # In Production those are real customers' emergencies and the offers carry their service
+    # addresses. DemoBehaviorPolicy logs the active state at WARN on every startup.
+    behavior-enabled: ${DEMO_BEHAVIOR_ENABLED:}
+
   demo-data:
     # TEST/DEMO synthetic dataset (com.pronto.demo). Off by default and off in every
     # environment except a deliberately-configured TEST/DEMO one; a normal startup never

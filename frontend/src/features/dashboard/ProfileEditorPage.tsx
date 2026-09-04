@@ -24,6 +24,8 @@ import {
   getFieldErrorMessages,
   getServiceAreas,
   citiesForRegion,
+  BIO_MAX_LENGTH,
+  FULL_NAME_MAX_LENGTH,
 } from '../../shared/api';
 import type {
   ProfessionalProfileResponse,
@@ -435,6 +437,7 @@ export default function ProfileEditorPage() {
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               error={fieldErrors.fullName}
+              maxLength={FULL_NAME_MAX_LENGTH}
               required
             />
             {/* MS4 §18: categories and service coverage are editable here, not only at
@@ -498,7 +501,7 @@ export default function ProfileEditorPage() {
               value={bio}
               onChange={(e) => setBio(e.target.value)}
               error={fieldErrors.bio}
-              hint="עד 2000 תווים."
+              maxLength={BIO_MAX_LENGTH}
             />
             <Input
               label="מחיר ביקור בסיסי"

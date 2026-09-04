@@ -145,7 +145,12 @@ export function PhotoUploader({ label, photos, onChange, maxCount = 6, hint, onU
 
   return (
     <div className={styles.field}>
-      <span className={styles.label}>{label}</span>
+      {/* Label and hint share one line: this section is optional, and on a phone it should cost
+          the description above it as little vertical room as possible. */}
+      <div className={styles.labelRow}>
+        <span className={styles.label}>{label}</span>
+        {hint && <span className={styles.hint}>{hint}</span>}
+      </div>
       <div className={styles.grid}>
         {photos.map((photo) => (
           <div key={photo.imageKey} className={styles.thumbWrapper}>
@@ -211,7 +216,8 @@ export function PhotoUploader({ label, photos, onChange, maxCount = 6, hint, onU
         ))}
         {canAddMore && (
           <button type="button" className={styles.addButton} onClick={() => inputRef.current?.click()}>
-            <ImagePlus size={22} aria-hidden="true" />
+            <ImagePlus size={18} aria-hidden="true" />
+            <span>הוספת תמונה</span>
           </button>
         )}
       </div>
@@ -224,7 +230,6 @@ export function PhotoUploader({ label, photos, onChange, maxCount = 6, hint, onU
         onChange={handleSelect}
         aria-label={label}
       />
-      {hint && <p className={styles.hint}>{hint}</p>}
     </div>
   );
 }

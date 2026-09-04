@@ -1,22 +1,20 @@
-/* Mascot + heading lead, above the Card (design doc §3.5/§3.6) — same restrained, static,
-   decorative pattern `LoginPage.tsx` established. */
-.lead {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-block-end: var(--space-4);
-}
-
-.heading {
-  font-size: 20px;
-  line-height: 28px;
-  font-weight: 700;
-  color: var(--color-text-primary);
-  margin: 0;
-}
-
 .card {
   padding: var(--space-6);
+}
+
+/* Compound selector on purpose: this overrides `Textarea.module.css`'s own single-class
+   `.field` margin, and equal specificity would leave the winner up to stylesheet order. */
+.problemField.problemField {
+  margin-block-end: var(--space-2);
+}
+
+/* Opens at ~3 lines instead of the shared 120px, and is grown to fit by the auto-resize effect
+   in `DescribeIssueStep.tsx` — hence `resize: none`, since the handle would fight it. */
+.problemField textarea {
+  min-height: 76px;
+  max-height: 220px;
+  overflow-y: auto;
+  resize: none;
 }
 
 .form {
@@ -42,15 +40,25 @@
    CSS, not the component itself: these are one-shot prefill triggers, not a `role="radiogroup"`
    selection state. --- */
 
+/* Deliberately one row that scrolls sideways rather than a wrapping block: a second row of
+   chips pushes the urgency choice below the fold on a phone, and these are optional shortcuts
+   — worth a swipe, not worth the height. */
 .examplesRow {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
   gap: var(--space-2);
-  margin-block-start: var(--space-2);
   margin-block-end: var(--space-4);
+  /* Room for the overlay scrollbar so it can't sit on top of the chips. */
+  padding-block-end: var(--space-1);
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
 }
 
 .exampleChip {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  scroll-snap-align: start;
   height: 36px;
   padding-inline: var(--space-4);
   border-radius: var(--radius-md);
@@ -79,20 +87,20 @@
 /* --- Urgency section (design doc §3.3/§3.4) --- */
 
 .urgencySection {
-  margin-block-start: var(--space-2);
+  margin-block-start: 0;
 }
 
 .urgencyHeading {
   font-size: 15px;
   font-weight: 600;
   color: var(--color-text-primary);
-  margin: 0 0 var(--space-3);
+  margin: 0 0 var(--space-2);
 }
 
 .urgencyRow {
   display: flex;
-  gap: var(--space-3);
-  margin-block-end: var(--space-6);
+  gap: var(--space-2);
+  margin-block-end: var(--space-4);
 }
 
 .urgencyCard {
@@ -100,9 +108,9 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: var(--space-2);
+  gap: var(--space-1);
   text-align: start;
-  padding: var(--space-4);
+  padding: var(--space-3);
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border-strong);
   background: var(--color-surface);
@@ -177,12 +185,25 @@
     padding: var(--space-4);
   }
 
-  .examplesRow {
-    flex-wrap: wrap;
+  /* Stays a single side-by-side row on mobile too — stacking it turned the one comparison on
+     this screen into two full-width blocks and pushed the submit button off-screen. The copy
+     steps down a size instead. */
+  .urgencyCard {
+    padding: var(--space-3) var(--space-2);
   }
 
-  .urgencyRow {
-    flex-direction: column;
+  .urgencyTitle {
+    font-size: 14px;
+  }
+
+  .urgencySubcopy {
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .urgencyNote {
+    font-size: 11px;
+    line-height: 15px;
   }
 }
 

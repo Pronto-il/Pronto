@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Heart } from 'lucide-react';
 import { PageHeader, Card, Button, Skeleton } from '../../shared/components';
-import { useAuth, useBookingDraft } from '../../shared/hooks';
+import { useAuth, useBookingDraft, useHeaderBackAction } from '../../shared/hooks';
 import {
   getProfessionalProfile,
   getReviews,
@@ -153,6 +153,11 @@ export default function ProfessionalProfilePage() {
    * guaranteed here — the line above just wrote to it, and `locationState` only exists because the
    * matching screen sent them.
    */
+  // Back in the app header (`AppLayout`), like the rest of the customer flow. Still `navigate(-1)`
+  // — this screen is opened from wherever the customer was browsing, and history is the only thing
+  // that knows where that was.
+  useHeaderBackAction(() => navigate(-1));
+
   function handleSelectProfessional() {
     if (!locationState) return;
     if (locationState.urgencyType === 'STANDARD') {
@@ -166,7 +171,7 @@ export default function ProfessionalProfilePage() {
 
   return (
     <div className="focused-page">
-      <PageHeader title="פרופיל בעל מקצוע" onBack={() => navigate(-1)} />
+      <PageHeader title="פרופיל בעל מקצוע" />
 
       {isLoading && (
         <div className={styles.loadingIdentity}>

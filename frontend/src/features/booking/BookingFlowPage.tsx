@@ -24,7 +24,7 @@ import type {
 import { deriveStartTimeCandidates } from '../../shared/utils/availability';
 import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
 import { ProfessionalList, STANDARD_SORT_OPTIONS } from '../professionals';
-import { useAuth, useBookingDraft } from '../../shared/hooks';
+import { useAuth, useBookingDraft, useHeaderBackAction } from '../../shared/hooks';
 import { stepTransition } from '../../shared/motion/variants';
 import { AddressSelectionStep, type AddressMode } from './AddressSelectionStep';
 import { StartTimePicker } from './StartTimePicker';
@@ -128,7 +128,28 @@ export default function BookingFlowPage() {
    * this stops the doomed request being sent in the first place, so a customer whose token died
    * mid-flow degrades to the ordinary guest listing instead of an error.
    */
-  const canNameIssue = Boolean(token);
+  /**
+   * The issue this draft claimed as SOS when the screen mounted, if any.
+   *
+   * Snapshotted, not read live, because this page's own `updateDraft` calls set
+   * `urgencyType: 'STANDARD'` on the way through — reading the live draft would let the flag it
+   * writes erase the fact it is being warned about.
+   */
+  const sosIssueIdOnMount = useRef(draft?.urgencyType === 'SOS' ? draft.issueId : undefined).current;
+
+  /**
+   * Every endpoint this screen names an issue to is Standard-only: `BookingsService` refuses an
+   * issue whose `urgency_type != STANDARD` with `409 ISSUE_URGENCY_MISMATCH`. So an issue the
+   * draft itself marks SOS is not named here — the listing falls back to the category, which is
+   * the same public marketplace page and carries no urgency at all.
+   *
+   * A safety net, not the fix: the crossings between the two paths now keep the draft's urgency
+   * and its issue id in agreement (`handleTrySos` here, `resolveIssueId` in `ProntoSosEntryPage`,
+   * the two "book the regular way" actions in `features/sos`). This catches a draft that predates
+   * those and is already sitting in somebody's localStorage. It never converts anything: the SOS
+   * issue stays SOS on the server, and a Standard commit from here creates its own STANDARD issue.
+   */
+  const canNameIssue = Boolean(token) && !(sosIssueIdOnMount !== undefined && issueId === sosIssueIdOnMount);
   // Memoized on the two ids it is built from, not rebuilt per render: it is a `useCallback`
   // dependency below, and a fresh object literal every render would give `fetchProfessionals` a
   // new identity every render for a value that had not actually changed.
@@ -351,6 +372,8 @@ export default function BookingFlowPage() {
       addressMode,
       address,
       sort: toDraftSort(sort),
+      // Confirmed for this visit — see `sanitizeRestoredDraft`.
+      addressUnconfirmed: undefined,
     });
   }
 
@@ -438,8 +461,16 @@ export default function BookingFlowPage() {
    * <p>The draft's stage is left alone deliberately. The SOS entry page owns its own activation
    * flow (address, urgency, scan), and pre-setting a booking stage here would hand it a
    * half-finished standard booking to reconcile.
+   *
+   * <p>The draft's <b>urgency</b> is not left alone, and that was the bug. The customer is leaving
+   * the Standard path for the SOS one, so the draft has to say so before it gets there: the SOS
+   * page creates an SOS issue and writes its id back, and a draft still claiming `STANDARD` around
+   * that id sends every later resume (`resolveDraftRoute`, the toolbox, the post-login landing)
+   * back to `/booking`, which answers `409 ISSUE_URGENCY_MISMATCH` for a non-STANDARD issue. It
+   * also restores the address to the SOS page, which reads it only from an SOS draft.
    */
   function handleTrySos() {
+    updateDraft({ urgencyType: 'SOS', address, addressMode });
     navigate('/sos-booking');
   }
 
@@ -478,15 +509,16 @@ export default function BookingFlowPage() {
   }
 
   /**
-   * The guest hit the book button. Persist where they are, then send them to sign in.
+   * The guest hit the book button. Persist where they are — and nothing else.
    *
-   * <p>`BOOKING_CONFIRM` is the stage `resolveDraftRoute` maps back to this screen, so after
-   * login/registration the customer returns to this exact confirmation card with their
-   * professional, slot and address intact — see `useSessionLanding`, which resumes the draft
-   * instead of landing on Home.
+   * <p>**This used to navigate to `/login`**, which replaced the summary the customer was
+   * confirming with a form and relied on the draft to rebuild it afterwards. It no longer does:
+   * `BookingSummary` opens the deferred-authentication gate over this screen instead, and resumes
+   * the confirmation in place once a session exists (`AuthGateModal`, `useSessionLanding`).
    *
-   * <p>`state.from` is not used: the draft is a better record than a URL, because it survives a
-   * closed tab and carries the selection as well as the location.
+   * <p>The draft write stays, and matters more than ever: it is what survives a closed tab, and
+   * `BOOKING_CONFIRM` is the stage `resolveDraftRoute` maps back to this screen for the customer
+   * who does leave and come back.
    */
   function handleAuthRequired() {
     if (step.name === 'confirm') {
@@ -498,7 +530,6 @@ export default function BookingFlowPage() {
         bookedStart: step.bookedStart,
       });
     }
-    navigate('/login', { state: { from: { pathname: '/booking' } } });
   }
 
   /**
@@ -539,6 +570,11 @@ export default function BookingFlowPage() {
     }
   }
 
+  // Back lives in the app header on every screen of this flow (`AppLayout`), not in a row of its
+  // own. `null` on the success step — the booking is done and there is nothing to step back into
+  // — which is exactly what `onBack={undefined}` used to express here.
+  useHeaderBackAction(step.name === 'success' ? null : handleBack);
+
   // Same neutralization pattern `NewIssuePage.tsx`/`AiAnalyzingOverlay.tsx` already apply —
   // `stepTransition`'s `animate`/`exit` targets each carry their own embedded spring
   // `transition`, which wins over a component-level `transition` prop. Copied locally per
@@ -563,7 +599,6 @@ export default function BookingFlowPage() {
       <PageHeader
         title="בחירת בעל מקצוע"
         description={STEP_LABELS[step.name]}
-        onBack={step.name === 'success' ? undefined : handleBack}
         steps={STEP_NUMBERS[step.name] !== undefined ? { current: STEP_NUMBERS[step.name]!, total: 4 } : undefined}
       />
 

@@ -254,3 +254,17 @@ export type {
   ProfessionalReviewDetail,
   VerificationDocumentUrlResponse,
 } from './adminProfessionals';
+
+// Free-text field limits, mirrored from the backend request DTOs — see `fieldLimits.ts`.
+export {
+  ISSUE_DESCRIPTION_MIN_LENGTH,
+  ISSUE_DESCRIPTION_MAX_LENGTH,
+  CLARIFICATION_ANSWER_MAX_LENGTH,
+  REVIEW_COMMENT_MAX_LENGTH,
+  BIO_MAX_LENGTH,
+  FULL_NAME_MAX_LENGTH,
+  EMAIL_MAX_LENGTH,
+  PHONE_INPUT_MAX_LENGTH,
+  PHONE_STORED_MAX_LENGTH,
+  ADDRESS_MAX_LENGTHS,
+} from './fieldLimits';

@@ -56,4 +56,22 @@
     font-size: var(--font-size-h1-mobile);
     line-height: var(--line-height-h1-mobile);
   }
+
+  /* Desktop can afford the air; a phone spends it on content. The back control keeps its 44px
+     tap target — only the gaps around the block shrink. */
+  .header {
+    margin-block-end: var(--space-4);
+  }
+
+  .backButton {
+    margin-block-end: var(--space-1);
+  }
+
+  .description {
+    margin-block-start: var(--space-1);
+  }
+
+  .progressTrack {
+    margin-block-start: var(--space-2);
+  }
 }

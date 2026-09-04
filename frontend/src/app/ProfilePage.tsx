@@ -23,6 +23,8 @@ import {
   getFieldErrorMessages,
   type UserRole,
   type UserMeDefaultAddress,
+  FULL_NAME_MAX_LENGTH,
+  PHONE_STORED_MAX_LENGTH,
 } from '../shared/api';
 import styles from './ProfilePage.module.css';
 
@@ -224,6 +226,7 @@ export default function ProfilePage() {
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               error={fieldErrors.fullName}
+              maxLength={FULL_NAME_MAX_LENGTH}
               required
             />
             <Input
@@ -231,6 +234,7 @@ export default function ProfilePage() {
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               error={fieldErrors.phone}
+              maxLength={PHONE_STORED_MAX_LENGTH}
               required
             />
             <AddressFormFields value={address} onChange={setAddress} errors={addressErrors} />

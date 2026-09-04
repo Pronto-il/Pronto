@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CalendarClock, MapPin } from 'lucide-react';
 import { Button, Card, toServicePlaceFields } from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
 import type { ClarificationAnswer } from '../../shared/api';
 import { createIssue, createOrder, ApiError, GENERIC_ERROR_MESSAGE, getCategoryNameHe } from '../../shared/api';
-import { useAuth } from '../../shared/hooks';
+import { useAuth, useAuthGate } from '../../shared/hooks';
 import type { OrderResponse, ProfessionalCard as ProfessionalCardData } from '../../shared/api';
 import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
 import styles from './BookingSummary.module.css';
@@ -117,8 +117,24 @@ export function BookingSummary({
   onTimeUnavailable,
 }: BookingSummaryProps) {
   const { token } = useAuth();
+  const { open: openAuthGate } = useAuthGate();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [bannerError, setBannerError] = useState<string | null>(null);
+  /**
+   * Set when the customer pressed confirm without a session and then obtained one through the
+   * gate. A flag rather than a captured callback on purpose: the resume runs in the same tick the
+   * session lands, when this component's `token` is still the previous render's `undefined`.
+   * Waiting for the re-render is what makes the retry see the token it needs.
+   */
+  const [resumeRequested, setResumeRequested] = useState(false);
+
+  useEffect(() => {
+    if (resumeRequested && token) {
+      setResumeRequested(false);
+      void submitBooking();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeRequested, token]);
 
   async function handleConfirm() {
     setBannerError(null);
@@ -130,15 +146,29 @@ export function BookingSummary({
     // dispatches a real professional to a real address.
     //
     // Nothing is created before this check: no issue, no order, and no notification. A guest who
-    // gets this far and turns back at the login screen leaves no trace in the database.
+    // gets this far and dismisses the account question leaves no trace in the database, and stays
+    // on this screen with their booking intact.
     //
     // The draft has already been written by the step transitions that led here, so `onAuthRequired`
-    // only has to send them to the login screen -- everything they entered is on disk and is
-    // adopted by whichever account signs in (see BookingDraftProvider's adoption rule).
+    // only has to persist the last of it -- everything they entered is on disk and is adopted by
+    // whichever account signs in (see BookingDraftProvider's adoption rule).
     if (!token) {
+      // Persist first (the parent writes the draft), then ask for the account **over this screen**
+      // rather than by navigating to `/login`: everything the customer chose is on display behind
+      // the modal, and the confirmation they pressed is resumed the moment a session exists.
       onAuthRequired();
+      openAuthGate(() => setResumeRequested(true));
       return;
     }
+    await submitBooking();
+  }
+
+  /**
+   * The commit itself, split out from {@link handleConfirm} so the gate can resume *exactly* what
+   * the customer pressed — same issue reuse, same order call, same error handling. Nothing about
+   * it is guest-specific, and an authenticated confirm reaches it by the same line it always did.
+   */
+  async function submitBooking() {
     // Pre-flight: never send a request the server is guaranteed to reject. Catches the common
     // shape of this problem (the customer sat on this screen until the chosen time passed)
     // without a round trip, and without any invented lead-time rule — this mirrors exactly

@@ -11,6 +11,7 @@ import {
   withEditedAddressText,
   withSelectedPlace,
 } from './addressTypes';
+import { ADDRESS_MAX_LENGTHS } from '../api/fieldLimits';
 import { googlePlacesProvider } from './googlePlaces';
 import type { AddressSuggestion, AddressSuggestionProvider } from './googlePlaces';
 import styles from './AddressFormFields.module.css';
@@ -208,6 +209,7 @@ export function AddressFormFields({ value, onChange, errors, provider }: Address
           onSelect={handleCitySelect}
           onClear={() => onChange(withEditedAddressText(value, 'city', ''))}
           error={errors?.city}
+          maxLength={ADDRESS_MAX_LENGTHS.city}
           hint={unavailable ? 'חיפוש הכתובות אינו זמין כרגע.' : 'יש לבחור עיר מתוך הרשימה'}
         />
       </div>
@@ -224,6 +226,7 @@ export function AddressFormFields({ value, onChange, errors, provider }: Address
           onSelect={handleStreetSelect}
           onClear={() => onChange(withEditedAddressText(value, 'street', ''))}
           error={errors?.street}
+          maxLength={ADDRESS_MAX_LENGTHS.street}
           hint={
             value.city.trim() === ''
               ? 'יש לבחור עיר תחילה'
@@ -244,6 +247,7 @@ export function AddressFormFields({ value, onChange, errors, provider }: Address
         inputMode="numeric"
         pattern="[0-9]*"
         autoComplete="off"
+        maxLength={ADDRESS_MAX_LENGTHS.houseNumber}
         hint="ספרות בלבד"
         required
       />
@@ -268,6 +272,7 @@ export function AddressFormFields({ value, onChange, errors, provider }: Address
         value={value.apartment}
         onChange={(e) => handleSanitizedAccessField('apartment', e.target.value, sanitizeApartment)}
         error={errors?.apartment}
+        maxLength={ADDRESS_MAX_LENGTHS.apartment}
         // `type="text"` + `inputMode`, never `type="number"` — same reasoning as the house number
         // above: spinners, an accepted `e`/`+`/`-`, and an empty string reported for anything the
         // browser dislikes are all wrong for a field whose value we sanitize ourselves.
@@ -281,6 +286,7 @@ export function AddressFormFields({ value, onChange, errors, provider }: Address
         value={value.floor}
         onChange={(e) => handleSanitizedAccessField('floor', e.target.value, sanitizeFloor)}
         error={errors?.floor}
+        maxLength={ADDRESS_MAX_LENGTHS.floor}
         inputMode="numeric"
         pattern="[0-9]*"
         autoComplete="off"
@@ -294,7 +300,7 @@ export function AddressFormFields({ value, onChange, errors, provider }: Address
         // `maxLength` is a convenience for the caret, not the rule: `sanitizeEntrance` truncates
         // and `validateAddressTextOnly` re-checks, because an autofill or a paste can set a value
         // without the browser ever enforcing this attribute.
-        maxLength={2}
+        maxLength={ADDRESS_MAX_LENGTHS.entrance}
         autoComplete="off"
         hint="לא חובה, עד 2 אותיות או ספרות"
       />
@@ -304,6 +310,7 @@ export function AddressFormFields({ value, onChange, errors, provider }: Address
           value={value.addressNotes}
           onChange={(e) => handleAccessField('addressNotes', e.target.value)}
           error={errors?.addressNotes}
+          maxLength={ADDRESS_MAX_LENGTHS.addressNotes}
           hint="לא חובה, למשל: קוד לשער"
         />
       </div>

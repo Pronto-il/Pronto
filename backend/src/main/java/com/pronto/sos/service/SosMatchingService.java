@@ -122,7 +122,7 @@ public class SosMatchingService {
     private final SosOfferRepository sosOfferRepository;
     private final DistanceEtaStrategy distanceEtaStrategy;
     private final SosProperties properties;
-    /** The environment half of the demo-presenter guard. See {@link #demoPresenterIds}. */
+    /** The environment half of the demo-presenter guard. See {@link #demoPresenters}. */
     private final DemoBehaviorPolicy demoBehaviorPolicy;
 
     public SosMatchingService(SosCandidateRepository sosCandidateRepository,
@@ -177,7 +177,37 @@ public class SosMatchingService {
                                             SosSearchScope scope) {
         Instant now = Instant.now();
         int remainingPoolSlots = scope.poolSize() - alreadyOfferedProfessionalIds.size();
+
+        List<Long> excluded = alreadyOfferedProfessionalIds.isEmpty()
+                ? List.of(NO_EXCLUSIONS_SENTINEL)
+                : new ArrayList<>(alreadyOfferedProfessionalIds);
+
+        // THE DEMO PRESENTER, resolved BEFORE any of the three early returns below.
+        //
+        // It used to be resolved further down, after the pool-slot, destination and service-city
+        // checks had each already had a chance to return. That ordering quietly contradicted the
+        // guarantee the flag is supposed to carry -- "the presenter receives every SOS request" --
+        // because all three of those returns fire on inputs a demonstration can easily produce: an
+        // address in a city the catalogue has never heard of, an address that failed to geocode,
+        // or a re-scan against an already-full pool. Resolving the presenter first is what makes
+        // the guarantee true for *every* request rather than only for the ones that got far enough
+        // to be matched.
+        //
+        // Still gated on the environment FIRST inside demoPresenters(), so where demo behaviour is
+        // not permitted this is a no-op that makes no query at all and reads no demo column.
+        List<EligibleProfessional> presenters = demoPresenters(excluded, request);
+        Set<Long> presenterIds = presenters.stream()
+                .map(EligibleProfessional::professionalId)
+                .collect(java.util.stream.Collectors.toSet());
+
         if (remainingPoolSlots <= 0) {
+            // The pool is full of real professionals. The presenter is still dispatched, because
+            // "every SOS request" has to survive a customer pressing "סרוק שוב" as well. This is
+            // the one place the pool cap is exceeded, it is exceeded by exactly the presenter, and
+            // no real professional gains a slot from it -- they were already capped out.
+            if (!presenters.isEmpty()) {
+                return MatchingOutcome.of(rankPresenters(presenters));
+            }
             log.info("sos.matching.pool-full sosRequestId={} scopeLevel={} poolSize={} alreadyOffered={}",
                     request.getId(), scope.level(), scope.poolSize(), alreadyOfferedProfessionalIds.size());
             return MatchingOutcome.empty();
@@ -189,13 +219,18 @@ public class SosMatchingService {
         // must be reported as such rather than producing an empty candidate list.
         GeoCoordinates destination = GeoCoordinates.ofNullable(request.getLatitude(), request.getLongitude());
         if (destination == null) {
+            // No destination means no real professional can be evaluated -- every one of them is
+            // filtered on a road distance to a point that does not exist. The presenter is scored
+            // without a route anyway (see scoreUnroutablePresenter), so there is nothing for them
+            // to be missing, and they are dispatched alone.
+            if (!presenters.isEmpty()) {
+                log.warn("sos.matching.demo-presenter-only sosRequestId={} reason=destination-unknown",
+                        request.getId());
+                return MatchingOutcome.of(rankPresenters(presenters));
+            }
             log.warn("sos.matching.degraded sosRequestId={} reason=destination-unknown", request.getId());
             return MatchingOutcome.degraded(SosMatchingDegradation.DESTINATION_UNKNOWN);
         }
-
-        List<Long> excluded = alreadyOfferedProfessionalIds.isEmpty()
-                ? List.of(NO_EXCLUSIONS_SENTINEL)
-                : new ArrayList<>(alreadyOfferedProfessionalIds);
 
         // The service-area filter, resolved to a canonical service_cities id before the query for
         // the same reason the standard listing does it there: eligibility is the professional's
@@ -208,6 +243,16 @@ public class SosMatchingService {
         // this platform has never heard of.
         Optional<Long> serviceCityId = serviceCityResolver.resolveId(request.getServiceCity());
         if (serviceCityId.isEmpty()) {
+            // A presenter is dispatched even here, which is a real change to what a customer in an
+            // uncovered city sees: previously SERVICE_AREA_UNCOVERED and no dispatch, now a
+            // dispatch to the presenter alone. That is the accepted cost of "all cities" -- no
+            // real professional's coverage rule moved, and where no presenter exists (i.e. every
+            // deployment that has not turned this on) the DEGRADED answer below is unchanged.
+            if (!presenters.isEmpty()) {
+                log.warn("sos.matching.demo-presenter-only sosRequestId={} reason=city-not-in-catalogue "
+                        + "city=\"{}\"", request.getId(), request.getServiceCity());
+                return MatchingOutcome.of(rankPresenters(presenters));
+            }
             log.warn("sos.matching.degraded sosRequestId={} reason=city-not-in-catalogue city=\"{}\"",
                     request.getId(), request.getServiceCity());
             return MatchingOutcome.degraded(SosMatchingDegradation.SERVICE_AREA_UNCOVERED);
@@ -216,11 +261,7 @@ public class SosMatchingService {
         List<EligibleProfessional> eligible = new ArrayList<>(sosCandidateRepository.findEligible(
                 request.getCategoryId(), serviceCityId.get(), excluded));
 
-        // THE DEMO PRESENTER, merged in here and nowhere else. Gated on the environment FIRST, so
-        // in Production the repository call below is never even made and the demo_sos_presenter
-        // column is never read -- the flag alone grants nothing (see DemoBehaviorPolicy for the
-        // two-key rule and V56 for why a stray presenter row in Production is inert).
-        Set<Long> presenterIds = demoPresenterIds(eligible, excluded, request);
+        mergePresenters(eligible, presenters);
 
         if (eligible.isEmpty()) {
             log.info("sos.matching.empty sosRequestId={} categoryId={} serviceCityId={} "
@@ -233,9 +274,27 @@ public class SosMatchingService {
         // holding live offers on other requests is technically eligible for this one, but
         // dispatching them a third simultaneous urgent job mostly produces a slower response to
         // all three. One grouped query for the whole pool, not one per candidate.
+        //
+        // The presenter is exempt. The rule above is a load-balancing courtesy owed to somebody
+        // whose time is really being spent, and it was the last remaining way for a presenter to
+        // miss a request: hold one live offer from an earlier demonstration and every subsequent
+        // SOS silently skips them, which is precisely the "why did it not appear this time?"
+        // failure the flag exists to prevent.
         Set<Long> busy = new HashSet<>(sosOfferRepository.findProfessionalIdsWithLiveOffers(
                 eligible.stream().map(EligibleProfessional::professionalId).toList(), now));
-        List<EligibleProfessional> available = eligible.stream()
+
+        // The busy rule and its fallback are evaluated over REAL professionals only, with the
+        // presenter partitioned out first and re-joined afterwards.
+        //
+        // Doing it in one pass over the merged list looked simpler and was wrong: the fallback
+        // below fires on "nobody survived", and an always-surviving presenter makes that condition
+        // unreachable. Every real professional being busy would then quietly dispatch the presenter
+        // ALONE, where before it dispatched all of them -- a real professional losing a job to a
+        // demo account, which is precisely the kind of silent narrowing this change must not cause.
+        List<EligibleProfessional> realEligible = eligible.stream()
+                .filter(p -> !presenterIds.contains(p.professionalId()))
+                .toList();
+        List<EligibleProfessional> availableReal = realEligible.stream()
                 .filter(p -> !busy.contains(p.professionalId()))
                 .toList();
 
@@ -243,11 +302,18 @@ public class SosMatchingService {
         // the request. "Somebody who is busy" beats "nobody at all" for a customer with an
         // active leak -- this is a load-balancing preference, not an eligibility rule, and it
         // must not be allowed to masquerade as one.
-        if (available.isEmpty()) {
+        if (availableReal.isEmpty() && !realEligible.isEmpty()) {
             log.info("sos.matching.busy-fallback sosRequestId={} poolSize={} reason=all-candidates-busy",
-                    request.getId(), eligible.size());
-            available = eligible;
+                    request.getId(), realEligible.size());
+            availableReal = realEligible;
         }
+
+        // The presenter re-joins here, exempt from the busy rule: holding one live offer from an
+        // earlier demonstration must not make every subsequent SOS silently skip them.
+        List<EligibleProfessional> available = new ArrayList<>(availableReal);
+        eligible.stream()
+                .filter(p -> presenterIds.contains(p.professionalId()))
+                .forEach(available::add);
 
         Map<Long, Double> acceptanceRates = loadAcceptanceRates(
                 available.stream().map(EligibleProfessional::professionalId).toList(), now);
@@ -338,13 +404,32 @@ public class SosMatchingService {
             return MatchingOutcome.empty();
         }
 
-        List<RankedCandidate> pool = ranked.stream()
-                .sorted(Comparator.comparing(RankedCandidate::score).reversed()
-                        // Deterministic tie-break, so two runs over identical data produce
-                        // identical dispatch order and a disputed ranking is reproducible.
-                        .thenComparing(c -> c.professional().professionalId()))
+        Comparator<RankedCandidate> byScore = Comparator.comparing(RankedCandidate::score).reversed()
+                // Deterministic tie-break, so two runs over identical data produce identical
+                // dispatch order and a disputed ranking is reproducible.
+                .thenComparing(c -> c.professional().professionalId());
+
+        // The pool cap is applied to real professionals only, and the presenter is appended
+        // afterwards. Truncation was the last filter that could still drop them: the presenter is
+        // scored mid-pack on purpose (scoreUnroutablePresenter), so on any request with more than
+        // `remainingPoolSlots` strong real candidates they fell off the end of the list.
+        //
+        // Real professionals keep exactly the slots they had. The presenter takes one *additional*
+        // slot rather than displacing the last-ranked real candidate -- displacing them would mean
+        // a real professional loses work to a demo account, which is a different and much worse
+        // trade than dispatching one extra offer.
+        List<RankedCandidate> presenterPool = ranked.stream()
+                .filter(c -> presenterIds.contains(c.professional().professionalId()))
+                .sorted(byScore)
+                .toList();
+        List<RankedCandidate> realPool = ranked.stream()
+                .filter(c -> !presenterIds.contains(c.professional().professionalId()))
+                .sorted(byScore)
                 .limit(remainingPoolSlots)
                 .toList();
+
+        List<RankedCandidate> pool = new ArrayList<>(realPool);
+        pool.addAll(presenterPool);
 
         log.info("sos.matching.ranked sosRequestId={} scopeLevel={} eligible={} routable={} scored={} "
                         + "dispatching={} poolSize={} remainingSlots={} noLocation={} providerFailure={} "
@@ -376,14 +461,36 @@ public class SosMatchingService {
      * trades and cities they have genuinely declared, exactly like any other professional —
      * demo SOS eligibility and regular-booking eligibility are separate queries and stay that way.
      */
-    private Set<Long> demoPresenterIds(List<EligibleProfessional> eligible, List<Long> excluded,
-                                        SosRequest request) {
+    private List<EligibleProfessional> demoPresenters(List<Long> excluded, SosRequest request) {
         if (!demoBehaviorPolicy.isAllowed()) {
-            return Set.of();
+            return List.of();
         }
         List<EligibleProfessional> presenters = sosCandidateRepository.findDemoSosPresenters(excluded);
         if (presenters.isEmpty()) {
-            return Set.of();
+            return List.of();
+        }
+        log.warn("sos.matching.demo-presenter-included sosRequestId={} categoryId={} city=\"{}\" "
+                        + "presenterIds={} environment={} — demo-only SOS eligibility is active here",
+                request.getId(), request.getCategoryId(), request.getServiceCity(),
+                presenters.stream().map(EligibleProfessional::professionalId).toList(),
+                demoBehaviorPolicy.environmentName());
+        return presenters;
+    }
+
+    /**
+     * Adds {@code presenters} to {@code eligible} in place, skipping any that the ordinary query
+     * already returned.
+     *
+     * <p>The presenter is normally <em>not</em> in {@code eligible} already, because the whole
+     * point is that they are asked for categories and cities they have not declared. When they do
+     * also qualify normally they are deduplicated rather than added twice: a second row would mean
+     * a second offer, and {@code ux_sos_offers_request_professional} would refuse it at the insert
+     * anyway.
+     */
+    private void mergePresenters(List<EligibleProfessional> eligible,
+                                  List<EligibleProfessional> presenters) {
+        if (presenters.isEmpty()) {
+            return;
         }
         Set<Long> alreadyListed = eligible.stream()
                 .map(EligibleProfessional::professionalId)
@@ -393,14 +500,18 @@ public class SosMatchingService {
                 eligible.add(presenter);
             }
         }
-        Set<Long> presenterIds = presenters.stream()
-                .map(EligibleProfessional::professionalId)
-                .collect(java.util.stream.Collectors.toSet());
-        log.warn("sos.matching.demo-presenter-included sosRequestId={} categoryId={} presenterIds={} "
-                        + "environment={} — demo-only SOS eligibility is active in this environment",
-                request.getId(), request.getCategoryId(), presenterIds,
-                demoBehaviorPolicy.environmentName());
-        return presenterIds;
+    }
+
+    /**
+     * The presenter-only dispatch used by the three early-return paths, where no real professional
+     * can be evaluated at all (no pool slots, no destination, no catalogued service city).
+     *
+     * <p>Scored without a route, because on these paths there is definitionally none to score —
+     * the same {@link #scoreUnroutablePresenter} the main loop uses for a presenter with no fresh
+     * device position.
+     */
+    private List<RankedCandidate> rankPresenters(List<EligibleProfessional> presenters) {
+        return presenters.stream().map(this::scoreUnroutablePresenter).toList();
     }
 
     /**

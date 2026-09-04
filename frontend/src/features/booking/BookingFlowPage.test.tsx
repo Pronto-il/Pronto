@@ -10,6 +10,8 @@ import type { AuthContextValue } from '../../shared/hooks/authContext';
 import { BookingDraftContext } from '../../shared/hooks/bookingDraftContext';
 import type { BookingDraft, BookingDraftContextValue } from '../../shared/hooks/bookingDraftContext';
 import type { UserMeResponse } from '../../shared/api/users';
+import { HeaderBackProvider } from '../../shared/hooks';
+import { HeaderSlot } from '../../test/HeaderSlot';
 
 /**
  * `/issues/:issueId/booking`'s Back button, from its very first ('address') step — the
@@ -50,11 +52,16 @@ function renderBookingFlow(draft: BookingDraft, updateDraft = vi.fn()) {
     <MemoryRouter initialEntries={[`/issues/${draft.issueId}/booking`]}>
       <AuthContext.Provider value={auth}>
         <BookingDraftContext.Provider value={bookingDraft}>
-          <Routes>
-            <Route path="/issues/:issueId/booking" element={<BookingFlowPage />} />
-            <Route path="/issues/new" element={<div data-testid="new-issue-screen">issues/new</div>} />
-            <Route path="/" element={<div data-testid="home-screen">home</div>} />
-          </Routes>
+          {/* Back is published into the app header now (`useHeaderBackAction`), not rendered as a
+              row under this page's own `PageHeader` — so the harness supplies the slot. */}
+          <HeaderBackProvider>
+            <HeaderSlot />
+            <Routes>
+              <Route path="/issues/:issueId/booking" element={<BookingFlowPage />} />
+              <Route path="/issues/new" element={<div data-testid="new-issue-screen">issues/new</div>} />
+              <Route path="/" element={<div data-testid="home-screen">home</div>} />
+            </Routes>
+          </HeaderBackProvider>
         </BookingDraftContext.Provider>
       </AuthContext.Provider>
     </MemoryRouter>,

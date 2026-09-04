@@ -13,7 +13,7 @@ export type { UseOrderStatusResult } from './useOrderStatus';
 
 export { BookingDraftProvider } from './BookingDraftProvider';
 export { useBookingDraft } from './useBookingDraft';
-export { resolveDraftRoute } from './bookingDraftContext';
+export { resolveDraftRoute, sanitizeRestoredDraft, GUEST_DRAFT_STALE_AFTER_MS } from './bookingDraftContext';
 export type {
   BookingDraft,
   BookingDraftStage,
@@ -52,5 +52,15 @@ export type { PendingRequestsContextValue } from './pendingRequestsContext';
 export { ToastProvider } from './ToastProvider';
 export { useToast } from './useToast';
 export type { ToastTone, ToastOptions, ToastItem, ToastContextValue } from './toastContext';
+export { AuthGateProvider } from './AuthGateProvider';
+export { AuthGateContext } from './authGateContext';
+export type { AuthGateContextValue } from './authGateContext';
+export { useAuthGate } from './useAuthGate';
+
+export { HeaderBackProvider } from './HeaderBackProvider';
+export { useHeaderBackAction } from './useHeaderBackAction';
+export { HeaderBackContext } from './headerBackContext';
+export type { HeaderBackAction, HeaderBackContextValue } from './headerBackContext';
+
 export { useToolboxPosition } from './useToolboxPosition';
 export type { UseToolboxPositionResult } from './useToolboxPosition';

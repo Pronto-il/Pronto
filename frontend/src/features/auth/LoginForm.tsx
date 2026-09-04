@@ -2,15 +2,24 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button, Card, Input } from '../../shared/components';
-import { ApiError, login as loginRequest } from '../../shared/api';
+import { ApiError, login as loginRequest, EMAIL_MAX_LENGTH } from '../../shared/api';
 import { AccountLockoutBanner } from './AccountLockoutBanner';
 import { LoginRateLimitBanner } from './LoginRateLimitBanner';
-import type { AuthChallengeState } from './AuthChallengePage';
+import type { AuthChallengeState } from './AuthChallengeStep';
 import { useSessionLanding } from './useSessionLanding';
 import styles from './formStyles.module.css';
 
 export interface LoginFormProps {
   initialIdentifier?: string;
+  /**
+   * Where a one-time-password challenge goes. Defaults to navigating to `/verify`, which is the
+   * page that hosts it.
+   *
+   * <p>The deferred-authentication gate passes its own handler instead: it renders the same
+   * `AuthChallengeStep` inside its modal, because a guest answering a code must not have the
+   * Booking Summary they are confirming navigated away from underneath them.
+   */
+  onChallenge?: (state: AuthChallengeState) => void;
 }
 
 /**
@@ -31,7 +40,7 @@ export interface LoginFormProps {
  * number and the server works out which; asking the user to classify their own identifier first is
  * a question with no wrong answer worth collecting, and both resolve to the same account anyway.
  */
-export function LoginForm({ initialIdentifier = '' }: LoginFormProps) {
+export function LoginForm({ initialIdentifier = '', onChallenge }: LoginFormProps) {
   const navigate = useNavigate();
   const land = useSessionLanding();
 
@@ -84,6 +93,10 @@ export function LoginForm({ initialIdentifier = '' }: LoginFormProps) {
         nextStep: response.nextStep,
         challenge: response.challenge,
       };
+      if (onChallenge) {
+        onChallenge(state);
+        return;
+      }
       navigate('/verify', { state });
     } catch (error) {
       if (error instanceof ApiError) {
@@ -135,6 +148,7 @@ export function LoginForm({ initialIdentifier = '' }: LoginFormProps) {
           value={identifier}
           onChange={(event) => setIdentifier(event.target.value)}
           error={fieldErrors.identifier}
+          maxLength={EMAIL_MAX_LENGTH}
           hint="אפשר להתחבר עם כתובת האימייל או עם מספר הטלפון"
           required
         />

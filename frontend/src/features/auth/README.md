@@ -333,3 +333,24 @@ job — failures there is nothing specific to say about.
 
 A duplicate reported at final submit routes back to stage 1 via `routeFieldErrors` with every other
 stage's answers still in state, so only the offending field needs correcting.
+
+
+## `AuthGateModal` (2026-09-04) — the account question, asked in place
+
+Hosts the **existing** `LoginForm`, `CustomerRegisterForm` and OTP step over whichever screen needs
+a session, instead of navigating to `/login`. No new auth UI: same components, endpoints, validation
+and error treatments the `/login`, `/register/customer` and `/verify` routes render.
+
+Three seams made that possible, all small:
+
+- **`AuthChallengeStep`** — extracted from `AuthChallengePage`. With `AUTH_OTP_REQUIRED=true` a
+  password submit answers with a challenge, so the modal has to host the code step too or the guest
+  is navigated away mid-flow. The page is now the route around the step (router state, heading,
+  refresh recovery); the interaction lives in the component both hosts render.
+- **`LoginForm.onChallenge`** — optional. Absent, it navigates to `/verify` exactly as before.
+- **`useSessionLanding`** — checks the gate before its draft-route navigation. A non-`CUSTOMER` who
+  signs in through the gate is landed on their own dashboard instead (resuming a customer booking
+  for them would only earn a 403), and the gate is closed on the way out.
+
+Registration inside the gate is the **customer** form only: this gate exists on the customer booking
+journey, and `/register` remains the way to choose a role.

@@ -68,7 +68,7 @@ class SosMatchingServiceTest {
         // rules, and a policy that answered true would silently exempt a presenter row from
         // them. The demo path has its own suite (SosDemoPresenterTest).
         demoBehaviorPolicy = new com.pronto.demo.DemoBehaviorPolicy(
-                new com.pronto.common.config.ProntoEnvironment("production"));
+                new com.pronto.common.config.ProntoEnvironment("production"), null);
         service = new SosMatchingService(sosCandidateRepository, sosOfferRepository, distanceEtaStrategy,
                 serviceCityResolver, properties, demoBehaviorPolicy);
 

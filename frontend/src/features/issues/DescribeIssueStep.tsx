@@ -1,9 +1,15 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Clock, Zap } from 'lucide-react';
-import { Textarea, PhotoUploader, Button, Card, Mascot } from '../../shared/components';
+import { Textarea, PhotoUploader, Button, Card } from '../../shared/components';
 import type { UploadedPhoto } from '../../shared/components';
-import { classifyIssue, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
+import {
+  classifyIssue,
+  ApiError,
+  GENERIC_ERROR_MESSAGE,
+  ISSUE_DESCRIPTION_MIN_LENGTH,
+  ISSUE_DESCRIPTION_MAX_LENGTH,
+} from '../../shared/api';
 import type { ClassifyIssueResponse, IssueUrgencyType } from '../../shared/api';
 import styles from './DescribeIssueStep.module.css';
 
@@ -55,14 +61,33 @@ export function DescribeIssueStep({
   const [bannerError, setBannerError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [photosUploading, setPhotosUploading] = useState(false);
+  const descriptionRef = useRef<HTMLTextAreaElement>(null);
+
+  // The field opens at roughly three lines so the urgency choice below it is reachable on a
+  // phone without scrolling past an empty box, and grows with the text instead — up to the
+  // `max-height` in CSS, after which it scrolls internally. Runs on hydration from a draft too,
+  // so a resumed description arrives already sized.
+  useLayoutEffect(() => {
+    const element = descriptionRef.current;
+    if (!element) {
+      return;
+    }
+    // Read before collapsing: `scrollHeight` excludes borders, which the border-box `height`
+    // set below does include, so the difference has to be added back or every pass shrinks.
+    const borders = element.offsetHeight - element.clientHeight;
+    element.style.height = 'auto';
+    element.style.height = `${element.scrollHeight + borders}px`;
+  }, [description]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setBannerError(null);
 
     const trimmed = description.trim();
-    if (trimmed.length < 10 || trimmed.length > 2000) {
-      setDescriptionError('יש לתאר את התקלה באורך של 10 עד 2000 תווים.');
+    if (trimmed.length < ISSUE_DESCRIPTION_MIN_LENGTH || trimmed.length > ISSUE_DESCRIPTION_MAX_LENGTH) {
+      setDescriptionError(
+        `יש לתאר את התקלה באורך של ${ISSUE_DESCRIPTION_MIN_LENGTH} עד ${ISSUE_DESCRIPTION_MAX_LENGTH} תווים.`,
+      );
       return;
     }
     setDescriptionError(undefined);
@@ -89,10 +114,6 @@ export function DescribeIssueStep({
 
   return (
     <div>
-      <div className={styles.lead}>
-        <Mascot state="idle" size="sm" />
-        <h2 className={styles.heading}>ספר לי מה קרה</h2>
-      </div>
       <Card className={styles.card}>
         <form className={styles.form} onSubmit={handleSubmit} noValidate>
           {bannerError && (
@@ -100,16 +121,19 @@ export function DescribeIssueStep({
               <p>{bannerError}</p>
             </div>
           )}
-          {/* The page heading above already says "ספר לי מה קרה"; the field asks the narrower
-              question, so the same sentence isn't printed twice on one screen. */}
+          {/* The page header already says "יש לי תקלה", so this field's own label is the only
+              question on the screen — the guidance that used to sit under the box now sits
+              under the label, where it can still be read before anything is typed. */}
           <Textarea
+            ref={descriptionRef}
+            className={styles.problemField}
             label="מה הבעיה?"
             placeholder="לדוגמה: יש נזילת מים מתחת לכיור במטבח"
             value={description}
             onChange={(event) => onDescriptionChange(event.target.value)}
             error={descriptionError}
-            hint="כל פרט קטן עוזר לנו למצוא את בעל המקצוע המתאים"
-            maxLength={2000}
+            helperText="תאר בכמה מילים את התקלה - המערכת תמצא את בעלי המקצוע המתאימים"
+            maxLength={ISSUE_DESCRIPTION_MAX_LENGTH}
             required
           />
           {description.length === 0 && (

@@ -14,7 +14,7 @@ import {
 import type { AddressValue } from '../../shared/components';
 import { AddressSelectionStep } from '../booking';
 import type { AddressMode } from '../booking';
-import { useAuth, useBookingDraft } from '../../shared/hooks';
+import { useAuth, useBookingDraft, useHeaderBackAction } from '../../shared/hooks';
 import {
   CATEGORIES,
   getCategoryNameHe,
@@ -119,8 +119,13 @@ export default function ProfessionMatchPage() {
   // button (which persists whatever was on screen, including nothing) resumed straight into the
   // wheel — and the wheel's whole job is to warm `GET /api/bookings/professionals`, which
   // requires city/street/houseNumber. `isAddressComplete` asks the question that was meant.
+  // `addressUnconfirmed` is the stale-restore flag (`sanitizeRestoredDraft`): the address is
+  // still here as prefill, but a returning guest has not said it is still where they want somebody
+  // sent, so the question gets asked rather than assumed from the fields being non-empty.
   const [phase, setPhase] = useState<'address' | 'matching'>(
-    draftMatchesIssue && isAddressComplete(draft?.address) ? 'matching' : 'address',
+    draftMatchesIssue && isAddressComplete(draft?.address) && !draft?.addressUnconfirmed
+      ? 'matching'
+      : 'address',
   );
   const [address, setAddress] = useState<AddressValue>(() => {
     if (draftMatchesIssue && draft?.address) {
@@ -185,6 +190,8 @@ export default function ProfessionMatchPage() {
       issueId,
       addressMode,
       address,
+      // Confirmed for this visit — see `sanitizeRestoredDraft`.
+      addressUnconfirmed: undefined,
       ...(resolved ? { urgencyType: resolved.urgencyType, categoryId: resolved.categoryId } : {}),
     });
     setPhase('matching');
@@ -223,6 +230,10 @@ export default function ProfessionMatchPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [issueId, resolved, draft?.categoryId, draft?.urgencyType]);
+
+  // Back lives in the app header on every screen of this flow (`AppLayout`). `null` while the
+  // wheel is turning: that phase has no header and nothing to go back to — it auto-advances.
+  useHeaderBackAction(phase === 'address' ? handleAddressBack : null);
 
   const isKnownCategory = resolved !== null && CATEGORIES.some((category) => category.id === resolved.categoryId);
   const bookingPath = resolved?.urgencyType === 'SOS' ? '/sos-booking' : '/booking';
@@ -350,7 +361,6 @@ export default function ProfessionMatchPage() {
         <PageHeader
           title="לאן שנגיע?"
           description="נשתמש בכתובת הזו כדי למצוא בעלי מקצוע קרובים אליך."
-          onBack={handleAddressBack}
         />
         <AddressSelectionStep
           value={address}

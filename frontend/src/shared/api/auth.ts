@@ -1,3 +1,4 @@
+import type { SubServicePriceSelection } from './professionals';
 import { httpClient } from './httpClient';
 import type { WorkingHoursItemRequest } from './availability';
 
@@ -141,7 +142,15 @@ export interface RegisterProfessionalPayload {
    * MS1 (D4/D7) — required, at least one, every id belonging to one of `categoryIds`.
    * A cross-category id is refused by the backend with `400 CATEGORY_MISMATCH`.
    */
-  subServiceIds: number[];
+  subServiceIds?: number[];
+  /**
+   * The priced form of the same choice: each selected sub-service with what the professional
+   * charges for it. Sent instead of `subServiceIds`, never alongside it — the server treats this as
+   * authoritative when both are present, so sending both would create two sources of truth for one
+   * list. A null/omitted `price` means "not stated", which is legal: a registrant may finish signing
+   * up and price their services later from their profile.
+   */
+  subServices?: SubServicePriceSelection[];
   /**
    * MS1 (D4/D7) — required. Exactly 7 entries (weekday `0`-`6`, no duplicates/gaps) with at
    * least one `enabled` day, validated server-side by `WorkingHoursValidator`.
@@ -173,7 +182,8 @@ interface RegisterRequestData {
     serviceCityIds: number[];
     baseCityId: number;
     basePrice: number;
-    subServiceIds: number[];
+    subServiceIds?: number[];
+    subServices?: SubServicePriceSelection[];
     workingHours: WorkingHoursItemRequest[];
   } | null;
 }
@@ -246,6 +256,7 @@ export function registerProfessional(
       baseCityId: payload.baseCityId,
       basePrice: payload.basePrice,
       subServiceIds: payload.subServiceIds,
+      subServices: payload.subServices,
       workingHours: payload.workingHours,
     },
   };

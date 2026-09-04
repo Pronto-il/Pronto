@@ -39,11 +39,38 @@ export interface ClassifyQuestion {
  * create and no professional to match — and deliberately distinct from a `CLASSIFIED` result that
  * later finds zero available professionals, which is a supported trade with nobody free right now.
  */
+/** What the customer wants done. Mirrors the backend `ai.taxonomy.Intent` enum. */
+export type ClassificationIntent =
+  | 'REPAIR'
+  | 'INSTALLATION'
+  | 'MAINTENANCE'
+  | 'PROJECT'
+  | 'DIAGNOSIS'
+  | 'EMERGENCY';
+
+/** How soon, judged from the described situation rather than the trade. Mirrors `ai.taxonomy.Urgency`. */
+export type ClassificationUrgency = 'LOW' | 'NORMAL' | 'HIGH' | 'CRITICAL';
+
 export interface ClassifyIssueResponse {
   status: 'CLASSIFIED' | 'QUESTIONS' | 'UNSUPPORTED_PROFESSION';
   /** The trade Pronto identified, in Hebrew. Populated on every status; rendered only on
    *  `UNSUPPORTED_PROFESSION`, where naming the trade is the whole content of the message. */
   detectedProfession: string | null;
+  /**
+   * The same trade as a stable code from the backend's versioned profession taxonomy, e.g.
+   * `GAS_TECHNICIAN`. Additive and currently unread by this app — `detectedProfession` remains
+   * what the UI renders, because it is already Hebrew and already customer-facing.
+   *
+   * It exists so a screen that needs to *branch* (rather than display) has something stable to
+   * branch on: matching on the Hebrew string would break the moment the model rephrases it.
+   * Populated on every status, including `UNSUPPORTED_PROFESSION` — a trade Pronto does not
+   * dispatch is still classified, and this is the field that says which one.
+   */
+  professionCode: string | null;
+  /** The concrete problem under that profession, e.g. `BURST_PIPE_OR_MAJOR_LEAK`. Additive. */
+  subcategoryCode: string | null;
+  intent: ClassificationIntent | null;
+  urgency: ClassificationUrgency | null;
   suggestedCategoryId: number | null;
   suggestedCategoryCode: string | null;
   questions: ClassifyQuestion[];

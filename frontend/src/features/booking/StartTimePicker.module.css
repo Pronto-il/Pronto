@@ -122,3 +122,73 @@
 .skeleton {
   height: 200px;
 }
+
+/* ---- the standard-booking lead time (2.5h by default) ---- */
+
+/*
+ * A start time the professional IS free for, but which a standard booking may not take. Muted, not
+ * hidden and not styled as an error: nothing has gone wrong and the professional is not busy --
+ * the platform is declining the booking, and the notice above says so in words.
+ */
+.timeChipTooSoon {
+  background: var(--color-surface-muted, #f4f5f7);
+  border-color: var(--color-border);
+  color: var(--color-text-tertiary, #9aa0a6);
+  cursor: not-allowed;
+  /* Deliberately not lower: below ~0.6 a chip reads as broken rather than as unavailable. */
+  opacity: 0.65;
+}
+
+.timeChipTooSoon:hover {
+  border-color: var(--color-border);
+}
+
+.leadNotice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted, #f4f5f7);
+  border: 1px solid var(--color-border);
+}
+
+.leadNoticeBody {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.leadNoticeCta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.leadNoticeCtaText {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* Mirrors the SOS entry point's own accent so the two read as the same product surface. */
+.sosLink {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--color-sos, #e23c3c);
+  background: transparent;
+  color: var(--color-sos, #e23c3c);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.sosLink:hover {
+  background: var(--color-sos, #e23c3c);
+  color: var(--color-surface);
+}

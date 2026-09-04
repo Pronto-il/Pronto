@@ -1,5 +1,6 @@
 package com.pronto.professionals.controller;
 
+import com.pronto.common.dto.FieldError;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import com.pronto.common.security.AuthenticatedUser;
@@ -23,6 +24,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+
+import java.util.List;
 
 /**
  * {@code /api/professionals/*}. Route-level role gating ({@code PROFESSIONAL}-only on the
@@ -77,12 +80,40 @@ public class ProfessionalsController {
         return ResponseEntity.ok(professionalsService.updateMySubServices(principal, request));
     }
 
+    /**
+     * @param subServiceId optional. When the customer's problem has already been classified to a
+     *                     concrete service, pass its id and the response carries this professional's
+     *                     own price for it ({@code subServicePrice}) instead of leaving the client to
+     *                     show a generic figure. Omitted, the response is exactly what it always was.
+     *                     An unparseable value is a {@code 400}; an unknown-but-numeric one simply
+     *                     yields no price, because refusing it would confirm to an unauthenticated
+     *                     caller which sub-service ids exist.
+     */
     @GetMapping("/{professionalId}")
     public ResponseEntity<ProfessionalProfileResponse> getProfile(
             @AuthenticationPrincipal AuthenticatedUser principal,
-            @PathVariable("professionalId") String professionalIdRaw) {
+            @PathVariable("professionalId") String professionalIdRaw,
+            @RequestParam(value = "subServiceId", required = false) String subServiceIdRaw) {
         Long professionalId = parsePathId(professionalIdRaw);
-        return ResponseEntity.ok(professionalsService.getProfile(professionalId, principal));
+        Long subServiceId = subServiceIdRaw == null ? null : parseSubServiceId(subServiceIdRaw);
+        return ResponseEntity.ok(professionalsService.getProfile(professionalId, principal, subServiceId));
+    }
+
+    /**
+     * Same parse-and-report convention as {@link #parsePathId}, but reported against the query
+     * parameter's own name so the client can tell which value it got wrong.
+     */
+    private Long parseSubServiceId(String raw) {
+        try {
+            long value = Long.parseLong(raw);
+            if (value <= 0) {
+                throw new NumberFormatException();
+            }
+            return value;
+        } catch (NumberFormatException e) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request failed validation.",
+                    List.of(new FieldError("subServiceId", "must be a positive numeric id")));
+        }
     }
 
     /** Same path-referenced-id convention as {@code bookings.controller.BookingsController}. */

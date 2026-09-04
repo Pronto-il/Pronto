@@ -1,0 +1,16 @@
+{
+  "datasetVersion": "pronto_classification_experiment_5000_v2",
+  "taxonomyVersion": "profession-taxonomy-v1",
+  "sourceWorkbook": "pronto_classification_experiment_5000_v2.xlsx",
+  "splitSalt": "pronto-classification-v2",
+  "rows": 5000,
+  "professions": 50,
+  "subcategories": 250,
+  "dispatchable": 18,
+  "splitCounts": {
+    "dev": 3500,
+    "holdout": 750,
+    "validation": 750
+  },
+  "datasetSha256": "9e598be65bba2c373260d0d122376c7516182f0700ab19886ebfc039d14e4ec7"
+}

@@ -18,7 +18,8 @@ shape, and §3.1's client contract.
 
 | Sub-package | What lives there |
 |---|---|
-| `catalog` | The category source of truth. `ServiceCategoryCatalog` reads the real `categories` table (via `professionals.repository.CategoryRepository` — no duplicated taxonomy, no enum). `CategoryRoutingProfiles` holds each category's scope / belongs / does-not-belong / typical components / overlap rules as **data**, joined onto the live rows. |
+| `taxonomy` | The **classification** label space: 50 professions × 250 subcategories, plus each profession's mapping onto the dispatch categories. Answers "what does the customer need?" — see `taxonomy/README.md`. |
+| `catalog` | The **dispatch** source of truth. `ServiceCategoryCatalog` reads the real `categories` table (via `professionals.repository.CategoryRepository` — no duplicated taxonomy, no enum). `CategoryRoutingProfiles` holds each category's scope / belongs / does-not-belong / typical components / overlap rules as **data**, joined onto the live rows. Answers "what can Pronto send?" |
 | `prompt` | Prompt construction in named sections and the two JSON Schemas. Nothing here is one opaque string. |
 | `decision` | `RoutingDecisionPolicy` — the single place "commit or ask" is decided, and the only place an AI-supplied category becomes a real Pronto category. `RoutingProperties` holds every threshold; `ClarificationDeduplicator` catches repeat questions. |
 | `client` | Transport and parsing only. `OpenAiChatClient` (HTTP, retries, base64 image encoding), the two clients, the two parsers. Makes no routing decisions. |

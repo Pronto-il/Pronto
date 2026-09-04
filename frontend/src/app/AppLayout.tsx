@@ -1,12 +1,13 @@
-import { useEffect } from 'react';
+import { useContext, useEffect } from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
-import { LogOut, User, ClipboardList, LayoutDashboard, ShieldCheck, Wrench } from 'lucide-react';
-import { useAuth } from '../shared/hooks';
+import { ArrowRight, LogOut, User, ClipboardList, LayoutDashboard, ShieldCheck, Wrench } from 'lucide-react';
+import { useAuth, HeaderBackContext } from '../shared/hooks';
 import { setPhoneVerificationRequiredHandler } from '../shared/api';
 import { BookingDraftIndicator } from './BookingDraftIndicator';
 import { ActiveIssueToolbox } from './ActiveIssueToolbox';
 import { BottomNav } from './BottomNav';
 import { NotificationBell } from '../features/notifications';
+import { AuthGateModal } from '../features/auth';
 import logoUrl from '../assets/pronto-logo.jpg';
 import styles from './AppLayout.module.css';
 
@@ -95,6 +96,10 @@ import styles from './AppLayout.module.css';
 export default function AppLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  // Set by whichever screen is mounted (`useHeaderBackAction`); `null` on screens that don't
+  // hoist a back control, which is all of them except the issue flow — those keep rendering
+  // `PageHeader`'s own back row.
+  const { action: backAction } = useContext(HeaderBackContext);
 
   // Production MS1. An account whose phone has never been verified authenticates normally but is
   // refused the marketplace mutations that end with a professional at somebody's front door
@@ -112,9 +117,23 @@ export default function AppLayout() {
     <div className={styles.shell}>
       <header className={styles.header}>
         <div className={styles.headerInner}>
-          <Link to={brandTarget} className={styles.brand} aria-label="Pronto">
-            <span className={styles.logo} style={{ backgroundImage: `url(${logoUrl})` }} />
-          </Link>
+          {/* Back sits at the inline start — the right edge under `dir="rtl"` — with the brand
+              immediately beside it, so a screen that hoists a back action gets it in the bar
+              rather than as a row of its own below the header. Rendered before the brand in the
+              DOM precisely because inline order is direction-aware: "first" is the right in
+              RTL, which is where a back control belongs. Absent on most screens, and the group
+              collapses to just the brand when it is. */}
+          <div className={styles.headerLead}>
+            {backAction && (
+              <button type="button" className={styles.headerBack} onClick={backAction.onBack}>
+                <ArrowRight size={18} aria-hidden="true" />
+                <span>{backAction.label}</span>
+              </button>
+            )}
+            <Link to={brandTarget} className={styles.brand} aria-label="Pronto">
+              <span className={styles.logo} style={{ backgroundImage: `url(${logoUrl})` }} />
+            </Link>
+          </div>
 
           <nav className={styles.nav}>
             {user ? (
@@ -193,6 +212,9 @@ export default function AppLayout() {
       <main className={styles.main}>
         <Outlet />
       </main>
+      {/* The deferred-authentication gate. Rendered once, at the shell, so any screen can ask
+          for a session without leaving itself — it is closed and invisible until one does. */}
+      <AuthGateModal />
       {user?.role === 'CUSTOMER' && <ActiveIssueToolbox />}
       {user?.role === 'CUSTOMER' && <BottomNav />}
     </div>

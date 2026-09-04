@@ -889,3 +889,13 @@ filter uses, so the two surfaces cannot disagree about who serves where.
 - **An unresolvable city short-circuits to an empty listing**, with a
   `bookings.listing.uncovered` log line, rather than binding null and relying on SQL null semantics
   to filter everything out by accident.
+
+
+## Service-address length bounds (2026-09-04)
+
+`CreateOrderRequest`'s `serviceCity`, `serviceStreet` and `serviceAddressNotes` had no `@Size` at
+all — the only three address strings in the codebase that didn't. They now carry 100/150/500,
+the same widths as the sibling DTOs (`users.dto.CustomerAddressRequest`,
+`auth.dto.DefaultAddressRequest`, `sos.dto.CreateSosRequestRequest`) and the `users.default_*`
+columns they mirror. `serviceApartment`/`serviceFloor`/`serviceEntrance` were already bounded by
+their `maps.AddressAccessFields` patterns (`\d{0,20}`, `\d{0,20}`, `[\p{L}0-9]{0,2}`).

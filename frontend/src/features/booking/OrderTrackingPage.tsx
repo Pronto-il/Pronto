@@ -6,7 +6,7 @@ import { OrderProgressStepper } from './OrderProgressStepper';
 import { OrderDetailsCard } from './OrderDetailsCard';
 import { ProntoAnalysisCard } from './ProntoAnalysisCard';
 import { ProfessionalProfileModal } from '../professionals';
-import { useAuth, useOrderStatus, useEtaCountdown, useActiveOrder } from '../../shared/hooks';
+import { useAuth, useOrderStatus, useEtaCountdown, useActiveOrder, useHeaderBackAction } from '../../shared/hooks';
 import {
   cancelOrder,
   markOnTheWay,
@@ -308,6 +308,10 @@ export default function OrderTrackingPage() {
     );
   }
 
+  // Back in the app header (`AppLayout`), like the rest of the customer flow. Same `backPath`,
+  // which is already role-aware (a professional viewing the same order goes to their jobs list).
+  useHeaderBackAction(() => navigate(backPath));
+
   function renderHeroAction() {
     if (canReview) {
       return (
@@ -336,7 +340,7 @@ export default function OrderTrackingPage() {
 
   return (
     <div className="focused-page">
-      <PageHeader title="מעקב הזמנה" onBack={() => navigate(backPath)} />
+      <PageHeader title="מעקב הזמנה" />
 
       {isLoading && !order && <Skeleton variant="rect" className={styles.loadingCard} />}
 

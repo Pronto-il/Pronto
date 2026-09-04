@@ -1,10 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { clearGuestSession } from '../api/guestSession';
 import { useAuth } from './useAuth';
-import { BookingDraftContext, type BookingDraft } from './bookingDraftContext';
+import { BookingDraftContext, sanitizeRestoredDraft, type BookingDraft } from './bookingDraftContext';
 
 const DRAFT_STORAGE_KEY = 'pronto_booking_draft';
 
+/**
+ * The single point a draft re-enters the app, and therefore the single place its freshness is
+ * judged — see `sanitizeRestoredDraft`. Doing it here rather than in each screen's resume effect
+ * is what stops the four of them drifting apart about what "old" means.
+ */
 function readStoredDraft(): BookingDraft | null {
   try {
     const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
@@ -15,7 +20,7 @@ function readStoredDraft(): BookingDraft | null {
     if (parsed.version !== 2) {
       return null;
     }
-    return parsed;
+    return sanitizeRestoredDraft(parsed, Date.now());
   } catch {
     return null;
   }

@@ -19,6 +19,7 @@ import com.pronto.availability.repository.SosAvailabilityRepository;
 import com.pronto.common.dto.LockedDetails;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
+import com.pronto.professionals.dto.SubServicePriceSelection;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.entity.ProfessionalCategory;
 import com.pronto.professionals.entity.ProfessionalServiceCity;
@@ -44,6 +45,7 @@ import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -210,18 +212,34 @@ public class AuthAccountWriter {
 
         persistCategories(professional.getId(), professionalData.categoryIds());
         persistServiceCities(professional.getId(), professionalData.serviceCityIds());
-        persistSubServices(professional.getId(), professionalData.subServiceIds());
+        persistSubServices(professional.getId(), professionalData.subServiceSelections());
         persistWorkingHours(professional.getId(), professionalData.workingHours());
     }
 
     /**
-     * The registrant's sub-service selection, deduplicated while preserving the order they sent (so a
-     * duplicate id in the payload cannot become a primary-key violation on
-     * {@code professional_sub_services}).
+     * The registrant's sub-service selection <b>and what they charge for each</b>, deduplicated while
+     * preserving the order they sent (so a duplicate id in the payload cannot become a primary-key
+     * violation on {@code professional_sub_services}).
+     *
+     * <p>A {@code null} price is stored as {@code null} — "they did not say" — and never as zero.
+     * The registrant may price nothing at all here and do it later from their profile; what
+     * registration requires is that they named at least one service, which is what
+     * {@code ProfessionalEligibility} tests. See
+     * {@code V57__alter_professional_sub_services_add_price.sql}.
+     *
+     * <p>First entry wins on a duplicate id, matching the "preserve the order they sent" rule this
+     * method already followed. The priced request form rejects duplicates outright before reaching
+     * here ({@code SubServicePriceValidator}), because two prices for one service have no honest
+     * resolution; this remains the backstop for the id-only form, where a duplicate is unambiguous.
      */
-    private void persistSubServices(Long professionalId, List<Long> subServiceIds) {
-        for (Long subServiceId : new LinkedHashSet<>(subServiceIds)) {
-            professionalSubServiceRepository.save(new ProfessionalSubService(professionalId, subServiceId));
+    private void persistSubServices(Long professionalId, List<SubServicePriceSelection> selections) {
+        Set<Long> seen = new LinkedHashSet<>();
+        for (SubServicePriceSelection selection : selections) {
+            if (!seen.add(selection.subServiceId())) {
+                continue;
+            }
+            professionalSubServiceRepository.save(new ProfessionalSubService(
+                    professionalId, selection.subServiceId(), selection.price()));
         }
     }
 

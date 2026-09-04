@@ -13,6 +13,6 @@ import jakarta.validation.constraints.Size;
 public record CreateReviewRequest(
         @NotNull Long orderId,
         @Min(1) @Max(5) int rating,
-        @Size(max = 2000) String comment
+        @Size(max = ReviewText.COMMENT_MAX_LENGTH) String comment
 ) {
 }

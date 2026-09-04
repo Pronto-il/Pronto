@@ -11,7 +11,7 @@ import type {
   IssueUrgencyType,
   PresignedImageUrlsResponse,
 } from '../../shared/api';
-import { useBookingDraft } from '../../shared/hooks';
+import { resolveDraftRoute, useBookingDraft, useHeaderBackAction } from '../../shared/hooks';
 import type { BookingDraftPhoto } from '../../shared/hooks';
 import { stepTransition } from '../../shared/motion/variants';
 import { DescribeIssueStep } from './DescribeIssueStep';
@@ -349,21 +349,44 @@ export default function NewIssuePage() {
 
   const stepNumber = STEP_NUMBERS[step.name];
 
+  // The back control lives in the app header, beside the brand, rather than as a row of its own
+  // under it (`PageHeader`'s `onBack`, deliberately not passed below). Same `handleBack`, so
+  // rewinding a step and leaving the flow behave exactly as before — only where the button is
+  // drawn changed.
+  useHeaderBackAction(handleBack);
+
   return (
-    <div className="focused-page">
+    <div className={`focused-page ${styles.page}`}>
       <PageHeader
         title="יש לי תקלה"
         description={STEP_LABELS[step.name]}
-        onBack={handleBack}
         steps={stepNumber !== undefined ? { current: stepNumber, total: 3 } : undefined}
       />
 
       {hasConflictingDraft && !warningDismissed && step.name === 'describe' && (
         <div className={styles.warningBanner} role="alert">
           <p>יש לך בקשה פעילה בתהליך הזמנה — התחלת תקלה חדשה תבטל אותה.</p>
-          <button type="button" className={styles.warningDismiss} onClick={() => setWarningDismissed(true)}>
-            הבנתי
-          </button>
+          <div className={styles.warningActions}>
+            {/* The way back to the booking this banner is warning about. It exists because the
+                warning was previously a dead end: the two surfaces that link to a draft —
+                `BookingDraftIndicator` and `ActiveIssueToolbox` — are both rendered only for a
+                signed-in CUSTOMER, so a guest had no route back to their own booking at all.
+
+                `resolveDraftRoute` is the same rule those two use, so Regular lands on `/booking`
+                and SOS on `/sos-booking`, resumed from the same draft. No authentication: all four
+                booking routes are public (`router.tsx`), the draft is the state, and a guest's own
+                draft is theirs to continue. */}
+            <button
+              type="button"
+              className={styles.warningPrimary}
+              onClick={() => navigate(resolveDraftRoute(initialDraft!))}
+            >
+              להזמנה הקיימת
+            </button>
+            <button type="button" className={styles.warningDismiss} onClick={() => setWarningDismissed(true)}>
+              הבנתי
+            </button>
+          </div>
         </div>
       )}
 

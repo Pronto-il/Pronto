@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CalendarClock, MapPin } from 'lucide-react';
-import { Button, Card } from '../../shared/components';
+import { Button, Card, toServicePlaceFields } from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
 import type { ClarificationAnswer } from '../../shared/api';
 import { createIssue, createOrder, ApiError, GENERIC_ERROR_MESSAGE, getCategoryNameHe } from '../../shared/api';
-import { useAuth } from '../../shared/hooks';
+import { useAuth, useAuthGate } from '../../shared/hooks';
 import type { OrderResponse, ProfessionalCard as ProfessionalCardData } from '../../shared/api';
 import { formatDateLabel, formatTimeLabel } from '../../shared/utils/formatDateTime';
 import styles from './BookingSummary.module.css';
@@ -59,6 +59,11 @@ export interface BookingSummaryProps {
 
 const ORDER_ERROR_MESSAGES: Record<string, string> = {
   BOOKING_TIME_UNAVAILABLE: 'הזמן הזה כבר לא פנוי. אפשר לבחור זמן אחר.',
+  /* Distinct from BOOKING_TIME_UNAVAILABLE on purpose: the professional may well be free then.
+     Reachable despite the disabled chips whenever time passes while the customer is on the confirm
+     step -- the server re-checks the rule against its own clock at the commit, which is the point. */
+  BOOKING_LEAD_TIME_NOT_MET:
+    'הזמן שבחרת קרוב מדי להזמנה רגילה. אפשר לבחור מועד מאוחר יותר, או להפעיל SOS למי שצריך מישהו עכשיו.',
   ISSUE_NOT_BOOKABLE: 'הבקשה הזו כבר בטיפול. אפשר לעקוב אחריה בדף ההזמנות שלך.',
 };
 
@@ -112,8 +117,24 @@ export function BookingSummary({
   onTimeUnavailable,
 }: BookingSummaryProps) {
   const { token } = useAuth();
+  const { open: openAuthGate } = useAuthGate();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [bannerError, setBannerError] = useState<string | null>(null);
+  /**
+   * Set when the customer pressed confirm without a session and then obtained one through the
+   * gate. A flag rather than a captured callback on purpose: the resume runs in the same tick the
+   * session lands, when this component's `token` is still the previous render's `undefined`.
+   * Waiting for the re-render is what makes the retry see the token it needs.
+   */
+  const [resumeRequested, setResumeRequested] = useState(false);
+
+  useEffect(() => {
+    if (resumeRequested && token) {
+      setResumeRequested(false);
+      void submitBooking();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeRequested, token]);
 
   async function handleConfirm() {
     setBannerError(null);
@@ -125,15 +146,29 @@ export function BookingSummary({
     // dispatches a real professional to a real address.
     //
     // Nothing is created before this check: no issue, no order, and no notification. A guest who
-    // gets this far and turns back at the login screen leaves no trace in the database.
+    // gets this far and dismisses the account question leaves no trace in the database, and stays
+    // on this screen with their booking intact.
     //
     // The draft has already been written by the step transitions that led here, so `onAuthRequired`
-    // only has to send them to the login screen -- everything they entered is on disk and is
-    // adopted by whichever account signs in (see BookingDraftProvider's adoption rule).
+    // only has to persist the last of it -- everything they entered is on disk and is adopted by
+    // whichever account signs in (see BookingDraftProvider's adoption rule).
     if (!token) {
+      // Persist first (the parent writes the draft), then ask for the account **over this screen**
+      // rather than by navigating to `/login`: everything the customer chose is on display behind
+      // the modal, and the confirmation they pressed is resumed the moment a session exists.
       onAuthRequired();
+      openAuthGate(() => setResumeRequested(true));
       return;
     }
+    await submitBooking();
+  }
+
+  /**
+   * The commit itself, split out from {@link handleConfirm} so the gate can resume *exactly* what
+   * the customer pressed — same issue reuse, same order call, same error handling. Nothing about
+   * it is guest-specific, and an authenticated confirm reaches it by the same line it always did.
+   */
+  async function submitBooking() {
     // Pre-flight: never send a request the server is guaranteed to reject. Catches the common
     // shape of this problem (the customer sat on this screen until the chosen time passed)
     // without a round trip, and without any invented lead-time rule — this mirrors exactly
@@ -174,12 +209,11 @@ export function BookingSummary({
         issueId: resolvedIssueId,
         professionalId: professional.professionalId,
         bookedStart,
-        // V55: the selected place travels with the address. Omitted for a grandfathered legacy
-        // default address, which the backend accepts by recognising it as the caller's own.
-        servicePlaceId: address.placeId ?? undefined,
-        serviceFormattedAddress: address.formattedAddress ?? undefined,
-        serviceLatitude: address.latitude ?? undefined,
-        serviceLongitude: address.longitude ?? undefined,
+        // V55: the selected place travels with the address, all four fields or none -- see
+        // `toServicePlaceFields`. Omitted for any saved default address, whose coordinates `/me`
+        // does not return; the backend accepts that by recognising the caller's own address and
+        // resolving it server-side.
+        ...toServicePlaceFields(address),
         serviceCity: address.city,
         serviceStreet: address.street,
         serviceHouseNumber: address.houseNumber,
@@ -190,7 +224,11 @@ export function BookingSummary({
       });
       onConfirmed(order);
     } catch (error) {
-      if (error instanceof ApiError && error.code === 'BOOKING_TIME_UNAVAILABLE') {
+      if (error instanceof ApiError && error.code === 'BOOKING_LEAD_TIME_NOT_MET') {
+        // Back to the picker, same as the other two "that time will not work" cases -- the chips
+        // are re-derived against a freshly-fetched boundary there.
+        onTimeUnavailable(ORDER_ERROR_MESSAGES.BOOKING_LEAD_TIME_NOT_MET);
+      } else if (error instanceof ApiError && error.code === 'BOOKING_TIME_UNAVAILABLE') {
         // Not `setBannerError` here — this component is about to unmount as `onTimeUnavailable`
         // sends the customer back to the `slot` step, so a banner set on local state would
         // never paint. The parent renders the message instead.

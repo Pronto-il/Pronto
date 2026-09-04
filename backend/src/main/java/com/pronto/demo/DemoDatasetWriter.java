@@ -91,15 +91,26 @@ class DemoDatasetWriter {
      */
     static final String DEMO_EMAIL_DOMAIN = "demo.pronto.invalid";
 
-    /**
-     * Prefixed onto every demo PROFESSIONAL's displayed name (not customers' -- customers are never
-     * browsed/selected by a stranger the way a professional is). The email-domain marker above is
-     * sufficient to identify a demo row in the database, but this dataset is now written into the
-     * real production database alongside genuine accounts rather than into an isolated demo-only
-     * one, so a marker visible in the product UI itself -- not only in a query -- is worth the one
-     * extra string concatenation.
+    /*
+     * THERE IS DELIBERATELY NO NAME PREFIX HERE ANY MORE.
+     *
+     * Demo professionals used to be seeded as "(דמו) דוד כהן", so that a synthetic account was
+     * identifiable from the product UI and not only from a query. That marker is removed: it made
+     * every screenshot, every walkthrough and every live demonstration read as a mock-up, which is
+     * the opposite of what a demonstration is for, and it leaked an internal concept into
+     * customer-facing copy.
+     *
+     * Identification did not depend on it and still does not. DEMO_EMAIL_DOMAIN above is the
+     * marker -- a column that cannot be reached from any customer-facing surface, is unique by
+     * construction, and is what every "is this row synthetic?" query already used. The displayed
+     * name was always the weaker of the two signals: it is user-editable through
+     * PUT /api/professionals/me, so a demo account could drop the prefix at any time while its
+     * email could not change at all.
+     *
+     * Nothing else in this file, and nothing anywhere in the backend, matches on the visible name
+     * to decide that a row is demo data -- verified by grep across the whole source tree before
+     * the prefix was removed.
      */
-    private static final String DEMO_PROFESSIONAL_NAME_PREFIX = "(דמו) ";
 
     /**
      * Tables {@link #reset()} never touches: Flyway's own history (deleting it would make the
@@ -347,6 +358,12 @@ class DemoDatasetWriter {
                 "APPROVED", adminUserId, null, false, true, true, false);   // no verification document
         int approvedIncomplete = 3;
 
+        // ---- the demo SOS presenter: one account a person logs into during a live demonstration ----
+        long presenterId = seedSosPresenter(index++, passwordHash, categories, regions, adminUserId);
+        bookable.add(new BookableProfessional(presenterId, categories.get(0), basePrice(
+                DemoContent.forCategory(categories.get(0).code()), 0)));
+        sosAvailableTotal++;
+
         int[] history = seedReviewHistory(bookable, customers);
         int favorites = seedFavorites(customers, bookable);
 
@@ -363,6 +380,73 @@ class DemoDatasetWriter {
                 customers.size(), history[0], history[1], favorites, sosAvailableTotal, perCategoryReport,
                 regions.size(), withPhoto == null ? 0 : withPhoto);
     }
+
+    /**
+     * <b>The dedicated demo SOS presenter</b> — the one account somebody signs into during a live
+     * demonstration to accept an SOS call on stage.
+     *
+     * <h2>An ordinary professional, seeded honestly</h2>
+     *
+     * Built by the same {@link #insertProfessional} every other seeded professional goes through, so
+     * they get real working hours, real sub-services with real prices, a real verification document
+     * and {@code APPROVED} status by satisfying the rules rather than by bypassing them. They are
+     * <b>not</b> an operator, hold no elevated role, and are subject to every route guard, ownership
+     * check and state transition that applies to anyone else. What makes them special is one boolean
+     * and what it does is narrow — see {@code V56}'s header.
+     *
+     * <h2>Categories: three real trades, not all eight</h2>
+     *
+     * The presenter needs to be able to demonstrate SOS across the demo categories, and the demo-only
+     * matching path gives them exactly that without any category declaration at all
+     * ({@code SosCandidateRepository#findDemoSosPresenters}). So their declared trades are chosen for
+     * a different purpose: to keep them a <em>normal-looking professional</em> in ordinary
+     * browse-and-book listings. Declaring all eight would put one person in every Standard search
+     * result on the platform, which is the "universal professional" outcome the brief rules out; the
+     * first three the catalogue has is a plausible multi-trade tradesperson and keeps regular-booking
+     * behaviour separate from demo SOS behaviour, which is the actual requirement.
+     *
+     * <h2>SOS availability is seeded on, and does not have to stay on</h2>
+     *
+     * The toggle is seeded {@code true} so a first demonstration works out of the box, but the demo
+     * matching path does not join {@code sos_availability} at all — so a presenter who switched it
+     * off mid-demonstration still receives the next request. That is the whole point of the
+     * feature: no database editing before a presentation.
+     *
+     * @return the presenter's {@code professionals.id}
+     */
+    private long seedSosPresenter(int index, String passwordHash, List<CategorySeed> categories,
+                                   List<RegionSeed> regions, long adminUserId) {
+        List<CategorySeed> presenterCategories = categories.subList(0, Math.min(3, categories.size()));
+        SeededProfessional seeded = insertProfessional(index, passwordHash, presenterCategories, regions,
+                "APPROVED", adminUserId, null, true, true, true, true);
+
+        // A memorable, obviously-purposeful address to sign in with, replacing the positional
+        // demo.pro.N one insertProfessional assigns. Still under DEMO_EMAIL_DOMAIN, so it is still
+        // counted by countExistingDemoAccounts, still removed by reset(), and still incapable of
+        // receiving mail. The display name carries no marker, exactly like every other demo
+        // professional -- see the note where the name prefix used to be.
+        jdbcTemplate.update("UPDATE users SET email = ?, full_name = ? WHERE id = "
+                        + "(SELECT user_id FROM professionals WHERE id = ?)",
+                "demo.sos.presenter@" + DEMO_EMAIL_DOMAIN, PRESENTER_DISPLAY_NAME, seeded.id());
+
+        // The flag itself, written here and nowhere else in the application. Professional has no
+        // setter for it precisely so that registration, profile editing and operator approval cannot
+        // reach it -- this statement is the only writer in the codebase.
+        jdbcTemplate.update("UPDATE professionals SET demo_sos_presenter = TRUE WHERE id = ?", seeded.id());
+
+        log.info("demo.seed.sos-presenter professionalId={} email=demo.sos.presenter@{} categories={}",
+                seeded.id(), DEMO_EMAIL_DOMAIN,
+                presenterCategories.stream().map(CategorySeed::code).toList());
+        return seeded.id();
+    }
+
+    /**
+     * The presenter's displayed name. An ordinary Hebrew name like every other demo professional —
+     * it appears on a customer's SOS screen during a demonstration and must not read as scaffolding.
+     * The account is identified internally by {@code demo_sos_presenter} and by its email, never by
+     * this string.
+     */
+    private static final String PRESENTER_DISPLAY_NAME = "יונתן אבידן";
 
     /** The {@link CategorySeed}s named by a combination, in order, skipping any the database lacks. */
     private static List<CategorySeed> resolveCombination(List<String> codes, List<CategorySeed> categories) {
@@ -553,7 +637,7 @@ class DemoDatasetWriter {
                                                     boolean withSubServices, boolean sosAvailable) {
         CategorySeed primary = categories.get(0);
         CategoryContent content = DemoContent.forCategory(primary.code());
-        String name = DEMO_PROFESSIONAL_NAME_PREFIX + fullName(index);
+        String name = fullName(index);
         BigDecimal basePrice = basePrice(content, index);
 
         RegionSeed region = regionFor(regions, index);
@@ -685,9 +769,43 @@ class DemoDatasetWriter {
                 chosen.add(available.get((index + c + i) % available.size()));
             }
         }
+        CategoryContent content = DemoContent.forCategory(categories.get(0).code());
+        List<Object[]> batch = new ArrayList<>(chosen.size());
+        int position = 0;
+        for (Long subServiceId : chosen) {
+            batch.add(new Object[]{professionalId, subServiceId, subServicePrice(content, index, position++)});
+        }
         jdbcTemplate.batchUpdate(
-                "INSERT INTO professional_sub_services (professional_id, sub_service_id) VALUES (?, ?)",
-                chosen.stream().map(id -> new Object[]{professionalId, id}).toList());
+                "INSERT INTO professional_sub_services (professional_id, sub_service_id, price) VALUES (?, ?, ?)",
+                batch);
+    }
+
+    /**
+     * A per-sub-service price ({@code V57}), spread around the professional's own
+     * {@link #basePrice(CategoryContent, int)} rather than equal to it.
+     *
+     * <p>The spread is the point. A dataset where every sub-service of every professional carried
+     * the same number would render correctly and demonstrate nothing — the whole reason this column
+     * exists is that unblocking a drain and replacing a boiler are not the same job. Varying by
+     * position within the professional's own selection produces a believable price list per person
+     * while staying deterministic, so two seed runs over the same catalogue produce identical data.
+     *
+     * <p>Deliberately never {@code null} here, even though the column and the API both permit it: a
+     * demonstration must not accidentally show a missing price and have it read as a bug. The
+     * unpriced state is still reachable — and still worth exercising — through the ordinary
+     * registration and profile-edit flows.
+     */
+    private static BigDecimal subServicePrice(CategoryContent content, int index, int position) {
+        BigDecimal base = basePrice(content, index);
+        // -20%, -5%, +10%, +25% ... cycling, so a professional's cheapest service is meaningfully
+        // cheaper than their dearest and the ordering is stable per seed.
+        int adjustmentPercent = -20 + (position % 4) * 15;
+        BigDecimal adjusted = base.add(base.multiply(BigDecimal.valueOf(adjustmentPercent))
+                .divide(BigDecimal.valueOf(100), 0, java.math.RoundingMode.HALF_UP));
+        // Round to the nearest 10 ILS: real tradespeople quote round numbers, and a demo showing
+        // "397.00 ₪" looks generated rather than realistic.
+        BigDecimal rounded = BigDecimal.valueOf(Math.round(adjusted.doubleValue() / 10.0) * 10L);
+        return rounded.max(BigDecimal.valueOf(80)).setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
     // ------------------------------------------------------------------ history

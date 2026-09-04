@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Modal, Skeleton } from '../../shared/components';
 import { useBookingDraft, useSosRequest } from '../../shared/hooks';
@@ -6,6 +6,7 @@ import {
   ApiError,
   GENERIC_ERROR_MESSAGE,
   cancelSosRequest,
+  getOrder,
   selectSosProfessional,
 } from '../../shared/api';
 import type { SosCandidate } from '../../shared/api';
@@ -63,9 +64,24 @@ function toUserMessage(error: unknown): string {
  */
 export default function ProntoSosScreen({ sosRequestId, onRetry, isRetrying, retryError }: ProntoSosScreenProps) {
   const navigate = useNavigate();
-  const { draft, clearDraft } = useBookingDraft();
+  const { draft, updateDraft, clearDraft } = useBookingDraft();
   const { request, candidates, selectionOpen, isLoading, error, refetch, realtimeStatus } =
     useSosRequest(sosRequestId);
+
+  /**
+   * Whether the **order** behind this attempt actually reached `COMPLETED` — the one status that
+   * makes a job reviewable (`reviews.service.ReviewsService` accepts nothing else, and
+   * `CompletionReviewPage` shows nothing else).
+   *
+   * <p>Asked separately because this screen's own `DONE` phase is not that answer. It comes from
+   * the *SOS request's* status, and the two can disagree: `SosOfferService.complete` marks the
+   * request `COMPLETED` unconditionally and then completes the order through
+   * `completeIfOnTheWay`, which only fires for `ON_THE_WAY`/`ARRIVED`, ignores its own result, and
+   * is skipped entirely when there is no order. Offering a review off the back of the terminal
+   * *screen* is exactly the inference that put a review prompt in front of jobs that never
+   * completed.
+   */
+  const [isOrderCompleted, setIsOrderCompleted] = useState(false);
 
   /** The offer whose `בחר` was pressed. Non-null for the whole round trip — one submit at a time. */
   const [pendingOfferId, setPendingOfferId] = useState<number | null>(null);
@@ -81,6 +97,36 @@ export default function ProntoSosScreen({ sosRequestId, onRetry, isRetrying, ret
    * state says the candidate is gone.
    */
   const [openCandidateOfferId, setOpenCandidateOfferId] = useState<number | null>(null);
+
+  /**
+   * Asks the order — once the attempt says it finished, and only then. Any answer other than
+   * `COMPLETED` (including a failed lookup) leaves the review offer off: a review that cannot be
+   * created is worse than no offer, and the server would refuse it anyway with
+   * `REVIEW_ORDER_NOT_COMPLETED`.
+   */
+  const sosStatus = request?.status;
+  const orderId = request?.orderId ?? null;
+  useEffect(() => {
+    if (sosStatus !== 'COMPLETED' || orderId === null) {
+      setIsOrderCompleted(false);
+      return;
+    }
+    let cancelled = false;
+    getOrder(orderId)
+      .then((order) => {
+        if (!cancelled) {
+          setIsOrderCompleted(order.orderStatus === 'COMPLETED');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setIsOrderCompleted(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sosStatus, orderId]);
 
   async function handleSelect(candidate: SosCandidate) {
     // Double-submit guard. The backend's atomic guarded update is the real protection — two taps
@@ -256,10 +302,27 @@ export default function ProntoSosScreen({ sosRequestId, onRetry, isRetrying, ret
               </Button>
               {/* `/booking`, not `/issues/{id}/booking` — deferred authentication flattened the
                   booking routes, so the old path no longer resolves and this fallback landed the
-                  customer on a blank screen at the exact moment SOS had just failed them. The
-                  draft carries the issue (`ProntoSosEntryPage` persists its id before activating),
-                  which is what `/booking` reads. Same defect as the one fixed in that page. */}
-              <Button variant="ghost" onClick={() => navigate('/booking')} fullWidth>
+                  customer on a blank screen at the exact moment SOS had just failed them.
+
+                  The draft is switched to the Standard path *here*, at the customer's explicit
+                  choice, rather than being carried over as-is. The SOS issue this attempt ran on
+                  cannot be booked through the Standard endpoints — they refuse a non-STANDARD
+                  issue with `409 ISSUE_URGENCY_MISMATCH` — so its id is dropped and the standard
+                  commit creates its own STANDARD issue from the description, category and photos
+                  the draft still carries. Nothing is converted: the SOS issue stays SOS on the
+                  server, and this attempt has already ended. */}
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  updateDraft({
+                    stage: 'ADDRESS_SELECTION',
+                    urgencyType: 'STANDARD',
+                    issueId: undefined,
+                  });
+                  navigate('/booking');
+                }}
+                fullWidth
+              >
                 בחירת בעל מקצוע לפי תור רגיל
               </Button>
             </div>
@@ -269,9 +332,14 @@ export default function ProntoSosScreen({ sosRequestId, onRetry, isRetrying, ret
 
       {phase === 'DONE' && request.orderId !== null && (
         <div className={styles.doneActions}>
-          <Button onClick={() => navigate(`/orders/${request.orderId}/review`)} fullWidth>
-            השארת ביקורת
-          </Button>
+          {/* Offered on the order's status, not on this screen's phase — see `isOrderCompleted`.
+              The order details link is not gated: looking at what happened is reasonable whatever
+              state the order ended in. */}
+          {isOrderCompleted && (
+            <Button onClick={() => navigate(`/orders/${request.orderId}/review`)} fullWidth>
+              השארת ביקורת
+            </Button>
+          )}
           <Button variant="ghost" onClick={() => navigate(`/orders/${request.orderId}`)} fullWidth>
             לפרטי ההזמנה
           </Button>

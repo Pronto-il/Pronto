@@ -98,7 +98,8 @@ class BookingsArrivalTest {
                 // stubbing it would leave the tests asserting that a mock was called.
                 new ArrivalVerifier(professionalLocationService, locationProperties),
                 new com.pronto.maps.service.SelectedPlaceValidator(),
-                Mockito.mock(com.pronto.professionals.repository.CategoryRepository.class));
+                Mockito.mock(com.pronto.professionals.repository.CategoryRepository.class),
+                new com.pronto.bookings.config.BookingProperties());
 
         Professional professional = Mockito.mock(Professional.class);
         Mockito.lenient().when(professional.getId()).thenReturn(PROFESSIONAL_ID);
@@ -373,7 +374,8 @@ class BookingsArrivalTest {
                 Mockito.mock(ServiceAddressGeocoder.class), recording, locationProperties,
                 new ArrivalVerifier(recording, locationProperties),
                 new com.pronto.maps.service.SelectedPlaceValidator(),
-                Mockito.mock(com.pronto.professionals.repository.CategoryRepository.class));
+                Mockito.mock(com.pronto.professionals.repository.CategoryRepository.class),
+                new com.pronto.bookings.config.BookingProperties());
 
         assertThatThrownBy(() -> withRecording.arrived(PROFESSIONAL_USER_ID, ORDER_ID,
                 fixNorthOfDestination(5000, "15")))

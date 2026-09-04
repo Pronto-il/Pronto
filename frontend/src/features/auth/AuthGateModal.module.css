@@ -1,0 +1,32 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.intro {
+  margin: 0;
+  font-size: var(--font-size-small);
+  line-height: 20px;
+  color: var(--color-text-secondary);
+}
+
+.switch {
+  margin: 0;
+  text-align: center;
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+}
+
+/* A button, not a `Link`: switching between the two forms must not navigate — leaving the screen
+   underneath is the whole thing this gate exists to avoid. */
+.switchButton {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--color-primary);
+  font-size: inherit;
+  font-weight: var(--font-weight-semibold);
+  text-decoration: underline;
+  cursor: pointer;
+}

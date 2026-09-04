@@ -1,5 +1,6 @@
 package com.pronto.ai.decision;
 
+import com.pronto.ai.TestTaxonomy;
 import com.pronto.ai.TestCategories;
 import com.pronto.ai.catalog.ServiceCategory;
 import com.pronto.ai.catalog.ServiceCategoryCatalog;
@@ -42,7 +43,7 @@ class UnsupportedProfessionRoutingTest {
 
     @BeforeEach
     void setUp() {
-        policy = new RoutingDecisionPolicy(new RoutingProperties());
+        policy = new RoutingDecisionPolicy(new RoutingProperties(), TestTaxonomy.taxonomy());
         categories = new ServiceCategoryCatalog(TestCategories.repository()).categories();
     }
 

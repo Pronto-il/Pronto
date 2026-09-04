@@ -1,0 +1,94 @@
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  transition: background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+/* A ticked row is doing more than the others (it owns a price), so it gets a container. */
+.rowSelected {
+  background: var(--color-surface-muted, #f4f5f7);
+  border-color: var(--color-border);
+}
+
+.priceField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  /* Indented to sit under the checkbox label rather than under the checkbox itself, so the
+     price visibly belongs to the service above it. RTL-correct: padding-inline-start. */
+  padding-inline-start: var(--space-6, 28px);
+}
+
+.priceLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.priceLabelText {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.priceInputWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.priceInput {
+  width: 110px;
+  height: 40px;
+  /* Room for the ₪ glyph, which sits at the inline-end of the LTR-numeric field. */
+  padding: 0 var(--space-6, 28px) 0 var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.priceInput:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-focus-ring-subtle);
+}
+
+.priceInputError {
+  border-color: var(--color-danger, #d93025);
+}
+
+.priceInputError:focus {
+  border-color: var(--color-danger, #d93025);
+  box-shadow: 0 0 0 3px var(--color-danger-subtle, rgba(217, 48, 37, 0.16));
+}
+
+.currency {
+  position: absolute;
+  inset-inline-end: var(--space-3);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-tertiary, #9aa0a6);
+  pointer-events: none;
+}
+
+.priceHint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary, #9aa0a6);
+}
+
+.priceError {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-danger, #d93025);
+}

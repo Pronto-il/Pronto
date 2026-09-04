@@ -1,3 +1,12 @@
+/* Composed onto the shared `.focused-page` utility to trim its 32px of block-start padding: the
+   flow starts directly under the app bar. Only the page's own top padding is affected — nothing
+   inside moves relative to anything else. Scoped here rather than in `.focused-page`, which
+   every other screen shares. Compound selector so it beats that utility's own single-class
+   padding regardless of stylesheet order. */
+.page.page {
+  padding-block-start: var(--space-2);
+}
+
 .warningBanner {
   display: flex;
   align-items: center;
@@ -32,4 +41,32 @@
    `AnimatePresence`-driven step-to-step transition. */
 .stepViewport {
   position: relative;
+}
+
+/* The banner's two actions. `warningActions` keeps them together at the end of the row, so the
+   banner's existing shape (message, then actions) is unchanged by the addition of a second one. */
+.warningActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+/* "להזמנה הקיימת" — the one thing in this banner that goes somewhere, so it reads as the action
+   and "הבנתי" stays the quiet dismissal it already was. */
+.warningPrimary {
+  flex-shrink: 0;
+  min-height: 32px;
+  padding-inline: var(--space-3);
+  border: 1px solid currentColor;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.warningPrimary:hover {
+  background: rgba(0, 0, 0, 0.04);
 }

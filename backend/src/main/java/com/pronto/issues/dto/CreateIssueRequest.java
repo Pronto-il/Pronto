@@ -27,7 +27,8 @@ import java.util.List;
  */
 public record CreateIssueRequest(
         @NotNull Long categoryId,
-        @NotBlank @Size(min = 10, max = 2000) String description,
+        @NotBlank @Size(min = IssueText.DESCRIPTION_MIN_LENGTH, max = IssueText.DESCRIPTION_MAX_LENGTH)
+        String description,
         @NotNull IssueUrgencyType urgencyType,
         @Size(max = 6) List<@NotBlank String> imageKeys,
         @Valid @Size(max = 3) List<ClarificationAnswerRequest> clarificationAnswers

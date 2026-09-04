@@ -566,3 +566,34 @@ and returns null when `location.pathname === state.route` — the exact route a 
 to. No shortcut back to a screen you are already on, and no new state: if the tap would be a no-op,
 the toolbox is not shown. `REVIEW` has no `route` (its tap opens a modal in place), so it is never
 suppressed by this rule.
+
+## The header's back slot (2026-09-04)
+
+`AppLayout`'s bar gained one optional control: a back affordance at the **inline start**, with the
+brand immediately beside it. Under `dir="rtl"` inline order is direction-aware, so rendering it
+*before* the brand in the DOM puts it on the right — immediately to the right of the logo, which is
+where a back control belongs in RTL. Brand and back are wrapped in a `.headerLead` flex group, so
+`.headerInner`'s `space-between` still sees exactly two children and the nav side (bell, logout,
+`.desktopOnlyNav`, login/register) is untouched. The control is 40px tall inside the existing 72px
+(56px mobile) bar, so the header does not grow.
+
+It is empty on almost every screen. A routed screen opts in by calling `useHeaderBackAction(onBack)`
+(`shared/hooks`), which writes into `HeaderBackProvider`'s slot — mounted above the router in
+`App.tsx` so the header reads what the screen below it writes — and clears it on unmount. Today the
+one caller is `features/issues`' `NewIssuePage`, which dropped `PageHeader`'s `onBack` in exchange;
+every other screen still renders `PageHeader`'s own back row and is unaffected.
+
+
+### Standardized across the customer flow (2026-09-04)
+
+Every customer-journey screen with a back control now publishes it here instead of rendering a row
+under its own `PageHeader`: `NewIssuePage`, `ProfessionMatchPage`, `BookingFlowPage`,
+`ProntoSosEntryPage`, `OrderTrackingPage`, `CompletionReviewPage` and `ProfessionalProfilePage`.
+Each one is a single `useHeaderBackAction(handler)` call and the removal of an `onBack` prop — the
+handlers, and therefore the navigation, are unchanged. `null` covers the screens where back is
+conditional rather than absent (`BookingFlowPage`'s success step, `ProfessionMatchPage`'s matching
+phase), so no caller needs a conditional hook.
+
+Deliberately **not** hoisted: the two registration wizards' back controls (`CustomerRegisterForm`,
+`ProfessionalRegisterForm`) move between stages of a form rather than between screens, and the admin
+review screen is not customer flow.

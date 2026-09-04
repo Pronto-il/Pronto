@@ -385,3 +385,38 @@ had each completion compute `[...thatOneOldArray, itsOwnPhoto]` — last writer 
 silently vanished. `onChange` takes a value rather than an updater, so the component now keeps a
 `photosRef` as the authoritative list for code running inside an `await`. Faster uploads would
 have made this fire *more* often, not less.
+
+## Mobile height pass (2026-09-04) — `Textarea`, `PhotoUploader`, `PageHeader`
+
+Driven by `features/issues`' step 1 (see that package's README), but all three changes are
+general.
+
+- **`Textarea` gained `helperText`** — guidance rendered under the *label*, above the field,
+  additive to the existing `hint` (which stays below the field, for after-the-fact notes) and
+  appended to `aria-describedby` alongside it. Purely opt-in; every existing call site renders
+  identically.
+- **`PhotoUploader` is compact.** Label and hint share one line, thumbnails are 72px rather than
+  88px, and the add control is a 40px "הוספת תמונה" pill instead of an 88px dashed square. The
+  section is optional, so it should cost the content above it as little height as possible; a
+  drop-zone-sized target is only earned once there are photos to show. Upload, progress,
+  removal and error behaviour are unchanged.
+- **`PageHeader` tightens below 640px** — smaller gaps around the title, description and
+  progress track. Desktop is untouched, and the back control keeps its 44px tap target. It also
+  stays on the right in RTL without a change: it is an inline-flex element at the start of a
+  block, and its optical-alignment offset is `margin-inline-start`, so the direction handles it.
+
+
+## `Textarea` — character counter (2026-09-04)
+
+Passing `maxLength` to a controlled `Textarea` now also renders a subtle `42/300` counter. It sits
+in a footer row opposite the existing hint/error, so adding it costs no vertical space and the
+error/hint treatment is exactly where it was — including the `role="alert"` a server-side rejection
+surfaces through. No `maxLength`, or an uncontrolled field with nothing to count, renders exactly
+what it rendered before.
+
+Not a live region: it changes on every keystroke and announcing each one would be noise. The limit
+itself is on the element, where assistive tech reads it.
+
+The numbers come from `shared/api/fieldLimits.ts`, which mirrors the backend `@Size` constraints —
+see that module. Consumers today: the issue description, both review comments, the professional
+bio, and the admin rejection reason.

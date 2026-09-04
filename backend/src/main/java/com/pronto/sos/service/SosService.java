@@ -421,6 +421,39 @@ public class SosService {
      * an accepted professional stays visible and selectable until the customer decides. The
      * fan-out is bounded by the pool size (40 at the defaults), so "all of them" is a bounded
      * list, not an unbounded one.
+     *
+     * <h2>Professionals who were merely <em>asked</em> are returned too</h2>
+     *
+     * This list used to contain accepted offers and nothing else, so a customer whose request had
+     * gone out to eight plumbers saw an empty tray and a spinner until one of them answered — the
+     * screen could not distinguish "we have contacted eight people" from "we have found nobody",
+     * and the second is what an empty list reads as during an emergency.
+     *
+     * <p>It now also returns every offer whose response window is still open, tagged
+     * {@link SosCandidateState#REQUESTED}. What that changes is <b>visibility only</b>. It is not a
+     * relaxation of anything:
+     * <ul>
+     *   <li>{@code selectionOpen} still follows the request status, which still opens on the first
+     *       real acceptance — so a tray full of REQUESTED cards and no acceptance offers nothing to
+     *       press.</li>
+     *   <li>{@link #selectProfessional} still authorizes against {@code sos_offers.status ==
+     *       ACCEPTED} directly. A client that posted a REQUESTED candidate's {@code offerId}
+     *       anyway is refused with {@code SOS_CANDIDATE_NOT_AVAILABLE}, exactly as a client
+     *       inventing an id always was.</li>
+     *   <li>A REQUESTED candidate carries no ETA, because no human has committed one — see
+     *       {@code SosCandidate#estimatedArrivalMinutes}.</li>
+     * </ul>
+     *
+     * <p><b>Declined and lapsed offers are filtered out, not greyed out.</b> {@code REJECTED} and
+     * {@code EXPIRED} disappear from the list on the next read. Rendering them would publish one
+     * professional's decision to decline to a stranger, and would fill an urgent screen with rows
+     * nobody can act on; a customer needs to know who might still come, not who will not.
+     *
+     * <p><b>Sort order: accepted first, then asked</b> — and within each group by the figure that
+     * group actually has (committed ETA ascending for the accepted; the platform's own match rank
+     * for the rest, which is the order they were judged best in). So the professionals the customer
+     * can act on are always at the top, and the ordering never implies a REQUESTED candidate is
+     * faster than an ACCEPTED one on the strength of a number they never gave.
      */
     @Transactional
     public SosCandidatesResponse getCandidates(Long callerId, Long sosRequestId) {
@@ -430,11 +463,30 @@ public class SosService {
         }
         SosRequest current = enforceDeadlines(request);
 
+        // One read of the request's offers (bounded by the dispatch pool -- 40 at the defaults),
+        // filtered in Java rather than by a second status-specific query, because the two groups
+        // have to be ordered relative to each other and a repository cannot express that.
         List<SosCandidate> candidates = sosOfferRepository
-                .findBySosRequestIdAndStatusOrderByIdAsc(sosRequestId, SosOfferStatus.ACCEPTED)
+                .findBySosRequestIdOrderByMatchRankAsc(sosRequestId)
                 .stream()
-                .sorted(Comparator.comparing(SosOffer::getEstimatedArrivalMinutes,
-                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .filter(offer -> offer.getStatus() == SosOfferStatus.ACCEPTED || offer.getStatus().isOpen())
+                .sorted(Comparator
+                        // ACCEPTED (0) before REQUESTED (1). Not by enum ordinal -- an ordinal is an
+                        // accident of declaration order, and this is a product rule.
+                        .<SosOffer, Integer>comparing(offer ->
+                                offer.getStatus() == SosOfferStatus.ACCEPTED ? 0 : 1)
+                        // Within the accepted group, soonest COMMITTED arrival first --
+                        // promised_eta_minutes, not estimated_arrival_minutes. The latter is
+                        // populated at dispatch with the platform's own routing guess, so ordering
+                        // on it would rank unanswered professionals by a number they never gave.
+                        // Within the requested group it is null throughout, so this comparator is
+                        // inert there and the match-rank tie-break below decides.
+                        .thenComparing(SosOffer::getPromisedEtaMinutes,
+                                Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(SosOffer::getMatchRank,
+                                Comparator.nullsLast(Comparator.naturalOrder()))
+                        // Total order, so two reads of unchanged data cannot disagree.
+                        .thenComparing(SosOffer::getId))
                 .map(assembler::toCandidate)
                 .toList();
 

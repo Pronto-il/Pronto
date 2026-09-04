@@ -254,6 +254,47 @@ export function isAddressResolved(value: AddressValue): boolean {
 }
 
 /**
+ * The `service*` place claim to send with a booking or an SOS request — **all of it, or none of
+ * it.**
+ *
+ * A place claim is one indivisible fact on both sides of the wire. `maps.SelectedPlaceValidator`
+ * refuses a partial one outright ("latitude and longitude are both required when a placeId is
+ * supplied"), and it is right to: coordinates without a place id record a position nobody chose,
+ * and a place id without coordinates is an identity the server cannot locate.
+ *
+ * The half-claim this exists to prevent is not hypothetical. {@link toAddressValue} carries a
+ * saved default address's `placeId` — the profile screen renders it as "confirmed" — but
+ * `GET /api/users/me` deliberately withholds that address's coordinates, so the value it
+ * produces has a `placeId` and no position. Spreading those two fields into a request body
+ * straight off the `AddressValue` therefore sent exactly the shape the validator rejects, and
+ * every SOS activation against a customer's own saved address failed on it.
+ *
+ * Sending nothing in that case is not a workaround, it is the contract: `SosService` and
+ * `BookingsService` both recognise the caller's own saved default address and resolve it
+ * server-side from the `users` row, which holds the place id and the coordinates together. The
+ * client has no better answer to offer, so it offers none and lets the row speak.
+ *
+ * The condition is deliberately {@link isAddressResolved}'s, so "the app considers this address
+ * resolved" and "the app makes a place claim for it" can never drift apart.
+ */
+export function toServicePlaceFields(value: AddressValue): {
+  servicePlaceId?: string;
+  serviceFormattedAddress?: string;
+  serviceLatitude?: number;
+  serviceLongitude?: number;
+} {
+  if (value.placeId === null || value.latitude === null || value.longitude === null) {
+    return {};
+  }
+  return {
+    servicePlaceId: value.placeId,
+    serviceFormattedAddress: value.formattedAddress ?? undefined,
+    serviceLatitude: value.latitude,
+    serviceLongitude: value.longitude,
+  };
+}
+
+/**
  * Apply a selection: the normalised address text, and the identity that makes it validated.
  *
  * House number is a deliberate special case. Google does not return a street number for every

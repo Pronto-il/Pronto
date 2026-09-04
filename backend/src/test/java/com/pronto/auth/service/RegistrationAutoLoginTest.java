@@ -107,6 +107,7 @@ class RegistrationAutoLoginTest {
                 Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
                 Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
+                new com.pronto.professionals.service.SubServicePriceValidator(),
                 new VerificationPolicy(OtpPolicies.enabled(), smsRequired, emailRequired), new AuthOtpPolicy(OtpPolicies.enabled(), "false"),
                 new com.pronto.maps.service.SelectedPlaceValidator());
     }

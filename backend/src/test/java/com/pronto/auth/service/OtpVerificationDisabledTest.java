@@ -120,6 +120,7 @@ class OtpVerificationDisabledTest {
                 Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
                 Mockito.mock(com.pronto.locations.service.ServiceCoverageValidator.class),
                 Mockito.mock(com.pronto.professionals.service.SubServiceSelectionValidator.class),
+                new com.pronto.professionals.service.SubServicePriceValidator(),
                 verificationPolicy, otpPolicy,
                 new com.pronto.maps.service.SelectedPlaceValidator());
     }

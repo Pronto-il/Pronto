@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, Modal, Textarea } from '../../shared/components';
-import { createReview, ApiError, GENERIC_ERROR_MESSAGE } from '../../shared/api';
+import { createReview, ApiError, GENERIC_ERROR_MESSAGE, REVIEW_COMMENT_MAX_LENGTH } from '../../shared/api';
 import styles from './ReviewPromptModal.module.css';
 import { StarRatingInput } from './StarRatingInput';
 
@@ -85,6 +85,7 @@ export function ReviewPromptModal({ isOpen, orderId, onDismiss }: ReviewPromptMo
           value={comment}
           onChange={(event) => setComment(event.target.value)}
           placeholder="ספרו לנו עוד על החוויה שלכם…"
+          maxLength={REVIEW_COMMENT_MAX_LENGTH}
         />
 
         {submitError && (

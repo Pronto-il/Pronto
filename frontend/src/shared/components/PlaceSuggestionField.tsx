@@ -21,6 +21,8 @@ export interface PlaceSuggestionFieldProps {
   disabled?: boolean;
   error?: string;
   hint?: string;
+  /** Character cap for the text box, mirroring the field's own `@Size` on the server. */
+  maxLength?: number;
 }
 
 /** Long enough that a fast typist does not fire a request per character, short enough that the
@@ -58,6 +60,7 @@ export function PlaceSuggestionField({
   disabled,
   error,
   hint,
+  maxLength,
 }: PlaceSuggestionFieldProps) {
   const [query, setQuery] = useState(value);
   const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
@@ -146,6 +149,7 @@ export function PlaceSuggestionField({
         hint={hint}
         disabled={disabled}
         required
+        maxLength={maxLength}
         autoComplete="off"
         role="combobox"
         aria-expanded={isOpen && suggestions.length > 0}

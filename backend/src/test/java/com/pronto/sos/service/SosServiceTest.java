@@ -173,12 +173,15 @@ class SosServiceTest {
                 new BigDecimal("30.00"), Instant.now(), Instant.now().plusSeconds(120));
         setField(offer, "id", offerId);
         setField(offer, "status", SosOfferStatus.ACCEPTED);
+        // As SosOfferRepository#accept writes it: the committed figure, not the dispatch estimate.
+        setField(offer, "promisedEtaMinutes", (short) etaMinutes);
         return offer;
     }
 
     /** Just enough of a candidate to assert identity and order on. */
     private static SosCandidate candidateOf(SosOffer offer) {
-        return new SosCandidate(offer.getId(), offer.getProfessionalId(), "Dana", null, null, null,
+        return new SosCandidate(offer.getId(), offer.getProfessionalId(),
+                com.pronto.sos.dto.SosCandidateState.fromOfferStatus(offer.getStatus()), "Dana", null, null, null,
                 null, 0L, offer.getEstimatedArrivalMinutes(), offer.getDistanceKm(), offer.getVisitFee(),
                 offer.getSosFee(), offer.getSosFee(), offer.getPlatformCommission(), Instant.now());
     }
@@ -1030,7 +1033,7 @@ class SosServiceTest {
     void everyAcceptedProfessionalIsReturnedWithNoCap() {
         SosRequest request = selectableRequest();
         when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(request));
-        when(sosOfferRepository.findBySosRequestIdAndStatusOrderByIdAsc(REQUEST_ID, SosOfferStatus.ACCEPTED))
+        when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(REQUEST_ID))
                 .thenReturn(List.of(offer(SosOfferStatus.ACCEPTED), offer(SosOfferStatus.ACCEPTED),
                         offer(SosOfferStatus.ACCEPTED), offer(SosOfferStatus.ACCEPTED),
                         offer(SosOfferStatus.ACCEPTED)));
@@ -1045,7 +1048,7 @@ class SosServiceTest {
     @Test
     void aLaterAcceptanceNeverDisplacesAnEarlierCandidate() {
         when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(selectableRequest()));
-        when(sosOfferRepository.findBySosRequestIdAndStatusOrderByIdAsc(REQUEST_ID, SosOfferStatus.ACCEPTED))
+        when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(REQUEST_ID))
                 .thenReturn(List.of(offerWith(201L, 40), offerWith(202L, 30), offerWith(203L, 5)));
         when(assembler.toCandidate(any())).thenAnswer(inv -> candidateOf(inv.getArgument(0)));
 
@@ -1061,7 +1064,7 @@ class SosServiceTest {
     void candidatesBeforeAnyoneAcceptsIsAnEmptyListNotAnError() {
         when(sosRequestRepository.findById(REQUEST_ID))
                 .thenReturn(Optional.of(request(SosRequestStatus.WAITING_FOR_PROFESSIONALS)));
-        when(sosOfferRepository.findBySosRequestIdAndStatusOrderByIdAsc(REQUEST_ID, SosOfferStatus.ACCEPTED))
+        when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(REQUEST_ID))
                 .thenReturn(List.of());
 
         SosCandidatesResponse response = service.getCandidates(CUSTOMER_ID, REQUEST_ID);

@@ -287,6 +287,22 @@ export interface AvailableWindowsResponse {
   issueId: number;
   defaultDurationMinutes: number;
   timezone: string;
+  /**
+   * The first instant a **standard** booking may start — `now + minLeadMinutes`, computed
+   * server-side when this response was built.
+   *
+   * **`windows` is deliberately NOT filtered by it.** The professional's calendar really is open
+   * before this time, and the screen says exactly that: those start times are shown, disabled, with
+   * an explanation and an SOS prompt. Hiding them would make "we will not take this booking" look
+   * identical to "they are busy", which is a different and untrue statement.
+   *
+   * Presentation only. The server re-derives this from its own clock at `POST /api/bookings/orders`
+   * and answers `BOOKING_LEAD_TIME_NOT_MET` regardless of what the screen believed — so a customer
+   * who leaves this page open for an hour is refused at the commit, not let through on a stale value.
+   */
+  earliestBookableAt: string;
+  /** The rule itself, so copy can say "2.5 שעות" without the client owning the number. */
+  minLeadMinutes: number;
   windows: AvailableWindow[];
 }
 

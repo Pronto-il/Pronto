@@ -223,10 +223,26 @@ export interface SosRequestResponse {
  * is what the customer pays *for the visit* (`visitFee + sosFee`), never the price of the repair
  * itself, which is agreed on site.
  */
+/**
+ * How far one professional has got on this request, in the only two states a customer is shown.
+ *
+ * A projection of the backend's seven `SosOfferStatus` values, not a second state model: `OFFERED`
+ * and `VIEWED` both mean `REQUESTED` here, because "they opened your request" is not progress and
+ * must never be rendered as any. Rejected and expired professionals are absent from the list
+ * entirely rather than carrying a state of their own.
+ */
+export type SosCandidateState =
+  /** Contacted, has not answered. No ETA, not selectable, rendered muted. */
+  | 'REQUESTED'
+  /** Answered and committed to an arrival time. Selectable, rendered at full contrast. */
+  | 'ACCEPTED';
+
 export interface SosCandidate {
   /** What `/select` takes — the offer, not the professional: it carries the agreed price and ETA. */
   offerId: number;
   professionalId: number;
+  /** See {@link SosCandidateState}. Only `ACCEPTED` may be passed to `/select`. */
+  state: SosCandidateState;
   fullName: string;
   profileImageUrl: string | null;
   city: string | null;
@@ -235,14 +251,22 @@ export interface SosCandidate {
   /** Null when the professional has no reviews yet — render honestly, never a fabricated 0.0. */
   averageRating: number | null;
   reviewCount: number;
-  /** The professional's own committed ETA, given when they said they were available. */
+  /**
+   * The professional's own committed ETA, given when they said they were available.
+   *
+   * **Always `null` while `state` is `REQUESTED`** — and that is a backend guarantee, not a
+   * convention this client maintains: the offer row does carry a platform-computed estimate from
+   * the moment it is dispatched, and the server deliberately does not send it, because a customer
+   * cannot tell a computed guess from a promise. Never substitute one.
+   */
   estimatedArrivalMinutes: number | null;
   distanceKm: number | null;
   visitFee: number | null;
   sosFee: number;
   totalVisitCost: number;
   platformCommission: number | null;
-  respondedAt: string;
+  /** When they answered, or `null` for a `REQUESTED` candidate — who by definition has not. */
+  respondedAt: string | null;
 }
 
 /**

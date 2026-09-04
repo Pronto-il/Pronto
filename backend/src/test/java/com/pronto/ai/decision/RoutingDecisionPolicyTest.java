@@ -1,5 +1,6 @@
 package com.pronto.ai.decision;
 
+import com.pronto.ai.TestTaxonomy;
 import com.pronto.ai.TestCategories;
 import com.pronto.ai.catalog.ServiceCategory;
 import com.pronto.ai.catalog.ServiceCategoryCatalog;
@@ -30,7 +31,7 @@ class RoutingDecisionPolicyTest {
     @BeforeEach
     void setUp() {
         properties = new RoutingProperties();
-        policy = new RoutingDecisionPolicy(properties);
+        policy = new RoutingDecisionPolicy(properties, TestTaxonomy.taxonomy());
         categories = new ServiceCategoryCatalog(TestCategories.repository()).categories();
     }
 

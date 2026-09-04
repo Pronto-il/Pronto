@@ -784,3 +784,49 @@ handler — the name there is their customer's, and there is no professional pro
 
 Nothing new is fetched to make this work: `professionalId` is already on `OrderDetailResponse`,
 and the modal does its own lazy load the first time it is opened.
+
+
+## `409 ISSUE_URGENCY_MISMATCH` on the listing (2026-09-04)
+
+**The invariant: `draft.urgencyType` always describes `draft.issueId`.** The draft's urgency is what
+every route decision reads (`resolveDraftRoute`, the toolbox, the draft indicator, the post-login
+landing), while the issue is written by whichever screen commits it. When those two disagreed the
+customer was routed to `/booking` holding an SOS issue, and `GET /api/bookings/professionals?issueId=`
+— like `available-windows` and `POST /api/bookings/orders`, Standard-only by
+`BookingsService` — answered `409 ISSUE_URGENCY_MISMATCH`.
+
+The crossing that broke it was `handleTrySos`: "נסו SOS" on the slot step navigated to `/sos-booking`
+and left the draft alone, still saying `STANDARD`. `features/sos`' entry page then created an **SOS**
+issue and wrote back only its id, so from that moment the draft claimed STANDARD about an SOS issue —
+and every later resume walked back into the Standard flow and named it. `handleTrySos` now marks the
+draft `SOS` (and hands over the address it already has, which the SOS page reads only from an SOS
+draft) before navigating; `features/sos` writes `urgencyType` alongside the id it creates.
+
+**`canNameIssue` also excludes an issue the draft itself marks SOS**, alongside the existing no-token
+rule. That is a safety net for drafts written before this fix and already in localStorage, not the
+fix: the listing falls back to `{ categoryId }` — the same public marketplace page, owned by nobody —
+and a Standard commit from there creates its own STANDARD issue. Nothing is converted, and the
+backend guard is untouched. Snapshotted at mount, because this page's own `updateDraft` calls write
+`urgencyType: 'STANDARD'` and would otherwise erase the fact being guarded against.
+
+Covered by `BookingFlowPage.sosUrgency.test.tsx`.
+
+
+## The final confirmation asks for an account over the summary, not at `/login` (2026-09-04)
+
+`BookingSummary`'s guest branch used to call `onAuthRequired`, which navigated to `/login`. It now
+persists the draft *and* opens the shared deferred-authentication gate (`shared/hooks`'
+`AuthGateProvider`, rendered by `features/auth`'s `AuthGateModal`), so the summary the customer is
+confirming — professional, date, time, address, price — stays on screen behind the form.
+
+The commit moved out of `handleConfirm` into `submitBooking`, so the gate resumes *exactly* what was
+pressed: same issue reuse, same order call, same error handling. The resume is triggered by a flag
+rather than a captured callback, because a session lands in the same tick as the resume and this
+component's `token` is still the previous render's — waiting for the re-render is what makes the
+retry see the token it needs. An authenticated confirm reaches `submitBooking` by the line it always
+did, and creates exactly one issue and one order either way.
+
+Slot selection was never gated and still isn't; the summary's confirm is the only auth boundary in
+this flow, as its own comment has always said.
+
+Covered by `BookingSummary.authGate.test.tsx` and `staleGuestDraft.test.tsx`.

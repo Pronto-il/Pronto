@@ -128,7 +128,34 @@ export interface CategoryWithSubServicesResponse {
 }
 
 export interface MySubServicesResponse {
+  /** Unchanged, and still the whole answer for any caller that does not care about prices. */
   subServiceIds: number[];
+  /**
+   * The same selection with each entry's price and Hebrew label. Always describes the same set as
+   * `subServiceIds`, in the same order (category display order, then sub-service) — read either,
+   * never reconcile them.
+   */
+  subServices: MySubServiceItem[];
+}
+
+/** One selected sub-service and what this professional charges for it. */
+export interface MySubServiceItem {
+  subServiceId: number;
+  categoryId: number;
+  /** Stable identifier for keying. **Never display it** — `nameHe` is the only user-visible string. */
+  code: string;
+  nameHe: string;
+  /**
+   * `null` when the professional has not priced this service. Render as an empty input or a dash,
+   * **never as 0** — that would advertise free work nobody offered.
+   */
+  price: number | null;
+}
+
+/** One entry of the priced request form. `price` omitted/null means "not stated". */
+export interface SubServicePriceSelection {
+  subServiceId: number;
+  price?: number | null;
 }
 
 /** GET /api/categories — public, no auth required (called authenticated here like every other call on this page). */
@@ -141,9 +168,18 @@ export function getMySubServices(): Promise<MySubServicesResponse> {
   return httpClient.get<MySubServicesResponse>('/api/professionals/me/sub-services');
 }
 
-/** PUT /api/professionals/me/sub-services — PROFESSIONAL only, full-replace, empty list allowed. */
-export function updateMySubServices(subServiceIds: number[]): Promise<MySubServicesResponse> {
-  return httpClient.put<MySubServicesResponse>('/api/professionals/me/sub-services', { subServiceIds });
+/**
+ * PUT /api/professionals/me/sub-services — PROFESSIONAL only, full-replace, empty list allowed.
+ *
+ * Sends the **priced** form (`subServices`), which is authoritative over both membership and
+ * prices: an entry with a null price clears whatever was stored, which is how a professional
+ * withdraws one. The server also still accepts the older ids-only body; this client no longer sends
+ * it, because doing so would silently leave prices untouched and make the form's own state a lie.
+ */
+export function updateMySubServices(
+  subServices: SubServicePriceSelection[],
+): Promise<MySubServicesResponse> {
+  return httpClient.put<MySubServicesResponse>('/api/professionals/me/sub-services', { subServices });
 }
 
 // ---------------------------------------------------------------------------------------

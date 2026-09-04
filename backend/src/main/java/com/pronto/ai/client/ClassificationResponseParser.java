@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.pronto.ai.dto.CategoryCandidate;
 import com.pronto.ai.dto.ClarificationQuestion;
 import com.pronto.ai.dto.ClassificationResponse;
+import com.pronto.ai.taxonomy.Intent;
+import com.pronto.ai.taxonomy.Urgency;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import org.slf4j.Logger;
@@ -31,6 +33,10 @@ import java.util.List;
  *
  * <p>Category codes are <i>not</i> validated here — that is the policy's job, since it is the
  * component that holds the live category list. Nothing downstream ever accepts an unknown code.
+ * The same division applies to the classification layer: {@code professionCode} and
+ * {@code subcategoryCode} are read as text here and checked against
+ * {@code taxonomy.ProfessionTaxonomy} by {@code decision.RoutingDecisionPolicy}, which is the
+ * component that holds it.
  */
 public final class ClassificationResponseParser {
 
@@ -49,6 +55,14 @@ public final class ClassificationResponseParser {
         // classification over a label would be a worse outcome than the generic wording the policy
         // falls back to. Same severity split the rest of this parser uses.
         String detectedProfession = optionalText(payload, "detectedProfession");
+        String professionCode = optionalText(payload, "professionCode");
+        String subcategoryCode = optionalText(payload, "subcategoryCode");
+        // Soft for the same reason the profession label is: an unreadable intent or urgency
+        // degrades a piece of metadata, while the routing decision -- the thing a customer is
+        // waiting on -- does not depend on either. Failing the whole classification because the
+        // model wrote "URGENT" instead of "HIGH" would trade a working answer for none.
+        Intent intent = parseEnum(payload, "intent", Intent::parse);
+        Urgency urgency = parseEnum(payload, "urgency", Urgency::parse);
         String primaryCategoryCode = optionalText(payload, "primaryCategoryCode");
         double confidence = requiredConfidence(payload, "confidence");
 
@@ -75,8 +89,30 @@ public final class ClassificationResponseParser {
                     + "route on and nothing to name; the routing policy will fall back.");
         }
 
-        return new ClassificationResponse(detectedProfession, primaryCategoryCode, confidence,
-                needsClarification, ambiguityReason, candidates, nextQuestion);
+        return new ClassificationResponse(detectedProfession, professionCode, subcategoryCode, intent,
+                urgency, primaryCategoryCode, confidence, needsClarification, ambiguityReason, candidates,
+                nextQuestion);
+    }
+
+    /**
+     * Reads a controlled-vocabulary field, logging and returning {@code null} for anything the
+     * enum does not recognise.
+     *
+     * <p>The schema already constrains these to the enum's own names, so a miss here means the
+     * schema was not applied — worth a log line, never worth failing the request over.
+     */
+    private static <T> T parseEnum(JsonNode payload, String fieldName,
+                                    java.util.function.Function<String, java.util.Optional<T>> parser) {
+        String raw = optionalText(payload, fieldName);
+        if (raw == null) {
+            return null;
+        }
+        java.util.Optional<T> parsed = parser.apply(raw);
+        if (parsed.isEmpty()) {
+            log.warn("ai.classification.parse {}={} is not a recognised value — dropping it.", fieldName, raw);
+            return null;
+        }
+        return parsed.get();
     }
 
     private static List<CategoryCandidate> parseCandidates(JsonNode node) {

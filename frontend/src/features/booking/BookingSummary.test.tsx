@@ -60,7 +60,9 @@ function futureStart(): string {
   return new Date(Date.now() + 60 * 60 * 1000).toISOString();
 }
 
-function renderSummary(options: { issueId?: number; token?: string | null } = {}) {
+function renderSummary(
+  options: { issueId?: number; token?: string | null; address?: typeof ADDRESS } = {},
+) {
   const auth = {
     user: { id: 42, role: 'CUSTOMER' },
     token: options.token === undefined ? 'jwt-abc' : options.token,
@@ -81,7 +83,7 @@ function renderSummary(options: { issueId?: number; token?: string | null } = {}
           professional={PROFESSIONAL}
           bookedStart={futureStart()}
           defaultDurationMinutes={60}
-          address={ADDRESS}
+          address={options.address ?? ADDRESS}
           onConfirmed={onConfirmed}
           onTimeUnavailable={vi.fn()}
         />
@@ -194,5 +196,57 @@ describe('the guest boundary is unchanged', () => {
     expect(createIssue).not.toHaveBeenCalled();
     expect(createOrder).not.toHaveBeenCalled();
     expect(onIssueCreated).not.toHaveBeenCalled();
+  });
+});
+
+describe('the place claim the order carries', () => {
+  /**
+   * Standard booking builds its `service*` fields from the same `AddressValue` SOS does, through
+   * the same `toServicePlaceFields`. It had the same latent defect — a saved default address
+   * carries a `placeId` and no coordinates, because `GET /api/users/me` withholds them — and it
+   * would have failed `CreateOrderRequest`'s validation the same way SOS did. It was reported
+   * against SOS first only because SOS activates against the saved address automatically, without
+   * the customer ever opening an address step.
+   */
+  const SAVED_DEFAULT = { ...ADDRESS, latitude: null, longitude: null } as unknown as typeof ADDRESS;
+
+  it('sends placeId with its coordinates for an address selected from autocomplete', async () => {
+    const user = userEvent.setup();
+    renderSummary();
+
+    await user.click(confirmButton());
+
+    await waitFor(() => expect(createOrder).toHaveBeenCalledTimes(1));
+    expect(createOrder.mock.calls[0][0]).toMatchObject({
+      servicePlaceId: 'place-abc',
+      serviceLatitude: 32.06,
+      serviceLongitude: 34.77,
+      serviceFormattedAddress: 'הרצל 10, תל אביב-יפו',
+    });
+  });
+
+  it('sends no place fields at all for a saved default address', async () => {
+    const user = userEvent.setup();
+    renderSummary({ address: SAVED_DEFAULT });
+
+    await user.click(confirmButton());
+
+    await waitFor(() => expect(createOrder).toHaveBeenCalledTimes(1));
+    const wire = JSON.parse(JSON.stringify(createOrder.mock.calls[0][0]));
+    expect('servicePlaceId' in wire).toBe(false);
+    expect('serviceLatitude' in wire).toBe(false);
+    expect('serviceLongitude' in wire).toBe(false);
+    // The address text still travels — it is what the server resolves the booking against.
+    expect(wire.serviceCity).toBe('תל אביב-יפו');
+    expect(wire.serviceStreet).toBe('הרצל');
+  });
+
+  it('still creates the order, rather than failing validation', async () => {
+    const user = userEvent.setup();
+    renderSummary({ address: SAVED_DEFAULT });
+
+    await user.click(confirmButton());
+
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalled());
   });
 });

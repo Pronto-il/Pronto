@@ -224,3 +224,43 @@ accepted; it simply never flips back on a clock.
 
 The countdown that remains is the professional's own (`SosOfferCard`, `useCountdown` on
 `offer.expiresAt`) — that deadline is real, is per professional, and is enforced by the database.
+
+
+## SOS urgency survives the whole flow (2026-09-04)
+
+Two changes, both instances of one rule — **the booking draft's urgency must always describe the
+draft's issue** (see `features/booking`'s README for the `409 ISSUE_URGENCY_MISMATCH` this caused):
+
+- `ProntoSosEntryPage.resolveIssueId` writes `{ issueId, urgencyType: 'SOS' }`, not the id alone.
+  The id names an issue the server has just written as SOS; a draft still claiming STANDARD around it
+  sent every later resume to `/booking`, which cannot name a non-STANDARD issue.
+- The two "book the regular way" actions — `ProntoSosScreen`'s post-`ENDED` fallback and
+  `ProntoSosEntryPage`'s "this issue is not SOS" card — correct the draft on the way out instead of
+  carrying SOS into the Standard flow. The ENDED fallback also **drops the SOS issue id**: that issue
+  cannot be booked through the Standard endpoints, so the standard commit creates its own STANDARD
+  issue from the description, category and photos the draft still carries. The SOS issue stays SOS on
+  the server, and the attempt it belonged to has already ended — nothing is silently converted.
+
+SOS discovery itself is unchanged and is `POST /api/sos/requests`: Pronto dispatches on the
+customer's behalf and never renders the Standard listing.
+
+
+## The review offer is gated on the order, not on this screen's phase (2026-09-04)
+
+`ProntoSosScreen`'s `DONE` phase comes from `toSosUiPhase(request.status)` — the **SOS request's**
+status — and it was the only condition behind "השארת ביקורת". That is an inference from "the flow
+ended on the success screen", not a fact about the job, and the two can genuinely disagree:
+`SosOfferService.complete` marks the request `COMPLETED` unconditionally, then completes the order
+through `orderRepository.completeIfOnTheWay`, which fires only for `ON_THE_WAY`/`ARRIVED`, ignores
+its own result, and is skipped entirely when the request has no order.
+
+The authoritative state is `bookings.entity.OrderStatus.COMPLETED` on the order — the same and only
+thing `reviews.service.ReviewsService.createReview` accepts (`409 REVIEW_ORDER_NOT_COMPLETED`
+otherwise, already enforced and already tested). So the screen now asks it: on reaching a completed
+attempt with an order id it fetches the order once and offers the review only for `COMPLETED`. A
+failed lookup offers nothing — an unanswerable question is not a yes, and a review that cannot be
+created is worse than no offer.
+
+"לפרטי ההזמנה" is deliberately not gated: looking at what happened is reasonable whatever state the
+order ended in. The `ENDED` phase (nobody accepted, expired, cancelled, failed) never asked and
+still never asks. Covered by `features/booking/reviewEligibility.test.tsx`.

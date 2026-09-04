@@ -6,6 +6,8 @@ import ProntoSosEntryPage from './ProntoSosEntryPage';
 import { BookingDraftContext } from '../../shared/hooks/bookingDraftContext';
 import type { BookingDraft, BookingDraftContextValue } from '../../shared/hooks/bookingDraftContext';
 import { AuthContext } from '../../shared/hooks/authContext';
+import { HeaderBackProvider, resolveDraftRoute } from '../../shared/hooks';
+import { HeaderSlot } from '../../test/HeaderSlot';
 import type { AuthContextValue } from '../../shared/hooks/authContext';
 
 /**
@@ -88,11 +90,18 @@ function renderPage(options: { draft?: BookingDraft | null; token?: string | nul
     <MemoryRouter initialEntries={[options.path ?? '/sos-booking']}>
       <AuthContext.Provider value={auth}>
         <BookingDraftContext.Provider value={bookingDraft}>
-          <Routes>
-            <Route path="/sos-booking" element={<ProntoSosEntryPage />} />
-            <Route path="/login" element={<div>login-screen</div>} />
-            <Route path="/issues/new" element={<div>describe-issue-screen</div>} />
-          </Routes>
+          {/* Back is published into the app header now (`useHeaderBackAction`), not rendered under
+              this page's own `PageHeader` — so the harness supplies the slot. */}
+          <HeaderBackProvider>
+            <HeaderSlot />
+            <Routes>
+              <Route path="/sos-booking" element={<ProntoSosEntryPage />} />
+              <Route path="/login" element={<div>login-screen</div>} />
+              <Route path="/issues/new" element={<div>describe-issue-screen</div>} />
+              <Route path="/booking" element={<div>standard-booking-screen</div>} />
+              <Route path="/" element={<div>home-screen</div>} />
+            </Routes>
+          </HeaderBackProvider>
         </BookingDraftContext.Provider>
       </AuthContext.Provider>
     </MemoryRouter>,
@@ -160,7 +169,9 @@ describe('retry never creates a second issue', () => {
     renderPage();
 
     await waitFor(() => expect(createIssue).toHaveBeenCalled());
-    expect(updateDraft).toHaveBeenCalledWith({ issueId: 777 });
+    // `urgencyType` travels with the id — see the SOS-urgency suite below for why the id alone
+    // was a 409 waiting to happen.
+    expect(updateDraft).toHaveBeenCalledWith({ issueId: 777, urgencyType: 'SOS' });
   });
 
   it('reuses an issue the draft already carries instead of creating another', async () => {
@@ -315,5 +326,59 @@ describe('an attempt already in flight is re-attached, not duplicated', () => {
     // The recovery lookup matches on the id THIS attempt sent, not on stale component state —
     // which for a freshly created issue would still have been null.
     expect(await screen.findByText('live-sos-321')).toBeInTheDocument();
+  });
+});
+
+// ---- SOS urgency: the draft's urgency always describes the draft's issue ----
+
+describe('SOS stays SOS all the way through discovery', () => {
+  it('reaches professional discovery through the SOS path, never the Regular listing', async () => {
+    // SOS discovery IS `POST /api/sos/requests` — Pronto dispatches on the customer's behalf.
+    // `GET /api/bookings/professionals` is Regular-only (it refuses a non-STANDARD issue with
+    // `409 ISSUE_URGENCY_MISMATCH`), so this flow must never touch it.
+    const { getProfessionalsForIssue } = await import('../../shared/api');
+    renderPage();
+
+    expect(await screen.findByText('live-sos-555')).toBeInTheDocument();
+    expect(createSosRequest).toHaveBeenCalledTimes(1);
+    expect(createSosRequest.mock.calls[0][0].issueId).toBe(777);
+    expect(vi.isMockFunction(getProfessionalsForIssue)).toBe(false);
+  });
+
+  it('records SOS on the draft with the issue it just created, so every resume routes to SOS', async () => {
+    renderPage();
+
+    await waitFor(() => expect(createIssue).toHaveBeenCalled());
+    const patch = updateDraft.mock.calls.map((call) => call[0]).find((arg) => arg.issueId === 777);
+    expect(patch).toEqual({ issueId: 777, urgencyType: 'SOS' });
+
+    // The draft as it now stands — the id alone used to leave `urgencyType: 'STANDARD'` here,
+    // which sent the next resume to `/booking` and produced the 409.
+    const resumed = { ...sosDraft(), ...patch };
+    expect(resolveDraftRoute(resumed)).toBe('/sos-booking');
+  });
+
+  it('corrects a stale draft when the issue turns out to be STANDARD, instead of carrying SOS over', async () => {
+    // This branch exists because the draft was wrong; sending the customer to the Regular flow
+    // without fixing it would bounce them straight back here on the next resume.
+    const user = userEvent.setup();
+    getIssue.mockResolvedValue({ id: 4242, categoryId: 1, urgencyType: 'STANDARD' });
+    renderPage({ draft: sosDraft({ issueId: 4242 }) });
+
+    await user.click(await screen.findByRole('button', { name: 'להזמנה רגילה' }));
+
+    expect(updateDraft).toHaveBeenCalledWith({ urgencyType: 'STANDARD' });
+    expect(await screen.findByText('standard-booking-screen')).toBeInTheDocument();
+  });
+});
+
+describe('Back is published to the shared app header', () => {
+  it('renders in the header slot, and nowhere else on the page', async () => {
+    renderPage();
+
+    await screen.findByText('live-sos-555');
+    const backControls = screen.getAllByRole('button', { name: 'חזרה' });
+    expect(backControls).toHaveLength(1);
+    expect(screen.getByTestId('header-slot')).toContainElement(backControls[0]);
   });
 });

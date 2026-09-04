@@ -38,6 +38,28 @@ import java.util.List;
  * @param serviceCityIds <b>MS4</b>: the canonical cities they serve, in catalogue order, with
  *                       {@code serviceCityNamesHe} alongside. {@code baseCityId} is always one of
  *                       them, and is the city ETA is measured from.
+ * @param subServiceId   echoed back from the optional {@code ?subServiceId=} query parameter, or
+ *                       {@code null} when the caller did not ask about a specific service. Present
+ *                       so a client can tell "you did not ask" from "they have no price for it" —
+ *                       both of which leave {@link #subServicePrice} null, and which mean entirely
+ *                       different things.
+ * @param subServicePrice <b>This professional's own price for that one sub-service</b>, or
+ *                       {@code null} when they have not set one (or when no {@code subServiceId}
+ *                       was supplied).
+ *
+ *                       <p>Deliberately one price rather than the professional's whole price list:
+ *                       a customer viewing a professional for an already-classified problem needs
+ *                       the figure for <em>that</em> problem, and shipping the other thirty-three
+ *                       would be both wasteful and an invitation for the client to pick the wrong
+ *                       one.
+ *
+ *                       <p><b>There is no fallback to {@link #basePrice}, deliberately.</b> They
+ *                       are different claims — one is "what I charge to unblock a drain", the other
+ *                       is a single figure covering the whole trade — and substituting the second
+ *                       for the first would quote the customer a number the professional never
+ *                       attached to this job. {@code basePrice} is on this same response and a
+ *                       client that wants to show it as a general indication may, clearly labelled
+ *                       as such; what it must not do is present it as the price for this service.
  */
 public record ProfessionalProfileResponse(
         Long id,
@@ -57,6 +79,8 @@ public record ProfessionalProfileResponse(
         String approvalStatus,
         boolean bookable,
         Boolean favorited,
+        Long subServiceId,
+        BigDecimal subServicePrice,
         Instant createdAt,
         Instant updatedAt
 ) {

@@ -304,7 +304,7 @@ class SosLifecycleTimingTest {
         setField(choosing, "candidatesReadyAt", Instant.now().minusSeconds(11 * 60));
         when(sosRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(choosing));
         when(sosOfferRepository.countBySosRequestIdAndStatus(REQUEST_ID, SosOfferStatus.ACCEPTED)).thenReturn(1L);
-        when(sosOfferRepository.findBySosRequestIdAndStatusOrderByIdAsc(REQUEST_ID, SosOfferStatus.ACCEPTED))
+        when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(REQUEST_ID))
                 .thenReturn(List.of(acceptedOffer(300L, 20)));
 
         SosCandidatesResponse response = service.getCandidates(CUSTOMER_ID, REQUEST_ID);

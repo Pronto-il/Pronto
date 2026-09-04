@@ -81,6 +81,20 @@ export interface BookingDraft {
    *  retired `slotId` field as of `version: 2`. */
   bookedStart?: string;
 
+  /**
+   * Set only by {@link sanitizeRestoredDraft} on a stale guest draft: the address below is kept
+   * as prefill, but has not been confirmed *for this visit* and must be asked again.
+   *
+   * Absent on every live draft, so nothing about the normal flow changes. Cleared by whichever
+   * address step the customer then confirms.
+   *
+   * A flag rather than clearing the address, because the two questions are different: "do we have
+   * an address?" (we do, and re-typing it would be rude) and "has this customer confirmed it is
+   * still where they want somebody sent?" — which after a night away is genuinely unknown, and is
+   * the question `isAddressComplete` was standing in for.
+   */
+  addressUnconfirmed?: true;
+
   updatedAt: string; // ISO timestamp
 }
 
@@ -115,4 +129,77 @@ export function resolveDraftRoute(draft: BookingDraft): string {
     default:
       return draft.urgencyType === 'SOS' ? '/sos-booking' : '/booking';
   }
+}
+
+/**
+ * How long a **guest** draft keeps its navigation state before a return visit is treated as a new
+ * one. Twelve hours: everything inside one visit — a refresh, a commute, a lunch break, a phone
+ * that went to sleep — resumes exactly as it does today, while any overnight gap re-validates.
+ *
+ * <p>The upper bound it sits under is the backend's guest upload session
+ * (`pronto.auth.guest-session-ttl-seconds`, 24h): past that a guest's photos are no longer
+ * reachable with the token that uploaded them, so a draft older than a day has already lost part
+ * of itself regardless of what this policy says.
+ */
+export const GUEST_DRAFT_STALE_AFTER_MS = 12 * 60 * 60 * 1000;
+
+/** Stages that are still *describing the problem* — nothing here can skip a booking step. */
+const ISSUE_STAGES: ReadonlySet<BookingDraftStage> = new Set<BookingDraftStage>([
+  'ISSUE_DESCRIBE',
+  'ISSUE_CLARIFY',
+  'ISSUE_REVIEW',
+]);
+
+/**
+ * The one freshness policy for restored drafts, applied at the single point a draft re-enters the
+ * app ({@link BookingDraftProvider}'s load) rather than re-asked screen by screen.
+ *
+ * <h2>What went wrong without it</h2>
+ *
+ * A guest starts a booking, closes the app, and comes back the next day. Every screen decided
+ * where to resume from data that had no age attached to it: `BookingFlowPage` skips its address
+ * step whenever `stage` is past it and the address fields are non-empty, `ProfessionMatchPage`
+ * opens straight into the matching wheel whenever `isAddressComplete(address)`, and
+ * `ProntoSosEntryPage` goes further still — it *auto-activates a dispatch* against a usable
+ * address without asking. So yesterday's address, professional and time were silently carried
+ * into today's booking, and the customer never saw the screen that would have let them notice.
+ *
+ * <h2>What this keeps and what it drops</h2>
+ *
+ * Kept, because it is the customer's own account of their problem and does not go stale: the
+ * description, the confirmed category, the uploaded photo keys, the clarification answers, the
+ * urgency (so Regular stays Regular and SOS stays SOS), any issue already created, and the
+ * address itself — as prefill, flagged {@link BookingDraft.addressUnconfirmed}.
+ *
+ * Dropped, because each is a *position in a flow* rather than a fact about the problem: the
+ * stage (rewound to `ADDRESS_SELECTION`, the first step that asks anything), the chosen
+ * professional, the chosen start time, the sort order and the address mode.
+ *
+ * <h2>Scope</h2>
+ *
+ * Guest drafts only (`ownerId === null`). A signed-in customer's draft is untouched: they have an
+ * account to come back to, their address is on their profile, and nothing about their resume
+ * behaviour was reported as wrong. Issue-stage drafts are also left alone — there is no booking
+ * step for them to skip, and the describe/clarify/review screens re-derive everything anyway.
+ */
+export function sanitizeRestoredDraft(draft: BookingDraft, nowMs: number): BookingDraft {
+  if (draft.ownerId !== null) {
+    return draft;
+  }
+  const updatedAtMs = Date.parse(draft.updatedAt);
+  // An unparseable timestamp is treated as stale: a draft that cannot say when it was written
+  // cannot be trusted to say where the customer was.
+  const isFresh = Number.isFinite(updatedAtMs) && nowMs - updatedAtMs < GUEST_DRAFT_STALE_AFTER_MS;
+  if (isFresh || ISSUE_STAGES.has(draft.stage)) {
+    return draft;
+  }
+  return {
+    ...draft,
+    stage: 'ADDRESS_SELECTION',
+    professionalId: undefined,
+    bookedStart: undefined,
+    sort: undefined,
+    addressMode: undefined,
+    ...(draft.address ? { addressUnconfirmed: true as const } : {}),
+  };
 }

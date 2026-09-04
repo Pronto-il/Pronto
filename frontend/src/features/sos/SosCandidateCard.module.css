@@ -174,3 +174,52 @@
 .actions > :last-child {
   flex: 1 1 60%;
 }
+
+/* ---- REQUESTED vs ACCEPTED ------------------------------------------------
+ *
+ * The contrast between these two is the whole information design of the SOS screen: a customer
+ * must be able to tell, at a glance and in an emergency, who has actually committed to come.
+ */
+
+/*
+ * Contacted, no answer yet. Visible but secondary -- muted surface, softer border, slightly
+ * reduced contrast.
+ *
+ * The opacity is deliberately 0.72 and not lower. Below roughly 0.6 a card stops reading as
+ * "waiting" and starts reading as disabled, broken, or already dismissed -- which would undo the
+ * reason these are on screen at all.
+ */
+.cardRequested {
+  background: var(--color-surface-muted, #f4f5f7);
+  border-color: var(--color-border);
+  box-shadow: none;
+  opacity: 0.72;
+}
+
+/* Answered. Full contrast, back to the normal active surface. */
+.cardAccepted {
+  background: var(--color-surface);
+  border-color: var(--color-border-strong);
+  opacity: 1;
+}
+
+.waitingLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-tertiary, #9aa0a6);
+}
+
+.acceptedBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--color-success-subtle, #e6f4ea);
+  color: var(--color-success-strong, #1e7a3c);
+  font-size: 12px;
+  font-weight: 700;
+}

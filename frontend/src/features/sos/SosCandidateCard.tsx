@@ -28,9 +28,21 @@ function price(amount: number): string {
 }
 
 /**
- * One professional who has said **"I am available and can come."** That is all it means: this
- * card is an option, not an assignment, and the job is awarded only when the customer presses
- * `בחר`.
+ * One professional on the customer's SOS screen, in one of **two clearly different states**.
+ *
+ * `REQUESTED` — the platform has contacted them and they have not answered. Rendered muted: no
+ * arrival time (nobody has promised one), no select button, and a plain "ממתין לתשובה". The point
+ * is that the customer can see the search is real and who is in it, without being misled into
+ * thinking anyone has committed.
+ *
+ * `ACCEPTED` — they answered and named an arrival time. Full contrast, a clear badge, the ETA, and
+ * a live CTA. Even then it means **"I am available and can come"** and nothing more: the card is an
+ * option, not an assignment, and the job is awarded only when the customer presses `בחר`.
+ *
+ * <p>Rejected and expired professionals never reach this component — the backend drops them from
+ * the list. There is deliberately no "declined" rendering: a customer in an emergency needs to know
+ * who might still come, not who will not, and one professional's decision to decline is not a
+ * stranger's business.
  *
  * Structure mirrors `features/professionals`' `ProfessionalCard` (photo, name, rating with an
  * honest "no reviews yet", a meta strip of comparison signals, a price block and one primary CTA)
@@ -49,9 +61,10 @@ export function SosCandidateCard({
 }: SosCandidateCardProps) {
   const { fullName, profileImageUrl, averageRating, reviewCount, estimatedArrivalMinutes } = candidate;
   const area = candidate.serviceRegion ?? candidate.city;
+  const isAccepted = candidate.state === 'ACCEPTED';
 
   return (
-    <Card className={styles.card}>
+    <Card className={`${styles.card} ${isAccepted ? styles.cardAccepted : styles.cardRequested}`}>
       <div className={styles.top}>
         <SosAvatar
           imageUrl={profileImageUrl}
@@ -70,8 +83,16 @@ export function SosCandidateCard({
           ) : (
             <span className={styles.noRating}>עדיין אין ביקורות</span>
           )}
+          {isAccepted ? (
+            /* "אישר זמינות", not "אישר" alone. This app reserves the bare word for a professional
+               confirming a job they were actually GIVEN (see sosUiState.ts) -- saying it here would
+               tell the customer somebody is already on the way. */
+            <span className={styles.acceptedBadge}>אישר זמינות ✓</span>
+          ) : (
+            <span className={styles.waitingLabel}>ממתין לתשובה</span>
+          )}
         </div>
-        {estimatedArrivalMinutes !== null && (
+        {isAccepted && estimatedArrivalMinutes !== null && (
           <span className={styles.eta}>
             <Clock size={14} aria-hidden="true" />
             כ־{estimatedArrivalMinutes} דק׳
@@ -113,14 +134,20 @@ export function SosCandidateCard({
         <Button variant="secondary" onClick={() => onOpenDetails(candidate)} fullWidth>
           פרטים נוספים
         </Button>
-        <Button
-          onClick={() => onSelect(candidate)}
-          disabled={!selectionOpen || isSubmitting}
-          loading={isPending}
-          fullWidth
-        >
-          בחר
-        </Button>
+        {/* No select button at all for a professional who has not answered -- not a disabled one.
+            A greyed-out CTA invites the customer to keep trying it; its absence says plainly that
+            there is nothing to decide yet. The backend refuses such a selection regardless
+            (SOS_CANDIDATE_NOT_AVAILABLE), so this is the honest rendering of a real rule. */}
+        {isAccepted && (
+          <Button
+            onClick={() => onSelect(candidate)}
+            disabled={!selectionOpen || isSubmitting}
+            loading={isPending}
+            fullWidth
+          >
+            בחר
+          </Button>
+        )}
       </div>
     </Card>
   );

@@ -153,6 +153,25 @@ public class Professional {
     @Column(name = "approval_rejection_reason", length = 500)
     private String approvalRejectionReason;
 
+    /**
+     * <b>The demo SOS presenter marker ({@code V56}).</b> {@code false} for every professional
+     * except at most one, in at most one non-production environment.
+     *
+     * <p>Read by exactly one caller — {@code sos.service.SosMatchingService}, and only after
+     * {@code demo.DemoBehaviorPolicy#isAllowed()} has already returned {@code true}. It is not a
+     * role and confers no permission: see {@code V56}'s header and {@code DemoBehaviorPolicy} for
+     * the full two-key rule and for what the flag deliberately does <em>not</em> exempt its holder
+     * from (approval, verification document, working hours, sub-services, phone verification — all
+     * still required).
+     *
+     * <p><b>No setter, deliberately.</b> The flag is written by the demo seeder's plain SQL and by
+     * nothing else, so there is no application path — self-service profile edit, operator approval,
+     * registration — that can set it on any account. Adding a setter here is what would make that
+     * sentence stop being true.
+     */
+    @Column(name = "demo_sos_presenter", nullable = false)
+    private boolean demoSosPresenter;
+
     protected Professional() {
         // JPA
     }
@@ -324,6 +343,11 @@ public class Professional {
 
     public void setVerificationDocumentKey(String verificationDocumentKey) {
         this.verificationDocumentKey = verificationDocumentKey;
+    }
+
+    /** See {@link #demoSosPresenter}. Never {@code true} in a production-like environment's flow. */
+    public boolean isDemoSosPresenter() {
+        return demoSosPresenter;
     }
 
     public Instant getCreatedAt() {

@@ -1,5 +1,6 @@
 package com.pronto.ai.service;
 
+import com.pronto.ai.TestTaxonomy;
 import com.pronto.ai.TestCategories;
 import com.pronto.ai.catalog.ServiceCategoryCatalog;
 import com.pronto.ai.client.AiClassificationClient;
@@ -51,8 +52,9 @@ class ClassificationServiceTest {
         properties = new RoutingProperties();
         ServiceCategoryCatalog catalog = new ServiceCategoryCatalog(TestCategories.repository());
         classificationService = new ClassificationService(client, catalog,
-                new RoutingDecisionPolicy(properties),
-                new IssueImageResolver(Mockito.mock(StorageClient.class)));
+                new RoutingDecisionPolicy(properties, TestTaxonomy.taxonomy()),
+                new IssueImageResolver(Mockito.mock(StorageClient.class)),
+                TestTaxonomy.taxonomy());
     }
 
     private ClassificationResponse confident(String code) {

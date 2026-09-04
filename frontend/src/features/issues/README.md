@@ -236,3 +236,64 @@ customer does not need a plumber — they told us what they need and we said no.
 under a category picked to get *past* a rejection is how a locksmith gets dispatched to a gas leak.
 The architecture would allow it (`/matching` already accepts a `categoryId` for the guest journey),
 which is why the restraint is stated rather than left as an oversight.
+
+## `DescribeIssueStep` — the mobile-height pass (2026-09-04)
+
+Step 1 asked one question over roughly two phone screens: a mascot-and-heading lead, a 120px
+box, a hint under it, chips that wrapped to a second row, an 88px dashed upload square, and only
+then the Regular/SOS choice — which on mobile *stacked*, putting the submit button below that
+again. Nothing here was wrong individually; together they meant the customer scrolled before
+they could choose how urgent their problem was.
+
+**One question, asked once.** The "ספר לי מה קרה" lead (and its mascot) is gone: the page header
+already says "יש לי תקלה", and the field's own "מה הבעיה? *" is the question. The guidance moved
+from below the box to directly under the label — "תאר בכמה מילים את התקלה - המערכת תמצא את בעלי
+המקצוע המתאימים" — via `Textarea`'s new `helperText` prop, because a sentence telling you what to
+write is worthless underneath a box you have already filled in.
+
+**The box opens at ~3 lines and grows with the text** (76px `min-height`, auto-resize on
+`description`, 220px `max-height`, then it scrolls). The empty state no longer reserves height
+for text nobody has typed. Draft resume gets the same treatment for free — the effect runs on
+hydration.
+
+**Suggestion chips are one row that scrolls sideways**, never two rows. Same four suggestions,
+same one-shot prefill behaviour; only the wrap is gone. A second row of optional shortcuts is
+not worth pushing the urgency choice off-screen.
+
+**Regular/SOS stay side by side on mobile** rather than stacking, with tighter padding and a
+step down in copy size. Both options, their selection behaviour, and the SOS surcharge note are
+untouched — this is spacing only. They remain *after* the photo section, so a small scroll to
+reach them is still expected and fine.
+
+`DescribeIssueStep.test.tsx` pins the parts of this that are a contract rather than a taste:
+the removed heading, the helper text and its `aria-describedby` wiring, the description →
+photos → urgency order, chip prefill, and that submitting still calls `classifyIssue` unchanged.
+
+**The "חזרה" control is *in* the app bar.** `NewIssuePage` no longer passes `onBack` to
+`PageHeader` — there is no back row under the header at all. It calls `useHeaderBackAction(handleBack)`
+instead (`shared/hooks`), which publishes the arrow + "חזרה" into `AppLayout`'s header beside the
+brand, at the inline start (the right, under `dir="rtl"`) and therefore immediately to the right of
+the logo. Same `handleBack`: rewinding clarify/review to the describe step and leaving the flow from
+step 1 are untouched, as is the step title and its progress bar. `NewIssuePage.headerBack.test.tsx`
+asserts the page publishes exactly one back control and that it still leaves the flow; the bar's own
+markup and placement are covered in `app/AppLayout.test.tsx`.
+
+`NewIssuePage` also composes a local `.page` class onto the shared `.focused-page` utility, trimming
+its 32px block-start padding to 8px so the flow starts directly under the bar. Scoped to this page
+rather than changed in `.focused-page`, which every other screen shares.
+
+
+## The active-booking banner has a way back (2026-09-04)
+
+The "יש לך בקשה פעילה בתהליך הזמנה" warning offered only "הבנתי". For a signed-in customer that was
+merely unhelpful — `BookingDraftIndicator` and `ActiveIssueToolbox` both link to the draft. For a
+**guest** it was a dead end: both of those surfaces render only for a signed-in `CUSTOMER`, so a
+visitor who wandered back into "יש לי תקלה" had no route to their own booking and could only destroy
+it.
+
+"להזמנה הקיימת" navigates via `resolveDraftRoute` — the same rule those two surfaces use, so Regular
+lands on `/booking` and SOS on `/sos-booking`. No authentication and no auth modal: all four booking
+routes are public (`router.tsx`), the draft is the state, and a guest's own draft is theirs to
+continue. It writes nothing — the screen it lands on owns the step transition.
+
+Covered by `NewIssuePage.activeBooking.test.tsx`.

@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { Button, Card, Input, PageHeader } from '../../shared/components';
 import { useAuth } from '../../shared/hooks';
-import { ApiError, capturePhone, verifyPhone, type OtpChallenge } from '../../shared/api';
+import { ApiError, capturePhone, verifyPhone, PHONE_INPUT_MAX_LENGTH, type OtpChallenge } from '../../shared/api';
 import { OtpForm } from './OtpForm';
 import styles from './formStyles.module.css';
 
@@ -126,6 +126,7 @@ function CaptureStage({ onIssued }: { onIssued: (challenge: OtpChallenge) => voi
           value={phone}
           onChange={(event) => setPhone(event.target.value)}
           error={fieldError}
+          maxLength={PHONE_INPUT_MAX_LENGTH}
           hint="למשל 050-1234567"
           required
         />

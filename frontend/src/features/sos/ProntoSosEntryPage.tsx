@@ -8,13 +8,14 @@ import {
   PageHeader,
   Skeleton,
   toAddressValue,
+  toServicePlaceFields,
   validateAddress,
   validateAddressTextOnly,
 } from '../../shared/components';
 import type { AddressValue } from '../../shared/components';
 import { AddressSelectionStep } from '../booking';
 import type { AddressMode } from '../booking';
-import { useAuth, useBookingDraft } from '../../shared/hooks';
+import { useAuth, useBookingDraft, useHeaderBackAction } from '../../shared/hooks';
 import {
   ApiError,
   GENERIC_ERROR_MESSAGE,
@@ -168,6 +169,14 @@ export default function ProntoSosEntryPage() {
    * does carry an issue id it is the same one `issueId` was initialised from.
    */
   const draftAddress = draft?.urgencyType === 'SOS' ? (draft.address ?? null) : null;
+  /**
+   * A stale-restored guest draft (`sanitizeRestoredDraft`) keeps its address as prefill but has
+   * not had it confirmed for this visit. That matters more here than anywhere else in the app:
+   * activation is not a navigation, it is a dispatch — it calls real professionals out to the
+   * address below inside the same request. So the flag forces the address step, exactly as an
+   * absent address does, and nothing is sent until the customer has said "yes, still here".
+   */
+  const needsAddressConfirmation = draft?.addressUnconfirmed === true;
 
   const [address, setAddress] = useState<AddressValue>(() => draftAddress ?? defaultAddress ?? EMPTY_ADDRESS);
   const [addressMode, setAddressMode] = useState<AddressMode>(() =>
@@ -292,7 +301,15 @@ export default function ProntoSosEntryPage() {
     setIssueId(created.id);
     // Persisted before activation is attempted, so a failure anywhere after this point retries
     // against the same issue. The Standard flow does NOT do this today — see the report.
-    updateDraft({ issueId: created.id });
+    //
+    // `urgencyType` travels WITH the id, and must: the draft's urgency is what every route
+    // decision reads (`resolveDraftRoute`, the toolbox, the post-login landing), while the id
+    // names an issue the server has just written as SOS. Writing the id alone left the draft
+    // claiming STANDARD about an SOS issue — reachable from `BookingFlowPage`'s "נסו SOS", which
+    // enters this page without touching the draft — and every later resume then routed to
+    // `/booking`, whose listing endpoint refuses a non-STANDARD issue with
+    // `409 ISSUE_URGENCY_MISMATCH`. The draft's urgency describes its issue, always.
+    updateDraft({ issueId: created.id, urgencyType: 'SOS' });
     return created.id;
   }, [issueId, draft, updateDraft]);
 
@@ -343,12 +360,12 @@ export default function ProntoSosEntryPage() {
           serviceFloor: effectiveAddress.floor.trim() || undefined,
           serviceEntrance: effectiveAddress.entrance.trim() || undefined,
           serviceAddressNotes: effectiveAddress.addressNotes.trim() || undefined,
-          // V55. Omitted for a grandfathered legacy default address -- which SOS relies on more
-          // than any other flow, since it activates against the saved address without asking.
-          servicePlaceId: effectiveAddress.placeId ?? undefined,
-          serviceFormattedAddress: effectiveAddress.formattedAddress ?? undefined,
-          serviceLatitude: effectiveAddress.latitude ?? undefined,
-          serviceLongitude: effectiveAddress.longitude ?? undefined,
+          // V55. All four place fields or none of them -- see `toServicePlaceFields`. Omitted for
+          // any saved default address, legacy or not: `/me` does not return that address's
+          // coordinates, so the client cannot make a complete claim about it and the server
+          // resolves it from the `users` row instead. SOS relies on this more than any other flow,
+          // since it activates against the saved address without asking.
+          ...toServicePlaceFields(effectiveAddress),
         });
         setSosRequestId(created.id);
       } catch (err) {
@@ -401,6 +418,8 @@ export default function ProntoSosEntryPage() {
     setAddressErrors(errors);
     if (Object.keys(errors).length === 0) {
       setIsEditingAddress(false);
+      // Confirmed for this visit, so a refresh from here resumes normally rather than asking again.
+      updateDraft({ address, addressUnconfirmed: undefined });
       void activate(address);
     }
   }
@@ -417,6 +436,18 @@ export default function ProntoSosEntryPage() {
   }, [activate, address]);
 
   const hasUsableAddress = Object.keys(validateCurrentAddress()).length === 0;
+
+  // One back control for every branch this page renders, in the app header (`AppLayout`) like the
+  // rest of the customer flow. The condition is the one the address branch used to carry inline:
+  // while that branch is up *because the customer chose to change an address they already have*,
+  // back closes the editor; everywhere else it leaves SOS.
+  useHeaderBackAction(() => {
+    if (isEditingAddress && hasUsableAddress) {
+      setIsEditingAddress(false);
+      return;
+    }
+    navigate('/');
+  });
 
   /**
    * Exactly one automatic activation per mount. A ref, not state: two effect runs in the same
@@ -438,9 +469,10 @@ export default function ProntoSosEntryPage() {
     if (!canCommit) {
       return;
     }
-    // Nothing to send yet (no draft, no saved default) or the customer is mid-edit: the address
-    // step is showing and its own continue action will start the search.
-    if (!hasUsableAddress || isEditingAddress) {
+    // Nothing to send yet (no draft, no saved default), the customer is mid-edit, or the address
+    // came back from a stale draft unconfirmed: the address step is showing and its own continue
+    // action will start the search.
+    if (!hasUsableAddress || isEditingAddress || needsAddressConfirmation) {
       return;
     }
     // A STANDARD issue reaching this route is a mistake to explain, not a search to start.
@@ -467,14 +499,15 @@ export default function ProntoSosEntryPage() {
     }
     activationAttemptedRef.current = true;
     void activate(address);
-  }, [isResolving, sosRequestId, canCommit, hasUsableAddress, isEditingAddress, issue, activate, address, token]);
+  }, [isResolving, sosRequestId, canCommit, hasUsableAddress, isEditingAddress, needsAddressConfirmation,
+      issue, activate, address, token]);
 
   // ---- render ----
 
   if (isResolving) {
     return (
       <div className="focused-page">
-        <PageHeader title="Pronto SOS" onBack={() => navigate('/')} />
+        <PageHeader title="Pronto SOS" />
         <Skeleton variant="rect" className={styles.loading} />
       </div>
     );
@@ -483,7 +516,7 @@ export default function ProntoSosEntryPage() {
   if (loadError && !issue) {
     return (
       <div className="focused-page">
-        <PageHeader title="Pronto SOS" onBack={() => navigate('/')} />
+        <PageHeader title="Pronto SOS" />
         <Card className={styles.card}>
           <p className={styles.errorText}>{loadError}</p>
           <Button onClick={() => navigate('/')} fullWidth>
@@ -499,7 +532,7 @@ export default function ProntoSosEntryPage() {
   if (sosRequestId !== null) {
     return (
       <div className="focused-page">
-        <PageHeader title="Pronto SOS" onBack={() => navigate('/')} />
+        <PageHeader title="Pronto SOS" />
         {/* Keyed on the request id so a retry mounts a genuinely fresh screen rather than
             reusing the finished attempt's state. */}
         <ProntoSosScreen
@@ -518,7 +551,7 @@ export default function ProntoSosEntryPage() {
   if (issue && issue.urgencyType !== 'SOS') {
     return (
       <div className="focused-page">
-        <PageHeader title="Pronto SOS" onBack={() => navigate('/')} />
+        <PageHeader title="Pronto SOS" />
         <Card className={styles.card}>
           <p className={styles.cardTitle}>התקלה הזו לא מסומנת כדחופה</p>
           <p className={styles.cardBody}>
@@ -527,8 +560,19 @@ export default function ProntoSosEntryPage() {
           {/* `/booking`, not the retired `/issues/{id}/booking` — that path no longer resolves
               since deferred authentication flattened the booking routes, so the old link sent the
               customer to a blank screen. The draft carries the issue, as it does everywhere else
-              in this flow. */}
-          <Button onClick={() => navigate('/booking')} fullWidth>
+              in this flow.
+
+              The draft's urgency is corrected on the way out. This branch exists precisely because
+              it was wrong — the draft said SOS about an issue the server says is STANDARD — and
+              leaving it that way would send the standard flow to a screen that refuses to name
+              this issue, or bounce the next resume straight back here. */}
+          <Button
+            onClick={() => {
+              updateDraft({ urgencyType: 'STANDARD' });
+              navigate('/booking');
+            }}
+            fullWidth
+          >
             להזמנה רגילה
           </Button>
         </Card>
@@ -539,7 +583,7 @@ export default function ProntoSosEntryPage() {
   if (!canCommit) {
     return (
       <div className="focused-page">
-        <PageHeader title="Pronto SOS" onBack={() => navigate('/')} />
+        <PageHeader title="Pronto SOS" />
         <Card className={styles.card}>
           <span className={styles.mark} aria-hidden="true">
             <Siren size={26} />
@@ -558,14 +602,14 @@ export default function ProntoSosEntryPage() {
     );
   }
 
-  // Nothing usable inherited, or the customer asked to change it: ask here, once.
-  if (!hasUsableAddress || isEditingAddress) {
+  // Nothing usable inherited, the customer asked to change it, or a stale draft's address has not
+  // been confirmed for this visit: ask here, once.
+  if (!hasUsableAddress || isEditingAddress || needsAddressConfirmation) {
     return (
       <div className="focused-page">
         <PageHeader
           title="לאן שנגיע?"
           description="נשתמש בכתובת הזו כדי לקרוא לבעלי מקצוע שנמצאים קרוב אליך עכשיו."
-          onBack={() => (hasUsableAddress ? setIsEditingAddress(false) : navigate('/'))}
         />
         <AddressSelectionStep
           value={address}
@@ -602,7 +646,7 @@ export default function ProntoSosEntryPage() {
   if (activationError) {
     return (
       <div className="focused-page">
-        <PageHeader title="Pronto SOS" onBack={() => navigate('/')} />
+        <PageHeader title="Pronto SOS" />
         <Card className={styles.card}>
           <span className={styles.mark} aria-hidden="true">
             <Siren size={26} />
@@ -645,7 +689,7 @@ export default function ProntoSosEntryPage() {
   // request is in flight (or about to be). No button — see this page's doc comment.
   return (
     <div className="focused-page">
-      <PageHeader title="Pronto SOS" onBack={() => navigate('/')} />
+      <PageHeader title="Pronto SOS" />
 
       <Card className={styles.card}>
         <span className={styles.mark} aria-hidden="true">

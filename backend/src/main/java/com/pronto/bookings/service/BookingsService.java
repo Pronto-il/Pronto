@@ -4,6 +4,7 @@ import com.pronto.availability.dto.CalendarSegment;
 import com.pronto.availability.dto.SegmentType;
 import com.pronto.availability.repository.AvailabilitySlotRepository;
 import com.pronto.availability.service.AvailabilityDerivationService;
+import com.pronto.bookings.config.BookingProperties;
 import com.pronto.bookings.dto.ArrivalRequest;
 import com.pronto.bookings.dto.AvailableWindow;
 import com.pronto.bookings.dto.AvailableWindowsResponse;
@@ -146,6 +147,8 @@ public class BookingsService {
     private final ArrivalVerifier arrivalVerifier;
     private final SelectedPlaceValidator selectedPlaceValidator;
     private final CategoryRepository categoryRepository;
+    /** The Standard-flow lead-time rule. SOS never reads this. See {@link BookingProperties}. */
+    private final BookingProperties bookingProperties;
 
     public BookingsService(IssueRepository issueRepository,
                             ProfessionalRepository professionalRepository,
@@ -165,7 +168,9 @@ public class BookingsService {
                             LocationProperties locationProperties,
                             ArrivalVerifier arrivalVerifier,
                             SelectedPlaceValidator selectedPlaceValidator,
-                            CategoryRepository categoryRepository) {
+                            CategoryRepository categoryRepository,
+                            BookingProperties bookingProperties) {
+        this.bookingProperties = bookingProperties;
         this.serviceAddressGeocoder = serviceAddressGeocoder;
         this.selectedPlaceValidator = selectedPlaceValidator;
         this.categoryRepository = categoryRepository;
@@ -343,8 +348,29 @@ public class BookingsService {
                 .stream()
                 .map(segment -> new AvailableWindow(segment.startAt(), segment.endAt()))
                 .toList();
+        // The windows are the professional's real availability and are NOT clipped by the lead
+        // time -- see AvailableWindowsResponse's Javadoc for why that distinction is the whole
+        // point of shipping the boundary as a separate field instead.
         return new AvailableWindowsResponse(professionalId, issueId, DEFAULT_JOB_DURATION_MINUTES,
-                AvailabilityDerivationService.BUSINESS_TIMEZONE.getId(), windows);
+                AvailabilityDerivationService.BUSINESS_TIMEZONE.getId(),
+                earliestRegularBookingTime(from), bookingProperties.getRegularBookingMinLeadMinutes(),
+                windows);
+    }
+
+    /**
+     * <b>The Standard-booking lead-time rule, in one expression.</b> {@code now + pronto.bookings
+     * .regular-booking-min-lead-minutes} — the earliest instant a Standard order may start.
+     *
+     * <p>Both consumers call this rather than doing the arithmetic themselves, which is what makes
+     * "the rule is recalculated at validation time" true rather than merely intended:
+     * {@link #listAvailableWindows} publishes it for display, and {@link #createOrder} re-derives
+     * it from its own {@code now} at the moment of commit. The screen's copy of the boundary is
+     * never trusted, and cannot be — it is not an input to anything.
+     *
+     * @see BookingProperties#regularBookingMinLeadMinutes
+     */
+    private Instant earliestRegularBookingTime(Instant now) {
+        return now.plus(bookingProperties.regularBookingMinLead());
     }
 
     /**
@@ -400,6 +426,27 @@ public class BookingsService {
         if (!request.bookedStart().isAfter(now)) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
                     List.of(new FieldError("bookedStart", "must be strictly in the future")));
+        }
+
+        // THE MINIMUM-NOTICE RULE, recomputed here from this request's own clock -- never from the
+        // earliestBookableAt the customer's screen was handed when it loaded. That is the only
+        // ordering that survives the case this rule exists to catch: a customer who opened the
+        // availability screen at 11:25, chose 13:55, and posts it at 11:40 is inside the window
+        // again by their own action, and a client-side filter cannot know that.
+        //
+        // Deliberately AFTER the strictly-in-the-future check above, so a start time in the past
+        // keeps its existing, more specific error rather than being re-reported as a lead-time
+        // failure. Deliberately BEFORE checkBookingWindowAvailable, so a slot that is refused by
+        // policy is not also described as "the professional is busy" -- it may well be free.
+        Instant earliestBookable = earliestRegularBookingTime(now);
+        if (request.bookedStart().isBefore(earliestBookable)) {
+            throw new ApiException(ErrorCode.BOOKING_LEAD_TIME_NOT_MET,
+                    "A standard booking must start at least "
+                            + bookingProperties.getRegularBookingMinLeadMinutes()
+                            + " minutes from now (no earlier than " + earliestBookable + ").",
+                    List.of(new FieldError("bookedStart",
+                            "must be at least " + bookingProperties.getRegularBookingMinLeadMinutes()
+                                    + " minutes from now")));
         }
 
         // Step 1: server derives bookedEnd -- never accepted from the client (design §9.2.2).

@@ -19,11 +19,51 @@
   justify-content: space-between;
 }
 
+/* Brand plus the optional hoisted back control, as one group at the inline start. It replaces
+   the bare brand `Link` as `.headerInner`'s first flex child, so `space-between` still sees
+   exactly two children and the nav side is untouched. */
+.headerLead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
   padding-inline-end: var(--space-4);
   text-decoration: none;
+}
+
+/* Same treatment as `PageHeader`'s own back button — arrow + "חזרה", quiet until hovered — but
+   living in the bar. `ArrowRight` because "back" reads rightward in RTL (DESIGN_SYSTEM §71).
+   Height stays under the 56/72px bar, so the header does not grow; the negative inline-start
+   margin keeps the *text* optically aligned with the edge the padding establishes. */
+.headerBack {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  height: 40px;
+  padding-inline: var(--space-2);
+  margin-inline-start: calc(-1 * var(--space-2));
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.headerBack:hover {
+  color: var(--color-text-primary);
+}
+
+.headerBack:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
 }
 
 /*

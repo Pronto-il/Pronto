@@ -1,5 +1,6 @@
 package com.pronto.ai.prompt;
 
+import com.pronto.ai.TestTaxonomy;
 import com.pronto.ai.TestCategories;
 import com.pronto.ai.catalog.CategoryRoutingProfile;
 import com.pronto.ai.catalog.CategoryRoutingProfiles;
@@ -30,7 +31,7 @@ class ClassificationPromptBuilderTest {
 
     @BeforeEach
     void setUp() {
-        builder = new ClassificationPromptBuilder();
+        builder = new ClassificationPromptBuilder(TestTaxonomy.taxonomy());
         categories = new ServiceCategoryCatalog(TestCategories.repository()).categories();
     }
 
@@ -65,11 +66,14 @@ class ClassificationPromptBuilderTest {
         String prompt = builder.buildSystemPrompt(categories, 2);
 
         // classification-v5 reframed this as two ordered questions -- which profession is needed,
-        // and only then whether Pronto covers it -- so the old single-sentence framing is gone by
-        // design. What must survive is the ordering and the routing-not-diagnosis rule.
-        assertThat(prompt).contains("WHICH PROFESSION does this customer actually need");
+        // and only then whether Pronto covers it. classification-v6 named the two halves
+        // CLASSIFICATION and DISPATCH and made the first produce taxonomy codes rather than only
+        // free text, so the wording moved again. What must survive across both rewrites is the
+        // ORDERING, the independence of step 1 from Pronto's catalogue, and routing-not-diagnosis.
+        assertThat(prompt).contains("CLASSIFICATION — what does this customer actually need");
         assertThat(prompt).contains("WITHOUT considering what Pronto happens to offer");
-        assertThat(prompt).contains("ONLY THEN");
+        assertThat(prompt).contains("DISPATCH — can Pronto serve that profession today");
+        assertThat(prompt).contains("never let step 2 reach back into step 1");
         assertThat(prompt).contains("routing problem, not a technical diagnosis problem");
     }
 

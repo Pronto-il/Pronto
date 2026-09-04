@@ -28,6 +28,8 @@ import com.pronto.common.exception.ErrorCode;
 import com.pronto.locations.service.ServiceCoverageValidator;
 import com.pronto.maps.service.SelectedPlaceValidator;
 import com.pronto.professionals.service.ProfessionalCoverageService;
+import com.pronto.professionals.dto.SubServicePriceSelection;
+import com.pronto.professionals.service.SubServicePriceValidator;
 import com.pronto.professionals.service.SubServiceSelectionValidator;
 import com.pronto.users.entity.User;
 import com.pronto.users.entity.UserRole;
@@ -44,6 +46,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Registration, contact verification, login and password recovery.
@@ -96,6 +99,7 @@ public class AuthService {
     private final ProfessionalCoverageService professionalCoverageService;
     private final ServiceCoverageValidator serviceCoverageValidator;
     private final SubServiceSelectionValidator subServiceSelectionValidator;
+    private final SubServicePriceValidator subServicePriceValidator;
     private final VerificationPolicy verificationPolicy;
     private final AuthOtpPolicy authOtpPolicy;
     private final SelectedPlaceValidator selectedPlaceValidator;
@@ -108,6 +112,7 @@ public class AuthService {
                         ProfessionalCoverageService professionalCoverageService,
                         ServiceCoverageValidator serviceCoverageValidator,
                         SubServiceSelectionValidator subServiceSelectionValidator,
+                        SubServicePriceValidator subServicePriceValidator,
                         VerificationPolicy verificationPolicy,
                         AuthOtpPolicy authOtpPolicy,
                         SelectedPlaceValidator selectedPlaceValidator) {
@@ -119,6 +124,7 @@ public class AuthService {
         this.professionalCoverageService = professionalCoverageService;
         this.serviceCoverageValidator = serviceCoverageValidator;
         this.subServiceSelectionValidator = subServiceSelectionValidator;
+        this.subServicePriceValidator = subServicePriceValidator;
         this.verificationPolicy = verificationPolicy;
         this.authOtpPolicy = authOtpPolicy;
         this.selectedPlaceValidator = selectedPlaceValidator;
@@ -539,7 +545,10 @@ public class AuthService {
                     errors.add(new FieldError("professional.basePrice", "must have at most 2 decimal places"));
                 }
 
-                if (professional.subServiceIds() == null || professional.subServiceIds().isEmpty()) {
+                // Either shape satisfies this -- ids only, or ids with prices. The requirement is
+                // that the registrant named at least one thing they actually do (D4/D7); how they
+                // spelled it is not a product rule.
+                if (professional.subServiceSelections().isEmpty()) {
                     errors.add(new FieldError("professional.subServiceIds",
                             "at least one sub-service is required for professional registration"));
                 }
@@ -575,7 +584,15 @@ public class AuthService {
         serviceCoverageValidator.validate(professional.serviceRegionId(), professional.serviceCityIds(),
                 professional.baseCityId(), "professional.");
 
-        Set<Long> subServiceIds = new LinkedHashSet<>(professional.subServiceIds());
+        // Money shape first (non-negative, at most two decimals, no duplicate ids), reported against
+        // indexed field paths so a registrant with eight priced services is told exactly which
+        // inputs to fix. The identical component runs on the later profile edit.
+        subServicePriceValidator.validate(professional.subServiceSelections(), "professional.subServices",
+                professional.subServices() != null);
+
+        Set<Long> subServiceIds = professional.subServiceSelections().stream()
+                .map(SubServicePriceSelection::subServiceId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
         if (subServiceIds.contains(null)) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Request body failed validation.",
                     List.of(new FieldError("professional.subServiceIds", "must not contain null ids")));

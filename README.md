@@ -8,12 +8,45 @@ The platform helps users report home issues, receive AI-assisted problem classif
 
 ## Features
 
-* Service request creation
-* AI-assisted issue classification
-* Professional matching
-* SOS emergency requests
-* Image uploads
-* Professional availability management
+* Service request creation, with AI-assisted issue classification and clarifying questions
+* Professional matching by category, service area, availability and real driving ETA
+* Standard booking against a professional's derived weekly availability
+* **Pronto SOS** — urgent dispatch with realtime offer/response over WebSocket
+* Image uploads for issues, and verification-document upload for professionals
+* Professional availability management (weekly working hours, one-off blocks)
+* Live professional location, real distance/ETA and verified arrival
+* Reviews and ratings, and customer favorites
+* Operator (`ADMIN`) review and approval of professional applications
+* In-app and email/SMS notifications
+
+---
+
+## Who uses Pronto
+
+Three roles, enforced end to end by `ck_users_role` and the JWT `role` claim:
+
+| Role | What they do |
+| --- | --- |
+| `CUSTOMER` | Reports an issue, picks a professional, books a visit, tracks it, reviews it |
+| `PROFESSIONAL` | Publishes availability, receives and accepts work, travels, marks arrival |
+| `ADMIN` | Reviews professional applications and their verification documents |
+
+---
+
+## Main flows
+
+**Standard booking.** Describe the issue (optionally with photos) → the AI classifies it into a
+category and may ask clarifying questions → browse matching professionals with price, rating,
+distance and ETA → pick a start time from the professional's derived availability → confirm →
+track the order → review on completion.
+
+**Pronto SOS.** For urgent work: the request is dispatched to nearby professionals with a live
+position, offers are pushed over WebSocket, and the search radius expands automatically until
+someone commits to an ETA.
+
+**Professional workflow.** Manage availability and schedule → receive pre-classified service
+requests → review the issue details, location, and requested time → accept or reject requests →
+manage confirmed bookings → update the service status throughout the job → complete the service.
 
 ---
 
@@ -34,11 +67,31 @@ The platform focuses on:
 
 ### Frontend
 
-* React
+Verified against `frontend/package.json`:
+
+* **React 19** with **TypeScript**, built by **Vite 8**
+* **React Router 7** for routing
+* **Framer Motion** for animation, **lucide-react** for icons
+* **Vitest 3** + **Testing Library** (jsdom) for tests
+* **oxlint** for linting
+
+The UI is Hebrew and right-to-left throughout.
 
 ### Backend
 
-* Spring Boot
+Verified against `backend/pom.xml`:
+
+* **Java 21**, **Spring Boot 3.3.4**, built by **Maven**
+* Spring **Web**, **Data JPA**, **Security**, **Validation**, **Actuator**
+* Spring **WebSocket (STOMP)** for Pronto SOS realtime delivery, using the in-JVM simple
+  broker — no external message broker
+* **Flyway** for schema migrations (`backend/src/main/resources/db/migration`)
+* **PostgreSQL 16** as the only datastore
+* **AWS SDK v2** for S3 / SES / SNS
+
+Structured as a modular monolith: one package per domain (`auth`, `issues`, `bookings`,
+`availability`, `professionals`, `sos`, `maps`, `matching`, `notifications`, `reviews`,
+`favorites`, `storage`, `ai`, …), each with its own `README.md`.
 
 ### Cloud Services
 
@@ -68,22 +121,50 @@ Deployment target, defined in `infra/terraform/` and described in
 ## Project Structure
 
 ```text
-frontend/
-backend/
-docs/
+frontend/     React + TypeScript application
+backend/      Spring Boot REST API (modular monolith)
+docs/         Architecture, API contracts, roadmap and project documents
+infra/        Terraform infrastructure and bootstrap scripts
+.github/      CI and deployment workflows
 ```
 
 ### frontend
 
-React application for customers and service professionals.
+React application for customers and service professionals. Organised by feature
+(`src/features/auth`, `booking`, `issues`, `dashboard`, `sos`, `admin`, `professionals`,
+`favorites`, `notifications`) over a shared layer (`src/shared`) of API clients, hooks and
+design-system components.
 
 ### backend
 
-Spring Boot services and business logic.
+Spring Boot services and business logic, one package per domain — see *Tech Stack → Backend*.
 
 ### docs
 
-Project documentation, research, wireframes, and design artifacts.
+Architecture and design documents (`docs/architecture/`), the production roadmap and
+deployment runbook (`docs/production-roadmap/`), QA notes (`docs/qa/`), and the project
+documents listed under *Documentation* below.
+
+### infra
+
+Terraform definitions for the deployed environment (ECS Fargate, ALB, RDS, S3 + CloudFront)
+plus one-shot bootstrap resources.
+
+### .github
+
+Three GitHub Actions workflows: `backend-ci.yml`, `frontend-ci.yml` and
+`deploy-production.yml`.
+
+---
+
+## Prerequisites
+
+| Tool | Version | Why |
+| --- | --- | --- |
+| **JDK** | 21 | `java.version` in `backend/pom.xml` |
+| **Maven** | 3.9+ | **No Maven wrapper is committed** — there is no `mvnw` in this repository, so `mvn` must be installed and on your `PATH` |
+| **Node.js with npm** | — | Builds and runs the frontend |
+| **Docker** | — | Runs the local PostgreSQL 16 container via `docker-compose.yml` |
 
 ---
 
@@ -112,6 +193,30 @@ this project's development machine, and publishing the container there too meant
 started first won the port — with the backend silently reading the wrong database. Setting
 `DB_PORT` overrides both sides at once, so `DB_PORT=5432` works on a machine with no such
 conflict.
+
+---
+
+## Development commands
+
+**Frontend** (`cd frontend`) — the scripts defined in `frontend/package.json`:
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Vite dev server on http://localhost:5173 |
+| `npm run dev:lan` | Same, bound to `0.0.0.0` for testing from a phone on the same network |
+| `npm run build` | Type-check (`tsc -b`) then produce a production build |
+| `npm run preview` | Serve the production build locally |
+| `npm run lint` | oxlint |
+| `npm test` | Run the Vitest suite once |
+| `npm run test:watch` | Vitest in watch mode |
+
+**Backend** (`cd backend`):
+
+| Command | What it does |
+| --- | --- |
+| `mvn spring-boot:run` | Run the API on http://localhost:8080 |
+| `mvn test` | Run the test suite |
+| `mvn package` | Build the executable jar |
 
 ---
 
@@ -333,9 +438,26 @@ An operator is refused every customer/professional endpoint (`403`), by design.
 
 ---
 
+## Documentation
+
+Project documents:
+
+* [Pronto — Final Presentation](docs/Pronto_Presentation.pptx)
+* [Pronto — Executive Summary](docs/Pronto_Executive_Summary_Final.docx)
+
+Technical documentation lives in the repository alongside the code:
+
+* `docs/architecture/` — system overview, data model and the per-feature design documents
+* `docs/architecture/api-contract*.md` — the API contracts, one per domain
+* `docs/production-roadmap/` — production milestones, reports and the deployment runbook
+* Every backend package carries its own `README.md` describing its purpose, responsibilities
+  and assumptions
+
+---
+
 ## Current Status
 
-This project is currently under development as part of a Software Engineering academic project.
+Under active development as a Software Engineering academic project. The project includes working frontend and backend components, CI workflows, and infrastructure configuration for AWS deployment.
 
 ---
 

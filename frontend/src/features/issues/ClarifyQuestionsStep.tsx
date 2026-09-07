@@ -1,17 +1,31 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import type { TargetAndTransition } from 'framer-motion';
 import { Circle, CheckCircle2 } from 'lucide-react';
 import { Button } from '../../shared/components';
 import type { UploadedPhoto } from '../../shared/components';
-import { classifyIssue, GENERIC_ERROR_MESSAGE } from '../../shared/api';
+import { ApiError, classifyIssue, CLASSIFY_TIMEOUT_CODE, GENERIC_ERROR_MESSAGE } from '../../shared/api';
 import type { ClarificationAnswer, ClassifyIssueResponse, ClassifyQuestion } from '../../shared/api';
 import { pageTransition } from '../../shared/motion/variants';
 import styles from './ClarifyQuestionsStep.module.css';
 
+/** Same rule as the describe step: a round that timed out decided nothing and says so. */
+const CLARIFY_TIMEOUT_MESSAGE = 'לא הספקנו לנתח את התשובה בזמן. אפשר לנסות שוב.';
+
+/** The client deadline and the backend's own — see `DescribeIssueStep`. */
+const TIMEOUT_CODES = new Set([CLASSIFY_TIMEOUT_CODE, 'AI_TIMEOUT']);
+
 export interface ClarifyQuestionsStepProps {
   description: string;
   photos: UploadedPhoto[];
+  /**
+   * The describe step's profession hint, carried into every clarification round.
+   *
+   * `/classify` is stateless and re-runs over the *complete* evidence each time, so a hint that
+   * was sent on round one and dropped on round two would change the evidence between rounds —
+   * the customer would appear to have withdrawn their choice by answering a question.
+   */
+  selectedCategoryId?: number;
   /** Normally exactly one — the backend asks the single highest-value question per round. The
    *  component still renders a list defensively rather than assuming a length. */
   questions: ClassifyQuestion[];
@@ -34,6 +48,7 @@ export interface ClarifyQuestionsStepProps {
 export function ClarifyQuestionsStep({
   description,
   photos,
+  selectedCategoryId,
   questions,
   previousAnswers,
   onClassified,
@@ -42,6 +57,17 @@ export function ClarifyQuestionsStep({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [bannerError, setBannerError] = useState<string | null>(null);
+  // Identical guard to DescribeIssueStep's — see the comment there for why aborting and
+  // sequence-checking are both needed rather than either alone.
+  const submissionRef = useRef(0);
+  const inFlightRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      submissionRef.current += 1;
+      inFlightRef.current?.abort();
+    };
+  }, []);
   // Progressive reveal (design doc §4.2) — multi-question case only; a single question renders
   // immediately (today's existing behavior, just restyled).
   const [visibleCount, setVisibleCount] = useState(() => Math.min(1, questions.length));
@@ -66,25 +92,47 @@ export function ClarifyQuestionsStep({
 
   async function handleContinue() {
     setBannerError(null);
-    setIsSubmitting(true);
-    onAnalyzingChange(true);
     const accumulated: ClarificationAnswer[] = [
       ...previousAnswers,
       ...questions.map((question) => ({ question: question.question, answer: answers[question.id] })),
     ];
 
+    inFlightRef.current?.abort();
+    const controller = new AbortController();
+    inFlightRef.current = controller;
+    const submission = ++submissionRef.current;
+    const isCurrent = () => submissionRef.current === submission;
+
+    setIsSubmitting(true);
+    onAnalyzingChange(true);
     try {
-      const result = await classifyIssue({
-        description,
-        imageKeys: photos.map((photo) => photo.imageKey),
-        clarificationAnswers: accumulated,
-      });
+      const result = await classifyIssue(
+        {
+          description,
+          imageKeys: photos.map((photo) => photo.imageKey),
+          ...(selectedCategoryId !== undefined ? { selectedCategoryId } : {}),
+          clarificationAnswers: accumulated,
+        },
+        { signal: controller.signal },
+      );
+      if (!isCurrent()) {
+        return;
+      }
       onClassified(result, accumulated);
-    } catch {
-      setBannerError(GENERIC_ERROR_MESSAGE);
+    } catch (error) {
+      if (!isCurrent() || (error instanceof ApiError && error.code === 'ABORTED')) {
+        return;
+      }
+      setBannerError(
+        error instanceof ApiError && TIMEOUT_CODES.has(error.code)
+          ? CLARIFY_TIMEOUT_MESSAGE
+          : GENERIC_ERROR_MESSAGE,
+      );
     } finally {
-      setIsSubmitting(false);
-      onAnalyzingChange(false);
+      if (isCurrent()) {
+        setIsSubmitting(false);
+        onAnalyzingChange(false);
+      }
     }
   }
 

@@ -41,6 +41,13 @@ import java.util.List;
  *                          side of it, so question quality is inspectable per case and not
  *                          only in aggregate
  * @param latencyMillis     wall-clock for the whole case, across every model call it made
+ * @param callLatenciesMillis wall-clock for each individual classification call, in order.
+ *                          <b>This, not {@link #latencyMillis}, is the customer-facing number.</b>
+ *                          A customer waits once per submission, not once per case: a case that
+ *                          asks a question is two separate waits with the customer's own thinking
+ *                          time in between, and summing them describes a wait nobody experiences.
+ *                          The 5-second target is a per-call target, so the percentiles in
+ *                          {@link EvaluationReport} are computed over this.
  * @param failureReason     non-null when the run threw; such a case counts as wrong, never as
  *                          silently passing
  */
@@ -60,12 +67,19 @@ public record EvaluationOutcome(
         boolean expectedClarification,
         List<ClarificationRound> rounds,
         long latencyMillis,
+        List<Long> callLatenciesMillis,
         String failureReason
 ) {
 
     public EvaluationOutcome {
         rounds = rounds == null ? List.of() : List.copyOf(rounds);
         tier = tier == null || tier.isBlank() ? EvaluationCase.TIER_CORE : tier;
+        // A caller that did not record per-call timings still contributes one data point rather
+        // than silently dropping out of the latency percentiles — which would quietly bias them
+        // towards whichever cases happened to be instrumented.
+        callLatenciesMillis = callLatenciesMillis == null || callLatenciesMillis.isEmpty()
+                ? List.of(latencyMillis)
+                : List.copyOf(callLatenciesMillis);
     }
 
     public boolean isCore() {

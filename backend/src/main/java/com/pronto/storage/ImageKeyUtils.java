@@ -56,9 +56,12 @@ public final class ImageKeyUtils {
             Pattern.compile("^guests/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/.*");
 
     private static final String GUEST_PREFIX = "guests/";
+    private static final String CUSTOMER_PREFIX = "customers/";
 
     /** The shared per-owner namespace an issue photo is uploaded into, before any issue exists. */
     private static final String ISSUE_TEMP_SEGMENT = "/issues/temp/";
+    /** {@link #ISSUE_TEMP_SEGMENT} without the {@code temp} — a promoted key keeps only this. */
+    private static final String ISSUE_SEGMENT = "/issues/";
 
     private ImageKeyUtils() {
     }
@@ -80,6 +83,28 @@ public final class ImageKeyUtils {
     /** {@code true} iff {@code key} is under the guest namespace at all (well-formed or not). */
     public static boolean isGuestKey(String key) {
         return key != null && key.startsWith(GUEST_PREFIX);
+    }
+
+    /**
+     * {@code true} iff {@code key} names an ISSUE PHOTO belonging to some customer or guest —
+     * {@code customers/{id}/issues/...} or {@code guests/{uuid}/issues/...}.
+     *
+     * <p>Says nothing about WHOSE photo it is; it answers only "is this key in the issue-photo
+     * namespace at all". That is exactly the question
+     * {@code StorageService#getIssuePhotoUrlForDispatchedProfessional} needs: the caller has
+     * already been authorized against the SOS request the photo hangs off, and this is the guard
+     * that stops that narrow permission being pointed at a verification document or any other
+     * private namespace.
+     *
+     * <p>Matched on the {@code /issues/} segment rather than {@code /issues/temp/}, because a key
+     * promoted out of the guest namespace on booking no longer carries {@code temp}.
+     */
+    public static boolean isIssuePhotoKey(String key) {
+        if (key == null || key.contains("..")) {
+            return false;
+        }
+        return (key.startsWith(CUSTOMER_PREFIX) || key.startsWith(GUEST_PREFIX))
+                && key.contains(ISSUE_SEGMENT);
     }
 
     /** The {@code {guestId}} segment embedded in {@code guests/{guestId}/...}, if well-formed. */

@@ -60,9 +60,12 @@ class ClassificationBehaviourRunnerTest {
         RoutingProperties properties = new RoutingProperties();
         ServiceCategoryCatalog catalog = new ServiceCategoryCatalog(TestCategories.repository());
 
+        // The same transport in both roles; production splits them (ai.config.OpenAiClientConfig).
+        OpenAiChatClient chatClient = new OpenAiChatClient(apiKey, model, timeoutMs, new ObjectMapper());
+
         ClassificationService service = new ClassificationService(
                 new OpenAiClassificationClient(
-                        new OpenAiChatClient(apiKey, model, timeoutMs, new ObjectMapper()),
+                        chatClient, chatClient,
                         catalog, new ClassificationPromptBuilder(taxonomy),
                         new ClassificationSchema(taxonomy), new ProfessionalBriefPromptBuilder(),
                         new ProfessionalBriefSchema()),

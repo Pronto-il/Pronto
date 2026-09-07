@@ -397,6 +397,55 @@ resource "aws_ecs_task_definition" "backend" {
       # is 30s rather than 10s. Changing this value back must be done together with those two.
       { name = "OPENAI_MODEL", value = "gpt-5-mini" },
 
+      # ===================== INTERACTIVE CLASSIFICATION BUDGET =====================
+      #
+      # POST /api/issues/classify only. OPENAI_MODEL above now governs the BACKGROUND Professional
+      # Brief; these govern the request a customer is sitting in front of. They were one setting
+      # until the split, which is why the customer inherited a 30-second-per-attempt,
+      # three-attempt budget intended for a job nobody waits on.
+      #
+      # MEASURED, live OpenAI, 106-case labelled dataset, 130 calls (see the eval harness):
+      #                       before            after
+      #   per-call p50        11,230 ms         2,471 ms
+      #   per-call p95        88,208 ms         4,026 ms
+      #   per-call max        92,045 ms         4,775 ms
+      #   within 5s                0.0%            95.4%
+      #
+      # NONE of these variables reaches the running task on merge alone. Terraform owns the task
+      # definition's shape and `aws_ecs_service` has ignore_changes = [task_definition], so the
+      # sequence is `terraform apply` FIRST (registers a revision carrying these), THEN a
+      # deploy-production.yml run (which swaps the image onto that revision). Skipping the apply
+      # leaves the container running without them, silently on the defaults in application.yml.
+
+      # Total wall-clock budget for one classification: validation, image downloads, the provider
+      # call, any retry and parsing. Below the 5s promised to the customer so the server gives up
+      # first and still has time to answer. See ai.Deadline.
+      { name = "AI_CLASSIFICATION_DEADLINE_MS", value = "4000" },
+
+      # One attempt. Retries are what turned a 30s socket timeout into a 92s wait; inside a 4s
+      # budget a second attempt cannot finish even when it would have succeeded. Raising this is
+      # supported and the client will use it whenever the remaining budget genuinely affords it.
+      { name = "AI_CLASSIFICATION_MAX_ATTEMPTS", value = "1" },
+
+      # Per-attempt socket ceiling, narrowed further by whatever is left of the deadline. Well
+      # above the deadline deliberately: the deadline is the real bound.
+      { name = "OPENAI_CLASSIFICATION_TIMEOUT_MS", value = "10000" },
+
+      # `reasoning_effort`, a flat top-level string on Chat Completions, sent ONLY to the GPT-5
+      # reasoning family (OpenAiCallPolicy withholds it from sampling models, which reject it with
+      # a non-retryable 400). This is the single largest latency lever measured: gpt-5-mini
+      # defaults to `medium` and spends most of its completion tokens reasoning before the first
+      # visible one.
+      #
+      # SET TO EMPTY to omit the parameter and restore the model's own default. That is the
+      # rollback if a future model rejects the value, and it needs no code change.
+      #
+      # TRADE-OFF, MEASURED AND NOT YET SETTLED: `minimal` cost accuracy on the same dataset
+      # (core set 96.1% -> 89.5% final accuracy, and 5 cases wrongly reported as unsupported).
+      # See docs/architecture/classification-latency.md for the full before/after and the
+      # `low` comparison; revisit this value together with that document rather than in isolation.
+      { name = "OPENAI_CLASSIFICATION_REASONING_EFFORT", value = "minimal" },
+
       { name = "EMAIL_MODE", value = "ses" },
       { name = "EMAIL_FROM", value = local.email_from },
       { name = "EMAIL_SES_REGION", value = var.aws_region },

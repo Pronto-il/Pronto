@@ -1,5 +1,9 @@
 package com.pronto.sos.service;
 
+import com.pronto.issues.entity.Issue;
+import com.pronto.issues.entity.IssueImage;
+import com.pronto.issues.repository.IssueImageRepository;
+import com.pronto.issues.repository.IssueRepository;
 import com.pronto.professionals.entity.Professional;
 import com.pronto.professionals.repository.ProfessionalRatingAggregate;
 import com.pronto.professionals.repository.ProfessionalRepository;
@@ -9,6 +13,7 @@ import com.pronto.sos.config.SosProperties;
 import com.pronto.sos.dto.SosCandidate;
 import com.pronto.sos.dto.SosCandidateState;
 import com.pronto.sos.dto.SosEventResponse;
+import com.pronto.sos.dto.SosIssuePhoto;
 import com.pronto.sos.dto.SosOfferResponse;
 import com.pronto.sos.dto.SosRequestResponse;
 import com.pronto.sos.entity.SosEvent;
@@ -19,11 +24,14 @@ import com.pronto.sos.repository.SosOfferRepository;
 import com.pronto.storage.service.StorageService;
 import com.pronto.users.entity.User;
 import com.pronto.users.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.math.RoundingMode;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -35,6 +43,8 @@ import java.util.List;
 @Component
 public class SosResponseAssembler {
 
+    private static final Logger log = LoggerFactory.getLogger(SosResponseAssembler.class);
+
     private final ProfessionalRepository professionalRepository;
     private final UserRepository userRepository;
     private final ReviewAggregateRepository reviewAggregateRepository;
@@ -42,6 +52,8 @@ public class SosResponseAssembler {
     private final StorageService storageService;
     private final SosProperties properties;
     private final ProfessionalCoverageService professionalCoverageService;
+    private final IssueRepository issueRepository;
+    private final IssueImageRepository issueImageRepository;
 
     /**
      * {@code ReviewAggregateRepository} is reused from the {@code professionals} package rather
@@ -55,7 +67,9 @@ public class SosResponseAssembler {
                                  SosOfferRepository sosOfferRepository,
                                  StorageService storageService,
                                  SosProperties properties,
-                                 ProfessionalCoverageService professionalCoverageService) {
+                                 ProfessionalCoverageService professionalCoverageService,
+                                 IssueRepository issueRepository,
+                                 IssueImageRepository issueImageRepository) {
         this.professionalRepository = professionalRepository;
         this.userRepository = userRepository;
         this.reviewAggregateRepository = reviewAggregateRepository;
@@ -63,6 +77,48 @@ public class SosResponseAssembler {
         this.storageService = storageService;
         this.properties = properties;
         this.professionalCoverageService = professionalCoverageService;
+        this.issueRepository = issueRepository;
+        this.issueImageRepository = issueImageRepository;
+    }
+
+    /**
+     * The problem, as the customer described and photographed it.
+     *
+     * <p><b>The gap this closes.</b> An SOS professional was shown {@code issueSummary} — an
+     * optional 300-character headline that {@code CreateSosRequestRequest} accepts and the app has
+     * never sent — plus a street name. Everything they actually needed was already stored, one
+     * foreign key away on {@code sos_requests.issue_id}, and simply never joined in.
+     *
+     * <p>Every URL here is minted fresh, on every response, and that is what makes the photos
+     * survive the thing that would otherwise break them: presigned URLs expire in five minutes, so
+     * a professional who opens the card, accepts, walks to the van and comes back must be handed
+     * new ones rather than the ones from the first render. Nothing presigned is ever persisted.
+     *
+     * <p>Failure is non-fatal by design. A missing issue row, or one photo whose key is somehow
+     * outside the issue namespace, degrades that one field — it never fails the SOS response
+     * carrying it, because an emergency dispatch must not stop working over a thumbnail.
+     */
+    private IssueDetail issueDetail(Long issueId) {
+        if (issueId == null) {
+            return IssueDetail.EMPTY;
+        }
+        String description = issueRepository.findById(issueId).map(Issue::getDescription).orElse(null);
+        List<SosIssuePhoto> photos = new ArrayList<>();
+        for (IssueImage image : issueImageRepository.findByIssueId(issueId)) {
+            try {
+                photos.add(new SosIssuePhoto(image.getImageKey(),
+                        storageService.getIssuePhotoUrlForDispatchedProfessional(image.getImageKey())));
+            } catch (RuntimeException e) {
+                // Deliberately not logging the key: it is half of a bearer capability.
+                log.warn("sos.issue-photo.presign-failed issueId={} imageId={}", issueId, image.getId());
+            }
+        }
+        return new IssueDetail(description, List.copyOf(photos));
+    }
+
+    /** The two issue-derived fields, resolved once and shared by both response shapes. */
+    private record IssueDetail(String description, List<SosIssuePhoto> photos) {
+        private static final IssueDetail EMPTY = new IssueDetail(null, List.of());
     }
 
     /**
@@ -94,9 +150,11 @@ public class SosResponseAssembler {
                         .map(SosOffer::getEstimatedArrivalMinutes)
                         .orElse(null);
         boolean exact = access == SosAddressAccess.FULL;
+        IssueDetail issue = issueDetail(request.getIssueId());
 
         return new SosRequestResponse(request.getId(), request.getIssueId(), request.getCustomerId(),
-                request.getCategoryId(), request.getSubServiceId(), request.getIssueSummary(), request.getUrgency(),
+                request.getCategoryId(), request.getSubServiceId(), request.getIssueSummary(),
+                issue.description(), issue.photos(), request.getUrgency(),
                 request.getStatus(),
                 // City is never redacted -- it is what a professional needs to judge whether the
                 // job is reachable at all, and it is already on their offer card.
@@ -227,8 +285,10 @@ public class SosResponseAssembler {
      * the address is withheld until selection.
      */
     public SosOfferResponse toOfferResponse(SosOffer offer, SosRequest request) {
+        IssueDetail issue = issueDetail(request.getIssueId());
         return new SosOfferResponse(offer.getId(), offer.getSosRequestId(), offer.getProfessionalId(),
                 offer.getStatus(), request.getStatus(), request.getCategoryId(), request.getIssueSummary(),
+                issue.description(), issue.photos(),
                 request.getUrgency(), request.getServiceCity(), request.getServiceStreet(),
                 offer.getMatchRank(), offer.getDistanceKm(),
                 offer.getEstimatedArrivalMinutes(), offer.getVisitFee(), offer.getSosFee(),

@@ -33,6 +33,20 @@ public record SosRequestResponse(
         Long categoryId,
         Long subServiceId,
         String issueSummary,
+        /**
+         * The customer's own description of the problem, verbatim — never an AI summary.
+         *
+         * <p>Present for both readers of this DTO and for the same reason: the customer needs to
+         * see what they reported, and the professional needs it to stay available AFTER acceptance,
+         * not only on the offer card they have now navigated away from. Authorized by
+         * {@code SosService#authorizeRead}, which is the same gate that decides how much of the
+         * address the caller may see.
+         */
+        String issueDescription,
+        /** Every photo on the anchoring issue, each with a freshly-minted presigned URL. Empty
+         *  when there are none; never {@code null}. See {@link SosIssuePhoto} on why the URL is
+         *  per-response and the key is the stable identity. */
+        java.util.List<SosIssuePhoto> issuePhotos,
         SosUrgency urgency,
         SosRequestStatus status,
         String serviceCity,

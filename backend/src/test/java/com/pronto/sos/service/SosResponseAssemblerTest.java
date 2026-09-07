@@ -43,6 +43,8 @@ class SosResponseAssemblerTest {
     private static final Long CATEGORY_ID = 1L;
 
     private SosOfferRepository sosOfferRepository;
+    private com.pronto.issues.repository.IssueRepository issueRepository;
+    private com.pronto.issues.repository.IssueImageRepository issueImageRepository;
     private SosResponseAssembler assembler;
 
     @BeforeEach
@@ -54,9 +56,11 @@ class SosResponseAssemblerTest {
         StorageService storageService = Mockito.mock(StorageService.class);
         ProfessionalCoverageService professionalCoverageService =
                 Mockito.mock(ProfessionalCoverageService.class);
+        issueRepository = Mockito.mock(com.pronto.issues.repository.IssueRepository.class);
+        issueImageRepository = Mockito.mock(com.pronto.issues.repository.IssueImageRepository.class);
         assembler = new SosResponseAssembler(professionalRepository, userRepository, reviewAggregateRepository,
                 sosOfferRepository, storageService, new com.pronto.sos.config.SosProperties(),
-                professionalCoverageService);
+                professionalCoverageService, issueRepository, issueImageRepository);
 
         when(sosOfferRepository.findBySosRequestIdOrderByMatchRankAsc(anyLong())).thenReturn(List.of());
     }

@@ -93,7 +93,10 @@ class OpenAiTaxonomyEvaluationRunnerTest {
                         evaluatorHolder[0].usageListener()
                                 .onCall(schemaName, latency, attempts, prompt, completion, reasoning, ok));
 
+        // The same transport in both roles, so the usage listener installed above sees every call
+        // this run makes. Production splits the two (ai.config.OpenAiClientConfig).
         OpenAiClassificationClient client = new OpenAiClassificationClient(
+                chatClient,
                 chatClient,
                 catalog,
                 new ClassificationPromptBuilder(taxonomy),

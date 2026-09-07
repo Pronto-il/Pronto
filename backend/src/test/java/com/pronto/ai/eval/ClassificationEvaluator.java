@@ -71,11 +71,20 @@ public class ClassificationEvaluator {
         double pendingMarginBefore = 0;
 
         long startedAtNanos = System.nanoTime();
+        // One entry per classification call — see EvaluationOutcome.callLatenciesMillis for why
+        // the per-call number, not the per-case sum, is the one the 5-second target is about.
+        List<Long> callLatencies = new ArrayList<>();
+        // Declared outside the try so the catch below can still time the call that threw. A call
+        // that failed — a timeout above all — is a wait a customer really sat through, and
+        // dropping it would make the latency percentiles describe only the successes.
+        long callStartedAtNanos = System.nanoTime();
 
         try {
             for (int round = 0; round <= maxRounds; round++) {
+                callStartedAtNanos = System.nanoTime();
                 ClassificationSuggestion suggestion = classificationService.classify(
                         testCase.description(), testCase.imageKeys(), selectedCategoryId, answers);
+                callLatencies.add(elapsedMillis(callStartedAtNanos));
 
                 if (round == 0) {
                     initialCategory = bestGuess(suggestion);
@@ -100,7 +109,7 @@ public class ClassificationEvaluator {
                             suggestion.lowConfidence(), suggestion.unresolved(), unsupported,
                             suggestion.detectedProfession(), unmatchedQuestion,
                             testCase.requiresClarification(), List.copyOf(rounds),
-                            elapsedMillis(startedAtNanos), null);
+                            elapsedMillis(startedAtNanos), List.copyOf(callLatencies), null);
                 }
 
                 ClarificationQuestion question = suggestion.questions().get(0);
@@ -127,14 +136,15 @@ public class ClassificationEvaluator {
             return new EvaluationOutcome(testCase.id(), testCase.expectedCategory(), testCase.tier(),
                     initialCategory, null, null, answers.size(), false, false, false, null,
                     unmatchedQuestion, testCase.requiresClarification(), List.copyOf(rounds),
-                    elapsedMillis(startedAtNanos),
+                    elapsedMillis(startedAtNanos), List.copyOf(callLatencies),
                     "pipeline kept asking questions past the configured maximum of " + maxRounds);
 
         } catch (Exception e) {
+            callLatencies.add(elapsedMillis(callStartedAtNanos));
             return new EvaluationOutcome(testCase.id(), testCase.expectedCategory(), testCase.tier(),
                     initialCategory, null, null, answers.size(), false, false, false, null,
                     unmatchedQuestion, testCase.requiresClarification(), List.copyOf(rounds),
-                    elapsedMillis(startedAtNanos),
+                    elapsedMillis(startedAtNanos), List.copyOf(callLatencies),
                     e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }

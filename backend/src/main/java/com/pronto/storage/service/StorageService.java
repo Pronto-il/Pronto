@@ -272,6 +272,57 @@ public class StorageService {
     }
 
     /**
+     * <b>The photos a dispatched SOS professional is looking at while deciding whether to take the
+     * job.</b>
+     *
+     * <p>A third narrow exemption from {@link #authorize}, justified here in the terms
+     * {@link #getPresignedUrlAssumingCallerAuthorized} demands of any new caller — and, like
+     * {@link #getVerificationDocumentUrlForOperator}, deliberately its own prefix-locked method
+     * rather than a second caller of that general one.
+     *
+     * <p><b>Why the general rule cannot serve this.</b> {@link #authorize} resolves ownership out
+     * of the key: a {@code customers/{id}/issues/...} photo is readable only by customer
+     * {@code id}. A professional being offered that customer's emergency is by construction not
+     * that user, so the general rule refuses them — which is why the professional's SOS card showed
+     * a street name and nothing else. Teaching {@link #authorize} that professionals may read
+     * customers' photos was rejected for the same reason the ADMIN version was: it would widen
+     * access to every private key in the system on the strength of a role check made somewhere that
+     * cannot know what it is unlocking.
+     *
+     * <p>Narrow in the same three independent ways:
+     *
+     * <ul>
+     *   <li><b>Prefix-locked.</b> Only issue-photo keys — {@code customers/…/issues/} and
+     *       {@code guests/…/issues/}. It cannot be turned into a read primitive for verification
+     *       documents or anything else, even by a caller that chooses the key.</li>
+     *   <li><b>Reachable only from the SOS assembler</b>, whose every path has already run
+     *       {@code SosService#authorizeRead} — the rule that establishes this caller is the
+     *       request's customer, or a professional holding a live offer on it. That check is
+     *       strictly narrower than "may see this job at all", which is the permission being
+     *       exercised here.</li>
+     *   <li><b>Key never client-supplied.</b> The keys come from {@code issue_images} rows loaded
+     *       by the {@code issue_id} on the SOS request the caller was just authorized against. No
+     *       request field reaches this parameter.</li>
+     * </ul>
+     *
+     * <p>Photos are disclosed at offer time, unlike the house number: a picture of a burst pipe is
+     * what the professional is being asked to judge, and it identifies a fault rather than a door.
+     * The address rule is untouched — see {@code sos.service.SosAddressAccess}.
+     *
+     * <p><b>The returned URL is a bearer capability</b> valid for
+     * {@code pronto.storage.presigned-url-ttl-seconds}. It must never be logged or cached in a
+     * shared store, and neither must {@code key}; nothing here logs either.
+     *
+     * @throws ApiException {@code 403 FORBIDDEN} for any key outside the issue-photo namespace
+     */
+    public String getIssuePhotoUrlForDispatchedProfessional(String key) {
+        if (!ImageKeyUtils.isIssuePhotoKey(key)) {
+            throw new ApiException(ErrorCode.FORBIDDEN, "This key is not an issue photo.");
+        }
+        return storageClient.presignUrl(key, presignedUrlTtl);
+    }
+
+    /**
      * Batch counterpart to {@link #getPresignedUrl} — used exclusively by
      * {@code POST /api/storage/images/presigned-urls} (§12.2), which re-resolves a paused
      * booking draft's photo keys into fresh presigned URLs on resume. Never fails the whole

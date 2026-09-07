@@ -105,7 +105,7 @@ class GuestIssueImagesTest {
 
     @Test
     void aGuestsImagesAreForwardedToClassificationExactlyAsACustomersAre() {
-        when(classificationService.classify(anyString(), anyList(), any(), anyList())).thenReturn(classified());
+        when(classificationService.classify(anyString(), anyList(), any(), anyList(), any())).thenReturn(classified());
 
         issuesService.classify(UploadOwner.guest(GUEST_ID),
                 new ClassifyRequest("המזגן מטפטף מים על הרצפה", List.of(GUEST_KEY), null, null));
@@ -114,18 +114,18 @@ class GuestIssueImagesTest {
         // key to bytes via IssueImageResolver#resolveRequired), so this asserts the guest's keys
         // arrive there rather than being silently dropped for want of an account.
         verify(classificationService).classify(eq("המזגן מטפטף מים על הרצפה"), eq(List.of(GUEST_KEY)),
-                eq(null), eq(List.of()));
+                eq(null), eq(List.of()), any());
     }
 
     @Test
     void anAuthenticatedCustomersClassificationIsUnchanged() {
         // 14/16, the regression half: the pre-existing path still forwards exactly what it did.
-        when(classificationService.classify(anyString(), anyList(), any(), anyList())).thenReturn(classified());
+        when(classificationService.classify(anyString(), anyList(), any(), anyList(), any())).thenReturn(classified());
         String customerKey = "customers/42/issues/temp/x.jpg";
 
         issuesService.classify(CUSTOMER_ID, new ClassifyRequest("נזילה", List.of(customerKey), null, null));
 
-        verify(classificationService).classify(eq("נזילה"), eq(List.of(customerKey)), eq(null), eq(List.of()));
+        verify(classificationService).classify(eq("נזילה"), eq(List.of(customerKey)), eq(null), eq(List.of()), any());
     }
 
     @Test
@@ -134,7 +134,13 @@ class GuestIssueImagesTest {
                 new ClassifyRequest("נזילה", List.of(guestKey(OTHER_GUEST_ID, "b.jpg")), null, null)))
                 .isInstanceOf(ApiException.class)
                 .satisfies(code(ErrorCode.IMAGE_KEY_INVALID));
-        Mockito.verifyNoInteractions(classificationService);
+        // The property is "nothing was classified", not "the collaborator was never touched":
+        // `IssuesService.classify` now starts the request's time budget before the ownership check
+        // (ai.Deadline — the budget covers the whole request, including the checks), so that one
+        // clock-starting call is an expected interaction. Nothing is sent to the provider, no image
+        // is read, and no classification happens — which is what this test is about.
+        Mockito.verify(classificationService, Mockito.never())
+                .classify(Mockito.anyString(), Mockito.anyList(), Mockito.any(), Mockito.anyList(), Mockito.any());
     }
 
     @Test

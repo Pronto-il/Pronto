@@ -2,8 +2,13 @@ import { useState } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { AddressFormFields } from './AddressFormFields';
-import { EMPTY_ADDRESS, isAddressResolved, validateAddress } from './addressTypes';
+import { ADDRESS_UNVERIFIABLE_MESSAGE, AddressFormFields } from './AddressFormFields';
+import {
+  ADDRESS_NOT_SELECTED_MESSAGE,
+  EMPTY_ADDRESS,
+  isAddressResolved,
+  validateAddress,
+} from './addressTypes';
 import type { AddressValue } from './addressTypes';
 import type { AddressParts, AddressSuggestionProvider } from './googlePlaces';
 
@@ -65,10 +70,13 @@ function Harness({
   provider,
   onValue,
   initial = EMPTY_ADDRESS,
+  errors,
 }: {
   provider: AddressSuggestionProvider;
   onValue?: (v: AddressValue) => void;
   initial?: AddressValue;
+  /** What a screen passes back after `validateAddress` refused a Continue click. */
+  errors?: Partial<Record<keyof AddressValue, string>>;
 }) {
   const [value, setValue] = useState<AddressValue>(initial);
   return (
@@ -76,6 +84,7 @@ function Harness({
       <AddressFormFields
         value={value}
         provider={provider}
+        errors={errors}
         onChange={(next) => {
           setValue(next);
           onValue?.(next);
@@ -432,5 +441,116 @@ describe('AddressFormFields — apartment, floor and entrance', () => {
     expect(screen.getByLabelText(/^דירה/)).toHaveValue('');
     expect(screen.getByLabelText(/^קומה/)).toHaveValue('');
     expect(screen.getByLabelText(/^כניסה/)).toHaveValue('');
+  });
+});
+
+/**
+ * **The dead "המשך" button.**
+ *
+ * A signed-in customer with a saved home address opens the booking address step and picks
+ * "כתובת אחרת לפעם הזו". `AddressSelectionStep` carries the address text across into the form —
+ * and with it the saved address's `placeId`, because that is what `toAddressValue` produces from
+ * `GET /api/users/me`.
+ *
+ * That endpoint deliberately does not return the address's coordinates. So the value reaching this
+ * form had a place id and no position, which is a state the two "is this address resolved?"
+ * predicates answered differently: the form asked `placeId !== null` (yes — showed the ✓ and
+ * skipped re-confirmation), while `validateAddress`/`isAddressResolved` asked for the coordinates
+ * too (no — refused the submit). The refusal was reported under the `placeId` key, which no field
+ * in this form rendered, so "המשך" did nothing at all, showed nothing at all, and kept doing
+ * nothing however many times it was pressed.
+ *
+ * Both halves are pinned here: the predicate the form displays must be the predicate the screen
+ * submits on, and the selection rule must always be able to speak.
+ */
+describe('an address carrying a place id but no coordinates', () => {
+  /** Exactly what `toAddressValue(user.defaultAddress)` yields — see `addressTypes.ts`. */
+  const SAVED_ADDRESS_WITHOUT_COORDINATES: AddressValue = {
+    ...EMPTY_ADDRESS,
+    city: 'תל אביב-יפו',
+    street: 'דיזנגוף',
+    houseNumber: '100',
+    placeId: 'ChIJdizengoff100',
+    formattedAddress: 'דיזנגוף 100, תל אביב-יפו',
+    latitude: null,
+    longitude: null,
+  };
+
+  it('is not shown as confirmed, because it cannot be submitted', async () => {
+    render(<Harness provider={fakeProvider()} initial={SAVED_ADDRESS_WITHOUT_COORDINATES} />);
+
+    // The ✓ used to appear here on an address `validateAddress` would refuse — the form telling
+    // the customer they were done while the Continue button disagreed.
+    await waitFor(() => expect(screen.getByTestId('submittable')).toHaveTextContent('true'));
+  });
+
+  it('re-confirms it against Google and fills in the missing coordinates', async () => {
+    const resolveFullAddress = vi.fn(fakeProvider().resolveFullAddress);
+    render(
+      <Harness
+        provider={fakeProvider({ resolveFullAddress })}
+        initial={SAVED_ADDRESS_WITHOUT_COORDINATES}
+      />,
+    );
+
+    await waitFor(() => expect(resolveFullAddress).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId('resolved')).toHaveTextContent('true'));
+    expect(await screen.findByTestId('address-confirmed')).toBeInTheDocument();
+  });
+
+  it('explains itself instead of failing silently when Google cannot confirm it', async () => {
+    // The address is now genuinely unsubmittable — but the customer is told why and which fields
+    // to look at, rather than pressing a button that does nothing.
+    render(
+      <Harness
+        provider={fakeProvider({ resolveFullAddress: async () => null })}
+        initial={SAVED_ADDRESS_WITHOUT_COORDINATES}
+      />,
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(ADDRESS_UNVERIFIABLE_MESSAGE);
+    expect(screen.getByTestId('submittable')).toHaveTextContent('false');
+  });
+});
+
+describe('the address-selection rule can always be seen', () => {
+  it('renders the placeId error that validateAddress produces', async () => {
+    // `validateAddress` reports "pick an address from the list" under the `placeId` key. Nothing
+    // in this form rendered that key, so every screen using it (registration, profile, booking,
+    // SOS) could refuse a submit while showing the customer nothing.
+    const typedButNeverSelected: AddressValue = {
+      ...EMPTY_ADDRESS,
+      city: 'חיפה',
+      street: 'הרצל',
+      houseNumber: '5',
+    };
+    expect(validateAddress(typedButNeverSelected).placeId).toBe(ADDRESS_NOT_SELECTED_MESSAGE);
+
+    render(
+      <Harness
+        // Google is not reachable in this scenario, so nothing overwrites the screen's own verdict.
+        provider={fakeProvider({ resolveFullAddress: async () => null })}
+        initial={typedButNeverSelected}
+        errors={{ placeId: ADDRESS_NOT_SELECTED_MESSAGE }}
+      />,
+    );
+
+    const alerts = await screen.findAllByRole('alert');
+    expect(alerts.some((el) => el.textContent === ADDRESS_NOT_SELECTED_MESSAGE)).toBe(true);
+  });
+
+  it('stops showing it once the address is confirmed', async () => {
+    // A stale error from a previous refused click must not sit under a now-valid address.
+    render(
+      <Harness
+        provider={fakeProvider()}
+        initial={EMPTY_ADDRESS}
+        errors={{ placeId: ADDRESS_NOT_SELECTED_MESSAGE }}
+      />,
+    );
+    await enterFullAddress('100');
+
+    await waitFor(() => expect(screen.getByTestId('address-confirmed')).toBeInTheDocument());
+    expect(screen.queryByText(ADDRESS_NOT_SELECTED_MESSAGE)).not.toBeInTheDocument();
   });
 });

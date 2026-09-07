@@ -175,6 +175,93 @@ public class EvaluationReport {
         return outcomes.stream().mapToLong(EvaluationOutcome::latencyMillis).max().orElse(0);
     }
 
+    // ==============================================================================================
+    // Per-call latency — the customer-facing distribution
+    // ==============================================================================================
+    //
+    // Everything above is per CASE. A case that asked a clarification question is two model calls
+    // with the customer's own thinking time between them, so its per-case total is a duration
+    // nobody ever waited. The 5-second product target is about one submission, so it is measured
+    // against one call. See EvaluationOutcome.callLatenciesMillis.
+
+    /** Every individual classification call in the run, sorted ascending. */
+    public List<Long> callLatenciesMillis() {
+        return outcomes.stream()
+                .flatMap(outcome -> outcome.callLatenciesMillis().stream())
+                .sorted()
+                .toList();
+    }
+
+    /**
+     * Nearest-rank percentile over per-call latency. {@code percentile} is 0..100.
+     *
+     * <p>Nearest-rank rather than interpolated: with ~100 samples the interpolated variant
+     * invents a value between two real measurements, and for a latency budget the honest
+     * question is "which observed call sits at this rank", not "what would sit there if the
+     * distribution were continuous".
+     */
+    public long callLatencyPercentileMillis(double percentile) {
+        List<Long> sorted = callLatenciesMillis();
+        if (sorted.isEmpty()) {
+            return 0;
+        }
+        int rank = (int) Math.ceil(percentile / 100.0 * sorted.size());
+        return sorted.get(Math.min(Math.max(rank, 1), sorted.size()) - 1);
+    }
+
+    public long maxCallLatencyMillis() {
+        return callLatenciesMillis().stream().mapToLong(Long::longValue).max().orElse(0);
+    }
+
+    /**
+     * Share of individual calls that came back inside {@code budgetMillis}.
+     *
+     * <p>The headline number for this work: "target successful classifications within 5 seconds".
+     * Counts only calls that also succeeded — see {@link #failures()} — because a call that
+     * failed fast is not a classification delivered in time.
+     */
+    public double callsWithinBudgetRate(long budgetMillis) {
+        List<Long> all = callLatenciesMillis();
+        if (all.isEmpty()) {
+            return 0;
+        }
+        long failedCalls = outcomes.stream().filter(outcome -> outcome.failureReason() != null).count();
+        long within = all.stream().filter(latency -> latency <= budgetMillis).count();
+        // Every failed case contributes exactly one failed call (the one that threw), and it is
+        // the last entry in its list. Subtracting them keeps a fast failure from being counted as
+        // an in-budget success.
+        return Math.max(0, within - failedCalls) / (double) all.size();
+    }
+
+    /**
+     * Cases that ended in a timeout specifically, as opposed to any other provider failure.
+     * Reported separately because a timeout is the failure this work is trying to bound, and
+     * folding it into a general error rate hides whether the deadline is doing its job.
+     */
+    public List<EvaluationOutcome> timeouts() {
+        return outcomes.stream()
+                .filter(outcome -> outcome.failureReason() != null)
+                .filter(outcome -> {
+                    String reason = outcome.failureReason().toLowerCase(java.util.Locale.ROOT);
+                    return reason.contains("timeout") || reason.contains("timed out")
+                            || reason.contains("deadline");
+                })
+                .toList();
+    }
+
+    /** Share of cases that produced no classification at all, for any reason. */
+    public double errorRate() {
+        if (outcomes.isEmpty()) {
+            return 0;
+        }
+        return failures().size() / (double) outcomes.size();
+    }
+
+    /** Share of cases that produced a usable classification — the complement of {@link #errorRate()}. */
+    public double successfulClassificationRate() {
+        return 1 - errorRate();
+    }
+
     /**
      * Cases that declared their description insufficient to separate two trades, and which
      * Pronto committed on anyway without asking.
@@ -338,8 +425,28 @@ public class EvaluationReport {
         report.append(String.format("pipeline failures              %d%n", failures().size()));
         report.append(String.format("total AI calls                 %d  (%.2f per case)%n",
                 totalAiCalls(), outcomes.isEmpty() ? 0 : totalAiCalls() / (double) outcomes.size()));
-        report.append(String.format("latency avg / max              %.0f ms / %d ms%n",
+        report.append(String.format("latency avg / max (per case)   %.0f ms / %d ms%n",
                 averageLatencyMillis(), maxLatencyMillis()));
+
+        // The block the 5-second target is actually judged on. Per CALL, because that is what one
+        // customer waits through once; the per-case line above sums a case's clarification rounds
+        // and so describes a wait nobody experiences.
+        report.append(String.format("%n-- per-call latency (what one customer waits) --  [n=%d call(s)]%n",
+                callLatenciesMillis().size()));
+        report.append(String.format("p50                            %d ms%n",
+                callLatencyPercentileMillis(50)));
+        report.append(String.format("p95                            %d ms%n",
+                callLatencyPercentileMillis(95)));
+        report.append(String.format("max                            %d ms%n", maxCallLatencyMillis()));
+        report.append(String.format("within 5s (successful)         %.1f%%%n",
+                callsWithinBudgetRate(5_000) * 100));
+        report.append(String.format("within 4s (server deadline)    %.1f%%%n",
+                callsWithinBudgetRate(4_000) * 100));
+        report.append(String.format("successful classification rate %.1f%%%n",
+                successfulClassificationRate() * 100));
+        report.append(String.format("error rate                     %.1f%%  [%d case(s)]%n",
+                errorRate() * 100, failures().size()));
+        report.append(String.format("  of which timeouts            %d%n", timeouts().size()));
 
         report.append("\n-- questions asked per case --\n");
         questionDistribution().forEach((questions, count) -> report.append(String.format(

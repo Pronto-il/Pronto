@@ -77,10 +77,18 @@ export { uploadImage, getPresignedImageUrls } from './storage';
 export { clearGuestSession, getGuestSessionToken } from './guestSession';
 export type { UploadImageResponse, PresignedImageUrlEntry, PresignedImageUrlsResponse } from './storage';
 
-export { classifyIssue, createIssue, getIssue, updateIssueCategory } from './issues';
+export {
+  classifyIssue,
+  createIssue,
+  getIssue,
+  updateIssueCategory,
+  CLASSIFY_DEADLINE_MS,
+  CLASSIFY_TIMEOUT_CODE,
+} from './issues';
 export type {
   IssueUrgencyType,
   ClarificationAnswer,
+  ClassifyIssueOptions,
   ClassifyIssueRequest,
   ClassifyQuestion,
   ClassifyIssueResponse,
@@ -217,6 +225,7 @@ export type {
   SosUrgency,
   SosActorType,
   CreateSosRequestPayload,
+  SosIssuePhoto,
   SosRequestResponse,
   SosCandidate,
   SosCandidateState,

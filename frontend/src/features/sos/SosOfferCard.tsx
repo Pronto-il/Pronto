@@ -5,6 +5,7 @@ import { useCountdown } from '../../shared/hooks';
 import { getCategoryNameHe, isSosOfferOpen, isSosTerminalStatus } from '../../shared/api';
 import type { SosOfferResponse } from '../../shared/api';
 import { SOS_JOB_STEPS, SOS_OFFER_COPY } from './sosProUiState';
+import { SosIssueDetails } from './SosIssueDetails';
 import styles from './SosOfferCard.module.css';
 
 export interface SosOfferCardProps {
@@ -124,7 +125,14 @@ export function SosOfferCard({
         </p>
       </div>
 
-      {offer.issueSummary && <p className={styles.summary}>“{offer.issueSummary}”</p>}
+      {/* The problem itself — the customer's own description and their photos. This used to be
+          `issueSummary` alone, an optional headline the customer app never sends, so a
+          professional was shown a location and nothing about the fault. */}
+      <SosIssueDetails
+        summary={offer.issueSummary}
+        description={offer.issueDescription}
+        photos={offer.issuePhotos ?? []}
+      />
 
       {canRespond && label && (
         <p className={styles.countdown} aria-label={`נשארו ${label} דקות להגיב`}>

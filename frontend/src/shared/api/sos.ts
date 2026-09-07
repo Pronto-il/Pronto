@@ -143,6 +143,18 @@ export interface CreateSosRequestPayload {
  * across a slow response, a remount or a backgrounded tab. **The backend enforces both deadlines
  * regardless of what this client displays** — every read path re-applies them server-side.
  */
+/**
+ * One photo the customer attached to the emergency.
+ *
+ * `url` is a presigned bearer capability minted per response with a short TTL (300s), so it is a
+ * fact about *this* payload, not about the photo — never persist it, and re-read the request/offer
+ * to get a fresh one. `imageKey` is the stable identity and is what to use as a React key.
+ */
+export interface SosIssuePhoto {
+  imageKey: string;
+  url: string;
+}
+
 export interface SosRequestResponse {
   id: number;
   issueId: number;
@@ -150,6 +162,10 @@ export interface SosRequestResponse {
   categoryId: number;
   subServiceId: number | null;
   issueSummary: string | null;
+  /** The customer's own words, verbatim — never an AI summary. */
+  issueDescription: string | null;
+  /** Every photo on the anchoring issue. Empty array when there are none, never null. */
+  issuePhotos: SosIssuePhoto[];
   urgency: SosUrgency;
   status: SosRequestStatus;
   serviceCity: string;
@@ -321,6 +337,16 @@ export interface SosOfferResponse {
   requestStatus: SosRequestStatus;
   categoryId: number;
   issueSummary: string | null;
+  /**
+   * The customer's own description of the problem, verbatim — never an AI summary.
+   *
+   * Disclosed at OFFER time, unlike the house number: this is the thing the professional is being
+   * asked to accept or decline, and withholding it until after acceptance was asking them to
+   * commit blind. See `sos.service.SosAddressAccess` for where the disclosure line actually sits.
+   */
+  issueDescription: string | null;
+  /** Every photo the customer attached. Empty array when there are none, never null. */
+  issuePhotos: SosIssuePhoto[];
   urgency: SosUrgency;
   /**
    * The two location fields exposed before selection, by design — enough to estimate a realistic

@@ -120,8 +120,14 @@ class OpenAiProfessionalBriefEvaluationRunnerTest {
         ServiceCategoryCatalog catalog = new ServiceCategoryCatalog(TestCategories.repository());
         IssueImageResolver imageResolver = new IssueImageResolver(Mockito.mock(StorageClient.class));
 
+        // One transport in both roles — this runner evaluates the brief under the single
+        // OPENAI_MODEL/OPENAI_TIMEOUT_MS it is invoked with. Production budgets the two paths
+        // separately (ai.config.OpenAiClientConfig).
+        OpenAiChatClient chatClient = new OpenAiChatClient(apiKey, model, timeoutMs, new ObjectMapper());
+
         OpenAiClassificationClient client = new OpenAiClassificationClient(
-                new OpenAiChatClient(apiKey, model, timeoutMs, new ObjectMapper()),
+                chatClient,
+                chatClient,
                 catalog,
                 new ClassificationPromptBuilder(TestTaxonomy.taxonomy()),
                 new ClassificationSchema(TestTaxonomy.taxonomy()),

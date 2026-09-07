@@ -290,11 +290,60 @@ pronto:
     # Still the only place any model name appears outside infra/terraform. Nothing in Java names a
     # model; changing it is this line plus compute.tf.
     model: ${OPENAI_MODEL:gpt-5-mini}
-    # Raised from 10000 for gpt-5-mini's reasoning latency (see above). This is a per-attempt
-    # socket timeout and the retry policy allows 3 attempts, so the worst case a customer can wait
-    # grew with it — that is a deliberate trade against timing out requests that would have
-    # succeeded, and it is the number to revisit first if the classify endpoint feels slow.
+    # Per-attempt socket timeout for the BACKGROUND Professional Brief. Unchanged at 30s, and
+    # deliberately so: nobody waits on a brief, and shortening it to help the customer-facing path
+    # would truncate a document a professional relies on for no benefit. The interactive path no
+    # longer reads this — see `classification:` below.
     timeout-ms: ${OPENAI_TIMEOUT_MS:30000}
+
+    # ============================ INTERACTIVE CLASSIFICATION ============================
+    #
+    # POST /api/issues/classify, and only that. Split out from the keys above because a customer
+    # watching a spinner and a background job have opposite requirements, and one shared setting
+    # could only ever be wrong for one of them. Everything here is about the wait; nothing here
+    # affects the Professional Brief.
+    #
+    # MEASURED BASELINE (106-case labelled dataset, gpt-5-mini, classification-v6 prompt, live
+    # OpenAI): per-call p50 9.5s, p95 21.7s, max 51.6s. Not one call in the run finished inside
+    # five seconds. The dominant term was reasoning latency, not prompt size and not the network.
+    classification:
+      # Defaults to whatever OPENAI_MODEL is, so nothing silently diverges — but CAN diverge, which
+      # is the point: the classifier is now swappable without touching the brief.
+      model: ${OPENAI_CLASSIFICATION_MODEL:${OPENAI_MODEL:gpt-5-mini}}
+
+      # THE TOTAL WALL-CLOCK BUDGET for one classification: validation, image downloads, the
+      # provider call, any retry, and parsing. Not a socket timeout — see ai.Deadline for why
+      # per-socket limits could never bound this path, and ai.service.ClassificationService for
+      # why 4s sits below the 5s the customer is promised.
+      deadline-ms: ${AI_CLASSIFICATION_DEADLINE_MS:4000}
+
+      # Per-attempt socket ceiling, narrowed further by whatever is left of deadline-ms. Well
+      # above the deadline on purpose: the deadline is the real bound, and this only exists so an
+      # unbounded socket cannot outlive it if the two are ever misconfigured relative to one
+      # another.
+      timeout-ms: ${OPENAI_CLASSIFICATION_TIMEOUT_MS:10000}
+
+      # ONE attempt. Retries are what turned a 30s socket timeout into a 51s wait on the baseline
+      # run. Inside a 4s budget a second attempt cannot finish even when it would have succeeded,
+      # so it buys nothing and costs the customer the whole budget. A retry is still ATTEMPTED
+      # when the budget genuinely allows one (raise this and the client will use it), and
+      # Retry-After is still respected — see OpenAiChatClient. The customer's own "נסו שוב" is
+      # the retry that actually helps here, because it comes with a fresh budget.
+      max-attempts: ${AI_CLASSIFICATION_MAX_ATTEMPTS:1}
+
+      # `reasoning_effort`, sent ONLY to the GPT-5 reasoning family (OpenAiCallPolicy withholds it
+      # from sampling models, which answer it with a non-retryable 400). Chat Completions takes it
+      # as a flat top-level string; the nested `reasoning: {effort}` object is the Responses API's
+      # form and is rejected here.
+      #
+      # `minimal` is the fastest setting the GPT-5 family offers and the one OpenAI documents as
+      # most beneficial on mini/nano. Routing is classification against a fixed 50-profession
+      # label space with a strict output schema, not open-ended reasoning, so the deliberation the
+      # `medium` default buys is largely spent on a decision the schema already constrains.
+      #
+      # SET IT TO EMPTY TO DISABLE — the parameter is then omitted entirely and the model reverts
+      # to its own default. That is the escape hatch if a future model rejects the value.
+      reasoning-effort: ${OPENAI_CLASSIFICATION_REASONING_EFFORT:minimal}
 
   email:
     # log | ses. LIVE configuration as of Production MS1 -- this property used to exist and be read

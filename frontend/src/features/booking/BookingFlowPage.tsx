@@ -204,6 +204,21 @@ export default function BookingFlowPage() {
   const [timeUnavailableError, setTimeUnavailableError] = useState<string | null>(null);
 
   const [step, setStep] = useState<Step>({ name: 'address' });
+  /**
+   * The current step, readable from a handler that was created on an earlier render.
+   *
+   * <p>`AnimatePresence mode="wait"` keeps the outgoing step mounted — and clickable — for the
+   * length of its exit spring, holding the React element from the render it was created in. So a
+   * second tap during the transition runs *that* render's handler, whose `step` closure still says
+   * `'address'`: the `step.name !== …` guards below read a value that can no longer change, and
+   * were therefore not guarding anything. A double tap on the address step's "המשך" fired
+   * `GET /api/bookings/professionals` twice.
+   *
+   * A ref is the current value regardless of which render is asking, which is exactly the question
+   * those guards mean to ask.
+   */
+  const stepRef = useRef(step);
+  stepRef.current = step;
   const hasAttemptedResume = useRef(false);
   /** `1` = advancing forward, `-1` = going back — drives `stepTransition`'s slide direction
    *  (design doc §3.A1), mirroring `NewIssuePage.tsx`'s `direction` state exactly. */
@@ -359,6 +374,10 @@ export default function BookingFlowPage() {
   }
 
   function handleAddressContinue() {
+    // Already past this step — a second tap landing on the outgoing element. See `stepRef`.
+    if (stepRef.current.name !== 'address') {
+      return;
+    }
     if (!validateAddressStep()) {
       return;
     }
@@ -401,6 +420,9 @@ export default function BookingFlowPage() {
   }
 
   function handleSelectProfessional(professional: ProfessionalCardData) {
+    if (stepRef.current.name !== 'professionals') {
+      return;
+    }
     setDirection(1);
     setStep({ name: 'slot', professional });
     setTimeUnavailableError(null);
@@ -409,7 +431,8 @@ export default function BookingFlowPage() {
   }
 
   function handleSlotContinue() {
-    if (step.name !== 'slot' || !selectedStart) {
+    const current = stepRef.current;
+    if (current.name !== 'slot' || !selectedStart) {
       return;
     }
     // Belt-and-braces against the same staleness `BookingSummary` guards at submit time: the
@@ -419,7 +442,7 @@ export default function BookingFlowPage() {
       return;
     }
     setDirection(1);
-    setStep({ name: 'confirm', professional: step.professional, bookedStart: selectedStart });
+    setStep({ name: 'confirm', professional: current.professional, bookedStart: selectedStart });
     setTimeUnavailableError(null);
     updateDraft({ stage: 'BOOKING_CONFIRM', bookedStart: selectedStart });
   }

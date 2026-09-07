@@ -1,4 +1,4 @@
-import { httpClient } from './httpClient';
+import { httpClient, ApiError } from './httpClient';
 import type { OrderStatus } from './bookings';
 
 export type IssueUrgencyType = 'STANDARD' | 'SOS';
@@ -77,12 +77,87 @@ export interface ClassifyIssueResponse {
 }
 
 /**
+ * How long a customer may be made to wait for one classification before the app stops blocking
+ * them, in milliseconds.
+ *
+ * <p>The product rule is "a successful classification inside 5 seconds", so this is the point at
+ * which waiting longer is no longer the plan. It is deliberately *longer* than the server's own
+ * deadline (`pronto.openai.classification.deadline-ms`, 4s): the server is what actually bounds
+ * the work, and this is the backstop for the case where the server's answer never arrives at all
+ * — a dropped connection, a stalled proxy, a suspended tab. If the two were equal the client
+ * would routinely give up on responses that were already on their way back, turning a successful
+ * classification into a timeout for no reason.
+ */
+export const CLASSIFY_DEADLINE_MS = 5_000;
+
+/**
+ * The `ApiError.code` a classification that ran out of time rejects with.
+ *
+ * <p><b>Not an `AI_SERVICE_ERROR` and not a classification.</b> It means Pronto does not know the
+ * answer yet, which is a different thing from Pronto having decided anything — nothing may treat
+ * it as a result, invent a `CLASSIFIED` status, or fall back to a category. The only correct
+ * response is to tell the customer and offer them a way forward.
+ */
+export const CLASSIFY_TIMEOUT_CODE = 'CLASSIFY_TIMEOUT';
+
+export interface ClassifyIssueOptions {
+  /**
+   * Cancels the call — a newer submission, leaving the screen, or a step change. A cancelled
+   * call rejects with `ABORTED`, which callers are expected to swallow rather than render.
+   */
+  signal?: AbortSignal;
+  /** Overrides {@link CLASSIFY_DEADLINE_MS}. Tests use this; product code should not. */
+  timeoutMs?: number;
+}
+
+/**
  * `POST /api/issues/classify` — stateless preview, never writes to the database. Called once
  * per clarification round with the same `description`/`imageKeys` and the accumulated
  * `clarificationAnswers`. See `docs/architecture/api-contract-issues.md` §2.1.
+ *
+ * <p>Bounded by {@link CLASSIFY_DEADLINE_MS}. On expiry the request is genuinely **aborted**, not
+ * merely ignored: the `fetch` is cancelled so the browser stops holding the connection, and the
+ * promise rejects with {@link CLASSIFY_TIMEOUT_CODE}. Cancelling here does not stop the server —
+ * that is what the server-side deadline is for — but it does stop this app from waiting on work
+ * whose answer it has already decided not to use.
+ *
+ * <p>The caller's own `signal` is honoured alongside the deadline, so a screen can abandon a call
+ * it no longer wants without waiting for the timer.
  */
-export function classifyIssue(payload: ClassifyIssueRequest): Promise<ClassifyIssueResponse> {
-  return httpClient.post<ClassifyIssueResponse>('/api/issues/classify', payload);
+export function classifyIssue(
+  payload: ClassifyIssueRequest,
+  options: ClassifyIssueOptions = {},
+): Promise<ClassifyIssueResponse> {
+  const { signal, timeoutMs = CLASSIFY_DEADLINE_MS } = options;
+
+  // One controller fed by two independent sources (the deadline and the caller), rather than
+  // `AbortSignal.any` + `AbortSignal.timeout`: this shape carries an explicit abort *reason*
+  // through to `httpClient`, which is what keeps "timed out" and "cancelled" from collapsing
+  // into one indistinguishable failure at the call site.
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () =>
+      controller.abort(
+        new ApiError(CLASSIFY_TIMEOUT_CODE, 'Classification exceeded the client deadline.', null, 0),
+      ),
+    timeoutMs,
+  );
+
+  const onCallerAbort = () => controller.abort(signal?.reason);
+  if (signal) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+    } else {
+      signal.addEventListener('abort', onCallerAbort, { once: true });
+    }
+  }
+
+  return httpClient
+    .post<ClassifyIssueResponse>('/api/issues/classify', payload, { signal: controller.signal })
+    .finally(() => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onCallerAbort);
+    });
 }
 
 export interface CreateIssueRequest {

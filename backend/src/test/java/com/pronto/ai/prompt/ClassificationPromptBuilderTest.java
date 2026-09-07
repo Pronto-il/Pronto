@@ -70,11 +70,11 @@ class ClassificationPromptBuilderTest {
         // CLASSIFICATION and DISPATCH and made the first produce taxonomy codes rather than only
         // free text, so the wording moved again. What must survive across both rewrites is the
         // ORDERING, the independence of step 1 from Pronto's catalogue, and routing-not-diagnosis.
-        assertThat(prompt).contains("CLASSIFICATION — what does this customer actually need");
-        assertThat(prompt).contains("WITHOUT considering what Pronto happens to offer");
-        assertThat(prompt).contains("DISPATCH — can Pronto serve that profession today");
-        assertThat(prompt).contains("never let step 2 reach back into step 1");
-        assertThat(prompt).contains("routing problem, not a technical diagnosis problem");
+        assertThat(prompt).contains("CLASSIFICATION — what does this customer need");
+        assertThat(prompt).contains("WITHOUT considering what Pronto offers");
+        assertThat(prompt).contains("DISPATCH — can Pronto serve that profession");
+        assertThat(prompt).contains("Never let step 2 reach back into step 1");
+        assertThat(prompt).contains("routing problem, not a diagnosis problem");
     }
 
     @Test

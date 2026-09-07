@@ -7,6 +7,7 @@ import {
   sanitizeEntrance,
   sanitizeFloor,
   sanitizeHouseNumber,
+  isAddressResolved,
   isValidHouseNumber,
   withEditedAddressText,
   withSelectedPlace,
@@ -93,7 +94,21 @@ export function AddressFormFields({ value, onChange, errors, provider }: Address
     return sessionTokenRef.current;
   }
 
-  const isResolved = value.placeId !== null;
+  /**
+   * **Deliberately the same predicate `validateAddress` submits on, not a local approximation.**
+   *
+   * This was `value.placeId !== null`, and the disagreement between the two was a dead Continue
+   * button. `toAddressValue` carries a saved default address's `placeId` but *not* its coordinates
+   * — `GET /api/users/me` does not return them — so a customer who chose "כתובת אחרת לפעם הזו" saw
+   * this form declare the carried-over address confirmed (✓), skip re-confirmation, and then hit a
+   * Continue that `isAddressResolved` refused for the missing coordinates. Silently, because the
+   * `placeId` error it produced had nowhere to render (see the status row below).
+   *
+   * Asking the submit-time question here instead means such an address is simply re-confirmed
+   * against Google like any other unresolved one: the effect below fills in the coordinates, and
+   * the ✓ appears only when the address can actually be submitted.
+   */
+  const isResolved = isAddressResolved(value);
   const hasAllParts =
     value.city.trim() !== '' && value.street.trim() !== '' && isValidHouseNumber(value.houseNumber);
 
@@ -252,11 +267,23 @@ export function AddressFormFields({ value, onChange, errors, provider }: Address
         required
       />
 
+      {/* The confirmation status row, and the ONLY place the address-selection rule can speak.
+          `validateAddress` reports "you have not picked an address from the list" under the
+          `placeId` key, and until this line existed no surface rendered it — every screen that
+          calls `validateAddress` (registration, profile, booking, SOS) could therefore refuse a
+          Continue click while showing the customer nothing at all. Shown below the live states
+          because those are more specific: while a lookup is in flight, or when Google has just
+          answered, that is the better explanation of the same fact. */}
       <div className={styles.fullRow}>
         {isConfirming && <p className={styles.status}>{CONFIRMING_MESSAGE}</p>}
         {!isConfirming && confirmError && (
           <p className={styles.error} role="alert">
             {confirmError}
+          </p>
+        )}
+        {!isConfirming && !confirmError && !isResolved && errors?.placeId && (
+          <p className={styles.error} role="alert">
+            {errors.placeId}
           </p>
         )}
         {!isConfirming && !confirmError && isResolved && (

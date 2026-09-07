@@ -1,5 +1,6 @@
 package com.pronto.issues.service;
 
+import com.pronto.ai.Deadline;
 import com.pronto.ai.dto.ClarificationExchange;
 import com.pronto.ai.dto.ClarificationQuestion;
 import com.pronto.ai.dto.ClassificationStatus;
@@ -134,6 +135,13 @@ public class IssuesService {
      * proved; see {@code auth.security.UploadOwnerResolver}.
      */
     public ClassifyResponse classify(UploadOwner owner, ClassifyRequest request) {
+        // Started HERE, before any of the work below, because the budget is a promise to the
+        // customer about the whole request rather than about the model call at the end of it. The
+        // verification guard, the image-ownership lookups and the storage downloads all consume
+        // real time, and a deadline that only began once they were finished would be a deadline on
+        // the cheapest part of the operation.
+        Deadline deadline = classificationService.newInteractiveDeadline();
+
         Long callerId = owner.customerId();
         // Deferred authentication: callerId is null for a guest, and that is now a supported state.
         //
@@ -158,7 +166,7 @@ public class IssuesService {
         List<ClarificationExchange> answers = toExchanges(request.clarificationAnswers());
 
         ClassificationSuggestion suggestion = classificationService.classify(
-                request.description(), imageKeys, request.selectedCategoryId(), answers);
+                request.description(), imageKeys, request.selectedCategoryId(), answers, deadline);
 
         List<ClarifyQuestionResponse> questions = suggestion.questions().stream()
                 .map(this::toQuestionResponse)

@@ -81,7 +81,8 @@ existing taxonomy:
 | `IMAGE_KEY_INVALID` | 400 | An `imageKeys` entry passed to `/api/issues/classify` or `POST /api/issues` doesn't exist in storage, or exists but its embedded owner doesn't match the caller. See §3.3 for the ownership mechanism. |
 | `UNSUPPORTED_IMAGE_TYPE` | 400 | Uploaded file's content-type isn't one of the accepted image types (`image/jpeg`, `image/png`, `image/webp`). |
 | `IMAGE_TOO_LARGE` | 413 | Uploaded file exceeds the configured max size (recommended default 8 MB — see §2.3). |
-| `AI_SERVICE_ERROR` | 502 | The configured AI client failed to produce a classification (timeout, non-2xx, malformed response) after retries. Only reachable when `pronto.ai.mode=openai`; the mock client (§3.1) never fails this way. |
+| `AI_SERVICE_ERROR` | 502 | The configured AI client failed to produce a classification (non-2xx, malformed response) after its allowed attempts. Only reachable when `pronto.ai.mode=openai`; the mock client (§3.1) never fails this way. |
+| `AI_TIMEOUT` | 504 | Classification exceeded its total wall-clock budget (`pronto.openai.classification.deadline-ms`, default 4s) — covering validation, image resolution, the provider call, any retry and parsing. **Distinct from `AI_SERVICE_ERROR` on purpose**: that means the provider answered badly, this means Pronto stopped waiting and the provider may be perfectly healthy. Retrying immediately is reasonable for this and usually pointless for the other. **It is never a classification** — no client may translate it into a `CLASSIFIED` status, a low-confidence result, or a fallback category. See `docs/architecture/classification-latency.md`. |
 | `STORAGE_SERVICE_ERROR` | 502 | The configured storage client failed to store or retrieve an object (S3 call error). Only reachable when `pronto.storage.mode=s3`; the local-disk client (§3.2) fails this way only on genuine disk I/O errors. |
 | `UNAUTHORIZED` *(reused)* | 401 | Missing, malformed, expired, or otherwise invalid JWT. |
 | `NOT_FOUND` *(reused)* | 404 | Not used by any endpoint in this doc's happy/error paths below — image lookups deliberately use `IMAGE_KEY_INVALID` (400) rather than `NOT_FOUND` (404), since an invalid key is a caller input-validation problem (they own the request, not navigating to someone else's resource by id) — consistent with how M1 treated an invalid `categoryId`. Reused code, kept in the taxonomy table for completeness. |
@@ -258,7 +259,7 @@ confidence just because clarification answers were provided — see
 `backend/src/main/java/com/pronto/ai/README.md` for the full prompt/schema design.
 
 **Status codes**: `200` success · `400 VALIDATION_ERROR` · `400 IMAGE_KEY_INVALID` ·
-`401 UNAUTHORIZED` · `403 FORBIDDEN` · `502 AI_SERVICE_ERROR`.
+`401 UNAUTHORIZED` · `403 FORBIDDEN` · `502 AI_SERVICE_ERROR` · `504 AI_TIMEOUT`.
 
 ---
 
@@ -560,7 +561,12 @@ Two implementations, selected by a config flag — the same pattern M1 used for
 | `pronto.ai.mode` | `mock` \| `openai` | Default `mock` for local/dev profiles. |
 | `pronto.openai.api-key` | env var | Never committed. Required only when `mode=openai`. |
 | `pronto.openai.model` | string | e.g. `gpt-4o-mini` (or whichever current vision-capable model is appropriate at implementation time — not pinned here, that's an implementation-time/cost decision). |
-| `pronto.openai.timeout-ms` | integer | Recommended default `10000`. Bounds how long `/classify` can hang before returning `502 AI_SERVICE_ERROR`. |
+| `pronto.openai.timeout-ms` | integer | Default `30000`. Per-attempt socket timeout for the **background Professional Brief only**. `/classify` no longer reads this. |
+| `pronto.openai.classification.deadline-ms` | integer | Default `4000`. The **total** budget for one `/classify` call. This, not a socket timeout, is what bounds the endpoint; exceeding it returns `504 AI_TIMEOUT`. Deliberately below the 5s the customer is promised, so the server gives up first and still has time to answer. |
+| `pronto.openai.classification.model` | string | Defaults to `pronto.openai.model`. Lets the interactive classifier be changed without touching the brief. |
+| `pronto.openai.classification.timeout-ms` | integer | Default `10000`. Per-attempt socket ceiling for `/classify`, narrowed further by whatever remains of the deadline. |
+| `pronto.openai.classification.max-attempts` | integer | Default `1`. Total attempts including the first. A retry is only started when the remaining deadline affords it. |
+| `pronto.openai.classification.reasoning-effort` | string | Default `minimal`. Sent as the flat `reasoning_effort` parameter to the GPT-5 reasoning family only. Set empty to omit it entirely and restore the model default. |
 
 **Image reachability — a real design decision, not just an implementation detail.** The
 real `OpenAiClassificationClient` must **not** send OpenAI a public `imageUrl` to fetch

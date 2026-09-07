@@ -107,6 +107,7 @@ describe('ClarifyQuestionsStep', () => {
       expect.objectContaining({
         clarificationAnswers: [{ question: 'מאיפה מגיעים המים?', answer: 'לא בטוח' }],
       }),
+      expect.anything(),
     );
     expect(onClassified).toHaveBeenCalled();
   });
@@ -166,6 +167,7 @@ describe('ClarifyQuestionsStep', () => {
           { question: 'האם זה קורה רק כשהמזגן דולק?', answer: 'כן' },
         ],
       }),
+      expect.anything(),
     );
   });
 

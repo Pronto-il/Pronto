@@ -62,6 +62,24 @@ export interface BookingDraft {
   photos: BookingDraftPhoto[];
   /** Only meaningful while stage === 'ISSUE_CLARIFY'; re-submitted to `classifyIssue` on resume. */
   clarificationAnswers?: { question: string; answer: string }[];
+  /**
+   * The customer's optional profession HINT from the describe step — deliberately distinct from
+   * `categoryId` below, which is the classification's own answer.
+   *
+   * Keeping the two apart is what lets the hint survive a round trip: they hold different values
+   * whenever Pronto disagrees with the customer (which it is explicitly allowed to do), so
+   * collapsing them would either overwrite the customer's choice with the AI's, or silently
+   * promote a hint into a confirmed category. Persisted so that stepping back from review, or
+   * resuming a draft tomorrow, returns the customer to the picker as they left it.
+   */
+  selectedCategoryId?: number;
+  /**
+   * The last classification, with a signature of the evidence it was computed from, so resuming
+   * a draft does not have to re-run the model to re-derive an answer that has not changed.
+   * See `features/issues/classificationCache.ts` — the signature is what makes reuse safe, and
+   * a mismatch simply falls through to a fresh call.
+   */
+  classification?: { signature: string; result: unknown };
   /** Customer's confirmed/edited category once they reach ISSUE_REVIEW. */
   categoryId?: number;
 

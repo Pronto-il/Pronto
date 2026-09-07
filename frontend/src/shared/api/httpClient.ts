@@ -170,10 +170,21 @@ interface RequestOptions {
   body?: unknown;
   /** Attach the `Authorization` header when a token is available. Defaults to true. */
   auth?: boolean;
+  /**
+   * Cancels the in-flight request. `upload` has had this since it existed; ordinary requests
+   * had no way to be given up on, which is why a screen that stopped waiting for a slow
+   * response could only ignore it — the socket, and the backend work behind it, carried on.
+   *
+   * Abort with a reason to control what the caller sees: `controller.abort(new ApiError(...))`
+   * is rethrown verbatim, so a deadline can surface as its own code rather than as a generic
+   * cancellation. Anything else (including no reason) becomes `ABORTED`. See
+   * `issues.ts`'s `classifyIssue` for the deadline that uses this.
+   */
+  signal?: AbortSignal;
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, auth = true } = options;
+  const { method = 'GET', body, auth = true, signal } = options;
 
   // `FormData` bodies (multipart/form-data, e.g. registration file uploads) must NOT get
   // a manual `Content-Type` header or `JSON.stringify`'d body — the browser sets
@@ -195,14 +206,27 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
   applyGuestSessionHeader(headers);
 
+  // Checked before the socket is opened, not only after: aborting a signal that is already
+  // aborted must not still send the request.
+  if (signal?.aborted) {
+    throw abortError(signal);
+  }
+
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       method,
       headers,
       body: body === undefined ? undefined : isFormData ? body : JSON.stringify(body),
+      signal,
     });
   } catch {
+    // A cancelled request is a thing the app decided, and must not be reported as the network
+    // failing — the two need different UI (silence versus an error banner), and conflating them
+    // is how an intentional cancellation ends up showing "something went wrong".
+    if (signal?.aborted) {
+      throw abortError(signal);
+    }
     // Network failure (backend unreachable, DNS, CORS, offline, ...) — never a real
     // `ApiError` from the backend. status: 0 signals "no HTTP response at all".
     throw new ApiError('NETWORK_ERROR', 'Network request failed.', null, 0);
@@ -224,6 +248,20 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   return payload as T;
+}
+
+/**
+ * The error a cancelled request rejects with.
+ *
+ * Honours `AbortController.abort(reason)`: a caller that aborted with an {@link ApiError} — the
+ * deadline in `issues.ts` does exactly this — gets that error back unchanged, so "we stopped
+ * waiting after 5 seconds" and "the user navigated away" stay distinguishable at the call site.
+ * Everything else collapses to `ABORTED`, matching the code `upload` has always used.
+ */
+function abortError(signal: AbortSignal): ApiError {
+  return signal.reason instanceof ApiError
+    ? signal.reason
+    : new ApiError('ABORTED', 'Request cancelled.', null, 0);
 }
 
 /**
@@ -348,6 +386,8 @@ function upload<T>(path: string, formData: FormData, options: UploadOptions = {}
     xhr.send(formData);
   });
 }
+
+export type { RequestOptions };
 
 export const httpClient = {
   get: <T>(path: string, options?: Omit<RequestOptions, 'method' | 'body'>) =>

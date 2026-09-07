@@ -1,11 +1,13 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Clock, Zap } from 'lucide-react';
-import { Textarea, PhotoUploader, Button, Card } from '../../shared/components';
-import type { UploadedPhoto } from '../../shared/components';
+import { Textarea, PhotoUploader, Button, Card, Select } from '../../shared/components';
+import type { UploadedPhoto, SelectOption } from '../../shared/components';
 import {
   classifyIssue,
   ApiError,
+  CATEGORIES,
+  CLASSIFY_TIMEOUT_CODE,
   GENERIC_ERROR_MESSAGE,
   ISSUE_DESCRIPTION_MIN_LENGTH,
   ISSUE_DESCRIPTION_MAX_LENGTH,
@@ -20,6 +22,12 @@ export interface DescribeIssueStepProps {
   onPhotosChange: (photos: UploadedPhoto[]) => void;
   urgencyType: IssueUrgencyType;
   onUrgencyChange: (value: IssueUrgencyType) => void;
+  /**
+   * The customer's optional profession hint. `undefined` means "let Pronto decide", which is
+   * the default and remains fully supported — the picker narrows nothing by itself.
+   */
+  selectedCategoryId?: number;
+  onSelectedCategoryChange: (categoryId: number | undefined) => void;
   onClassified: (result: ClassifyIssueResponse) => void;
   /** Design doc §2.2 — fires `true` immediately before `classifyIssue` starts, `false` in the
    *  existing `finally`, so `NewIssuePage` can show `AiAnalyzingOverlay` over this step without
@@ -31,6 +39,43 @@ const CLASSIFY_ERROR_MESSAGES: Record<string, string> = {
   IMAGE_KEY_INVALID: 'אחת התמונות לא נטענה כראוי. יש להסיר אותה ולנסות שוב.',
   AI_SERVICE_ERROR: 'לא הצלחנו לעבד את התיאור כרגע. אפשר לנסות שוב בעוד רגע.',
 };
+
+/**
+ * Shown when the classification ran out of time — see `CLASSIFY_TIMEOUT_CODE`.
+ *
+ * Deliberately says Pronto did not finish, not that anything was decided: a timeout is not a
+ * classification, and the recovery on offer is to try again or to name the trade so the next
+ * attempt has more to go on. Choosing a profession here is still only a hint that the next
+ * classification reads — it is never a way around classification, which is why this copy asks
+ * the customer to continue rather than promising the choice will be used as the answer.
+ */
+const CLASSIFY_TIMEOUT_MESSAGE =
+  'לא הספקנו לנתח את התקלה בזמן. אפשר לנסות שוב, או לבחור את בעל המקצוע הדרוש ולהמשיך.';
+
+/**
+ * The two ways a classification can run out of time, shown identically because they mean the same
+ * thing to the customer.
+ *
+ * `CLASSIFY_TIMEOUT` is this app's own 5-second deadline. `AI_TIMEOUT` is the backend's 4-second
+ * one (`ErrorCode.AI_TIMEOUT`, a 504) and is the one that should normally fire, since the server
+ * gives up first by design. Both mean Pronto does not know the answer yet — neither is a
+ * classification, and neither may be turned into one.
+ */
+const TIMEOUT_CODES = new Set([CLASSIFY_TIMEOUT_CODE, 'AI_TIMEOUT']);
+
+/**
+ * The profession hint options.
+ *
+ * Built from the seven real, bookable `CATEGORIES` and labelled with `professionalNameHe` (the
+ * practitioner — "אינסטלטור"), because the question is who the customer needs, not what the
+ * field of work is called. Deliberately NOT the AI's 50-profession taxonomy: that is the
+ * classification label space, and most of it names trades Pronto cannot dispatch — offering
+ * them here would be advertising services that do not exist.
+ */
+const PROFESSION_OPTIONS: SelectOption[] = [
+  { value: '', label: 'שהמערכת תזהה לפי התיאור' },
+  ...CATEGORIES.map((category) => ({ value: String(category.id), label: category.professionalNameHe })),
+];
 
 /** Local, single-consumer "helpful examples" row (design doc §3.2) — shown only while
  *  `description` is empty; clicking one prefills a fuller example sentence via the existing
@@ -54,6 +99,8 @@ export function DescribeIssueStep({
   onPhotosChange,
   urgencyType,
   onUrgencyChange,
+  selectedCategoryId,
+  onSelectedCategoryChange,
   onClassified,
   onAnalyzingChange,
 }: DescribeIssueStepProps) {
@@ -62,6 +109,30 @@ export function DescribeIssueStep({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [photosUploading, setPhotosUploading] = useState(false);
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
+
+  /**
+   * Guards against a stale classification landing after the app has moved on.
+   *
+   * Two separate mechanisms, because they solve two different halves of the same problem.
+   * `inFlightRef` aborts the previous request so a superseded call stops occupying the network
+   * and the backend stops being waited on. `submissionRef` is the correctness half: an abort is
+   * not instantaneous, and a response that was already parsed when the newer submission started
+   * would otherwise still resolve and drive `onClassified` — advancing the flow on an answer to
+   * a question the customer has since changed. Comparing the sequence number at the moment the
+   * promise settles is what makes that impossible.
+   */
+  const submissionRef = useRef(0);
+  const inFlightRef = useRef<AbortController | null>(null);
+
+  // Leaving the step (back navigation, or the parent swapping in another step) must not leave a
+  // request outstanding. Nothing is rendered from it any more, so continuing to hold the socket
+  // open is pure waste.
+  useEffect(() => {
+    return () => {
+      submissionRef.current += 1;
+      inFlightRef.current?.abort();
+    };
+  }, []);
 
   // The field opens at roughly three lines so the urgency choice below it is reachable on a
   // phone without scrolling past an empty box, and grows with the text instead — up to the
@@ -81,6 +152,10 @@ export function DescribeIssueStep({
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    void runClassification();
+  }
+
+  async function runClassification() {
     setBannerError(null);
 
     const trimmed = description.trim();
@@ -92,23 +167,53 @@ export function DescribeIssueStep({
     }
     setDescriptionError(undefined);
 
+    // Supersede whatever is already running. A double-tapped "המשך" is the ordinary case; the
+    // damaging one is the second tap resolving first and then being overwritten by the first
+    // tap's older answer.
+    inFlightRef.current?.abort();
+    const controller = new AbortController();
+    inFlightRef.current = controller;
+    const submission = ++submissionRef.current;
+    const isCurrent = () => submissionRef.current === submission;
+
     setIsSubmitting(true);
     onAnalyzingChange(true);
     try {
-      const result = await classifyIssue({
-        description: trimmed,
-        imageKeys: photos.map((photo) => photo.imageKey),
-      });
+      const result = await classifyIssue(
+        {
+          description: trimmed,
+          imageKeys: photos.map((photo) => photo.imageKey),
+          // Omitted entirely rather than sent as null when the customer did not choose — the
+          // field is optional in the contract, and "absent" is what the backend already reads
+          // as "no hint".
+          ...(selectedCategoryId !== undefined ? { selectedCategoryId } : {}),
+        },
+        { signal: controller.signal },
+      );
+      if (!isCurrent()) {
+        return;
+      }
       onClassified(result);
     } catch (error) {
-      if (error instanceof ApiError && CLASSIFY_ERROR_MESSAGES[error.code]) {
+      // A superseded or unmounted call is not a failure anyone should be told about.
+      if (!isCurrent() || (error instanceof ApiError && error.code === 'ABORTED')) {
+        return;
+      }
+      if (error instanceof ApiError && TIMEOUT_CODES.has(error.code)) {
+        setBannerError(CLASSIFY_TIMEOUT_MESSAGE);
+      } else if (error instanceof ApiError && CLASSIFY_ERROR_MESSAGES[error.code]) {
         setBannerError(CLASSIFY_ERROR_MESSAGES[error.code]);
       } else {
         setBannerError(GENERIC_ERROR_MESSAGE);
       }
     } finally {
-      setIsSubmitting(false);
-      onAnalyzingChange(false);
+      // Guarded so a late-arriving loser cannot clear the spinner belonging to the submission
+      // that replaced it — which would leave the customer looking at an idle form while a
+      // classification they are still waiting for is genuinely in flight.
+      if (isCurrent()) {
+        setIsSubmitting(false);
+        onAnalyzingChange(false);
+      }
     }
   }
 
@@ -119,6 +224,16 @@ export function DescribeIssueStep({
           {bannerError && (
             <div className={styles.banner} role="alert">
               <p>{bannerError}</p>
+              {bannerError === CLASSIFY_TIMEOUT_MESSAGE && (
+                <button
+                  type="button"
+                  className={styles.bannerRetry}
+                  onClick={() => void runClassification()}
+                  disabled={isSubmitting}
+                >
+                  נסו שוב
+                </button>
+              )}
             </div>
           )}
           {/* The page header already says "יש לי תקלה", so this field's own label is the only
@@ -150,6 +265,22 @@ export function DescribeIssueStep({
               ))}
             </div>
           )}
+          {/* Placed between the examples and the photos deliberately: it reads as the natural
+              follow-up to "what is the problem", and it is a hint the classifier gets to use, so
+              it belongs with the evidence rather than beside the urgency choice at the bottom.
+              A compact select rather than a grid of chips — seven permanently-expanded cards
+              would push the urgency choice and the submit button off a phone screen, for a field
+              most customers should be able to skip without reading. */}
+          <Select
+            className={styles.professionField}
+            label="איזה בעל מקצוע דרוש לך?"
+            options={PROFESSION_OPTIONS}
+            value={selectedCategoryId === undefined ? '' : String(selectedCategoryId)}
+            onChange={(event) =>
+              onSelectedCategoryChange(event.target.value === '' ? undefined : Number(event.target.value))
+            }
+            hint="לא חובה - אפשר להשאיר לנו לזהות לפי התיאור"
+          />
           <PhotoUploader
             label="אפשר להוסיף תמונה?"
             photos={photos}

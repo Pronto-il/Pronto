@@ -77,7 +77,7 @@ class ClassificationServiceTest {
 
     @Test
     void aBlockedKitchenSinkRoutesToPlumbing() {
-        when(client.classify(any())).thenReturn(confident("plumbing"));
+        when(client.classify(any(), any())).thenReturn(confident("plumbing"));
 
         ClassificationSuggestion suggestion = classify("הכיור במטבח סתום");
 
@@ -90,7 +90,7 @@ class ClassificationServiceTest {
 
     @Test
     void anAcThatRunsButDoesNotCoolRoutesToAcHvac() {
-        when(client.classify(any())).thenReturn(confident("ac_hvac"));
+        when(client.classify(any(), any())).thenReturn(confident("ac_hvac"));
 
         ClassificationSuggestion suggestion = classify("המזגן עובד אבל לא מקרר");
 
@@ -101,7 +101,7 @@ class ClassificationServiceTest {
     @Test
     void aWaterHeaterThatDoesNotHeatRoutesToPlumbing() {
         // Pronto has no separate boiler category — water-heater work is plumbing.
-        when(client.classify(any())).thenReturn(confident("plumbing"));
+        when(client.classify(any(), any())).thenReturn(confident("plumbing"));
 
         ClassificationSuggestion suggestion = classify("אין מים חמים והדוד לא מחמם");
 
@@ -113,7 +113,7 @@ class ClassificationServiceTest {
 
     @Test
     void waterNextToTheWaterHeaterAsksInsteadOfCommitting() {
-        when(client.classify(any()))
+        when(client.classify(any(), any()))
                 .thenReturn(ambiguous("plumbing", "electrical", "מה בדיוק רטוב ליד הדוד?"));
 
         ClassificationSuggestion suggestion = classify("יש מים ליד הדוד");
@@ -126,7 +126,7 @@ class ClassificationServiceTest {
 
     @Test
     void aBreakerTrippingWithTheAcAsksWhetherTheFaultIsAcSpecific() {
-        when(client.classify(any()))
+        when(client.classify(any(), any()))
                 .thenReturn(ambiguous("ac_hvac", "electrical", "המפסק קופץ גם עם מכשירים אחרים?"));
 
         ClassificationSuggestion suggestion = classify("המפסק קופץ כשאני מדליק את המזגן");
@@ -137,7 +137,7 @@ class ClassificationServiceTest {
 
     @Test
     void onlyOneQuestionIsEverReturnedAtATime() {
-        when(client.classify(any()))
+        when(client.classify(any(), any()))
                 .thenReturn(ambiguous("plumbing", "ac_hvac", "מאיפה מגיעים המים?"));
 
         assertThat(classify("יש מים על הרצפה").questions()).hasSize(1);
@@ -147,13 +147,13 @@ class ClassificationServiceTest {
 
     @Test
     void theCustomerSelectedCategoryIsPassedAsAHintAndDoesNotOverrideTheEvidence() {
-        when(client.classify(any())).thenReturn(confident("plumbing"));
+        when(client.classify(any(), any())).thenReturn(confident("plumbing"));
 
         ClassificationSuggestion suggestion = classificationService.classify(
                 "האסלה סתומה", List.of(), TestCategories.IDS_BY_CODE.get("electrical"), List.of());
 
         ArgumentCaptor<ClassificationRequest> captor = ArgumentCaptor.forClass(ClassificationRequest.class);
-        Mockito.verify(client).classify(captor.capture());
+        Mockito.verify(client).classify(captor.capture(), any());
 
         assertThat(captor.getValue().customerSelectedCategoryCode()).isEqualTo("electrical");
         assertThat(suggestion.categoryCode()).isEqualTo("plumbing");
@@ -163,7 +163,7 @@ class ClassificationServiceTest {
 
     @Test
     void everyPassReceivesTheFullAccumulatedContextNotJustTheNewestAnswer() {
-        when(client.classify(any())).thenReturn(confident("ac_hvac"));
+        when(client.classify(any(), any())).thenReturn(confident("ac_hvac"));
 
         List<ClarificationExchange> answers = List.of(
                 new ClarificationExchange("שאלה ראשונה", "תשובה ראשונה"),
@@ -172,7 +172,7 @@ class ClassificationServiceTest {
         classificationService.classify("תיאור מקורי", List.of(), null, answers);
 
         ArgumentCaptor<ClassificationRequest> captor = ArgumentCaptor.forClass(ClassificationRequest.class);
-        Mockito.verify(client).classify(captor.capture());
+        Mockito.verify(client).classify(captor.capture(), any());
 
         assertThat(captor.getValue().description()).isEqualTo("תיאור מקורי");
         assertThat(captor.getValue().priorExchanges()).isEqualTo(answers);
@@ -181,7 +181,7 @@ class ClassificationServiceTest {
     @Test
     void theQuestionBudgetShrinksAsAnswersAccumulateAndReachesZero() {
         properties.setMaxClarificationQuestions(2);
-        when(client.classify(any())).thenReturn(confident("plumbing"));
+        when(client.classify(any(), any())).thenReturn(confident("plumbing"));
 
         classificationService.classify("תיאור", List.of(), null, List.of());
         classificationService.classify("תיאור", List.of(), null,
@@ -190,7 +190,7 @@ class ClassificationServiceTest {
                 List.of(new ClarificationExchange("ש1", "ת1"), new ClarificationExchange("ש2", "ת2")));
 
         ArgumentCaptor<ClassificationRequest> captor = ArgumentCaptor.forClass(ClassificationRequest.class);
-        Mockito.verify(client, Mockito.times(3)).classify(captor.capture());
+        Mockito.verify(client, Mockito.times(3)).classify(captor.capture(), any());
 
         assertThat(captor.getAllValues()).extracting(ClassificationRequest::clarificationBudgetRemaining)
                 .containsExactly(2, 1, 0);
@@ -210,7 +210,7 @@ class ClassificationServiceTest {
                 "האם הרטיבות מופיעה גם בקיר החיצוני?",
                 "מתי הבחנת בבעיה לראשונה?",
                 "האם ניסית לסגור את ברז הראשי?");
-        when(client.classify(any())).thenAnswer(invocation -> {
+        when(client.classify(any(), any())).thenAnswer(invocation -> {
             int round = ((ClassificationRequest) invocation.getArgument(0)).priorExchanges().size();
             return ambiguous("plumbing", "ac_hvac", endlessQuestions.get(round % endlessQuestions.size()));
         });
@@ -233,7 +233,7 @@ class ClassificationServiceTest {
 
     @Test
     void aQuestionThatRepeatsAnAnsweredOneIsNotAskedAgain() {
-        when(client.classify(any()))
+        when(client.classify(any(), any()))
                 .thenReturn(ambiguous("plumbing", "ac_hvac", "מאיפה מגיעים המים?"));
 
         ClassificationSuggestion suggestion = classificationService.classify("יש מים", List.of(), null,
@@ -248,7 +248,7 @@ class ClassificationServiceTest {
 
     @Test
     void anAiFailureSurfacesAsAiServiceErrorRatherThanARandomCategory() {
-        when(client.classify(any()))
+        when(client.classify(any(), any()))
                 .thenThrow(new ApiException(ErrorCode.AI_SERVICE_ERROR, "boom"));
 
         assertThatThrownBy(() -> classify("תיאור"))
@@ -259,7 +259,7 @@ class ClassificationServiceTest {
 
     @Test
     void anUnexpectedClientExceptionIsNormalisedNotLeaked() {
-        when(client.classify(any())).thenThrow(new IllegalStateException("internal detail"));
+        when(client.classify(any(), any())).thenThrow(new IllegalStateException("internal detail"));
 
         assertThatThrownBy(() -> classify("תיאור"))
                 .isInstanceOf(ApiException.class)

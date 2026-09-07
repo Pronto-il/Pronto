@@ -125,7 +125,7 @@ class IssuesServiceTest {
 
     @Test
     void classifyForwardsTheDescriptionHintAndWholeConversation() {
-        when(classificationService.classify(anyString(), anyList(), any(), anyList())).thenReturn(classified());
+        when(classificationService.classify(anyString(), anyList(), any(), anyList(), any())).thenReturn(classified());
 
         List<ClarificationAnswerRequest> answers = List.of(
                 new ClarificationAnswerRequest("מאיפה המים?", "מהמזגן"),
@@ -136,7 +136,7 @@ class IssuesServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<ClarificationExchange>> captor = ArgumentCaptor.forClass(List.class);
         Mockito.verify(classificationService)
-                .classify(eq("המזגן מטפטף מים"), eq(List.of()), eq(2L), captor.capture());
+                .classify(eq("המזגן מטפטף מים"), eq(List.of()), eq(2L), captor.capture(), any());
 
         assertThat(captor.getValue()).containsExactly(
                 new ClarificationExchange("מאיפה המים?", "מהמזגן"),
@@ -145,16 +145,16 @@ class IssuesServiceTest {
 
     @Test
     void classifyWithNoAnswersForwardsAnEmptyConversationNotNull() {
-        when(classificationService.classify(anyString(), anyList(), any(), anyList())).thenReturn(classified());
+        when(classificationService.classify(anyString(), anyList(), any(), anyList(), any())).thenReturn(classified());
 
         issuesService.classify(42L, new ClassifyRequest("המזגן מטפטף מים", List.of(), null, null));
 
-        Mockito.verify(classificationService).classify("המזגן מטפטף מים", List.of(), null, List.of());
+        Mockito.verify(classificationService).classify(eq("המזגן מטפטף מים"), eq(List.of()), Mockito.isNull(), eq(List.of()), any());
     }
 
     @Test
     void aClassifiedResultCarriesTheResolvedCategoryAndNoQuestions() {
-        when(classificationService.classify(anyString(), anyList(), any(), anyList())).thenReturn(classified());
+        when(classificationService.classify(anyString(), anyList(), any(), anyList(), any())).thenReturn(classified());
 
         ClassifyResponse response =
                 issuesService.classify(42L, new ClassifyRequest("המזגן מטפטף מים", List.of(), null, null));
@@ -167,7 +167,7 @@ class IssuesServiceTest {
 
     @Test
     void aQuestionsResultExposesTheQuestionButNoInternalDiagnostics() {
-        when(classificationService.classify(anyString(), anyList(), any(), anyList())).thenReturn(asking());
+        when(classificationService.classify(anyString(), anyList(), any(), anyList(), any())).thenReturn(asking());
 
         ClassifyResponse response =
                 issuesService.classify(42L, new ClassifyRequest("יש מים על הרצפה", List.of(), null, null));
@@ -530,7 +530,12 @@ class IssuesServiceTest {
                 .satisfies(e -> assertThat(((ApiException) e).getCode())
                         .isEqualTo(ErrorCode.PHONE_VERIFICATION_REQUIRED));
 
-        Mockito.verifyNoInteractions(classificationService);
+        // "No OpenAI request was spent", stated directly. `IssuesService.classify` starts the
+        // request's time budget before this guard runs (ai.Deadline — the budget is a promise about
+        // the whole request), so `verifyNoInteractions` no longer expresses the invariant this test
+        // is named for; `never().classify(...)` does, and is the thing that costs money.
+        Mockito.verify(classificationService, Mockito.never())
+                .classify(Mockito.anyString(), Mockito.anyList(), Mockito.any(), Mockito.anyList(), Mockito.any());
     }
 
     @Test
@@ -546,6 +551,6 @@ class IssuesServiceTest {
 
         Mockito.verify(contactVerificationGuard).requireVerifiedContactChannels(42L);
         Mockito.verify(classificationService)
-                .classify(Mockito.eq("המזגן מטפטף מים"), Mockito.anyList(), Mockito.isNull(), Mockito.anyList());
+                .classify(Mockito.eq("המזגן מטפטף מים"), Mockito.anyList(), Mockito.isNull(), Mockito.anyList(), Mockito.any());
     }
 }

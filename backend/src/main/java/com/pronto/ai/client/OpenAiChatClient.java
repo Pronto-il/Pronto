@@ -2,18 +2,15 @@ package com.pronto.ai.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pronto.ai.Deadline;
 import com.pronto.ai.dto.ImageAttachment;
 import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
-import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
@@ -35,8 +32,11 @@ import java.util.concurrent.ThreadLocalRandom;
  * <p>Never logs the API key, prompt bodies or image bytes — only sizes, the schema name and
  * failure messages.
  */
-@Component
-@ConditionalOnProperty(prefix = "pronto.ai", name = "mode", havingValue = "openai")
+// Deliberately NOT a @Component any more. There are now TWO of these — one tuned for the customer
+// waiting on a classification, one for the background brief that nobody is waiting on — and a
+// component-scanned class can only ever be one bean with one configuration. They are built
+// explicitly in ai.config.OpenAiClientConfig, which is also where the @ConditionalOnProperty that
+// used to live here now sits.
 public class OpenAiChatClient {
 
     private static final Logger log = LoggerFactory.getLogger(OpenAiChatClient.class);
@@ -51,8 +51,9 @@ public class OpenAiChatClient {
     // lands inside the same failure window as the first, so it is not a retry so much as a second
     // way to fail. Backoff is what makes an attempt meaningfully different from its predecessor.
 
-    /** Total attempts, not retries — 3 means the original call plus two retries. */
-    private static final int MAX_ATTEMPTS = 3;
+    // Attempt count now comes from OpenAiCallPolicy, per client instance — see
+    // OpenAiCallPolicy.DEFAULT_MAX_ATTEMPTS for the default and why the interactive path departs
+    // from it.
 
     /**
      * Deliberately short. This client is called on a customer-facing request thread
@@ -152,35 +153,49 @@ public class OpenAiChatClient {
     private final ObjectMapper objectMapper;
     private final Sleeper sleeper;
     private final UsageListener usageListener;
+    private final OpenAiCallPolicy policy;
+    /**
+     * Null for the test-seam constructor, which is handed an already-built {@code RestClient}
+     * whose timeouts this class does not own. Per-attempt deadline narrowing is therefore a
+     * production-path behaviour only, which is correct: those tests drive the retry LOGIC over
+     * stubbed responses and never open a socket for a timeout to apply to.
+     */
+    private final DeadlineAwareRequestFactory requestFactory;
 
-    // @Autowired is REQUIRED here, not decorative. Spring uses a sole constructor implicitly, but
-    // this class has two -- the test seam below is the second -- and with more than one it will not
-    // guess: it falls back to looking for a no-arg constructor and fails the context with
-    // "No default constructor found". That is a startup failure in production only, because
-    // @ConditionalOnProperty means this bean exists only when AI_MODE=openai, which no unit test
-    // and no local run ever sets. backend/tools/production-config-smoke.sh caught exactly this.
-    @Autowired
-    public OpenAiChatClient(@Value("${pronto.openai.api-key}") String apiKey,
-                             @Value("${pronto.openai.model}") String model,
-                             @Value("${pronto.openai.timeout-ms}") long timeoutMs,
-                             ObjectMapper objectMapper) {
-        this(apiKey, model, timeoutMs, objectMapper, UsageListener.NONE);
+    /**
+     * Convenience overload keeping the historical shape: default retry policy, no reasoning-effort
+     * override. Used by the evaluation runners and by any caller that has no opinion beyond the
+     * model and a timeout.
+     */
+    public OpenAiChatClient(String apiKey, String model, long timeoutMs, ObjectMapper objectMapper) {
+        this(apiKey, OpenAiCallPolicy.defaults(model, timeoutMs), objectMapper, UsageListener.NONE);
     }
 
     /**
      * As above, reporting per-call cost and latency to {@code usageListener}. Used by the
-     * evaluation harness; production uses the constructor above and pays nothing for this.
+     * evaluation harness; production pays nothing for this.
      */
     public OpenAiChatClient(String apiKey, String model, long timeoutMs, ObjectMapper objectMapper,
                              UsageListener usageListener) {
-        this.model = model;
+        this(apiKey, OpenAiCallPolicy.defaults(model, timeoutMs), objectMapper, usageListener);
+    }
+
+    /**
+     * The real constructor: everything about how a call is made comes from {@code policy}, so
+     * two instances of this class can serve two workloads with genuinely different budgets. See
+     * {@code ai.config.OpenAiClientConfig}, which builds exactly two.
+     */
+    public OpenAiChatClient(String apiKey, OpenAiCallPolicy policy, ObjectMapper objectMapper,
+                             UsageListener usageListener) {
+        this.model = policy.model();
+        this.policy = policy;
         this.objectMapper = objectMapper;
         this.sleeper = REAL_SLEEP;
         this.usageListener = usageListener;
 
-        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout((int) timeoutMs);
-        requestFactory.setReadTimeout((int) timeoutMs);
+        this.requestFactory = new DeadlineAwareRequestFactory();
+        requestFactory.setConnectTimeout((int) policy.perAttemptTimeoutMillis());
+        requestFactory.setReadTimeout((int) policy.perAttemptTimeoutMillis());
 
         this.restClient = RestClient.builder()
                 .baseUrl("https://api.openai.com/v1")
@@ -197,11 +212,19 @@ public class OpenAiChatClient {
      * production caller: the Spring-injected constructor above is the only one.
      */
     OpenAiChatClient(RestClient restClient, String model, ObjectMapper objectMapper, Sleeper sleeper) {
+        this(restClient, OpenAiCallPolicy.defaults(model, 10_000), objectMapper, sleeper);
+    }
+
+    /** As above, with an explicit policy so a test can drive a one-attempt or reasoning config. */
+    OpenAiChatClient(RestClient restClient, OpenAiCallPolicy policy, ObjectMapper objectMapper,
+                      Sleeper sleeper) {
         this.restClient = restClient;
-        this.model = model;
+        this.model = policy.model();
+        this.policy = policy;
         this.objectMapper = objectMapper;
         this.sleeper = sleeper;
         this.usageListener = UsageListener.NONE;
+        this.requestFactory = null;
     }
 
     /**
@@ -213,15 +236,39 @@ public class OpenAiChatClient {
      */
     public JsonNode requestStructured(String systemPrompt, String evidencePrompt, List<ImageAttachment> images,
                                        String schemaName, Map<String, Object> schema) {
+        return requestStructured(systemPrompt, evidencePrompt, images, schemaName, schema, Deadline.unbounded());
+    }
+
+    /**
+     * As above, bounded by {@code deadline}.
+     *
+     * <p>The deadline governs three separate things, and it has to govern all three to mean
+     * anything: the socket timeout handed to each attempt is narrowed to whatever is left, a
+     * retry is only started if there is budget for it to finish, and a backoff is only slept
+     * through if the budget survives it. Bounding only the socket — which is all this class used
+     * to do — leaves the total unbounded, because the total is attempts × socket + backoffs.
+     *
+     * @throws ApiException {@code AI_TIMEOUT} when the budget runs out, {@code AI_SERVICE_ERROR}
+     *                      when the attempts are spent
+     */
+    public JsonNode requestStructured(String systemPrompt, String evidencePrompt, List<ImageAttachment> images,
+                                       String schemaName, Map<String, Object> schema, Deadline deadline) {
 
         Map<String, Object> requestBody = buildRequestBody(systemPrompt, evidencePrompt, images, schemaName, schema);
         Exception lastError = null;
         int attemptsMade = 0;
+        int maxAttempts = policy.maxAttempts();
         long startedAtNanos = System.nanoTime();
 
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        // Checked before the first attempt too, not only between them: by the time this is
+        // reached the image downloads have already spent part of the budget, and starting a model
+        // call with nothing left would burn the request and still fail.
+        deadline.requireBudget("the model call");
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             attemptsMade = attempt;
             try {
+                applyAttemptTimeout(deadline);
                 String rawResponse = restClient.post()
                         .uri(CHAT_COMPLETIONS_PATH)
                         .body(requestBody)
@@ -234,7 +281,7 @@ public class OpenAiChatClient {
             } catch (Exception e) {
                 lastError = e;
                 log.warn("openai.request.failed schema={} attempt={}/{} reason={}",
-                        schemaName, attempt, MAX_ATTEMPTS, e.getMessage());
+                        schemaName, attempt, maxAttempts, e.getMessage());
 
                 // A request OpenAI has already rejected on its merits will be rejected identically
                 // however many times it is re-sent. Retrying a 400 (malformed schema) or a 401
@@ -245,7 +292,7 @@ public class OpenAiChatClient {
                     break;
                 }
 
-                if (attempt == MAX_ATTEMPTS) {
+                if (attempt == maxAttempts) {
                     break;
                 }
 
@@ -256,6 +303,26 @@ public class OpenAiChatClient {
                     // failure to retry correctly — a decision not to hold the request open.
                     log.warn("openai.request.retry_after_too_long schema={} requestedSeconds={} capMillis={}",
                             schemaName, retryAfterSeconds, MAX_BACKOFF_MILLIS);
+                    break;
+                }
+                // A retry has to fit ENTIRELY in what is left — the wait plus a round trip with
+                // enough time to complete. Starting one that the deadline will cut short converts
+                // a clean "the provider failed" into a slower "we ran out of time", which is a
+                // worse answer delivered later. Retry-After is respected on the way in
+                // (backoffDelayMillis above) and is simply unaffordable when it does not fit.
+                // `isBounded()` first, and it is not decoration. An unbounded deadline reports
+                // `Long.MAX_VALUE` remaining, and subtracting the wait from that produced a
+                // duration whose `toNanos()` overflows — so this affordability check threw
+                // `ArithmeticException` out of the retry loop instead of allowing the retry it was
+                // asked about. That is the Professional Brief's path exactly: unbounded on purpose
+                // and configured with three attempts, so the first transient provider failure hit
+                // it. An unbounded budget can always afford a retry, which is what asking the
+                // question at all presupposes.
+                if (deadline.isBounded()
+                        && (deadline.remainingMillis() <= delayMillis
+                            || !Deadline.inMillis(deadline.remainingMillis() - delayMillis).hasUsefulBudget())) {
+                    log.warn("openai.request.retry_skipped_no_budget schema={} attempt={} delayMillis={} "
+                            + "remainingMillis={}", schemaName, attempt, delayMillis, deadline.remainingMillis());
                     break;
                 }
                 if (!sleeper.sleep(delayMillis)) {
@@ -269,8 +336,31 @@ public class OpenAiChatClient {
 
         log.error("openai.request.exhausted schema={} attempts={}", schemaName, attemptsMade, lastError);
         reportUsage(schemaName, null, startedAtNanos, attemptsMade, false);
+
+        // A spent budget is reported as a timeout, not as a provider error. The distinction is the
+        // point of the deadline: "OpenAI said no" and "we stopped waiting" need different
+        // dashboards and different customer copy, and neither may ever become a classification.
+        if (!deadline.hasUsefulBudget()) {
+            throw new ApiException(ErrorCode.AI_TIMEOUT,
+                    "OpenAI request exceeded its time budget after " + attemptsMade + " attempt(s).");
+        }
         throw new ApiException(ErrorCode.AI_SERVICE_ERROR,
                 "OpenAI request failed after " + attemptsMade + " attempt(s).");
+    }
+
+    /**
+     * Narrows this attempt's socket timeouts to the smaller of the configured ceiling and the
+     * budget that is actually left.
+     *
+     * <p>No-op on the test-seam constructor, which was handed a {@code RestClient} whose factory
+     * this class does not own.
+     */
+    private void applyAttemptTimeout(Deadline deadline) {
+        if (requestFactory == null || !deadline.isBounded()) {
+            return;
+        }
+        requestFactory.overrideTimeoutMillis(
+                deadline.timeoutForAttemptMillis(policy.perAttemptTimeoutMillis()));
     }
 
     /**
@@ -400,6 +490,42 @@ public class OpenAiChatClient {
         boolean sleep(long millis);
     }
 
+    /**
+     * A {@link SimpleClientHttpRequestFactory} whose timeouts can be narrowed per attempt.
+     *
+     * <p><b>Why a subclass rather than just configuring the factory.</b> Spring's factories carry
+     * one connect/read timeout for their whole lifetime, and {@code RestClient} offers no
+     * per-request override. Rebuilding a {@code RestClient} per call to vary a timeout would
+     * discard connection reuse on the one path where latency is the entire problem. Overriding
+     * {@code prepareConnection} — the hook Spring calls with the actual
+     * {@code HttpURLConnection} — sets the value on the connection that is about to be used, which
+     * is precisely where a per-attempt timeout belongs.
+     *
+     * <p>The override is a {@link ThreadLocal} because one factory instance serves every request
+     * thread and each has its own deadline. It is cleared after being read so a later call on the
+     * same pooled thread cannot inherit a stale, shorter budget.
+     */
+    private static final class DeadlineAwareRequestFactory extends SimpleClientHttpRequestFactory {
+
+        private final ThreadLocal<Integer> overrideMillis = new ThreadLocal<>();
+
+        void overrideTimeoutMillis(int millis) {
+            overrideMillis.set(millis);
+        }
+
+        @Override
+        protected void prepareConnection(java.net.HttpURLConnection connection, String httpMethod)
+                throws java.io.IOException {
+            super.prepareConnection(connection, httpMethod);
+            Integer override = overrideMillis.get();
+            if (override != null) {
+                connection.setConnectTimeout(override);
+                connection.setReadTimeout(override);
+                overrideMillis.remove();
+            }
+        }
+    }
+
     static final Sleeper REAL_SLEEP = millis -> {
         try {
             Thread.sleep(millis);
@@ -443,6 +569,21 @@ public class OpenAiChatClient {
         // hint rather than a guarantee (system_fingerprint can still change under them), so it
         // is a way to make repeat runs comparable, never something correctness depends on.
         body.put("seed", SEED);
+
+        // The single largest latency lever on a reasoning model, and the one this whole exercise
+        // turned on. gpt-5-mini defaults to `medium` effort and spends most of its completion
+        // tokens thinking before it produces the first visible one — measured on the baseline run
+        // as 7-16 seconds for a decision the schema constrains to a handful of enum values.
+        // Routing is classification against a fixed label space, not open-ended reasoning, so the
+        // deliberation the default buys is largely wasted here.
+        //
+        // Sent only where it is understood — see OpenAiCallPolicy.sendsReasoningEffort, which
+        // withholds it from the sampling models for the same reason `temperature` is withheld
+        // from the reasoning ones: the wrong one is a non-retryable 400 and a total outage of the
+        // AI path, not a degraded mode.
+        if (policy.sendsReasoningEffort()) {
+            body.put("reasoning_effort", policy.reasoningEffort());
+        }
         return body;
     }
 

@@ -36,6 +36,32 @@
   margin: 0;
 }
 
+/* The retry offered alongside the timeout copy. Outlined rather than filled so it stays
+   subordinate to the form's own primary "המשך" button — two solid buttons on one screen read as
+   a choice between equals, and this one is a recovery, not a step. */
+.bannerRetry {
+  margin-block-start: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.bannerRetry:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Matches the spacing the sibling fields in this form already carry; the Select component owns
+   everything else about its own appearance. */
+.professionField {
+  margin-block-end: var(--space-4);
+}
+
 /* --- Example prompts (design doc §3.2/§3.4) — `FilterChip`'s visual *look* reused via local
    CSS, not the component itself: these are one-shot prefill triggers, not a `role="radiogroup"`
    selection state. --- */

@@ -4,6 +4,7 @@ import com.pronto.ai.TestTaxonomy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pronto.ai.TestCategories;
 import com.pronto.ai.catalog.ServiceCategoryCatalog;
+import com.pronto.ai.client.OpenAiCallPolicy;
 import com.pronto.ai.client.OpenAiChatClient;
 import com.pronto.ai.client.OpenAiClassificationClient;
 import com.pronto.ai.decision.RoutingDecisionPolicy;
@@ -57,14 +58,40 @@ class OpenAiClassificationEvaluationRunnerTest {
             return;
         }
 
-        String model = System.getenv().getOrDefault("OPENAI_MODEL", "gpt-4o-mini");
-        long timeoutMs = Long.parseLong(System.getenv().getOrDefault("OPENAI_TIMEOUT_MS", "30000"));
+        // Defaults MIRROR application.yml's `pronto.openai.classification` block, and that is
+        // load-bearing rather than tidy: a runner that defaulted to a different model or a
+        // different retry policy from Production would produce numbers that are quoted as
+        // Production's and are about something else. (This defaulted to gpt-4o-mini while
+        // Production defaulted to gpt-5-mini — the two had silently diverged.)
+        String model = System.getenv().getOrDefault("OPENAI_CLASSIFICATION_MODEL",
+                System.getenv().getOrDefault("OPENAI_MODEL", "gpt-5-mini"));
+        long timeoutMs = Long.parseLong(
+                System.getenv().getOrDefault("OPENAI_CLASSIFICATION_TIMEOUT_MS", "10000"));
+        int maxAttempts = Integer.parseInt(
+                System.getenv().getOrDefault("AI_CLASSIFICATION_MAX_ATTEMPTS", "1"));
+        // Empty string means "omit the parameter", exactly as in application.yml, so a baseline
+        // run can be reproduced with AI_CLASSIFICATION_REASONING_EFFORT= (empty).
+        String reasoningEffort = System.getenv()
+                .getOrDefault("OPENAI_CLASSIFICATION_REASONING_EFFORT", "minimal");
+        // 0 disables the deadline, for measuring what the latency WOULD have been without one —
+        // which is the only way to tell a genuine speed-up apart from calls being cut short.
+        long deadlineMs = Long.parseLong(
+                System.getenv().getOrDefault("AI_CLASSIFICATION_DEADLINE_MS", "4000"));
 
         RoutingProperties properties = new RoutingProperties();
         ServiceCategoryCatalog catalog = new ServiceCategoryCatalog(TestCategories.repository());
 
+        OpenAiCallPolicy policy = new OpenAiCallPolicy(model, timeoutMs, maxAttempts, reasoningEffort);
+
+        // One transport for both roles here. Production budgets classification and the brief
+        // separately (ai.config.OpenAiClientConfig); an evaluation run applies the classification
+        // policy under test to both, because the brief is not what is being measured.
+        OpenAiChatClient chatClient = new OpenAiChatClient(apiKey, policy, new ObjectMapper(),
+                OpenAiChatClient.UsageListener.NONE);
+
         OpenAiClassificationClient client = new OpenAiClassificationClient(
-                new OpenAiChatClient(apiKey, model, timeoutMs, new ObjectMapper()),
+                chatClient,
+                chatClient,
                 catalog,
                 new ClassificationPromptBuilder(TestTaxonomy.taxonomy()),
                 new ClassificationSchema(TestTaxonomy.taxonomy()),
@@ -76,7 +103,10 @@ class OpenAiClassificationEvaluationRunnerTest {
                 // No image cases in the dataset yet, so storage is never touched. When image
                 // cases are added, this is the one dependency that needs a real fixture.
                 new IssueImageResolver(Mockito.mock(StorageClient.class)),
-                TestTaxonomy.taxonomy());
+                TestTaxonomy.taxonomy(),
+                // Unbounded when deadlineMs is 0, so a run can measure raw provider latency
+                // without the deadline truncating the very distribution being measured.
+                deadlineMs <= 0 ? Long.MAX_VALUE : deadlineMs);
 
         EvaluationCases.Dataset dataset = EvaluationCases.dataset();
 
@@ -103,6 +133,11 @@ class OpenAiClassificationEvaluationRunnerTest {
         System.out.println("=== run metadata ===");
         System.out.println("promptVersion   " + ClassificationPromptBuilder.PROMPT_VERSION);
         System.out.println("model           " + model);
+        System.out.println("callPolicy      maxAttempts=" + maxAttempts
+                + " perAttemptTimeoutMs=" + timeoutMs
+                + " reasoningEffort=" + (policy.sendsReasoningEffort()
+                        ? policy.reasoningEffort() : "(not sent)")
+                + " deadlineMs=" + (deadlineMs <= 0 ? "unbounded" : String.valueOf(deadlineMs)));
         System.out.println("datasetVersion  " + dataset.version());
         System.out.println("datasetSize     " + dataset.cases().size()
                 + " (core=" + dataset.core().size() + ", challenge=" + dataset.challenge().size() + ")");

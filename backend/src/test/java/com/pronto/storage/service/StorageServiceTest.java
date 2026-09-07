@@ -284,4 +284,70 @@ class StorageServiceTest {
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.UNAUTHORIZED));
     }
+
+    /**
+     * <b>The SOS issue-photo exemption, and the fence around it.</b>
+     *
+     * <p>{@code getIssuePhotoUrlForDispatchedProfessional} lets a professional who has been
+     * dispatched an emergency see the customer's photos — which {@link StorageService#authorize}
+     * cannot allow, since it resolves ownership out of the key and the professional is not the
+     * owner. The exemption is only safe because it is prefix-locked: these tests are that lock.
+     */
+    @Test
+    void issuePhotoUrl_isIssuedForACustomersIssuePhoto() {
+        when(storageClient.presignUrl(anyString(), any())).thenReturn("https://signed/photo");
+
+        assertThat(storageService.getIssuePhotoUrlForDispatchedProfessional(
+                "customers/42/issues/temp/photo.jpg")).isEqualTo("https://signed/photo");
+    }
+
+    @Test
+    void issuePhotoUrl_isIssuedForAGuestsIssuePhoto() {
+        // A guest builds the whole emergency before they have an account; their photos promote to
+        // the issue and must reach the professional exactly as a customer's do.
+        when(storageClient.presignUrl(anyString(), any())).thenReturn("https://signed/photo");
+
+        assertThat(storageService.getIssuePhotoUrlForDispatchedProfessional(
+                "guests/3f2504e0-4f89-11d3-9a0c-0305e82c3301/issues/temp/photo.jpg"))
+                .isEqualTo("https://signed/photo");
+    }
+
+    @Test
+    void issuePhotoUrl_refusesAVerificationDocument() {
+        // The whole point of a separate prefix-locked method: this permission must not become a
+        // read primitive for the compliance namespace.
+        assertThatThrownBy(() -> storageService.getIssuePhotoUrlForDispatchedProfessional(
+                "verification-documents/9/licence.pdf"))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.FORBIDDEN));
+    }
+
+    @Test
+    void issuePhotoUrl_refusesKeysOutsideTheIssueNamespace() {
+        for (String key : List.of("customers/42/avatar.png", "profile-photos/42/x.jpg", "x.jpg", "")) {
+            assertThatThrownBy(() -> storageService.getIssuePhotoUrlForDispatchedProfessional(key))
+                    .as("key %s", key)
+                    .isInstanceOf(ApiException.class)
+                    .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo(ErrorCode.FORBIDDEN));
+        }
+    }
+
+    @Test
+    void issuePhotoUrl_refusesTraversalAndNull() {
+        assertThatThrownBy(() -> storageService.getIssuePhotoUrlForDispatchedProfessional(
+                "customers/42/issues/../../verification-documents/9/licence.pdf"))
+                .isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> storageService.getIssuePhotoUrlForDispatchedProfessional(null))
+                .isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    void issuePhotoUrl_neverConsultsTheCallersOwnership() {
+        // It cannot: there is no caller argument. Stated as a test so that adding one — and with it
+        // the temptation to widen `authorize` instead — is a deliberate act.
+        when(storageClient.presignUrl(anyString(), any())).thenReturn("https://signed/photo");
+
+        assertThat(storageService.getIssuePhotoUrlForDispatchedProfessional(
+                "customers/999/issues/temp/someone-elses.jpg")).isEqualTo("https://signed/photo");
+    }
 }

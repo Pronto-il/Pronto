@@ -53,6 +53,20 @@ public enum ErrorCode {
     UNSUPPORTED_IMAGE_TYPE(HttpStatus.BAD_REQUEST),
     IMAGE_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE),
     AI_SERVICE_ERROR(HttpStatus.BAD_GATEWAY),
+    /**
+     * The AI path ran out of its wall-clock budget (see {@code ai.Deadline}) rather than
+     * failing on its merits.
+     *
+     * <p>Separate from {@link #AI_SERVICE_ERROR}, and a 504 rather than a 502, because the two
+     * mean genuinely different things to both a customer and a dashboard: {@code AI_SERVICE_ERROR}
+     * is "the provider answered badly or not at all", this is "the provider may well be fine and
+     * we stopped waiting". Retrying immediately is reasonable for this one and usually pointless
+     * for the other, and folding them together would hide whether the deadline is doing its job.
+     *
+     * <p><b>It is never a classification.</b> Nothing may translate this into a category, a
+     * low-confidence result, or the {@code general_handyman} fallback.
+     */
+    AI_TIMEOUT(HttpStatus.GATEWAY_TIMEOUT),
     STORAGE_SERVICE_ERROR(HttpStatus.BAD_GATEWAY),
 
     // Milestone 3 additions (bookings/availability, plus issues' GET /{id}). See

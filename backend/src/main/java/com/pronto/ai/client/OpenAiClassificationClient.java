@@ -11,6 +11,9 @@ import com.pronto.ai.prompt.ClassificationPromptBuilder;
 import com.pronto.ai.prompt.ClassificationSchema;
 import com.pronto.ai.prompt.ProfessionalBriefPromptBuilder;
 import com.pronto.ai.prompt.ProfessionalBriefSchema;
+import com.pronto.ai.Deadline;
+import com.pronto.ai.config.OpenAiClientConfig;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -34,20 +37,24 @@ import java.util.List;
 @ConditionalOnProperty(prefix = "pronto.ai", name = "mode", havingValue = "openai")
 public class OpenAiClassificationClient implements AiClassificationClient {
 
-    private final OpenAiChatClient chatClient;
+    private final OpenAiChatClient classificationChatClient;
+    private final OpenAiChatClient briefChatClient;
     private final ServiceCategoryCatalog catalog;
     private final ClassificationPromptBuilder classificationPromptBuilder;
     private final ClassificationSchema classificationSchema;
     private final ProfessionalBriefPromptBuilder briefPromptBuilder;
     private final ProfessionalBriefSchema briefSchema;
 
-    public OpenAiClassificationClient(OpenAiChatClient chatClient,
-                                       ServiceCategoryCatalog catalog,
-                                       ClassificationPromptBuilder classificationPromptBuilder,
-                                       ClassificationSchema classificationSchema,
-                                       ProfessionalBriefPromptBuilder briefPromptBuilder,
-                                       ProfessionalBriefSchema briefSchema) {
-        this.chatClient = chatClient;
+    public OpenAiClassificationClient(
+            @Qualifier(OpenAiClientConfig.CLASSIFICATION_CLIENT) OpenAiChatClient classificationChatClient,
+            @Qualifier(OpenAiClientConfig.BRIEF_CLIENT) OpenAiChatClient briefChatClient,
+            ServiceCategoryCatalog catalog,
+            ClassificationPromptBuilder classificationPromptBuilder,
+            ClassificationSchema classificationSchema,
+            ProfessionalBriefPromptBuilder briefPromptBuilder,
+            ProfessionalBriefSchema briefSchema) {
+        this.classificationChatClient = classificationChatClient;
+        this.briefChatClient = briefChatClient;
         this.catalog = catalog;
         this.classificationPromptBuilder = classificationPromptBuilder;
         this.classificationSchema = classificationSchema;
@@ -57,6 +64,11 @@ public class OpenAiClassificationClient implements AiClassificationClient {
 
     @Override
     public ClassificationResponse classify(ClassificationRequest request) {
+        return classify(request, Deadline.unbounded());
+    }
+
+    @Override
+    public ClassificationResponse classify(ClassificationRequest request, Deadline deadline) {
         List<ServiceCategory> categories = catalog.categories();
 
         String systemPrompt = classificationPromptBuilder.buildSystemPrompt(
@@ -64,9 +76,10 @@ public class OpenAiClassificationClient implements AiClassificationClient {
         String evidencePrompt = classificationPromptBuilder.buildEvidencePrompt(
                 request, describeSelectedCategory(categories, request.customerSelectedCategoryCode()));
 
-        JsonNode payload = chatClient.requestStructured(systemPrompt, evidencePrompt, request.images(),
-                ClassificationSchema.SCHEMA_NAME,
-                classificationSchema.build(categories.stream().map(ServiceCategory::code).toList()));
+        JsonNode payload = classificationChatClient.requestStructured(systemPrompt, evidencePrompt,
+                request.images(), ClassificationSchema.SCHEMA_NAME,
+                classificationSchema.build(categories.stream().map(ServiceCategory::code).toList()),
+                deadline);
 
         return ClassificationResponseParser.parse(payload);
     }
@@ -76,8 +89,9 @@ public class OpenAiClassificationClient implements AiClassificationClient {
         String systemPrompt = briefPromptBuilder.buildSystemPrompt(request.categoryCode(), request.categoryNameHe());
         String evidencePrompt = briefPromptBuilder.buildEvidencePrompt(request);
 
-        JsonNode payload = chatClient.requestStructured(systemPrompt, evidencePrompt, request.images(),
-                ProfessionalBriefSchema.SCHEMA_NAME, briefSchema.build());
+        // Unbounded on purpose — nobody is waiting on this. See ai.config.OpenAiClientConfig.
+        JsonNode payload = briefChatClient.requestStructured(systemPrompt, evidencePrompt, request.images(),
+                ProfessionalBriefSchema.SCHEMA_NAME, briefSchema.build(), Deadline.unbounded());
 
         return ProfessionalBriefParser.parse(payload);
     }

@@ -71,7 +71,9 @@ class SosCandidateVisibilityTest {
                 Mockito.mock(UserRepository.class),
                 Mockito.mock(com.pronto.professionals.repository.ReviewAggregateRepository.class),
                 sosOfferRepository, Mockito.mock(StorageService.class), new SosProperties(),
-                Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class));
+                Mockito.mock(com.pronto.professionals.service.ProfessionalCoverageService.class),
+                Mockito.mock(com.pronto.issues.repository.IssueRepository.class),
+                Mockito.mock(com.pronto.issues.repository.IssueImageRepository.class));
 
         service = new SosService(sosRequestRepository, sosOfferRepository,
                 Mockito.mock(IssueRepository.class), Mockito.mock(OrderRepository.class),

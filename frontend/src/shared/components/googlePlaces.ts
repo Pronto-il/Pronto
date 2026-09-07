@@ -143,21 +143,44 @@ function loadMapsApi(): Promise<GoogleMapsNamespace> {
       resolve(window.google.maps);
       return;
     }
+    /**
+     * `loading=async` REQUIRES a callback, and leaving it out is what made the first address of
+     * every page load fail.
+     *
+     * <p>`script.onload` fires when the bootstrap has been fetched, not when the API is usable:
+     * `window.google.maps` exists at that moment but `importLibrary` has not been installed on it
+     * yet. Every caller here goes straight to `maps.importLibrary('places')`, so the first
+     * confirmation threw `TypeError: maps.importLibrary is not a function` — which
+     * `AddressFormFields` surfaced, correctly, as "לא הצלחנו לאמת את הכתובת כרגע". It then looked
+     * intermittent rather than systematic, because `loaderPromise` is memoised as resolved and the
+     * API finishes initialising a moment later, so every *subsequent* attempt worked.
+     *
+     * <p>The callback is the documented signal that the API is actually ready. It is given a
+     * unique name so a second load on the same page (there is none today, but the loader is a
+     * module singleton and this costs nothing) cannot collide with the first.
+     */
+    const callbackName = `__prontoMapsReady_${Math.random().toString(36).slice(2)}`;
+    const cleanup = () => {
+      delete (window as unknown as Record<string, unknown>)[callbackName];
+    };
+    (window as unknown as Record<string, unknown>)[callbackName] = () => {
+      cleanup();
+      if (window.google?.maps?.importLibrary) {
+        resolve(window.google.maps);
+      } else {
+        reject(new Error('Google Maps signalled ready without importLibrary.'));
+      }
+    };
+
     const script = document.createElement('script');
     script.src =
       `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(BROWSER_KEY)}` +
-      '&libraries=places&loading=async&language=he&region=IL';
+      `&libraries=places&loading=async&language=he&region=IL&callback=${callbackName}`;
     script.async = true;
-    script.onload = () => {
-      if (window.google?.maps) {
-        resolve(window.google.maps);
-      } else {
-        reject(new Error('Google Maps loaded without a maps namespace.'));
-      }
-    };
     // A failed load must not be memoised as a permanent failure: the customer may simply have
     // been offline for a moment, and a retry on the next mount should be allowed to work.
     script.onerror = () => {
+      cleanup();
       loaderPromise = null;
       reject(new Error('Google Maps failed to load.'));
     };

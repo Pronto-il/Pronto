@@ -14,6 +14,8 @@ import type {
 import { resolveDraftRoute, useBookingDraft, useHeaderBackAction } from '../../shared/hooks';
 import type { BookingDraftPhoto } from '../../shared/hooks';
 import { stepTransition } from '../../shared/motion/variants';
+import { classificationSignature, readCachedClassification } from './classificationCache';
+import type { CachedClassification } from './classificationCache';
 import { DescribeIssueStep } from './DescribeIssueStep';
 import { ClarifyQuestionsStep } from './ClarifyQuestionsStep';
 import { ReviewStep } from './ReviewStep';
@@ -103,6 +105,19 @@ export default function NewIssuePage() {
   );
   const [urgencyType, setUrgencyType] = useState<IssueUrgencyType>(() =>
     canHydrate ? initialDraft!.urgencyType : 'STANDARD',
+  );
+  /**
+   * The customer's optional profession hint from the describe step.
+   *
+   * Held here rather than inside `DescribeIssueStep` for the same reason `description` and
+   * `photos` are: the step unmounts on every forward transition, so state owned by it would be
+   * lost the moment the customer advanced and silently reappear as "no choice" on the way back.
+   * Kept distinct from the classification's own `categoryId` throughout — see the draft field's
+   * comment for why collapsing the two would either lose the customer's choice or promote a hint
+   * into a decision.
+   */
+  const [selectedCategoryId, setSelectedCategoryId] = useState<number | undefined>(() =>
+    canHydrate ? initialDraft!.selectedCategoryId : undefined,
   );
   const [step, setStep] = useState<Step>({ name: 'describe' });
   // Every clarification answer given so far, accumulated across rounds. The backend asks one
@@ -203,15 +218,41 @@ export default function NewIssuePage() {
 
     (async () => {
       try {
+        // The evidence this draft was last classified on. If it still matches, the persisted
+        // answer is reused and no model call is made at all — the single largest avoidable wait
+        // in the flow, since a resume previously always paid for a full re-classification of
+        // text that had not changed. Any difference falls through to a fresh call.
+        const signature = classificationSignature({
+          description: initialDraft.description,
+          imageKeys,
+          selectedCategoryId: initialDraft.selectedCategoryId,
+          clarificationAnswers: initialDraft.clarificationAnswers,
+        });
+        const cached = readCachedClassification(
+          initialDraft.classification as CachedClassification | undefined,
+          signature,
+        );
+
         const [result] = await Promise.all([
-          classifyIssue({
-            description: initialDraft.description,
-            imageKeys,
-            clarificationAnswers: initialDraft.clarificationAnswers,
-          }),
+          cached
+            ? Promise.resolve(cached)
+            : classifyIssue({
+                description: initialDraft.description,
+                imageKeys,
+                ...(initialDraft.selectedCategoryId !== undefined
+                  ? { selectedCategoryId: initialDraft.selectedCategoryId }
+                  : {}),
+                clarificationAnswers: initialDraft.clarificationAnswers,
+              }),
           getPresignedImageUrls(imageKeys).then(applyResolvedPhotos),
         ]);
-        if (result.status === 'QUESTIONS') {
+        if (result.status === 'UNSUPPORTED_PROFESSION') {
+          // Restored straight into the terminal state rather than falling through to review,
+          // which would offer a category this result deliberately does not have. Previously
+          // unreachable on resume only because a fresh call rarely repeated the verdict; a
+          // reused result makes it reachable, and it has to be handled.
+          setStep({ name: 'unsupported', detectedProfession: result.detectedProfession });
+        } else if (result.status === 'QUESTIONS') {
           setStep({ name: 'clarify', classification: result });
         } else {
           const classification =
@@ -237,6 +278,19 @@ export default function NewIssuePage() {
    * one-shot stage. The backend's own budget is what ends the loop, not this component.
    */
   function handleClassified(result: ClassifyIssueResponse, answers: ClarificationAnswer[] = []) {
+    // The evidence this very result was computed from, recorded with it so a later resume can
+    // tell whether it is still the right answer. Built from the same values the call carried,
+    // not from whatever state happens to be current when the draft is next written.
+    const cachedClassification: CachedClassification = {
+      signature: classificationSignature({
+        description,
+        imageKeys: photos.map((photo) => photo.imageKey),
+        selectedCategoryId,
+        clarificationAnswers: answers,
+      }),
+      result,
+    };
+
     // Checked first: an unsupported profession is a successful classification with no way
     // forward, so it must not fall through to the review step, which exists to confirm a category
     // this result deliberately does not have.
@@ -265,7 +319,9 @@ export default function NewIssuePage() {
       urgencyType,
       description,
       photos: toDraftPhotos(photos),
+      selectedCategoryId,
       clarificationAnswers: answers,
+      classification: cachedClassification,
       ...(nextStep.name === 'review' ? { categoryId: result.suggestedCategoryId ?? undefined } : {}),
     });
   }
@@ -285,6 +341,10 @@ export default function NewIssuePage() {
         urgencyType,
         description,
         photos: toDraftPhotos(photos),
+        // The hint survives going back — it is the customer's own choice about their own problem,
+        // and it is what the picker has to be repopulated from. The clarification answers do not,
+        // for the reason above: they answer questions about a description being restated.
+        selectedCategoryId,
         clarificationAnswers: [],
       });
     }
@@ -426,6 +486,8 @@ export default function NewIssuePage() {
                   onPhotosChange={setPhotos}
                   urgencyType={urgencyType}
                   onUrgencyChange={setUrgencyType}
+                  selectedCategoryId={selectedCategoryId}
+                  onSelectedCategoryChange={setSelectedCategoryId}
                   onClassified={handleClassified}
                   onAnalyzingChange={setIsAnalyzing}
                 />
@@ -437,6 +499,7 @@ export default function NewIssuePage() {
                   key={step.classification.questions.map((question) => question.id).join('|')}
                   description={description}
                   photos={photos}
+                  selectedCategoryId={selectedCategoryId}
                   questions={step.classification.questions}
                   previousAnswers={clarificationAnswers}
                   onClassified={handleClassified}

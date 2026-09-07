@@ -1,5 +1,6 @@
 package com.pronto.ai.client;
 
+import com.pronto.ai.Deadline;
 import com.pronto.ai.dto.ClassificationRequest;
 import com.pronto.ai.dto.ClassificationResponse;
 import com.pronto.ai.dto.ProfessionalBriefRequest;
@@ -31,6 +32,23 @@ public interface AiClassificationClient {
      *         rule-violating output, after retries). The mock client never throws this.
      */
     ClassificationResponse classify(ClassificationRequest request);
+
+    /**
+     * As above, bounded by {@code deadline} — the customer-facing form.
+     *
+     * <p>A default rather than an abstract method so an implementation with nothing to bound (the
+     * mock, which does no I/O) needs no ceremony to opt out. A real implementation MUST override
+     * it: inheriting this default on a network-backed client would mean the deadline is accepted
+     * and quietly ignored, which is worse than not having one, because the caller believes the
+     * operation is bounded when it is not.
+     *
+     * @throws com.pronto.common.exception.ApiException with {@code ErrorCode.AI_TIMEOUT} when the
+     *         budget is spent. That is <b>not</b> a classification and must never be converted
+     *         into one.
+     */
+    default ClassificationResponse classify(ClassificationRequest request, Deadline deadline) {
+        return classify(request);
+    }
 
     /**
      * The professional preparation brief, generated after the routing category is final.

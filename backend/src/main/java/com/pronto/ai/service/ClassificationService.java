@@ -1,5 +1,6 @@
 package com.pronto.ai.service;
 
+import com.pronto.ai.Deadline;
 import com.pronto.ai.catalog.ServiceCategory;
 import com.pronto.ai.catalog.ServiceCategoryCatalog;
 import com.pronto.ai.client.AiClassificationClient;
@@ -18,6 +19,8 @@ import com.pronto.common.exception.ApiException;
 import com.pronto.common.exception.ErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -48,17 +51,43 @@ public class ClassificationService {
 
     private static final Logger log = LoggerFactory.getLogger(ClassificationService.class);
 
+    /**
+     * The interactive budget used when nothing configures one — tests, and the convenience
+     * constructor below.
+     *
+     * <p>Four seconds, against a five-second product promise, and the gap is deliberate. The
+     * server has to give up FIRST: it is the only party that can stop the work, and a server that
+     * gave up at the same instant as the client would routinely have an answer in hand that
+     * arrived just too late to send. One second is enough to serialise a response and get it back
+     * over a mobile connection.
+     */
+    public static final long DEFAULT_CLASSIFICATION_DEADLINE_MILLIS = 4_000;
+
     private final AiClassificationClient aiClassificationClient;
     private final ServiceCategoryCatalog catalog;
     private final RoutingDecisionPolicy routingDecisionPolicy;
     private final IssueImageResolver imageResolver;
     private final ProfessionTaxonomy taxonomy;
+    private final long classificationDeadlineMillis;
 
     public ClassificationService(AiClassificationClient aiClassificationClient,
                                   ServiceCategoryCatalog catalog,
                                   RoutingDecisionPolicy routingDecisionPolicy,
                                   IssueImageResolver imageResolver,
                                   ProfessionTaxonomy taxonomy) {
+        this(aiClassificationClient, catalog, routingDecisionPolicy, imageResolver, taxonomy,
+                DEFAULT_CLASSIFICATION_DEADLINE_MILLIS);
+    }
+
+    @Autowired
+    public ClassificationService(AiClassificationClient aiClassificationClient,
+                                  ServiceCategoryCatalog catalog,
+                                  RoutingDecisionPolicy routingDecisionPolicy,
+                                  IssueImageResolver imageResolver,
+                                  ProfessionTaxonomy taxonomy,
+                                  @Value("${pronto.openai.classification.deadline-ms:4000}")
+                                  long classificationDeadlineMillis) {
+        this.classificationDeadlineMillis = classificationDeadlineMillis;
         this.aiClassificationClient = aiClassificationClient;
         this.catalog = catalog;
         this.routingDecisionPolicy = routingDecisionPolicy;
@@ -75,7 +104,28 @@ public class ClassificationService {
      */
     public ClassificationSuggestion classify(String description, List<String> imageKeys,
                                               Long selectedCategoryId, List<ClarificationExchange> answers) {
-        return classifyResolved(description, imageResolver.resolveRequired(imageKeys), selectedCategoryId, answers);
+        return classify(description, imageKeys, selectedCategoryId, answers, newInteractiveDeadline());
+    }
+
+    /**
+     * The interactive entry point, under one wall-clock budget covering <b>everything</b>: image
+     * resolution, prompt assembly, the provider call, any retry, and parsing.
+     *
+     * <p>The budget starts here rather than at the socket because that is the only place it can
+     * be honest. Downloading six photos and then allowing the model its full per-attempt timeout
+     * is how a request whose every individual step was inside its own limit still took most of a
+     * minute on the baseline run. One clock, started once, handed to each blocking step.
+     */
+    public ClassificationSuggestion classify(String description, List<String> imageKeys,
+                                              Long selectedCategoryId, List<ClarificationExchange> answers,
+                                              Deadline deadline) {
+        List<ImageAttachment> images = imageResolver.resolveRequired(imageKeys, deadline);
+        return classifyResolved(description, images, selectedCategoryId, answers, deadline);
+    }
+
+    /** A fresh budget for one customer-facing classification. */
+    public Deadline newInteractiveDeadline() {
+        return Deadline.inMillis(classificationDeadlineMillis);
     }
 
     /**
@@ -91,6 +141,15 @@ public class ClassificationService {
     public ClassificationSuggestion classifyResolved(String description, List<ImageAttachment> images,
                                                        Long selectedCategoryId,
                                                        List<ClarificationExchange> answers) {
+        // Unbounded: the one caller of this overload is the background brief job, which nobody is
+        // waiting on. See ai.config.OpenAiClientConfig.
+        return classifyResolved(description, images, selectedCategoryId, answers, Deadline.unbounded());
+    }
+
+    public ClassificationSuggestion classifyResolved(String description, List<ImageAttachment> images,
+                                                       Long selectedCategoryId,
+                                                       List<ClarificationExchange> answers,
+                                                       Deadline deadline) {
 
         List<ClarificationExchange> priorExchanges = answers == null ? List.of() : List.copyOf(answers);
         List<ServiceCategory> categories = catalog.categories();
@@ -108,7 +167,7 @@ public class ClassificationService {
         ClassificationRequest request = new ClassificationRequest(description, images, selectedCategoryCode,
                 priorExchanges, budget);
 
-        ClassificationResponse response = callClient(request);
+        ClassificationResponse response = callClient(request, deadline);
         RoutingDecision decision = routingDecisionPolicy.decide(response, categories, priorExchanges,
                 priorExchanges.size());
 
@@ -190,9 +249,9 @@ public class ClassificationService {
      * stack trace and normalised, so an unexpected client bug never leaks as a 500 with an
      * internal message.
      */
-    private ClassificationResponse callClient(ClassificationRequest request) {
+    private ClassificationResponse callClient(ClassificationRequest request, Deadline deadline) {
         try {
-            return aiClassificationClient.classify(request);
+            return aiClassificationClient.classify(request, deadline);
         } catch (ApiException e) {
             log.warn("ai.classification.failed code={} ", e.getCode());
             throw e;

@@ -50,6 +50,8 @@ function renderStep(overrides: Partial<DescribeIssueStepProps> = {}) {
     onPhotosChange: vi.fn(),
     urgencyType: 'STANDARD',
     onUrgencyChange: vi.fn(),
+    selectedCategoryId: undefined,
+    onSelectedCategoryChange: vi.fn(),
     onClassified: vi.fn(),
     onAnalyzingChange: vi.fn(),
     ...overrides,
@@ -102,10 +104,12 @@ describe('DescribeIssueStep layout', () => {
 
     await user.click(screen.getByRole('button', { name: 'המשך' }));
 
-    expect(classifyIssueMock).toHaveBeenCalledWith({
-      description: 'יש נזילת מים מתחת לכיור במטבח',
-      imageKeys: [],
-    });
+    // The second argument is the cancellation/deadline options bag every classify call now
+    // carries; asserted loosely here because this test is about the payload.
+    expect(classifyIssueMock).toHaveBeenCalledWith(
+      { description: 'יש נזילת מים מתחת לכיור במטבח', imageKeys: [] },
+      expect.anything(),
+    );
     expect(props.onClassified).toHaveBeenCalledWith(classified());
   });
 });
@@ -127,7 +131,10 @@ describe('the description length limit', () => {
 
     await user.click(screen.getByRole('button', { name: 'המשך' }));
 
-    expect(classifyIssueMock).toHaveBeenCalledWith({ description: atLimit, imageKeys: [] });
+    expect(classifyIssueMock).toHaveBeenCalledWith(
+      { description: atLimit, imageKeys: [] },
+      expect.anything(),
+    );
   });
 
   it('refuses one character over — in the field\'s existing error style, with no request sent', async () => {

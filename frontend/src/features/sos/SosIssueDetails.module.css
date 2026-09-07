@@ -1,0 +1,126 @@
+/*
+ * The customer's description and photos, shared by the SOS offer card and the active-job panel.
+ *
+ * Deliberately built from the same tokens `SosOfferCard.module.css`/`SosJobPanel.module.css`
+ * already use — `--color-surface-secondary` panels, `--space-*` rhythm, small type — so this
+ * lands inside the existing professional dashboard rather than beside it. No new colours, no new
+ * card treatment: this is more information in the surface that already exists.
+ */
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* The optional short headline, unchanged from where it used to live on each card. */
+.summary {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-secondary);
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+  color: var(--color-text-secondary);
+}
+
+.descriptionBlock,
+.photosBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+
+/*
+ * `pre-wrap` keeps the customer's own line breaks — people list symptoms one per line, and
+ * collapsing that into a paragraph loses the structure they chose. `overflow-wrap` stops a long
+ * unbroken token (a model number, a URL) from widening the card on a phone.
+ */
+.description {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-secondary);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * A horizontal strip rather than a grid: on a phone this sits inside a card that is already tall,
+ * and a wrapping grid of six thumbnails would push the accept button below the fold — which is the
+ * one control this screen exists to offer.
+ */
+.photoStrip {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0 0 var(--space-1);
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.photoButton {
+  display: block;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-secondary);
+  cursor: pointer;
+  overflow: hidden;
+  /* Comfortably above the design system's 44px minimum touch target. */
+  width: 72px;
+  height: 72px;
+}
+
+.photoButton:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Per-photo failure: one expired presigned URL must not hide the others, and must not look like
+   a broken page. Same footprint as a thumbnail so the strip does not reflow. */
+.photoFailed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 72px;
+  height: 72px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-secondary);
+  color: var(--color-text-tertiary);
+}
+
+.photoFailedText {
+  font-size: var(--font-size-caption);
+  line-height: 1;
+}
+
+.photoError {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  color: var(--color-text-secondary);
+}

@@ -4,6 +4,7 @@ import { getCategoryNameHe } from '../../shared/api';
 import type { ProSosJob } from '../../shared/hooks';
 import { SosStatusSteps } from './SosStatusSteps';
 import { SOS_JOB_STEPS } from './sosProUiState';
+import { SosIssueDetails } from './SosIssueDetails';
 import styles from './SosJobPanel.module.css';
 
 export interface SosJobPanelProps {
@@ -80,7 +81,20 @@ export function SosJobPanel({ job, onAdvance, isAdvancing, errorMessage }: SosJo
 
       <SosStatusSteps status={status} />
 
-      {offer.issueSummary && <p className={styles.summary}>“{offer.issueSummary}”</p>}
+      {/* The problem itself — the customer's own description and their photos. This used to be
+          `issueSummary` alone, an optional headline the customer app never sends, so a
+          professional was shown a location and nothing about the fault.
+
+          Read from `request` first, exactly as the address and status above are: it is
+          `GET /api/sos/requests/{id}`, refetched for this screen, so its presigned photo URLs are
+          the freshest available — which is what makes the photos still open after acceptance, a
+          navigation and a refresh, rather than only within the 300s that followed the offer that
+          started the job. The offer is the fallback for the moment before the request has landed. */}
+      <SosIssueDetails
+        summary={request?.issueSummary ?? offer.issueSummary}
+        description={request?.issueDescription ?? offer.issueDescription}
+        photos={(request?.issuePhotos ?? offer.issuePhotos) ?? []}
+      />
 
       <div className={styles.facts}>
         <p className={styles.fact}>

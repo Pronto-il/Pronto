@@ -127,7 +127,8 @@ class SosServiceTest {
     private static SosRequestResponse stubResponse(SosRequest request, SosAddressAccess access) {
         boolean exact = access == SosAddressAccess.FULL;
         return new SosRequestResponse(request.getId(), request.getIssueId(), request.getCustomerId(),
-                request.getCategoryId(), null, null, request.getUrgency(), request.getStatus(),
+                request.getCategoryId(), null, null, null, java.util.List.of(),
+                request.getUrgency(), request.getStatus(),
                 request.getServiceCity(),
                 request.getServiceStreet(), null, null, null, null, null,
                 exact ? request.getLatitude() : null, null,

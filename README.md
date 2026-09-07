@@ -442,7 +442,7 @@ An operator is refused every customer/professional endpoint (`403`), by design.
 
 Project documents:
 
-* [Pronto — Final Presentation](docs/Pronto_Presentation.pptx)
+* [Pronto — Final Presentation](docs/Pronto.pptx)
 * [Pronto — Executive Summary](docs/Pronto_Executive_Summary_Final.docx)
 
 Technical documentation lives in the repository alongside the code:
